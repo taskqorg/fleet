@@ -214,8 +214,9 @@ function HomePage() {
     return () => ro.disconnect();
   });
   // Waiting opened past its row by its +K (OR-30 expander); the other groups stay one row.
-  const [openWaiting, setOpenWaiting] = createSignal(false);
-  const shown = (g: { id: Group; cards: Card[] }) => (g.id === 'waiting' && openWaiting() ? g.cards : g.cards.slice(0, cols().cards));
+  // Waiting shows every card: a question no session asks is answered only here. The other groups preview one row of
+  // cards and link to their Conversations filter (OR-64).
+  const shown = (g: { id: Group; cards: Card[] }) => (g.id === 'waiting' ? g.cards : g.cards.slice(0, cols().cards));
   const loaded = () => !!active.data && !!questions.data;
   // A grid that appears later (the first cards, the asleep row) is measured once it is in the page.
   createEffect(() => [loaded(), bots.data] as const, () => { requestAnimationFrame(measure); });
@@ -473,16 +474,11 @@ function HomePage() {
                       <For each={shown(g)} keyed={c => c.key}>{c => renderCard(c)}</For>
                     </div>
                     <Show when={g.cards.length > shown(g).length}>
-                      {/* Waiting expands in place: a question no session asks is answered only here, so its +K never
-                          leaves Home. The other groups link to their Conversations filter. */}
-                      <Show when={g.id === 'waiting'} fallback={
-                        <a class="home-more" href={formatView({ view: 'conversations', state: g.states })}
-                          onClick={e => { e.preventDefault(); go(formatView({ view: 'conversations', state: g.states })); }}>
-                          +{g.cards.length - cols().cards} · Conversations ›
-                        </a>
-                      }>
-                        <Button label={`+${g.cards.length - cols().cards} more`} kind="quiet" onClick={() => setOpenWaiting(true)} />
-                      </Show>
+                      {/* A preview, no toggle (OR-64): the rest is in Conversations under the group's filter. */}
+                      <a class="home-more" href={formatView({ view: 'conversations', state: g.states })}
+                        onClick={e => { e.preventDefault(); go(formatView({ view: 'conversations', state: g.states })); }}>
+                        All {g.cards.length} in Conversations ›
+                      </a>
                     </Show>
                   </Show>
                 </section>
@@ -513,7 +509,7 @@ function HomePage() {
               </For>
             </div>
             <Show when={asleep().length > cols().tiles}>
-              <a class="home-more" href="/bots" onClick={e => { e.preventDefault(); go('/bots'); }}>+{asleep().length - cols().tiles} · All bots ›</a>
+              <a class="home-more" href="/bots" onClick={e => { e.preventDefault(); go('/bots'); }}>All {asleep().length} bots ›</a>
             </Show>
           </Show>
         </section>

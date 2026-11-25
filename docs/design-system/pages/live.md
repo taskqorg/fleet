@@ -37,7 +37,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * Delivery: pull requests moving through checks, merge, release and install, each with its time since opened (time in the stage on hover) and its stage chip.
    * CI runners: jobs running and minutes today; self-hosted runner state.
    * Just now: the latest events, each with age, a state dot, the task or conversation it belongs to and the agent; repeats are one event with `×N` (OR-58).
-   * Each side list shows its latest five, then `+K more`, which opens the rest in place (OR-30).
+   * Each side list shows its latest five; its heading, with the count, opens the full list (Projects, Tasks, Delivery), and in wall mode it is plain text (OR-30, OR-64).
 
 Every element opens its detail in the app: a host in System, a slot or event in its session, a pull request in its project's delivery facet, a project in Projects. In wall mode nothing opens; the screen only shows.
 

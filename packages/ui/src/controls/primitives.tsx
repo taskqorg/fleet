@@ -605,8 +605,21 @@ export function ProblemRow(p: {
 
 /* ---------- Detail sections (D11, C3) ---------- */
 
-export function DetailSection(p: { title: string; children: JSX.Element }) {
-  return <section class="dsec" data-ui="detail-section"><h3>{p.title}</h3>{p.children}</section>;
+/** A titled block of a detail. With `href`, the title (and its `count`) opens the full list the block previews (OR-64). */
+export function DetailSection(p: { title: string; count?: number; href?: string; onOpen?: () => void; children: JSX.Element }) {
+  const label = () => <>{p.title}<Show when={p.count !== undefined}> <span class="dsec-n">{p.count!.toLocaleString('en')}</span></Show></>;
+  return (
+    <section class="dsec" data-ui="detail-section">
+      <h3>
+        <Show when={p.href} keyed fallback={label()}>{href => (
+          <a class="dsec-open" href={href} onClick={e => { if (p.onOpen && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(); } }}>
+            {label()}<Icon name="chevron-right" />
+          </a>
+        )}</Show>
+      </h3>
+      {p.children}
+    </section>
+  );
 }
 export function KvRow(p: { icon: IconName; label: string; meta?: JSX.Element; value?: JSX.Element }) {
   return (

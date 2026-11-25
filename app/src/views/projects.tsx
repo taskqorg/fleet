@@ -5,7 +5,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from 'solid-js';
 import { useLocation, useSearch } from '../router.ts';
 import {
-  Avatar, Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Latest, ListDetail, ListFrame,
+  Avatar, Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Preview, InfiniteList, type Pager, ListDetail, ListFrame,
   Num, OpenQuestion, RowFacts, Fact, SearchField, SessionCard, ShellActions, Skeleton, StateBadge, StateDot, TabBar, Ago, VirtualList,
   catalogueRow, matchSearch, msMeasured, life, statesOf,
   harnesses, type Harness, type IconName, type Life, type StateOf,
@@ -13,6 +13,8 @@ import {
 import { op, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
 import { useOp } from '../store.ts';
+import { useOpPages } from '../op-pages.ts';
+import { formatView } from '../../../packages/view-url/view-url.ts';
 import { prefs, scopeIds } from '../prefs.ts';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { projectIdOf, projectSegment, type ListFacet } from '../routes.ts';
@@ -39,6 +41,7 @@ const CROSS: { id: CrossFacet; label: string }[] = [
 ];
 const RUNNING_TASK_STATES = SYSTEM_VIEWS.tasks.find(v => v.name === 'Running')?.view.state ?? ['in_progress', 'waiting'];
 const ACTIVE_SESSION: string[] = statesOf('session', ['working', 'waiting']);
+const WAITING_HREF = formatView({ view: 'conversations', state: statesOf('session', ['waiting']) });
 const IN_FLIGHT_STAGES = new Set(['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing']);
 
 function isRec(v: unknown): v is Record<string, unknown> {
@@ -242,8 +245,9 @@ function Summary(props: { names: Map<string, string> }) {
   const flight = createMemo(() => (delivery.data?.items ?? []).filter(it => IN_FLIGHT_STAGES.has(it.stage)));
   return (
     <article class="detail" data-ui="detail" tabindex={-1} aria-label="Projects summary">
-      <DetailSection title={`Waiting for you${questions.data?.questions.length ? ' · ' + questions.data.questions.length : ''}`}>
-        <Switch fallback={<Latest n={3} items={(questions.data?.questions ?? []).map(q => <AskCard q={q} label={name(q.projectId)} />)} />}>
+      <DetailSection title="Waiting for you" count={questions.data?.questions.length || undefined}
+        href={WAITING_HREF} onOpen={() => go(WAITING_HREF)}>
+        <Switch fallback={<Preview n={3} items={(questions.data?.questions ?? []).map(q => <AskCard q={q} label={name(q.projectId)} />)} />}>
           <Match when={questions.error}><ErrorBanner text={`Questions did not load: ${questions.error}`} onRetry={questions.reload} /></Match>
           <Match when={!questions.data}><Skeleton rows={2} /></Match>
           <Match when={questions.data!.questions.length === 0}><p class="muted">Nothing waits for you.</p></Match>
@@ -314,7 +318,11 @@ function AskCard(props: { q: Question; label?: string }) {
 function ProjectWork(props: { id: string; p?: { name: string; code: string; raw: Record<string, unknown> }; facet: Facet; item?: string; onClose: () => void }) {
   const [, go] = useLocation();
   const questions = useOp('questions_list', () => ({ projectIds: [props.id], state: 'open', limit: 200 }));
-  const sessions = useOp('sessions_list', () => ({ filter: { projectId: [props.id], archived: false }, sort: '-activity', limit: 60 }));
+  // The project's sessions, newest first, a page at a time as the facet scrolls (OR-64).
+  const paged = useOpPages('sessions_list', () => ({ filter: { projectId: [props.id], archived: false }, sort: '-activity', limit: 60 }), {
+    page: r => ({ rows: r.sessions, next: (r.nextAfter as unknown[] | null) ?? null }), after: after => ({ after }), key: s => s.id,
+  });
+  const sessions = paged.first;
   const asks = createMemo(() => questions.data?.questions ?? []);
   const working = createMemo(() => (sessions.data?.sessions ?? []).filter(s => ACTIVE_SESSION.includes(s.state)).length);
   const ready = createMemo(() => (props.p ? readiness(props.p.raw) : null));
@@ -349,7 +357,7 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
       <div class="pw-facet" role="tabpanel" aria-label={FACETS.find(f => f.id === props.facet)?.label}>
         <Switch>
           <Match when={props.facet === 'sessions'}>
-            <SessionsFacet sessions={sessions.data?.sessions} error={sessions.error} reload={sessions.reload} questions={asks()} pm={pmProfile()} name={props.p?.name ?? props.id} onTalk={talk} />
+            <SessionsFacet sessions={sessions.data ? paged.pages.rows : undefined} pages={paged.pages} error={sessions.error} reload={sessions.reload} questions={asks()} pm={pmProfile()} name={props.p?.name ?? props.id} onTalk={talk} />
           </Match>
           <Match when={props.facet === 'rules'}>
             <ProjectEditor id={props.id} embedded onName={setDraftName} onClose={undefined} onSaved={p => go('/projects/' + encodeURIComponent(p) + '?facet=rules')}
@@ -368,7 +376,7 @@ const lifeOfSession = (s: string): Life => life('session', s);
 const sessionPath = (s: Session) => '/conversations/' + encodeURIComponent(s.code ?? s.id);
 
 /** Sessions facet: the PM first, then the project's active sessions as cards, then the others (finished or asleep) as rows, newest first (OR-50, OR-51). */
-function SessionsFacet(props: { sessions?: Session[]; error: string | null; reload: () => void; questions: Question[]; pm: string; name: string; onTalk: () => void }) {
+function SessionsFacet(props: { sessions?: Session[]; pages: Pager; error: string | null; reload: () => void; questions: Question[]; pm: string; name: string; onTalk: () => void }) {
   const [, go] = useLocation();
   const pm = createMemo(() => (props.sessions ?? []).find(s => s.profileId === props.pm));
   const active = createMemo(() => (props.sessions ?? []).filter(s => s !== pm() && ACTIVE_SESSION.includes(s.state)));
@@ -399,14 +407,16 @@ function SessionsFacet(props: { sessions?: Session[]; error: string | null; relo
             <For each={active()}>{s => card(s)}</For>
           </div>
           <Show when={finished().length > 0}>
-            <DetailSection title={`Earlier · ${finished().length}`}>
-              <Latest n={8} items={finished().map(s => (
-                <a class="pw-row row-link" href={sessionPath(s)} onClick={e => { e.preventDefault(); go(sessionPath(s)); }}>
-                  <span class="muted mono">{s.activityAt ? <Ago t={Date.parse(s.activityAt)} /> : ''}</span>
-                  <StateDot family="session" state={s.state as StateOf<'session'>} />
-                  <span class="pw-row-t">{s.title ?? s.code ?? 'Untitled session'}</span>
-                </a>
-              ))} />
+            <DetailSection title="Earlier">
+              <InfiniteList pages={props.pages} label="Earlier sessions" endLabel="Older sessions">
+                <For each={finished()}>{s => (
+                  <a class="pw-row row-link" href={sessionPath(s)} onClick={e => { e.preventDefault(); go(sessionPath(s)); }}>
+                    <span class="muted mono">{s.activityAt ? <Ago t={Date.parse(s.activityAt)} /> : ''}</span>
+                    <StateDot family="session" state={s.state as StateOf<'session'>} />
+                    <span class="pw-row-t">{s.title ?? s.code ?? 'Untitled session'}</span>
+                  </a>
+                )}</For>
+              </InfiniteList>
             </DetailSection>
           </Show>
         </>

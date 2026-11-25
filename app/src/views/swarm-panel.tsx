@@ -5,7 +5,7 @@ import { useLocation } from '../router.ts';
 import { readValue, type MaybeAccessor } from '../signal.ts';
 import {
   AgeChip, ArtifactView, Button, Choice, CostFigures, DataTable, DetailSection, Disclosure, Empty,
-  EntityCode, EntityPicker, ErrorBanner, HarnessCounts, HarnessMark, Icon, KvRow, Latest, Markdown,
+  EntityCode, EntityPicker, ErrorBanner, HarnessCounts, HarnessMark, Icon, KvRow, InfiniteList, createWindow, Markdown,
   Num, OutcomeBlock, SearchField, Skeleton, SortColHead, StateBadge, StatStrip, TabBar, Totals,
   agentLabel, exact, harnesses, matchSearch, msMeasured, splitCostFigures,
   type CatalogueTreeNode, type CostFigureLike, type Harness, type IconName, type StateOf, type Stat, type Tone,
@@ -553,6 +553,8 @@ function SwarmBoardTab(props: {
       });
     });
   });
+  // Posts are built 25 at a time as the board scrolls (OR-64); a new filter starts from the top.
+  const posts = createWindow(filtered, 25, () => [props.threadFilter, props.kindFilter, props.search]);
 
   return (
     <>
@@ -609,18 +611,15 @@ function SwarmBoardTab(props: {
           />
         }
       >
-        <div class="stack">
-          <Latest
-            n={25}
-            items={filtered().map(m => (
-              <BoardMessageCard
-                m={m}
-                member={rosterByName().get(m.authorMember)}
-                threadTitle={m.threadId ? threadTitleMap().get(m.threadId) : undefined}
-              />
-            ))}
-          />
-        </div>
+        <InfiniteList pages={posts} label="Board posts" class="stack">
+          <For each={posts.rows}>{m => (
+            <BoardMessageCard
+              m={m}
+              member={rosterByName().get(m.authorMember)}
+              threadTitle={m.threadId ? threadTitleMap().get(m.threadId) : undefined}
+            />
+          )}</For>
+        </InfiniteList>
       </Show>
     </>
   );

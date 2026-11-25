@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSet
 import { useLocation } from '../router.ts';
 import { readValue, type MaybeAccessor } from '../signal.ts';
 import {
-  StatusLine, AgeChip, Button, DataTable, Disclosure, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
+  InfiniteList, createWindow, StatusLine, AgeChip, Button, DataTable, Disclosure, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
   cause, formatRowSpend, msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
   isFinished,
@@ -207,7 +207,8 @@ export function ScopedRollupDetails(props: { rollup: ScopedResourceRollup; foldT
     const term = taskQuery().trim().toLowerCase();
     return props.rollup.spawnedTasks.filter(task => !term || task.title.toLowerCase().includes(term) || task.code?.toLowerCase().includes(term));
   });
-  const shown = createMemo(() => tasks().slice(0, 8));
+  // Spawned tasks build 20 at a time as the list scrolls (OR-64); a new search starts from the top.
+  const shown = createWindow(tasks, 20, taskQuery);
   const rows = createMemo(() => {
     const r = props.rollup;
     const out: { label: string; s: ResourceSummary }[] = [
@@ -275,13 +276,11 @@ export function ScopedRollupDetails(props: { rollup: ScopedResourceRollup; foldT
             <Show when={props.rollup.spawnedTasks.length > 8}>
               <SearchBox label="Find spawned tasks" value={taskQuery()} onInput={setTaskQuery} always />
             </Show>
-            <Show when={shown().length < tasks().length}>
-              <span class="muted">{shown().length} of {tasks().length} tasks</span>
-            </Show>
-            <Show when={!shown().length}>
+            <Show when={!tasks().length}>
               <Empty text="No spawned tasks match." />
             </Show>
-            <For each={shown()}>
+            <InfiniteList pages={shown} label="Spawned tasks">
+            <For each={shown.rows}>
               {st => {
                 const stWall = resNum(st.resources.durations.executionWallMs, st.resources.durations.basis, 0.001);
                 const stTok = resNum(st.resources.tokens.total, st.resources.tokens.basis);
@@ -306,6 +305,7 @@ export function ScopedRollupDetails(props: { rollup: ScopedResourceRollup; foldT
                 );
               }}
             </For>
+            </InfiniteList>
           </div>
         </Show>
         <Show when={props.rollup.hidden > 0}>

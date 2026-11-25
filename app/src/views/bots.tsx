@@ -4,7 +4,7 @@ import { For, Match, Show, Switch, createMemo, createSignal, untrack } from 'sol
 import { useLocation, useSearch } from '../router.ts';
 import {
   Ago, Avatar, Button, Choice, DataTable, DetailSection, Empty, EntityCode, EntityPicker, ErrorBanner,
-  KvRow, ProblemRow, Skeleton, StateBadge, TabBar, TextField, states as uiStates, causeOf,
+  KvRow, ListEnd, ProblemRow, Skeleton, StateBadge, TabBar, TextField, states as uiStates, causeOf, type Pager,
   type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { writeOnce, useAlive, type Ops } from '../api.ts';
@@ -20,6 +20,7 @@ const asBotRunState = (s: string | null | undefined): StateOf<'botRun'> =>
 const asTaskState = (s: string): StateOf<'task'> =>
   VALID_TASK_STATES.has(s) ? (s as StateOf<'task'>) : 'queued';
 import { useOp } from '../store.ts';
+import { useOpPages } from '../op-pages.ts';
 import { parseMs as ms } from '../task-facts.ts';
 import { BotAutomations } from './bot-automations.tsx';
 import { BotAvatarField } from './bot-avatar.tsx';
@@ -76,14 +77,20 @@ export function BotDetail(props: {
   const [actionError, setActionError] = createSignal('');
   const signal = useAlive();
 
-  const runsOp = useOp('bot_runs', () => ({ botId: props.bot.id, limit: 100 }));
-  const automationRuns = useOp('bot_runs', () => {
-    const id = automationId();
-    if (!id) return null;
-    const after = params().get('after') ?? undefined;
-    return { botId: props.bot.id, automationId: id, limit: 50, after };
+  // Runs and tasks load a page at a time as their tables scroll near the end (OR-64); the overview previews the first page.
+  const runsPaged = useOpPages('bot_runs', () => ({ botId: props.bot.id, limit: 50 }), {
+    page: r => ({ rows: r.runs, next: r.nextAfter ?? null }), after: after => ({ after }), key: r => r.id,
   });
-  const tasksOp = useOp('bot_tasks', () => ({ botId: props.bot.id, limit: 100 }));
+  const runsOp = runsPaged.first;
+  const automationPaged = useOpPages('bot_runs', () => {
+    const id = automationId();
+    return id ? { botId: props.bot.id, automationId: id, limit: 50 } : null;
+  }, { page: r => ({ rows: r.runs, next: r.nextAfter ?? null }), after: after => ({ after }), key: r => r.id });
+  const automationRuns = automationPaged.first;
+  const tasksPaged = useOpPages('bot_tasks', () => ({ botId: props.bot.id, limit: 50 }), {
+    page: r => ({ rows: r.tasks, next: r.nextAfter ?? null }), after: after => ({ after }), key: t => t.taskId,
+  });
+  const tasksOp = tasksPaged.first;
 
   const reloadAll = () => {
     props.onReload();
@@ -92,8 +99,8 @@ export function BotDetail(props: {
     tasksOp.reload();
   };
 
-  const runs = createMemo(() => runsOp.data?.runs ?? []);
-  const tasks = createMemo(() => tasksOp.data?.tasks ?? []);
+  const runs = createMemo(() => runsPaged.pages.rows);
+  const tasks = createMemo(() => tasksPaged.pages.rows);
   const statusBadge = createMemo(() => botStatusBadge({
     paused: props.bot.paused,
     activeRunId: props.bot.activeRunId,
@@ -179,6 +186,7 @@ export function BotDetail(props: {
                 tasks={tasks()}
                 runs={runs()}
                 onSelectTab={setTab}
+                tabHref={t => path(props.bot) + '?' + new URLSearchParams({ tab: t })}
               />
             </Match>
             <Match when={tab() === 'automations'}>
@@ -189,23 +197,17 @@ export function BotDetail(props: {
                 onRun={reloadAll} />
             </Match>
             <Match when={tab() === 'tasks'}>
-              <BotTasksTab tasks={tasks()} projectNames={props.projectNames} loading={!tasksOp.data && !tasksOp.error} error={tasksOp.error} onRetry={tasksOp.reload} />
+              <BotTasksTab pages={tasksPaged.pages} tasks={tasks()} projectNames={props.projectNames} loading={!tasksOp.data && !tasksOp.error} error={tasksOp.error} onRetry={tasksOp.reload} />
             </Match>
             <Match when={tab() === 'runs'}>
               <Show when={automationId()} keyed fallback={
-                <BotRunsTab runs={runs()} projectNames={props.projectNames} loading={!runsOp.data && !runsOp.error} error={runsOp.error} onRetry={runsOp.reload} />
+                <BotRunsTab pages={runsPaged.pages} runs={runs()} projectNames={props.projectNames} loading={!runsOp.data && !runsOp.error} error={runsOp.error} onRetry={runsOp.reload} />
               }>{id => (
                 <>
                   <div class="row" style={{ 'flex-wrap': 'wrap', gap: 'var(--space-2)' }}>
                     <Button label="Automations" icon="arrow-left" iconOnly onClick={() => showTab('automations')} />
-                    <Show when={params().has('after')}>
-                      <Button label="Latest runs" onClick={() => showTab('runs', { automation: id })} />
-                    </Show>
-                    <Show when={automationRuns.data?.nextAfter} keyed>{after => (
-                      <Button label="Older runs" onClick={() => showTab('runs', { automation: id, after })} />
-                    )}</Show>
                   </div>
-                  <BotRunsTab runs={automationRuns.data?.runs ?? []} projectNames={props.projectNames}
+                  <BotRunsTab pages={automationPaged.pages} runs={automationPaged.pages.rows} projectNames={props.projectNames}
                     loading={!automationRuns.data && !automationRuns.error} error={automationRuns.error} onRetry={automationRuns.reload} />
                 </>
               )}</Show>
@@ -226,6 +228,7 @@ function BotOverviewTab(props: {
   tasks: BotTask[];
   runs: BotRun[];
   onSelectTab: (tab: BotTab) => void;
+  tabHref: (tab: BotTab) => string;
 }) {
   const [, go] = useLocation();
   const activeOrWaitingTasks = createMemo(() => props.tasks.filter(t => classifyBotTaskBucket(t.state) !== 'history'));
@@ -267,7 +270,7 @@ function BotOverviewTab(props: {
 
 
       <Show when={failedOrUnconf().length > 0}>
-        <DetailSection title="Run problems & unconfirmed wakes">
+        <DetailSection title="Run problems & unconfirmed wakes" count={failedOrUnconf().length} href={props.tabHref('runs')} onOpen={() => props.onSelectTab('runs')}>
           <For each={failedOrUnconf().slice(0, 3)}>
             {r => (
               <ProblemRow
@@ -282,21 +285,16 @@ function BotOverviewTab(props: {
         </DetailSection>
       </Show>
 
-      <DetailSection title={`Active & waiting tasks (${activeOrWaitingTasks().length})`}>
+      {/* Previews of the first rows; the title opens the tab, which loads the rest on scroll (OR-64). */}
+      <DetailSection title="Active & waiting tasks" href={props.tabHref('tasks')} onOpen={() => props.onSelectTab('tasks')}>
         <Show when={activeOrWaitingTasks().length > 0} fallback={<Empty text="No active or waiting tasks." />}>
           <BotTasksTable tasks={activeOrWaitingTasks().slice(0, 8)} projectNames={props.projectNames} />
-          <Show when={props.tasks.length > activeOrWaitingTasks().length}>
-            <Button label={`Inspect all ${props.tasks.length} tasks`} kind="quiet" onClick={() => props.onSelectTab('tasks')} />
-          </Show>
         </Show>
       </DetailSection>
 
-      <DetailSection title={`Recent runs (${props.runs.length})`}>
+      <DetailSection title="Recent runs" href={props.tabHref('runs')} onOpen={() => props.onSelectTab('runs')}>
         <Show when={props.runs.length > 0} fallback={<Empty text="No wake runs recorded yet." />}>
           <BotRunsTable runs={props.runs.slice(0, 8)} projectNames={props.projectNames} />
-          <Show when={props.runs.length > 8}>
-            <Button label={`Inspect all ${props.runs.length} runs`} kind="quiet" onClick={() => props.onSelectTab('runs')} />
-          </Show>
         </Show>
       </DetailSection>
     </div>
@@ -304,7 +302,7 @@ function BotOverviewTab(props: {
 }
 
 function BotTasksTab(props: {
-  tasks: BotTask[]; projectNames: Map<string, string>; loading: boolean; error: string | null; onRetry: () => void;
+  pages: Pager; tasks: BotTask[]; projectNames: Map<string, string>; loading: boolean; error: string | null; onRetry: () => void;
 }) {
   const [bucket, setBucket] = createSignal<BotTaskBucket>('all');
   const filtered = createMemo(() => filterBotTasks(props.tasks, bucket()));
@@ -335,6 +333,7 @@ function BotTasksTab(props: {
         <Show when={filtered().length > 0} fallback={<Empty text="No tasks in this category." />}>
           <BotTasksTable tasks={filtered()} projectNames={props.projectNames} />
         </Show>
+        <ListEnd pages={props.pages} what="Older tasks" />
       </Show>
     </div>
   );
@@ -378,7 +377,7 @@ function BotTasksTable(props: { tasks: BotTask[]; projectNames: Map<string, stri
 }
 
 function BotRunsTab(props: {
-  runs: BotRun[]; projectNames: Map<string, string>; loading: boolean; error: string | null; onRetry: () => void;
+  pages: Pager; runs: BotRun[]; projectNames: Map<string, string>; loading: boolean; error: string | null; onRetry: () => void;
 }) {
   const [filter, setFilter] = createSignal<BotRunFilter>('all');
   const filtered = createMemo(() => filterBotRuns(props.runs, filter()));
@@ -404,6 +403,7 @@ function BotRunsTab(props: {
         <Show when={filtered().length > 0} fallback={<Empty text="No runs match this filter." />}>
           <BotRunsTable runs={filtered()} projectNames={props.projectNames} />
         </Show>
+        <ListEnd pages={props.pages} what="Older runs" />
       </Show>
     </div>
   );

@@ -41,6 +41,7 @@ const RULES = [
   { id: 'OR-48', re: /class="vl-wrap"/g, where: f => /app\/src\/views\/[^/]+\.tsx$/.test(f) && !/app\/src\/views\/(hosts|runners)\.tsx$/.test(f), say: 'raw vl-wrap catalogue in view; use ListPagePanel or CatalogueTree in Control Column' },
   { id: 'OR-48', re: /<header[^>]*class="page-h"[^>]*>[\s\S]{0,300}label="New /g, where: f => /app\/src\/views\/[^/]+\.tsx$/.test(f), say: 'section "New …" action inside <header class="page-h">; move it to <ShellActions>' },
   { id: 'OR-49', re: /role="tablist"/g, where: f => /\.tsx$/.test(f) && !/controls\/tables\.tsx$/.test(f), say: 'raw role="tablist"; use TabBar from packages/ui' },
+  { id: 'OR-64', re: /label=\{?[`'"](?:Show (?:more|less)|Load more|Older|Newer)\b|label=\{`\+\$\{[^`]*\} more`\}/g, where: f => /\.tsx$/.test(f), say: 'toggle pagination; lists load on scroll (InfiniteList, ListEnd) and card previews open the full list from their title' },
 ];
 const warn = [];
 for (const f of files) {

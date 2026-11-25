@@ -429,7 +429,7 @@ export function Lab(props: { id?: string }) {
   const idle = (
     <article class="detail" aria-label="Lab overview">
       <Waiting experiments={waitingExperiments()} approvals={approvals()} openRatings={openRatings()} now={now}
-        onOpen={x => go(`/lab/${encodeURIComponent(x)}`)} />
+        onOpen={x => go(`/lab/${encodeURIComponent(x)}`)} onAll={() => pickView(VIEW_WAITING)} />
       {comparison('All use cases')}
     </article>
   );
@@ -503,6 +503,8 @@ const shorten = (t: string, n = 90) => t.length > n ? t.slice(0, n - 1).trimEnd(
 function Waiting(props: {
   experiments: readonly LabExperimentRecord[]; approvals: readonly LabRating[]; openRatings: readonly LabRating[]; now: number;
   onOpen: (id: string) => void;
+  /** Opens the view of every finished run waiting for a decision. */
+  onAll: () => void;
 }) {
   const [answering, setAnswering] = createSignal<{ id: string; label: string } | null>(null);
   const [answered, setAnswered] = createSignal<Record<string, { answer: string; at: number }>>({});
@@ -523,7 +525,12 @@ function Waiting(props: {
   };
   return <Show when={count() > 0}>
     <section class="panel" aria-label="Waiting for you">
-      <header class="panel-h"><Icon name="bell" /><h2>Waiting for you</h2><span class="muted mono">{count()}</span></header>
+      {/* The first question is a preview (OR-64); the heading opens every finished run waiting for a decision. */}
+      <header class="panel-h"><Icon name="bell" /><h2>
+        <Show when={props.experiments.length > QUESTIONS_SHOWN} fallback="Waiting for you">
+          <a class="dsec-open" href="/lab" onClick={e => { e.preventDefault(); props.onAll(); }}>Waiting for you<Icon name="chevron-right" /></a>
+        </Show>
+      </h2><span class="muted mono">{count()}</span></header>
       <div class="lab-qs stack-pad">
         <For each={props.experiments.slice(0, QUESTIONS_SHOWN)}>{e => <>
           <QuestionCard
@@ -536,9 +543,6 @@ function Waiting(props: {
           <span class="muted"><EntityCode id={e.id} kind="experiment" /> · {subtitle(e)} · <a class="row-link" href={`/lab/${encodeURIComponent(e.id)}`} onClick={ev => { ev.preventDefault(); props.onOpen(e.id); }}>scores and decision gate</a></span>
           <Show when={failed()?.id === e.id}><ProblemRow title="Decision not recorded" facts={failed()!.text} severity="failure" actions={[]} /></Show>
         </>}</For>
-        <Show when={props.experiments.length > QUESTIONS_SHOWN}>
-          <span class="muted">{props.experiments.length - QUESTIONS_SHOWN} more finished runs wait in the view "Waiting for a decision".</span>
-        </Show>
         <For each={props.approvals}>{r => <Rating r={r} now={props.now} />}</For>
         <Show when={props.openRatings.length > 0}>
           <KvRow

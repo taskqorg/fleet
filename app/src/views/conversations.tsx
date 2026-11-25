@@ -7,7 +7,7 @@ import {
   StateBadge, StateCounters, Button, DetailSection,
   OpsSummary, KvRow, Num, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, finishedStates,
-  OpenQuestion, Latest, StateDot, type Tone,
+  OpenQuestion, Preview, StateDot, statesOf, type Tone,
   ShellStatus, ShellActions, WorkFacts, peerFence, useTick,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, type Ops } from '../api.ts';
@@ -27,6 +27,7 @@ const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
 /** The contract's session row. */
 type SessionRow = ContractSessionRow & { state: StateOf<'session'> };
 const TERMINAL: readonly string[] = finishedStates.session;
+const WAITING = statesOf('session', ['waiting']) as string[];
 const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
 
 export function Conversations(props: { id?: string }) {
@@ -169,9 +170,10 @@ function WaitingCards(props: { page: ListPage<SessionRow>; archived: boolean }) 
   const answers = useAnswers();
   return (
     <Show when={waiting().length > 0}>
-      <DetailSection title={`Waiting for you · ${waiting().length}`}>
+      <DetailSection title="Waiting for you" count={waiting().length}
+        href={props.page.href({ state: WAITING, preset: undefined })} onOpen={() => props.page.set({ state: WAITING, preset: undefined })}>
         <div class="stack">
-          <Latest
+          <Preview
             n={3}
             items={waiting().map(q => {
               const name = () => names().get(q.sessionId);
@@ -204,6 +206,7 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
   }, { every: 30_000 }); // sessions_list names no change kinds, so the feed does not reread it
   const counts = () => props.page.list.counts as Partial<Record<StateOf<'session'>, number>>;
   const hasCounts = createMemo(() => Object.values(counts()).some(n => (n ?? 0) > 0));
+  const finishedCount = createMemo(() => TERMINAL.reduce((n, st) => n + (counts()[st as StateOf<'session'>] ?? 0), 0));
   // Project groups of the list; the waiting group is the cards above.
   const groups = createMemo(() => props.page.list.groups.filter(g => g.count > 0 && !isWaitingGroup(props.page.rowsGroup, g.key)));
   const projects = useOp('project_list', () => (props.page.rowsGroup === 'project' ? {} : null));
@@ -249,9 +252,10 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
           </Show>
         </Show>
         <Show when={(finished.data?.sessions.length ?? 0) > 0}>
-          <DetailSection title="Latest finished">
-            <Latest
-              n={3}
+          <DetailSection title="Latest finished" count={finishedCount() || undefined}
+            href={props.page.href({ state: [...TERMINAL], preset: undefined })} onOpen={() => props.page.set({ state: [...TERMINAL], preset: undefined })}>
+            <Preview
+              n={5}
               items={(finished.data?.sessions ?? []).map(raw => {
                 const r = raw as SessionRow;
                 const at = r.activityAt ? Date.parse(r.activityAt) : NaN;

@@ -4,7 +4,7 @@
 
 **Composition.** A panel with:
 * items in urgency order, then the most recent first (OR-40): [decision blocks](../controls/decision-block.md) that block work, then [problem rows](../controls/problem-row.md), then acceptance decisions;
-* the latest 3, then a `+K` button that shows the rest in place (OR-30, `Latest` in `packages/ui`).
+* the latest 3 (`Preview` in `packages/ui`); the title, with the count, opens the full list (OR-30, OR-64).
 
 Each item names the work that waits ("T-9989 Write release notes 95"), which links to its detail.
 

@@ -14,7 +14,7 @@
 **Behaviour.**
 * A click on the tile opens the bot's session view; Wake starts a run and opens nothing.
 * Typing to the bot in the [composer](composer.md#target-picker) also wakes it with its memory.
-* Tiles share one row, as many as fit, then `+K` ([OR-30](../owner-rules.md)).
+* Tiles share one row, as many as fit, then `All N bots ›`, which opens Bots ([OR-30](../owner-rules.md)).
 
 **Keyboard.** One focus stop per tile; `Enter` opens; `Tab` moves to Wake.
 
