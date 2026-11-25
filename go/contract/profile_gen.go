@@ -138,6 +138,7 @@ type Profile struct {
 	McpServers         []ProfileMcpGrant    `json:"mcpServers"`
 	Model              string               `json:"model"`
 	Monogram           *string              `json:"monogram,omitempty"`
+	Publishing         *bool                `json:"publishing,omitempty"`
 	Purpose            *string              `json:"purpose,omitempty"`
 	Settings           *AntigravitySettings `json:"settings,omitempty"`
 	Skills             []string             `json:"skills,omitempty"`

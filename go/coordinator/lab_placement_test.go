@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -64,7 +66,10 @@ func TestPublishesAndWithoutForge(t *testing.T) {
 	exp, read := "e1", "read"
 	step := "run:step:0"
 	if publishes(&dispatchExecution{ExperimentID: &exp}) || publishes(&dispatchExecution{Dispatch: &dispatchSpec{Access: &read}}) || publishes(&dispatchExecution{PipelineStepID: &step}) {
-		t.Fatal("a Lab trial, a pipeline agent step and a read-only start must not publish")
+		t.Fatal("a Lab trial, a non-publishing pipeline agent step and a read-only start must not publish")
+	}
+	if !publishes(&dispatchExecution{PipelineStepID: &step, StepPublishes: true}) || publishes(&dispatchExecution{PipelineStepID: &step, StepPublishes: true, ExperimentID: &exp}) {
+		t.Fatal("a publishing pipeline step publishes, except in Lab")
 	}
 	if !publishes(&dispatchExecution{}) {
 		t.Fatal("a write start outside Lab publishes")
@@ -77,5 +82,54 @@ func TestPublishesAndWithoutForge(t *testing.T) {
 	}
 	if err := json.Unmarshal(project["execution"], &ex); err != nil || ex.Forge || len(ex.Tools) != 1 {
 		t.Fatalf("execution = %s", project["execution"])
+	}
+}
+
+// What a step does decides publishing: coding-task and coding-task-reviewed run coding-worker steps that publish (its
+// profile says publishing), doc-recognize-agent's read step does not (DAM Lab; #1085 had turned every step off).
+func TestShippedPipelineStepsPublish(t *testing.T) {
+	root := filepath.Join("..", "..", "config")
+	profile := func(id string) rawObject {
+		b, err := os.ReadFile(filepath.Join(root, "agents", id+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p rawObject
+		if err := json.Unmarshal(b, &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	want := map[string]map[string]bool{
+		"coding-task":          {"implement": true},
+		"coding-task-reviewed": {"implement": true, "review": false, "fix": true},
+		"doc-recognize-agent":  {},
+	}
+	for id, steps := range want {
+		b, err := os.ReadFile(filepath.Join(root, "pipelines", id+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var def struct {
+			Steps []pipelineDefStep `json:"steps"`
+		}
+		if err := json.Unmarshal(b, &def); err != nil {
+			t.Fatal(err)
+		}
+		agents := 0
+		for i := range def.Steps {
+			s := &def.Steps[i]
+			if s.Kind != "agent" {
+				continue
+			}
+			agents++
+			got := stepPublishes(s, profile(s.Profile))
+			if w := steps[s.ID]; got != w {
+				t.Errorf("%s step %s (profile %s) publishes = %v, want %v", id, s.ID, s.Profile, got, w)
+			}
+		}
+		if agents == 0 {
+			t.Errorf("%s has no agent step", id)
+		}
 	}
 }

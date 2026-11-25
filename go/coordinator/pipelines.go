@@ -267,7 +267,9 @@ type pipelineDefStep struct {
 	TimeoutMs   json.RawMessage `json:"timeout_ms,omitempty"`
 	Host        string          `json:"host,omitempty"`
 	When        json.RawMessage `json:"when,omitempty"`
-	raw         json.RawMessage
+	// Publishes: the agent step publishes to the project's forge though its profile does not say so (publishing).
+	Publishes bool `json:"publishes,omitempty"`
+	raw       json.RawMessage
 }
 
 func (s *pipelineDefStep) UnmarshalJSON(b []byte) error {

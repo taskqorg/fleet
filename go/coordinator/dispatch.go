@@ -562,6 +562,7 @@ type dispatchExecution struct {
 	PipelineRunID         *string              `json:"pipelineRunId,omitempty"`
 	PipelineStepID        *string              `json:"pipelineStepId,omitempty"`
 	ExperimentID          *string              `json:"experimentId,omitempty"`
+	StepPublishes         bool                 `json:"stepPublishes,omitempty"`
 	RequestedAccount      json.RawMessage      `json:"requestedAccount,omitempty"`
 	EffectiveAccount      json.RawMessage      `json:"effectiveAccount,omitempty"`
 	ConnectionsRefused    []string             `json:"connectionsRefused,omitempty"`
@@ -1291,12 +1292,19 @@ func isBackpressureCause(cause string) bool {
 	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency") || strings.HasSuffix(cause, ":updating")
 }
 
-// publishes: the run may publish to the project's forge (push its branch, open a pull or merge request): any start
-// with write access outside Lab and outside a pipeline. A Lab trial measures a method and never publishes; a pipeline
-// agent step answers with its output files and never publishes; nor does a read-only start. They need no forge login
-// (DAM Lab, 2026-11-25: Claude trials failed forge-actor-auth-unready on owner-mac).
+// publishes: the run may publish to the project's forge (push its branch, open a pull or merge request). It depends
+// on what the run does, not where it runs: a pipeline agent step publishes when its profile or step says so
+// (stepPublishes: coding-worker in coding-task), any other start when it has write access. A Lab trial measures a method
+// and never publishes, nor does a read-only start. A run that does not publish needs no forge login (DAM Lab,
+// 2026-11-25: Claude trials failed forge-actor-auth-unready on owner-mac).
 func publishes(e *dispatchExecution) bool {
-	return deref(e.ExperimentID) == "" && deref(e.PipelineStepID) == "" && (e.Dispatch == nil || deref(e.Dispatch.Access) != "read")
+	if deref(e.ExperimentID) != "" || e.Dispatch != nil && deref(e.Dispatch.Access) == "read" {
+		return false
+	}
+	if deref(e.PipelineStepID) != "" {
+		return e.StepPublishes
+	}
+	return true
 }
 
 // withoutForge: the project settings a run that does not publish receives: execution.forge off, so the executor sets up
