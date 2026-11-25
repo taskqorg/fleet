@@ -169,12 +169,13 @@ func accessSubscription(a accountRec, period contract.LimitPeriod, profiles []ac
 		}
 		if lc, ok := jsonAs[struct {
 			Reason string `json:"reason"`
-		}](b.LastCheck); ok && lc.Reason != "" && lc.Reason != "ready" {
+		}](b.LastCheck); ok && lc.Reason != "" && lc.Reason != "ready" && lc.Reason != "login-started" {
 			h.Reason = &lc.Reason
 		}
 		if at, ok := jsonAs[int64](b.ObservedAt); ok && at > 0 {
 			h.ObservedAt = &at
 		}
+		h.Login = b.Login
 		it.Hosts = append(it.Hosts, h)
 		if h.Readiness == "ready" {
 			ready = append(ready, h.HostId)
@@ -576,6 +577,18 @@ func accessOnboardLogin(q *Request, r *contract.AccessOnboardRequest) (contract.
 		return no, err
 	}
 	login := strings.Join(loginArgv[a.Harness], " ")
+	if r.Start != nil && *r.Start {
+		// Only the holder or the owner starts a login, from the Sign in button; an agent asks the owner (below) instead.
+		if q.agent != "" || (q.person != nil && !fullAccess(q.person) && q.person.Email != a.Holder) {
+			return no, fail(403, "Only the holder or the owner starts a login")
+		}
+		if _, err := accountInspectMode(q, a.ID, h.HostId, r.Binding, "login"); err != nil {
+			return no, err
+		}
+		started := true
+		return contract.AccessOnboardReply{Kind: string(r.Kind), Started: &started, Guide: &contract.AccessGuide{Login: &login},
+			Steps: []string{"Fleet started " + login + " on " + h.HostId + "; the sign-in link and code show here in a few seconds", "Open the link, enter the code and sign in as " + a.Name, "Press Check: Fleet reads who is signed in, the models and the quota"}}, nil
+	}
 	out := contract.AccessOnboardReply{Kind: string(r.Kind), Guide: &contract.AccessGuide{Login: &login},
 		Steps: []string{"On System › Access, press Sign in on " + a.Name + " · " + h.HostId, "Open the link and enter the code Fleet shows; sign in as " + a.Name}}
 	if text, ok := jsonAs[string](h.RequiredUserInteraction); ok && text != "" {

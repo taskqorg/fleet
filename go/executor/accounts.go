@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -136,6 +137,9 @@ func (e *executor) accountInspect(c contract.Command) error {
 	reg, rerr := readRegistry()
 	if mode == "limits" {
 		return e.readLimits(c, p, reg, rerr)
+	}
+	if mode == "login" {
+		return e.accountLogin(c, p, reg, rerr)
 	}
 	r := contract.AccountReceipt{HostId: e.host, CommandId: cid, ExecutionId: execution}
 	if mode == "catalogue" {
@@ -690,4 +694,142 @@ func modelNames(list any) []string {
 		}
 	}
 	return out
+}
+
+// Login on the host (inspection mode login, System › Access "Sign in"): the owner pressed Sign in for this binding.
+// The vendor CLI's login (contracts/vocabulary.json loginArgv: codex device auth, claude, agy) starts under the binding's
+// environment with its output in a private file; the command reports the sign-in link and code as soon as the CLI
+// prints them and ends, while the CLI keeps waiting on the host for the owner's sign-in (at most loginWait). Fleet never
+// sees a password; a later status inspection shows the login.
+const (
+	loginWait   = 15 * time.Minute
+	loginPrompt = 60 * time.Second
+)
+
+var (
+	loginURL  = regexp.MustCompile(`https://[^\s"'<>\x1b]+`)
+	loginCode = regexp.MustCompile(`\b[A-Z0-9]{4,5}-[A-Z0-9]{4,5}\b`)
+	ansiEsc   = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+)
+
+func loginArgvOf(harness string) []string {
+	for _, h := range contract.Vocabulary.Harnesses {
+		if h.ID == harness {
+			return h.LoginArgv
+		}
+	}
+	return nil
+}
+
+func (e *executor) accountLogin(c contract.Command, p contract.AccountInspectPayload, reg map[string]registryEntry, rerr error) error {
+	cid, _ := idOf(c, "id")
+	execution, _ := idOf(c, "executionId")
+	binding := str0(p.Binding)
+	x, known := reg[binding]
+	o := contract.AccountObservation{AccountId: p.AccountId, Binding: binding, Platform: contract.Platform(platform()), Quota: "unknown", Readiness: "unknown", Reason: "login-started"}
+	prompt := contract.AccountLoginPrompt{State: "failed", StartedAt: nowMs()}
+	argv := loginArgvOf(p.Harness)
+	switch {
+	case rerr != nil:
+		o.Reason = rerr.Error()
+	case !known || x.Harness != p.Harness || !filepath.IsAbs(x.Executable):
+		o.Readiness, o.Reason = "unavailable", "binding not in this host's account registry for "+p.Harness
+	case len(argv) == 0:
+		o.Reason = "this harness has no login command"
+	default:
+		o.Readiness = nonEmpty(x.Readiness, "unknown")
+		o.Roots = &contract.AccountRoots{Home: &x.Home, NativeHome: &x.NativeHome, Executable: &x.Executable}
+		prompt = runLogin(x, argv)
+		if prompt.State == "failed" && x.Harness == "claude" {
+			// Claude Code's login takes the code back on its own terminal, which a host login started by Fleet does not have.
+			t := "Claude's login asks for the code back in its own terminal; sign in on the host itself. " + str0(prompt.Text)
+			prompt.Text = &t
+		}
+	}
+	o.Login = &prompt
+	r := contract.AccountReceipt{HostId: e.host, CommandId: cid, ExecutionId: execution, AccountObservation: &o}
+	if err := e.inTx(func() error { return queueTo(e.ex, contract.RouteAccountsReport, r) }); err != nil {
+		return err
+	}
+	return e.finish(c, "completed", "")
+}
+
+// runLogin starts the login and reads its output file until the CLI printed a link (and its code), ended, or
+// loginPrompt passed. The CLI runs on in its own process group until it ends or loginWait passes.
+func runLogin(x registryEntry, argv []string) contract.AccountLoginPrompt {
+	out := contract.AccountLoginPrompt{State: "failed", StartedAt: nowMs()}
+	executable, managed, err := managedExecutable(x.Harness, x.Executable, "")
+	if err != nil {
+		return withText(out, err.Error())
+	}
+	x.Executable, x.ReleaseManaged = executable, managed
+	cmd := probeCmd(x, argv...)
+	if x.Harness == "antigravity" {
+		setEnv(cmd, "GEMINI_HOME", x.NativeHome)
+		if x.CredentialAuthority == "native-current" {
+			setEnv(cmd, "HOME", x.CredentialHome)
+		}
+	}
+	log := filepath.Join(x.Home, ".fleet-login.log")
+	f, err := os.OpenFile(log, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return withText(out, err.Error())
+	}
+	cmd.Stdout, cmd.Stderr = f, f
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	f.Close()
+	if err != nil {
+		return withText(out, err.Error())
+	}
+	ended := make(chan error, 1)
+	errtrack.Go("account.login", func() {
+		t := time.AfterFunc(loginWait, func() { proc.Kill() })
+		ended <- proc.Wait()
+		t.Stop()
+	})
+	deadline := time.Now().Add(loginPrompt)
+	var urlSeen time.Time
+	for time.Now().Before(deadline) {
+		b, _ := os.ReadFile(log)
+		text := ansiEsc.ReplaceAllString(string(b), "")
+		u, code := loginURL.FindString(text), loginCode.FindString(text)
+		select {
+		case werr := <-ended:
+			out = withText(out, text)
+			if u != "" {
+				out.Url = &u
+			}
+			if werr == nil {
+				out.State = "signed-in"
+			}
+			return out
+		default:
+		}
+		if u != "" && urlSeen.IsZero() {
+			urlSeen = time.Now()
+		}
+		if u != "" && (code != "" || time.Since(urlSeen) > 3*time.Second) {
+			out = withText(out, text)
+			out.State, out.Url = "waiting", &u
+			if code != "" {
+				out.Code = &code
+			}
+			return out
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	b, _ := os.ReadFile(log)
+	return withText(out, "the login printed no sign-in link within a minute: "+ansiEsc.ReplaceAllString(string(b), ""))
+}
+
+// withText: the last lines of the CLI's output, at most 500 characters.
+func withText(p contract.AccountLoginPrompt, text string) contract.AccountLoginPrompt {
+	t := strings.TrimSpace(text)
+	if r := []rune(t); len(r) > 500 {
+		t = string(r[len(r)-500:])
+	}
+	if t != "" {
+		p.Text = &t
+	}
+	return p
 }

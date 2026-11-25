@@ -9,7 +9,9 @@ import { Icon, Button, StateBadge, Ago, SearchBox, HarnessMark } from './primiti
 
 /** An unsaved form value; it never claims that a setting was applied (controls/text-field.md). */
 export function TextField(p: {
-  label: string; value: string; onChange: (value: string) => void; multiline?: boolean; type?: 'text' | 'number' | 'email';
+  label: string; value: string; onChange: (value: string) => void; multiline?: boolean;
+  /** password: a write-only value (an API key) typed once, never shown, never autofilled. */
+  type?: 'text' | 'number' | 'email' | 'password';
   help?: string; error?: string; disabledReason?: string;
 }) {
   const note = createMemo(() => p.error || p.disabledReason || p.help);
@@ -18,7 +20,7 @@ export function TextField(p: {
       <FieldLabel>{p.label}</FieldLabel>
       <Show
         when={p.multiline}
-        fallback={<Input type={p.type ?? 'text'} autocomplete={p.type === 'email' ? 'email' : undefined} value={p.value} onValueChange={v => p.onChange(v)} />}
+        fallback={<Input type={(p.type ?? 'text') as 'text'} autocomplete={p.type === 'email' ? 'email' : p.type === 'password' ? 'off' : undefined} value={p.value} onValueChange={v => p.onChange(v)} />}
       >
         <Textarea value={p.value} rows={3} onValueChange={v => p.onChange(v)} />
       </Show>

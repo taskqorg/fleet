@@ -126,20 +126,40 @@ func (v *AccountInspectPayload) Validate() error {
 	return nil
 }
 
+// AccountLoginPrompt: A login the owner started on this host (inspection mode login): the vendor CLI's sign-in link and code as it printed them, for the owner to open; the CLI keeps waiting on the host until the sign-in completes or 15 minutes pass. Fleet never sees the password; the code is the CLI's one-time device code.
+type AccountLoginPrompt struct {
+	Code      *string `json:"code,omitempty"`
+	StartedAt int64   `json:"startedAt"`
+	State     string  `json:"state"`
+	Text      *string `json:"text,omitempty"`
+	Url       *string `json:"url,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountLoginPrompt) Validate() error {
+	return nil
+}
+
 type AccountObservation struct {
-	AccountId           string        `json:"accountId"`
-	Binding             string        `json:"binding"`
-	Models              []string      `json:"models,omitempty"`
-	NativeLoginObserved *bool         `json:"nativeLoginObserved"`
-	Platform            Platform      `json:"platform"`
-	Quota               string        `json:"quota"`
-	Readiness           string        `json:"readiness"`
-	Reason              string        `json:"reason"`
-	Roots               *AccountRoots `json:"roots,omitempty"`
+	AccountId           string              `json:"accountId"`
+	Binding             string              `json:"binding"`
+	Login               *AccountLoginPrompt `json:"login,omitempty"`
+	Models              []string            `json:"models,omitempty"`
+	NativeLoginObserved *bool               `json:"nativeLoginObserved"`
+	Platform            Platform            `json:"platform"`
+	Quota               string              `json:"quota"`
+	Readiness           string              `json:"readiness"`
+	Reason              string              `json:"reason"`
+	Roots               *AccountRoots       `json:"roots,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountObservation) Validate() error {
+	if v.Login != nil {
+		if err := Check(v.Login, "login"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.Platform, "platform"); err != nil {
 		return err
 	}
