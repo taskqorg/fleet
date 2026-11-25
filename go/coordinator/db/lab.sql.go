@@ -175,8 +175,8 @@ func (q *Queries) LabExampleFileInsert(ctx context.Context, arg LabExampleFileIn
 }
 
 const labExampleInsert = `-- name: LabExampleInsert :many
-INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at)
-VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6)
+INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at,use_case_id)
+VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6,$7::text)
 ON CONFLICT (coalesce(project_id,''),name) WHERE role='example' AND state<>'deleted' DO NOTHING RETURNING id
 `
 
@@ -187,6 +187,7 @@ type LabExampleInsertParams struct {
 	Size        int64
 	Name        string
 	ApprovedAt  *time.Time
+	UseCaseID   string
 }
 
 // A new example; nothing when one of that name exists meanwhile.
@@ -198,6 +199,7 @@ func (q *Queries) LabExampleInsert(ctx context.Context, arg LabExampleInsertPara
 		arg.Size,
 		arg.Name,
 		arg.ApprovedAt,
+		arg.UseCaseID,
 	)
 	if err != nil {
 		return nil, err
@@ -228,8 +230,52 @@ func (q *Queries) LabExampleRatingCount(ctx context.Context, artifactID string) 
 	return column_1, err
 }
 
+const labExampleUseCaseSet = `-- name: LabExampleUseCaseSet :exec
+UPDATE artifact SET use_case_id = $1::text WHERE id = $2::text AND role='example' AND use_case_id IS NULL
+`
+
+type LabExampleUseCaseSetParams struct {
+	UseCaseID string
+	ID        string
+}
+
+func (q *Queries) LabExampleUseCaseSet(ctx context.Context, arg LabExampleUseCaseSetParams) error {
+	_, err := q.db.Exec(ctx, labExampleUseCaseSet, arg.UseCaseID, arg.ID)
+	return err
+}
+
+const labExampleUseCases = `-- name: LabExampleUseCases :many
+SELECT id, use_case_id::text AS use_case_id FROM artifact WHERE id = ANY($1::text[]) AND role='example' AND use_case_id IS NOT NULL
+`
+
+type LabExampleUseCasesRow struct {
+	ID        string
+	UseCaseID string
+}
+
+// The recorded use case of the given example artifacts (migration 102); a row not read yet has none.
+func (q *Queries) LabExampleUseCases(ctx context.Context, ids []string) ([]LabExampleUseCasesRow, error) {
+	rows, err := q.db.Query(ctx, labExampleUseCases, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabExampleUseCasesRow
+	for rows.Next() {
+		var i LabExampleUseCasesRow
+		if err := rows.Scan(&i.ID, &i.UseCaseID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labExamplesList = `-- name: LabExamplesList :many
-SELECT id,project_id,name,content_hash,approved_at,created_at FROM artifact WHERE role='example' AND state='stored'
+SELECT id,project_id,name,content_hash,approved_at,created_at,use_case_id FROM artifact WHERE role='example' AND state='stored'
   AND ($1::boolean IS NULL OR (approved_at IS NOT NULL)=$1::boolean) ORDER BY name
 `
 
@@ -240,6 +286,7 @@ type LabExamplesListRow struct {
 	ContentHash string
 	ApprovedAt  *time.Time
 	CreatedAt   time.Time
+	UseCaseID   *string
 }
 
 // The stored examples by name; approved true or false narrows them (lab.go labExamplesList).
@@ -259,10 +306,41 @@ func (q *Queries) LabExamplesList(ctx context.Context, approved *bool) ([]LabExa
 			&i.ContentHash,
 			&i.ApprovedAt,
 			&i.CreatedAt,
+			&i.UseCaseID,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labExamplesUseCaseUnread = `-- name: LabExamplesUseCaseUnread :many
+SELECT id FROM artifact WHERE role='example' AND state='stored' AND use_case_id IS NULL AND id > $1::text ORDER BY id LIMIT $2::int
+`
+
+type LabExamplesUseCaseUnreadParams struct {
+	After string
+	Lim   int32
+}
+
+// Stored examples whose use case was not read from their content yet (labExampleUseCaseBackfill).
+func (q *Queries) LabExamplesUseCaseUnread(ctx context.Context, arg LabExamplesUseCaseUnreadParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, labExamplesUseCaseUnread, arg.After, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

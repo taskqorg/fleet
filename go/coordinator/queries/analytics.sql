@@ -53,9 +53,10 @@ SELECT
 
 -- name: AnalyticsDefinitionLineage :one
 -- The leaves of non-draft pinned executions of the last days, per definition id (total) and per id:revision (rev),
--- container descendants resolved to leaves. The visible child/parent edges are materialized once: an OR join inside
--- the recursive term rescans every execution for every tree row and spills wide session rows; the narrow edge relation
--- preserves all four links.
+-- container descendants resolved to leaves. The walk goes down from the pinned roots only: plain-column links
+-- (parent execution, a session's parent) are index lookups per tree row; the two links held in JSON come from one map
+-- read by key. Materializing every execution's links instead scanned and sorted the whole execution table on each call
+-- (seconds at 200k executions, FLT-41).
 WITH RECURSIVE
  pinned AS (
   SELECT e.id AS root_id, d->>'id' AS def_id, CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END AS rev
@@ -66,27 +67,34 @@ WITH RECURSIVE
     AND coalesce(d->>'revision', '') ~ '^[0-9]+$'
     AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => sqlc.arg(days)::int)
  ),
- -- A session's parent execution read by key: a join to session planned from an estimate of one execution row scans
- -- every session for each execution (seconds at 20k executions before the tables are analyzed).
- session_parents AS (
-  SELECT coalesce(jsonb_object_agg(id, parent_execution_id), '{}'::jsonb) AS m FROM session WHERE parent_execution_id IS NOT NULL
- ),
- edges AS MATERIALIZED (
-  SELECT DISTINCT c.id AS child_id, p.parent_id::text AS parent_id
-  FROM execution c
-  CROSS JOIN LATERAL (VALUES
-   (c.parent_execution_id),
-   (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
-   ((SELECT m FROM session_parents) ->> c.session_id),
-   (CASE WHEN c.kind = 'tool_run' THEN c.data->>'pipelineRunId' END)
-  ) p(parent_id)
-  WHERE p.parent_id IS NOT NULL
+ -- The two links held in JSON (a delegation's parent, a pipeline tool call's run) are read once each from their
+ -- partial indexes into one map from parent to children, read by key: under row security a non-leakproof ->> cannot be
+ -- an index condition, so a lookup per tree row would rescan the whole partial index.
+ json_children AS MATERIALIZED (
+  SELECT coalesce(jsonb_object_agg(parent_id, kids), '{}'::jsonb) AS m
+  FROM (
+   SELECT parent_id, jsonb_agg(child_id) AS kids
+   FROM (
+    SELECT c.id AS child_id, c.delegation->>'parentExecutionId' AS parent_id FROM execution c WHERE c.delegation IS NOT NULL
+    UNION ALL
+    SELECT c.id, c.data->>'pipelineRunId' FROM execution c WHERE c.data ? 'pipelineRunId' AND c.kind = 'tool_run'
+   ) j
+   WHERE parent_id IS NOT NULL
+   GROUP BY parent_id
+  ) g
  ),
  tree AS (
   SELECT root_id AS exec_id, def_id, rev FROM pinned
   UNION
-  SELECT c.child_id AS exec_id, t.def_id, t.rev
-  FROM edges c JOIN tree t ON c.parent_id = t.exec_id
+  SELECT ch.exec_id, t.def_id, t.rev
+  FROM tree t
+  CROSS JOIN LATERAL (
+   SELECT c.id AS exec_id FROM execution c WHERE c.parent_execution_id = t.exec_id
+   UNION ALL
+   SELECT c.id FROM session s JOIN execution c ON c.session_id = s.id WHERE s.parent_execution_id = t.exec_id
+   UNION ALL
+   SELECT k.child_id FROM jsonb_array_elements_text((SELECT m FROM json_children) -> t.exec_id) k(child_id)
+  ) ch
  ),
  leaf_hits AS (
   SELECT DISTINCT tr.def_id, tr.rev, e.id AS leaf_id

@@ -465,7 +465,7 @@ func labExamplesAdd(q *Request, r *contract.LabExamplesAddRequest) (contract.Lab
 				now := time.Now()
 				at = &now
 			}
-			rs, err := q.db().LabExampleInsert(q.ctx(), db.LabExampleInsertParams{ID: id, ProjectID: projectID, ContentHash: h, Size: int64(len(p.bytes)), Name: p.name, ApprovedAt: at})
+			rs, err := q.db().LabExampleInsert(q.ctx(), db.LabExampleInsertParams{ID: id, ProjectID: projectID, ContentHash: h, Size: int64(len(p.bytes)), Name: p.name, ApprovedAt: at, UseCaseID: p.ex.UseCaseID})
 			if err != nil {
 				return out, err
 			}
@@ -523,8 +523,12 @@ func labExamplesList(q *Request, state *contract.LabExampleState) (contract.LabE
 	}
 	for _, r := range rs {
 		hash := r.ContentHash
+		uc := deref(r.UseCaseID) // recorded on the row (migration 102); read from the content until the backfill did
+		if r.UseCaseID == nil {
+			uc = cachedExampleUseCaseID(q, r.ID)
+		}
 		var useCaseID *string
-		if uc := cachedExampleUseCaseID(q, r.ID); uc != "" {
+		if uc != "" {
 			useCaseID = &uc
 		}
 		out.Examples = append(out.Examples, contract.LabExampleEntry{ArtifactId: r.ID, ProjectId: r.ProjectID, Name: r.Name, Hash: &hash, State: labExampleState(r.ApprovedAt),

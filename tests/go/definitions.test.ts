@@ -163,6 +163,19 @@ test('D10 definition_usage counts the runs that pinned a definition, per revisio
   assert.equal((await op('definition_usage', {kind: 'pipeline', id: 'no-such'})).status, 404);
 });
 
+test('D10b catalogue gives each method the usage of its own pipeline from one shared read (requirement: catalogue method assessment, FLT-41; risk: reading pipeline usage once for all methods hands a method another pipeline\'s runs, or none)', async () => {
+  ok(await op('pipeline_run_create', {pipelineId: 'search-basic', requestId: 'd10b', example: {}}));
+  const cat = ok(await op('catalogue', {projectId: 'desiign'}));
+  const withUsage = cat.methods.filter((m: any) => m.assessment.basis === 'usage');
+  assert.ok(withUsage.some((m: any) => m.pipeline === 'search-basic.json'), JSON.stringify(cat.methods.map((m: any) => [m.id, m.assessment.basis])));
+  for (const m of cat.methods) {
+    if (m.assessment.basis === 'lab') continue;
+    const u = ok(await op('definition_usage', {kind: 'pipeline', id: m.pipeline.replace(/\.json$/, '')}));
+    assert.equal(m.assessment.usage?.runs ?? 0, u.total.runs, m.id);
+    assert.equal(m.assessment.basis, u.total.runs > 0 ? 'usage' : 'none', m.id);
+  }
+});
+
 test('D11 the Agents tabs: effective layers and result, compatibility rows, harness models; architect only (requirement: agent_effective, agent_compatibility, harness_models; risk: the Effective tab shows another profile than the start sends, or an incompatible label without a run)', async () => {
   const e = ok(await op('agent_effective', {id: 'pm', projectId: 'desiign'}));
   assert.deepEqual(e.layers.map((l: any) => l.name), ['role', 'definition', 'project']);

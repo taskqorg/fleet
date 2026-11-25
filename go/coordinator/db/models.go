@@ -468,6 +468,7 @@ type Artifact struct {
 	TombstonedAt          *time.Time
 	SessionID             *string
 	Code                  *string
+	UseCaseID             *string
 }
 
 type ArtifactCopy struct {

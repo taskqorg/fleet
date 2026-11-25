@@ -255,6 +255,12 @@ func cachedExampleUseCaseID(q *Request, artifactID string) string {
 		uc, _ := v.(string)
 		return uc
 	}
+	if rec, err := labExampleUseCases(q, []string{artifactID}); err == nil {
+		if uc, ok := rec[artifactID]; ok { // recorded on the row (migration 102)
+			labExampleUseCaseCache.Store(artifactID, uc)
+			return uc
+		}
+	}
 	stored, err := labExampleRead(q, artifactID)
 	if err != nil {
 		return ""

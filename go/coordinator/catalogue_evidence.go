@@ -52,16 +52,41 @@ func evidenceExperiments(rows []db.CatalogueExperimentsRow) ([]evidenceExperimen
 	return out, nil
 }
 
-func methodAssessment(q *Request, project string, method labMethod) (contract.MethodAssessment, error) {
-	out := contract.MethodAssessment{Basis: contract.AssessmentBasisNone, CostBasis: "unavailable"}
+// catalogueEvidence: what every method's assessment of one project's catalogue reads, read once per catalogue: the
+// project's experiments and, when a method has no terminal experiment, the 30-day usage of every pipeline (one lineage
+// read, not one per method: FLT-41).
+type catalogueEvidence struct {
+	project string
+	exps    []evidenceExperiment
+	usage   map[string]contract.Window // nil until a method needs it
+}
+
+func newCatalogueEvidence(q *Request, project string) (*catalogueEvidence, error) {
 	rows, err := q.db().CatalogueExperiments(q.ctx(), project)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
 	exps, err := evidenceExperiments(rows)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
+	return &catalogueEvidence{project: project, exps: exps}, nil
+}
+
+func (ev *catalogueEvidence) pipelineUsage(q *Request) (map[string]contract.Window, error) {
+	if ev.usage == nil {
+		totals, _, err := usageWindows(q, "pipeline", "", 30)
+		if err != nil {
+			return nil, err
+		}
+		ev.usage = totals
+	}
+	return ev.usage, nil
+}
+
+func methodAssessment(q *Request, ev *catalogueEvidence, method labMethod) (contract.MethodAssessment, error) {
+	out := contract.MethodAssessment{Basis: contract.AssessmentBasisNone, CostBasis: "unavailable"}
+	project, exps := ev.project, ev.exps
 	var chosen *evidenceExperiment
 	var variant *labVariant
 	for i, exp := range exps {
@@ -82,7 +107,7 @@ func methodAssessment(q *Request, project string, method labMethod) (contract.Me
 	}
 	pipeline := strings.TrimSuffix(method.Pipeline, ".json")
 	if chosen == nil {
-		totals, _, err := usageWindows(q, "pipeline", pipeline, 30)
+		totals, err := ev.pipelineUsage(q)
 		if err != nil {
 			return out, err
 		}
@@ -247,25 +272,38 @@ func enrichCatalogue(q *Request, c rawObject) error {
 	if err != nil {
 		return err
 	}
+	// Each visible project's recommended method, read once for all methods.
+	type projectMethod struct{ project, method string }
+	recs := []projectMethod{}
+	for _, id := range projects {
+		if q.person != nil && !mayAccessProjectID(q.person, id) {
+			continue
+		}
+		other, err := catalogueBase(q, id)
+		if err != nil {
+			return err
+		}
+		o, _ := asT[labCatalogueView](other)
+		if m, ok := rawValue(o.RecommendedMethod).(string); ok {
+			recs = append(recs, projectMethod{id, m})
+		}
+	}
+	ev, err := newCatalogueEvidence(q, view.ProjectID)
+	if err != nil {
+		return err
+	}
 	methods := []map[string]json.RawMessage{}
 	for _, raw := range view.Methods {
 		var method labMethod
 		json.Unmarshal(raw, &method)
-		a, err := methodAssessment(q, view.ProjectID, method)
+		a, err := methodAssessment(q, ev, method)
 		if err != nil {
 			return err
 		}
 		recommended := []string{}
-		for _, id := range projects {
-			if q.person != nil && !mayAccessProjectID(q.person, id) {
-				continue
-			}
-			other, err := catalogueBase(q, id)
-			if err != nil {
-				return err
-			}
-			if o, _ := asT[labCatalogueView](other); rawValue(o.RecommendedMethod) == method.ID {
-				recommended = append(recommended, id)
+		for _, r := range recs {
+			if r.method == method.ID {
+				recommended = append(recommended, r.project)
 			}
 		}
 		var m map[string]json.RawMessage

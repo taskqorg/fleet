@@ -585,7 +585,7 @@ func init() {
 		return replyAs[contract.CatalogueReply](catalogue(q, r.ProjectId))
 	})
 	op("recommendation_set", func(q *Request, r *contract.RecommendationSetRequest) (contract.RecommendationSetReply, error) {
-		c, err := catalogue(q, r.ProjectId)
+		c, err := catalogueBase(q, r.ProjectId)
 		if err != nil {
 			return contract.RecommendationSetReply{}, err
 		}

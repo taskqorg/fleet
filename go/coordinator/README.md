@@ -110,4 +110,6 @@ The three independent fixed-header reads use one ordered batch under the same pr
 
 [`projects.go`](projects.go) pages pipeline history by execution sequence. [`pipelines.go`](pipelines.go) measures run replies after MCP text encoding and uses the bounded reply format in the [pipeline contract](../../fleet.md#tools-and-pipelines).
 
+[`lab_example_use_case.go`](lab_example_use_case.go) keeps an example artifact's Lab use case on its row (`artifact.use_case_id`, migration 102): `lab_examples_add` records it, a start-up step (`untilDone`) reads it once from the content of examples stored before, and `lab_examples_list` and `lab_leaderboard` read the row instead of the object store.
+
 `lab_assessment.go` captures fixed contained assessment bytes, materializes ordinary artifacts outside write locks and links exact evaluator/input/trial identities with the existing Lab score transaction. `lab_retry.go` verifies current-format selected command/process and artifact proof; missing proof conflicts and never authorizes provider replay. See [pipeline configuration](../../docs/configuration.md#pipeline-execution) and [Lab assessments](../../docs/designs/fleet-lab.md#conditional-plans-and-project-assessments).
