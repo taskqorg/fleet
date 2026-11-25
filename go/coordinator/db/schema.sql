@@ -503,6 +503,11 @@ CREATE TABLE delivery_settings (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE delivery_snapshot (
+  "id" text NOT NULL,
+  "state" jsonb NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE delivery_state (
   "id" text NOT NULL,
   "project_id" text NOT NULL,

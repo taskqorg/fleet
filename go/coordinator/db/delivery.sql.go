@@ -637,6 +637,27 @@ func (q *Queries) DeliverySettingsPut(ctx context.Context, arg DeliverySettingsP
 	return err
 }
 
+const deliverySnapshotGet = `-- name: DeliverySnapshotGet :one
+SELECT state FROM delivery_snapshot WHERE id = 'last'
+`
+
+func (q *Queries) DeliverySnapshotGet(ctx context.Context) ([]byte, error) {
+	row := q.db.QueryRow(ctx, deliverySnapshotGet)
+	var state []byte
+	err := row.Scan(&state)
+	return state, err
+}
+
+const deliverySnapshotPut = `-- name: DeliverySnapshotPut :exec
+INSERT INTO delivery_snapshot(id, state) VALUES ('last', $1) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()
+`
+
+// The pass's last state (deliverySnapshot), kept across restarts.
+func (q *Queries) DeliverySnapshotPut(ctx context.Context, state []byte) error {
+	_, err := q.db.Exec(ctx, deliverySnapshotPut, state)
+	return err
+}
+
 const deliverySourceTasks = `-- name: DeliverySourceTasks :many
 SELECT e.id, coalesce(e.session_id, '')::text AS session_id, coalesce(e.task_id, s.task_id)::text AS task_id
 FROM execution e LEFT JOIN session s ON s.id = e.session_id
