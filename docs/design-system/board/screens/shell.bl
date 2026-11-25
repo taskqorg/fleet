@@ -3112,4 +3112,6 @@ dc0c0f6b85ce0cf8 al(v,g(24),pad(32)) p(1900,0) s(1760,hug:2574.3) f[(d3e8c9e3cb6
                 vr(r1) f[(ff8ee8747c5845cb,#ECECEC)]
             f6a4290d3c4f2676 fr p(30,30) s(8,8) f[(0d99f06ce58d8b1e,#F2B44C)] st[(b2b8a8e97ff478c1,#050505,w(2))] rd(999) "Frame 836"
           f795ced790088a46 t("PM · fleet",Inter,12.1,r,align(l),lh(auto,1.24)) p(6,46) s(hug:54.43,hug:15.01) f[(1cd929783d34f1c3,#ECECEC)] "Text 779"
+b0b37a92e10230aa al(v,pad(12,16)) p(3800,-90) s(1600,hug:60.4) f[(9897fbb4e89d011e,#221C10)] st[(c01695997006bc5f,#6B5020,w(1))] rd(3) "Frame 837"
+  043ee4a2be5c48aa t("Built 26 Nov, owner via orchestrator: rows show state only (asks, working, failed, age), no unread count: conversations have no per-person read marks yet (only bot work threads do). The \"3\" badge below is not built. The zone's order (rowPins.nav) and each list's Pinned order are separate.",Inter,13,r,align(l),lh(1.4)) p(16,12) s(fill,hug:36.4) ext(1568,) f[(d1c00d901650c533,#F2B44C)] "Text 780"
 bp:end

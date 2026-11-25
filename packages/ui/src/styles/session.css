@@ -78,6 +78,9 @@
     /* Explicit columns, counted from the end (a selection column may lead): leads auto-place in row 1, the title sits
        in the free column, line 2 puts the agent mark under the state icon and the now line under the title. */
     .conv-list .vl-row:not(.grp) > .lead { grid-row: 1; }
+    /* A pinned row's pin sits on line 1 before the state icon, as tall as the line: its touch target keeps its width, not
+       a 44 px height that would push line 2 down and float the pin between the lines. */
+    .conv-list .vl-row:not(.grp) > .lead .row-pin { min-height: 0; height: calc(var(--font-size-md) * 1.4); }
     .conv-list .vl-row:not(.grp) > .tt { grid-row: 1; grid-column: -3 / -2; }
     .conv-list .vl-row .tt .title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
     .conv-list .vl-row .tt > :not(.title) { display: none; }
