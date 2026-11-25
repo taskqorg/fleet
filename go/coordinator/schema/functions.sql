@@ -193,6 +193,84 @@ BEGIN
 END $function$;
 REVOKE ALL ON FUNCTION execution_spend_on_totals_upd() FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION public.fleet_activity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+-- History (docs/designs/fleet-history.md): the one writer of activity, run by the triggers of the tables it records in
+-- the same transaction as their write. It writes in the coordinator's scope, so recording never fails a write the
+-- writer may make; activity's policies decide who reads the entry.
+DECLARE prev text := current_setting('fleet.project_ids', true); r record; k text; v text; o text; sec text; subj text; ttl text; act text;
+ tid text; sid text; hid text; bid text; xid text; hold text; gk text; det jsonb;
+BEGIN
+ r := NEW;
+ IF TG_TABLE_NAME = 'execution' THEN
+  IF r.kind NOT IN ('agent_run', 'pipeline_run', 'host_job') OR r.started_at IS NULL THEN RETURN NULL; END IF;
+  IF TG_OP = 'UPDATE' AND OLD.started_at IS NOT NULL AND (OLD.ended_at IS NOT NULL OR r.ended_at IS NULL) THEN RETURN NULL; END IF;
+  -- A host job records only its end: a host runs dozens an hour, and its start says nothing its end does not.
+  IF r.ended_at IS NULL AND r.kind = 'host_job' THEN RETURN NULL; END IF;
+  k := 'run';
+  IF r.ended_at IS NULL THEN v := 'started'; o := 'running';
+  ELSIF r.state = 'failed' THEN v := 'failed'; o := 'failed';
+  ELSIF r.state = 'cancelled' THEN v := 'stopped'; o := 'stopped';
+  ELSE v := 'finished'; o := 'ok'; END IF;
+  sec := CASE WHEN r.experiment_id IS NOT NULL THEN 'lab' WHEN r.kind = 'host_job' AND r.task_id IS NULL THEN 'system' ELSE 'work' END;
+  subj := 'execution:' || r.id; act := coalesce(r.bot_id, r.harness, r.system_actor, r.directed_by);
+  tid := r.task_id; sid := r.session_id; hid := r.host_id; bid := r.bot_id; xid := r.experiment_id;
+  gk := coalesce('task:' || r.task_id, CASE WHEN r.kind = 'host_job' THEN 'host_job:' || coalesce(r.host_id, '') END, 'session:' || r.session_id, subj);
+  det := jsonb_strip_nulls(jsonb_build_object('executionKind', r.kind, 'harness', r.harness, 'model', r.model, 'startedAt', r.started_at, 'problem', r.problem));
+ ELSIF TG_TABLE_NAME = 'task' THEN
+  IF TG_OP = 'UPDATE' AND OLD.state = r.state THEN RETURN NULL; END IF;
+  k := 'task'; sec := 'work'; subj := 'task:' || r.id; tid := r.id; gk := subj;
+  IF TG_OP = 'INSERT' THEN v := 'created'; o := 'info'; act := coalesce(r.created_by, r.requested_by); sid := r.created_by_session_id;
+  ELSE v := r.state::text;
+   o := CASE r.state WHEN 'completed' THEN 'ok' WHEN 'failed' THEN 'failed' WHEN 'cancelled' THEN 'stopped' WHEN 'paused' THEN 'stopped' WHEN 'waiting' THEN 'waiting' WHEN 'in_progress' THEN 'running' ELSE 'info' END;
+   det := jsonb_build_object('from', OLD.state);
+  END IF;
+ ELSIF TG_TABLE_NAME = 'question' THEN
+  IF TG_OP = 'UPDATE' AND OLD.state = r.state THEN RETURN NULL; END IF;
+  k := 'question'; subj := 'question:' || r.id; gk := subj; tid := r.task_id; sid := r.session_id;
+  sec := CASE WHEN r.cause IS NOT NULL AND r.project_id IS NULL THEN 'system' ELSE 'work' END;
+  IF TG_OP = 'INSERT' THEN v := 'asked'; o := 'waiting'; act := r.asked_by;
+  ELSE v := r.state::text; o := CASE WHEN r.state = 'answered' THEN 'ok' WHEN r.state = 'open' THEN 'waiting' ELSE 'stopped' END; act := r.answered_by;
+   det := jsonb_strip_nulls(jsonb_build_object('answer', r.answer));
+  END IF;
+ ELSIF TG_TABLE_NAME = 'experiment' THEN
+  IF TG_OP = 'UPDATE' AND OLD.state = r.state AND OLD.decision IS NOT DISTINCT FROM r.decision THEN RETURN NULL; END IF;
+  k := 'lab'; sec := 'lab'; subj := 'experiment:' || r.id; gk := subj; xid := r.id;
+  IF TG_OP = 'INSERT' THEN v := 'created'; o := 'info'; act := r.requested_by;
+  ELSIF OLD.decision IS DISTINCT FROM r.decision AND r.decision IS NOT NULL AND r.decision <> 'pending' THEN v := 'decided'; o := 'ok'; act := r.decided_by;
+  ELSE v := r.state::text; o := CASE r.state WHEN 'done' THEN CASE WHEN r.decision = 'pending' THEN 'waiting' ELSE 'ok' END WHEN 'running' THEN 'running' ELSE 'stopped' END;
+  END IF;
+  det := jsonb_strip_nulls(jsonb_build_object('labGroup', r.lab_group, 'decision', r.decision));
+ ELSIF TG_TABLE_NAME = 'audit_log' THEN
+  -- A person's own preferences (pins, widths, panels) are not history.
+  IF r.target = 'person:' || coalesce(r.actor, '') THEN RETURN NULL; END IF;
+  k := CASE WHEN r.target LIKE 'access-grant:%' OR r.target LIKE 'person:%' THEN 'access' ELSE 'settings' END;
+  v := 'changed'; o := 'info'; sec := 'system'; subj := r.target; act := r.actor; hold := r.holder; gk := r.target || ':' || r.field;
+  det := jsonb_strip_nulls(jsonb_build_object('field', r.field, 'previous', CASE WHEN length(r.previous::text) <= 2000 THEN r.previous END,
+   'value', CASE WHEN length(r.value::text) <= 2000 THEN r.value END));
+ ELSE RETURN NULL; END IF;
+ PERFORM set_config('fleet.project_ids', '*', true);
+ BEGIN
+  IF TG_TABLE_NAME = 'execution' THEN
+   ttl := coalesce((SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = r.task_id), (SELECT s.title FROM session s WHERE s.id = r.session_id), '');
+  ELSIF TG_TABLE_NAME = 'task' THEN ttl := coalesce(r.code || ' ', '') || r.title;
+  ELSIF TG_TABLE_NAME = 'question' THEN ttl := r.text;
+  ELSIF TG_TABLE_NAME = 'experiment' THEN ttl := coalesce(r.goal, r.lab_group, r.kind::text);
+  ELSE ttl := r.target || ' ' || r.field; END IF;
+  INSERT INTO activity (kind, verb, outcome, section, subject, title, actor, project_id, task_id, session_id, host_id, bot_id, experiment_id, holder, group_key, detail)
+  VALUES (k, v, o, sec, subj, left(coalesce(ttl, ''), 300), coalesce(act, nullif(current_setting('fleet.actor', true), ''), nullif(current_setting('fleet.person', true), '')),
+   r.project_id, tid, sid, hid, bid, xid, hold, gk, det);
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN NULL;
+END $function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_append_only()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -206,7 +284,7 @@ AS $function$ DECLARE r record; k text; i text; t text; s text; h text; p text; 
 CREATE OR REPLACE FUNCTION public.fleet_change()
  RETURNS trigger
  LANGUAGE plpgsql
-AS $function$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; st text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'audit_log' THEN k := 'setting-change'; i := r.id; w := r.holder; st := nullif(r.target, ''); ELSIF TG_TABLE_NAME = 'project_recommendation' THEN k := 'project-recommendation'; i := r.id; ELSIF TG_TABLE_NAME IN ('delivery_state', 'delivery_pr', 'delivery_run', 'delivery_release', 'delivery_check') THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) = (to_jsonb(NEW) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) THEN RETURN NULL; END IF; k := 'delivery'; i := r.id; ELSIF TG_TABLE_NAME = 'host_observation' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{last_seen_at,updated_at}'::text[]) = (to_jsonb(NEW) - '{last_seen_at,updated_at}'::text[]) THEN RETURN NULL; END IF; k := 'host'; i := r.id; h := r.id; ELSIF TG_TABLE_NAME IN ('managed_account', 'api_connection') THEN k := replace(TG_TABLE_NAME, '_', '-'); i := r.id; w := r.holder; ELSIF TG_TABLE_NAME = 'connection_key' THEN k := 'connection-key'; i := r.id; ELSIF TG_TABLE_NAME = 'session' THEN k := 'session'; i := r.id; s := r.id; ELSIF TG_TABLE_NAME IN ('message', 'event') THEN k := 'event'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'command' THEN k := 'command'; i := r.id; h := r.host_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; ELSIF TG_TABLE_NAME = 'bot' THEN k := 'bot'; i := r.id; s := r.home_session_id; ELSIF TG_TABLE_NAME = 'bot_automation' THEN k := 'bot'; i := r.bot_id; ELSIF TG_TABLE_NAME = 'bot_run' THEN k := 'bot-run'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'bot_task' THEN k := 'bot'; i := r.bot_id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'watch' THEN k := 'watch'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'trigger' THEN k := 'trigger'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME IN ('work_plan', 'board_message') THEN k := 'board'; i := r.scope_kind || ':' || r.scope_id; IF r.scope_kind = 'task' THEN t := r.scope_id; ELSIF r.scope_kind = 'session' THEN s := r.scope_id; END IF; ELSE RETURN NULL; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder, setting_target) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w, st); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $function$;
+AS $function$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; st text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'audit_log' THEN k := 'setting-change'; i := r.id; w := r.holder; st := nullif(r.target, ''); ELSIF TG_TABLE_NAME = 'project_recommendation' THEN k := 'project-recommendation'; i := r.id; ELSIF TG_TABLE_NAME IN ('delivery_state', 'delivery_pr', 'delivery_run', 'delivery_release', 'delivery_check') THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) = (to_jsonb(NEW) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) THEN RETURN NULL; END IF; k := 'delivery'; i := r.id; ELSIF TG_TABLE_NAME = 'host_observation' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{last_seen_at,updated_at}'::text[]) = (to_jsonb(NEW) - '{last_seen_at,updated_at}'::text[]) THEN RETURN NULL; END IF; k := 'host'; i := r.id; h := r.id; ELSIF TG_TABLE_NAME IN ('managed_account', 'api_connection') THEN k := replace(TG_TABLE_NAME, '_', '-'); i := r.id; w := r.holder; ELSIF TG_TABLE_NAME = 'connection_key' THEN k := 'connection-key'; i := r.id; ELSIF TG_TABLE_NAME = 'session' THEN k := 'session'; i := r.id; s := r.id; ELSIF TG_TABLE_NAME IN ('message', 'event') THEN k := 'event'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'command' THEN k := 'command'; i := r.id; h := r.host_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; ELSIF TG_TABLE_NAME = 'bot' THEN k := 'bot'; i := r.id; s := r.home_session_id; ELSIF TG_TABLE_NAME = 'bot_automation' THEN k := 'bot'; i := r.bot_id; ELSIF TG_TABLE_NAME = 'bot_run' THEN k := 'bot-run'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'bot_task' THEN k := 'bot'; i := r.bot_id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'watch' THEN k := 'watch'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'trigger' THEN k := 'trigger'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'activity' THEN k := 'activity'; i := r.seq::text; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME IN ('work_plan', 'board_message') THEN k := 'board'; i := r.scope_kind || ':' || r.scope_id; IF r.scope_kind = 'task' THEN t := r.scope_id; ELSIF r.scope_kind = 'session' THEN s := r.scope_id; END IF; ELSE RETURN NULL; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder, setting_target) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w, st); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $function$;
 
 CREATE OR REPLACE FUNCTION public.fleet_conn_meta_all()
  RETURNS TABLE(id text, provider text)

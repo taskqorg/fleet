@@ -147,6 +147,165 @@ func (v FoundKind) Valid() bool {
 	return false
 }
 
+// HistoryEntry: One activity entry (docs/designs/fleet-history.md); at and firstAt in ms. n > 1: n consecutive entries of one group (subject, verb, outcome) folded; seq and at are the newest's.
+type HistoryEntry struct {
+	Actor        *string                    `json:"actor"`
+	At           float64                    `json:"at"`
+	BotId        *string                    `json:"botId"`
+	Detail       map[string]json.RawMessage `json:"detail"`
+	ExperimentId *string                    `json:"experimentId"`
+	FirstAt      float64                    `json:"firstAt"`
+	HostId       *string                    `json:"hostId"`
+	Kind         HistoryKind                `json:"kind"`
+	N            int64                      `json:"n"`
+	Outcome      HistoryOutcome             `json:"outcome"`
+	ProjectId    *string                    `json:"projectId"`
+	Section      HistorySection             `json:"section"`
+	Seq          int64                      `json:"seq"`
+	SessionId    *string                    `json:"sessionId"`
+	Subject      string                     `json:"subject"`
+	TaskId       *string                    `json:"taskId"`
+	Title        string                     `json:"title"`
+	Verb         string                     `json:"verb"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HistoryEntry) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Outcome, "outcome"); err != nil {
+		return err
+	}
+	if err := Check(&v.Section, "section"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type HistoryKind string
+
+const (
+	HistoryKindRun      HistoryKind = "run"
+	HistoryKindTask     HistoryKind = "task"
+	HistoryKindQuestion HistoryKind = "question"
+	HistoryKindLab      HistoryKind = "lab"
+	HistoryKindSettings HistoryKind = "settings"
+	HistoryKindAccess   HistoryKind = "access"
+)
+
+// HistoryKindValues lists every HistoryKind in schema order.
+var HistoryKindValues = []HistoryKind{HistoryKindRun, HistoryKindTask, HistoryKindQuestion, HistoryKindLab, HistoryKindSettings, HistoryKindAccess}
+
+// Valid: v is one of the schema's values.
+func (v HistoryKind) Valid() bool {
+	for _, x := range HistoryKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type HistoryOutcome string
+
+const (
+	HistoryOutcomeOk      HistoryOutcome = "ok"
+	HistoryOutcomeFailed  HistoryOutcome = "failed"
+	HistoryOutcomeStopped HistoryOutcome = "stopped"
+	HistoryOutcomeWaiting HistoryOutcome = "waiting"
+	HistoryOutcomeRunning HistoryOutcome = "running"
+	HistoryOutcomeInfo    HistoryOutcome = "info"
+)
+
+// HistoryOutcomeValues lists every HistoryOutcome in schema order.
+var HistoryOutcomeValues = []HistoryOutcome{HistoryOutcomeOk, HistoryOutcomeFailed, HistoryOutcomeStopped, HistoryOutcomeWaiting, HistoryOutcomeRunning, HistoryOutcomeInfo}
+
+// Valid: v is one of the schema's values.
+func (v HistoryOutcome) Valid() bool {
+	for _, x := range HistoryOutcomeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// HistorySection: work: tasks, conversations and their runs; lab: experiments and trials; system: host jobs, settings, access and coordinator problems.
+type HistorySection string
+
+const (
+	HistorySectionWork   HistorySection = "work"
+	HistorySectionLab    HistorySection = "lab"
+	HistorySectionSystem HistorySection = "system"
+)
+
+// HistorySectionValues lists every HistorySection in schema order.
+var HistorySectionValues = []HistorySection{HistorySectionWork, HistorySectionLab, HistorySectionSystem}
+
+// Valid: v is one of the schema's values.
+func (v HistorySection) Valid() bool {
+	for _, x := range HistorySectionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type HistoryViewReply struct {
+	Entries    []HistoryEntry `json:"entries"`
+	NextCursor *int64         `json:"nextCursor"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HistoryViewReply) Validate() error {
+	if v.Entries == nil {
+		return Missing("entries")
+	}
+	for i := range v.Entries {
+		if err := Check(&v.Entries[i], "entries"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type HistoryViewRequest struct {
+	Actor        *string         `json:"actor,omitempty"`
+	Before       *int64          `json:"before,omitempty"`
+	BotId        *string         `json:"botId,omitempty"`
+	ExperimentId *string         `json:"experimentId,omitempty"`
+	HostId       *string         `json:"hostId,omitempty"`
+	Kinds        []HistoryKind   `json:"kinds,omitempty"`
+	Limit        *int64          `json:"limit,omitempty"`
+	Outcome      *HistoryOutcome `json:"outcome,omitempty"`
+	ProjectIds   []string        `json:"projectIds,omitempty"`
+	Section      *HistorySection `json:"section,omitempty"`
+	SessionId    *string         `json:"sessionId,omitempty"`
+	TaskId       *string         `json:"taskId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HistoryViewRequest) Validate() error {
+	for i := range v.Kinds {
+		if err := Check(&v.Kinds[i], "kinds"); err != nil {
+			return err
+		}
+	}
+	if v.Outcome != nil {
+		if err := Check(v.Outcome, "outcome"); err != nil {
+			return err
+		}
+	}
+	if v.Section != nil {
+		if err := Check(v.Section, "section"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type HomeBlocker struct {
 	At     int64           `json:"at"`
 	Cause  string          `json:"cause"`
@@ -1037,6 +1196,7 @@ func (v VisitPage) Valid() bool {
 func init() {
 	for n, o := range map[string]Operation{
 		"focus_set":           {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus. Focus does not bind a repository checkout; use session_transition with projectId for that. Configure focus for the user’s intended granted project before project context reads", InputSchema: json.RawMessage("{\"$comment\":\"projectIds: a list of project ids in the caller's grants, or \\\"*\\\".\",\"additionalProperties\":true,\"properties\":{\"projectIds\":{},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"projectIds\"],\"type\":\"object\"}")},
+		"history_view":        {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "History: what happened in Fleet, newest first, one entry per thing (a run started or ended, a task created or moving state, a question asked or answered, an experiment created, moving or decided, a setting or access change). The same list for every scope: no filter is everything you may see; section (work, lab, system), projectIds ('-': outside projects) or one object (taskId, sessionId, hostId, botId, experimentId) narrows it; kinds, actor and outcome filter it. Consecutive entries of one subject, verb and outcome come as one entry with n and the oldest firstAt. Page older entries with before: the reply's nextCursor.", Changes: []string{"activity"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"actor\":{\"$comment\":\"Only entries by this actor (a person's email, a bot id, a harness).\",\"type\":\"string\"},\"before\":{\"$comment\":\"Page: entries with seq below this (the previous reply's nextCursor).\",\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"kinds\":{\"items\":{\"enum\":[\"run\",\"task\",\"question\",\"lab\",\"settings\",\"access\"],\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"$comment\":\"Entries returned after folding (default 50, at most 200).\",\"minimum\":1,\"type\":\"integer\"},\"outcome\":{\"enum\":[\"ok\",\"failed\",\"stopped\",\"waiting\",\"running\",\"info\"],\"type\":\"string\"},\"projectIds\":{\"$comment\":\"Only these projects ('-': outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"section\":{\"$comment\":\"work: tasks, conversations and their runs; lab: experiments and trials; system: host jobs, settings, access and coordinator problems.\",\"enum\":[\"work\",\"lab\",\"system\"],\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"home_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Your Home screen in one read (projectIds or excludeProjectIds: the focus, '-' is work outside projects; dayStart: your local midnight in ms, default UTC): the active and failed sessions (up to 200, newest activity first) with the plain cause of each failed one, the open questions for people, the blockers grouped by cause and host (failed runs that need a look and the coordinator's problem questions), the bots, and the counts of the pulse and the quiet summary (sessions done today, and done, merged and failed since your last Home visit). It counts on the server and returns no finished sessions or runs.", Changes: []string{"session", "execution", "question", "bot", "bot-run", "setting-change", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"dayStart\":{\"$comment\":\"ms: the start of the caller's day, which doneToday counts from; default the UTC midnight.\",\"minimum\":0,\"type\":\"integer\"},\"excludeProjectIds\":{\"$comment\":\"Leave these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"Only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"list_membership":     {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "At most 1000 ids and one or two lists.", Changes: []string{"task", "session", "execution", "question", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"$comment\":\"At most 1000 ids and one or two lists.\",\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"lists\":{\"items\":{\"$comment\":\"name: tasks or sessions.\",\"additionalProperties\":true,\"properties\":{\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"sort\":{\"$comment\":\"as the list's own page operation: task_page or sessions_list group and sort\",\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"ids\",\"lists\"],\"type\":\"object\"}")},
 		"me":                  {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "The calling person: email, name, roles, owner flag and grants version", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},

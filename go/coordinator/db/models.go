@@ -458,6 +458,27 @@ type AccountInspection struct {
 	TombstonedAt *time.Time
 }
 
+type Activity struct {
+	Seq          int64
+	At           time.Time
+	Kind         string
+	Verb         string
+	Outcome      string
+	Section      string
+	Subject      string
+	Title        string
+	Actor        *string
+	ProjectID    *string
+	TaskID       *string
+	SessionID    *string
+	HostID       *string
+	BotID        *string
+	ExperimentID *string
+	Holder       *string
+	GroupKey     string
+	Detail       []byte
+}
+
 type AgentToolReceipt struct {
 	ID             string
 	ExecutionID    string

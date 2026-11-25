@@ -108,6 +108,7 @@ func (v *CatalogueMethodView) Validate() error {
 type ChangeKind string
 
 const (
+	ChangeKindActivity              ChangeKind = "activity"
 	ChangeKindApiConnection         ChangeKind = "api-connection"
 	ChangeKindArtifact              ChangeKind = "artifact"
 	ChangeKindBoard                 ChangeKind = "board"
@@ -134,7 +135,7 @@ const (
 )
 
 // ChangeKindValues lists every ChangeKind in schema order.
-var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindBoard, ChangeKindBot, ChangeKindBotRun, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindDelivery, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindProjectRecommendation, ChangeKindQuestion, ChangeKindResourceSummary, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask, ChangeKindTrigger, ChangeKindWatch}
+var ChangeKindValues = []ChangeKind{ChangeKindActivity, ChangeKindApiConnection, ChangeKindArtifact, ChangeKindBoard, ChangeKindBot, ChangeKindBotRun, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindDelivery, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindProjectRecommendation, ChangeKindQuestion, ChangeKindResourceSummary, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask, ChangeKindTrigger, ChangeKindWatch}
 
 // Valid: v is one of the schema's values.
 func (v ChangeKind) Valid() bool {
