@@ -58,3 +58,23 @@ func TestSettingsRefuse(t *testing.T) {
 		t.Fatal("a passing cause or a usable candidate must not refuse")
 	}
 }
+
+// A Lab trial or a read-only start does not publish: its project settings go out with execution.forge off.
+func TestPublishesAndWithoutForge(t *testing.T) {
+	exp, read := "e1", "read"
+	if publishes(&dispatchExecution{ExperimentID: &exp}) || publishes(&dispatchExecution{Dispatch: &dispatchSpec{Access: &read}}) {
+		t.Fatal("a Lab trial and a read-only start must not publish")
+	}
+	if !publishes(&dispatchExecution{}) {
+		t.Fatal("a write start outside Lab publishes")
+	}
+	project := map[string]json.RawMessage{"execution": json.RawMessage(`{"forge":true,"tools":["node"]}`)}
+	withoutForge(project)
+	var ex struct {
+		Forge bool     `json:"forge"`
+		Tools []string `json:"tools"`
+	}
+	if err := json.Unmarshal(project["execution"], &ex); err != nil || ex.Forge || len(ex.Tools) != 1 {
+		t.Fatalf("execution = %s", project["execution"])
+	}
+}

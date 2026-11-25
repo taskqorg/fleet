@@ -245,6 +245,13 @@ func capabilities() []string {
 		hasGH := isFile(filepath.Join(store, "hosts.yml"))
 		glabHosts := glabConfiguredHosts(store)
 		hasGL := resolveGlabStore(store) != ""
+		hasGH = hasGH && forgeLoginVerified("github", "github.com")
+		verified := []string{}
+		for _, h := range glabHosts {
+			if forgeLoginVerified("gitlab", h) {
+				verified = append(verified, h)
+			}
+		}
 		for _, raw := range strings.Split(os.Getenv("FLEET_FORGE_REPOSITORIES"), ",") {
 			h, slug, ok := contract.ParseForgeRepoEntry(raw)
 			if !ok {
@@ -255,10 +262,10 @@ func capabilities() []string {
 					c = append(c, contract.ForgeCapability(slug), contract.PublishingHostCapability("github", "github.com", slug))
 				}
 				if hasGL {
-					for _, gh := range glabHosts {
+					for _, gh := range verified {
 						c = append(c, contract.PublishingHostCapability("gitlab", gh, slug))
 					}
-					if len(glabHosts) == 0 {
+					if len(glabHosts) == 0 && forgeLoginVerified("gitlab", "gitlab.com") {
 						c = append(c, contract.PublishingHostCapability("gitlab", "gitlab.com", slug))
 					}
 					c = append(c, contract.ForgeCapability(slug))
@@ -271,7 +278,7 @@ func capabilities() []string {
 				}
 				continue
 			}
-			if hasGL {
+			if hasGL && forgeLoginVerified("gitlab", h) {
 				c = append(c, contract.PublishingHostCapability("gitlab", h, slug), contract.ForgeCapability(h+"/"+slug))
 			}
 		}

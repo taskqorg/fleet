@@ -746,7 +746,7 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if requirements != nil && requirements.Forge && !hostHasProjectPublishingCapability(k.caps[id], settings, id) {
+			if requirements != nil && requirements.Forge && publishes(e) && !hostHasProjectPublishingCapability(k.caps[id], settings, id) {
 				skip("project forge connection unavailable on "+id, "host:"+id+":forge")
 				continue
 			}
@@ -1292,6 +1292,27 @@ func isBackpressureCause(cause string) bool {
 	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency") || strings.HasSuffix(cause, ":updating")
 }
 
+// publishes: the run may publish to the project's forge (push its branch, open a pull or merge request): any start
+// with write access outside Lab. A Lab trial measures a method and never publishes, nor does a read-only start, so
+// they need no forge login (DAM Lab, 2026-11-25: Claude trials failed forge-actor-auth-unready on owner-mac).
+func publishes(e *dispatchExecution) bool {
+	return deref(e.ExperimentID) == "" && (e.Dispatch == nil || deref(e.Dispatch.Access) != "read")
+}
+
+// withoutForge: the project settings a run that does not publish receives: execution.forge off, so the executor sets up
+// no publishing tools and checks no forge login.
+func withoutForge(project map[string]json.RawMessage) {
+	ex := map[string]json.RawMessage{}
+	if raw, ok := project["execution"]; ok && json.Unmarshal(raw, &ex) != nil {
+		return
+	}
+	if raw, ok := ex["forge"]; !ok || string(raw) != "true" {
+		return
+	}
+	ex["forge"] = json.RawMessage("false")
+	project["execution"] = jsonBytes(ex)
+}
+
 // passingCause: a skip that clears without anyone changing a setting: the host comes back, finishes its update or
 // load, a subscription limit resets, a budget or a paused host or subscription is resumed.
 func passingCause(cause string) bool {
@@ -1545,6 +1566,9 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		p.ProjectId = &pid
 		if snapshot != nil && len(snapshot.Settings) > 0 {
 			_ = json.Unmarshal(snapshot.Settings, &p.Project)
+		}
+		if !publishes(e) {
+			withoutForge(p.Project)
 		}
 	}
 	var snapSettings json.RawMessage
