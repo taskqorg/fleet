@@ -154,10 +154,25 @@ func (c cleanupLedger) record(trigger string) {
 // removeDir removes a directory tree and adds it to the ledger.
 func (c *cleanupLedger) removeDir(d string) {
 	size := treeSize(d)
-	if err := os.RemoveAll(d); err == nil {
+	if err := removeTree(d); err == nil {
 		c.dirs++
 		c.bytes += size
 	}
+}
+
+// removeTree: os.RemoveAll, and once more after making every folder writable: a Go module cache (GOMODCACHE) is
+// read-only, so a plain RemoveAll leaves it in place.
+func removeTree(d string) error {
+	if os.RemoveAll(d) == nil {
+		return nil
+	}
+	_ = filepath.WalkDir(d, func(p string, e fs.DirEntry, err error) error {
+		if err == nil && e.IsDir() {
+			_ = os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(d)
 }
 
 func treeSize(d string) int64 {
@@ -190,7 +205,7 @@ func cleanupRun(root, execution string) int {
 	if _, err := os.Lstat(d); err == nil {
 		// The run's own directory is expected: only what it held counts.
 		c.bytes += treeSize(d)
-		_ = os.RemoveAll(d)
+		_ = removeTree(d)
 	}
 	if c.processes > 0 || c.bytes > 0 {
 		c.dirs = max(c.dirs, 1)

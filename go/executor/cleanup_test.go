@@ -112,6 +112,7 @@ func TestSweepTmp(t *testing.T) {
 		os.MkdirAll(filepath.Join(dir, d), 0o700)
 	}
 	os.WriteFile(filepath.Join(dir, "stale/a/f"), []byte("12345"), 0o600)
+	os.Chmod(filepath.Join(dir, "stale/a"), 0o500) // read-only, as a Go module cache is
 	os.WriteFile(filepath.Join(dir, "fresh/a/f"), nil, 0o600)
 	l, err := net.Listen("unix", filepath.Join(dir, "sock", "s"))
 	if err != nil {
