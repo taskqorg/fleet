@@ -266,9 +266,11 @@ export function Live(props: { wall: boolean }) {
       const task = r.taskId ? taskById().get(r.taskId) : undefined;
       const what = task ? `${task.code ? task.code + ' ' : ''}${task.title}` : r.taskTitle ?? r.sessionTitle ?? `${r.harness ? r.harness + ' ' : ''}${KINDS[r.kind] ?? 'run'}`;
       const where = r.hostId ?? 'coordinator';
-      const verb = ACTIVE.has(r.state) ? `started on ${where}` : r.state === 'failed' ? `failed on ${where}` : r.state === 'cancelled' ? 'stopped' : 'finished';
+      const verb = ACTIVE.has(r.state) ? `started on ${where}` : r.state === 'failed' ? `failed on ${where}` : r.state === 'cancelled' ? 'stopped' : r.kind === 'host_job' && !r.taskId ? `finished on ${where}` : 'finished';
       const life: Life = ACTIVE.has(r.state) ? 'working' : r.state === 'failed' ? 'failed' : r.state === 'cancelled' ? 'stopped' : 'done';
-      const key = `${r.taskId ?? r.sessionId ?? r.id}\0${life}\0${ACTIVE.has(r.state) || r.state === 'failed' ? where : ''}`;
+      // A host job without a task opens a session of its own each time: its subject is the host's jobs.
+      const subject = r.taskId ?? (r.kind === 'host_job' ? `host_job:${where}` : r.sessionId ?? r.id);
+      const key = `${subject}\0${life}\0${ACTIVE.has(r.state) || r.state === 'failed' ? where : ''}`;
       const e = by.get(key);
       if (e) { e.n++; if (at > e.at) Object.assign(e, { at, agent: r.harness ?? e.agent }); continue; }
       by.set(key, { id: key, at, n: 1, text: `${what} ${verb}`, state: life, agent: r.harness, to: r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null });
