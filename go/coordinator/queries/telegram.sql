@@ -175,3 +175,7 @@ SELECT * FROM telegram_outbox WHERE work_id = $1 AND id LIKE 'notice:newwork:%' 
 -- name: TelegramTurnOthers :one
 -- Messages of a work item still waiting for their reply, besides this one: its status stays "working" until the last.
 SELECT count(*) FROM telegram_turn WHERE work_id = @work_id AND id <> @id;
+
+-- name: TelegramWorkLock :exec
+-- Serialises the reply steps of one work item, so the last one to end sees the others gone and writes the status.
+SELECT id FROM telegram_work WHERE id = $1 FOR UPDATE;

@@ -726,10 +726,10 @@ func conductorModel(ctx context.Context, a *App) (string, string) {
 // person then chooses with one tap, so a model outage never misroutes a message.
 var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, author, text string) conductorDecision {
 	conn, model := conductorModel(ctx, a)
-	if conn == "" {
-		return conductorDecision{Choice: "ask", err: errors.New("no OpenAI connection open to every project")}
+	d := conductorDecision{Choice: "ask", err: errors.New("no OpenAI connection open to every project")}
+	if conn != "" {
+		d = conductorCall(ctx, a, conn, model, open, author, text)
 	}
-	d := conductorCall(ctx, a, conn, model, open, author, text)
 	call := &contract.TelegramConductorCall{Connection: conn, Model: model, At: nowMs(), Choice: ptr(d.Choice)}
 	if d.err != nil {
 		call.Error = ptr(d.err.Error())
@@ -840,7 +840,14 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 			return err
 		}
 		if len(queued) == 0 || queued[0].State != "queued" {
-			return q.db().TelegramTurnDelete(q.ctx(), t.ID) // withdrawn before it ran: nothing will answer it
+			// Withdrawn before it ran: nothing will answer it.
+			if t.WorkID != nil {
+				tp, _ := q.db().TelegramPersonGet(q.ctx(), t.Email)
+				if err := telegramWorkEnded(q, t, tp.Language, "statusWithdrawn"); err != nil {
+					return err
+				}
+			}
+			return q.db().TelegramTurnDelete(q.ctx(), t.ID)
 		}
 		return telegramTyping(q, now, c, t)
 	}
@@ -881,14 +888,8 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 		if e.State != "succeeded" {
 			key = "statusFailed"
 		}
-		others, err := q.db().TelegramTurnOthers(q.ctx(), db.TelegramTurnOthersParams{WorkID: t.WorkID, ID: t.ID})
-		if err != nil {
+		if err := telegramWorkEnded(q, t, lang, key); err != nil {
 			return err
-		}
-		if others == 0 {
-			if err := telegramWorkStatus(q, *t.WorkID, t.ID+":end", lang, say(lang, key, "")); err != nil {
-				return err
-			}
 		}
 		if sm, err := q.db().TelegramWorkStatusMessage(q.ctx(), t.WorkID); err == nil && sm.TelegramMessageID != nil {
 			if link := telegramMessageLink(sm.ChatID, sm.ThreadID, *sm.TelegramMessageID); link != "" {
@@ -927,6 +928,19 @@ func telegramTyping(q *Request, now time.Time, c *kitClaim, t db.TelegramTurn) e
 	}
 	c.Call = func(ctx context.Context) any { return telegramCall(ctx, a, "send_chat_action", args) }
 	return nil
+}
+
+// telegramWorkEnded: one of a work item's messages is done; when it is the last one waiting, the status message says so.
+// The row lock orders the item's reply steps, so two runs ending together cannot both see the other still waiting.
+func telegramWorkEnded(q *Request, t db.TelegramTurn, lang, key string) error {
+	if err := q.db().TelegramWorkLock(q.ctx(), *t.WorkID); err != nil {
+		return err
+	}
+	others, err := q.db().TelegramTurnOthers(q.ctx(), db.TelegramTurnOthersParams{WorkID: t.WorkID, ID: t.ID})
+	if err != nil || others > 0 {
+		return err
+	}
+	return telegramWorkStatus(q, *t.WorkID, t.ID+":end", lang, say(lang, key, ""))
 }
 
 // openMarkup: the [Open in Fleet] button of a conversation (nil without FLEET_BROWSER_ORIGIN).
@@ -1144,36 +1158,38 @@ func telegramSent(q *Request, now time.Time, o db.TelegramOutbox, line contract.
 
 var telegramWords = map[string]map[string]string{
 	"en": {
-		"linked":         "Linked to Fleet as %s. Write here to talk to Fleet.",
-		"notDelivered":   "Not delivered: %s",
-		"filesLater":     "Files without text do not reach Fleet yet; add a line of text.",
-		"newHome":        "The next message starts a new conversation.",
-		"newWork":        "New: %s",
-		"which":          "Is this about:",
-		"newButton":      "Something new",
-		"noReply":        "Done, without a text answer.",
-		"runFailed":      "The run failed without an answer.",
-		"open":           "Open in Fleet",
-		"status":         "Status",
-		"statusWorking":  "⏳ Working on a message from %s",
-		"statusAnswered": "✓ Answered",
-		"statusFailed":   "✗ The run failed",
+		"linked":          "Linked to Fleet as %s. Write here to talk to Fleet.",
+		"notDelivered":    "Not delivered: %s",
+		"filesLater":      "Files without text do not reach Fleet yet; add a line of text.",
+		"newHome":         "The next message starts a new conversation.",
+		"newWork":         "New: %s",
+		"which":           "Is this about:",
+		"newButton":       "Something new",
+		"noReply":         "Done, without a text answer.",
+		"runFailed":       "The run failed without an answer.",
+		"open":            "Open in Fleet",
+		"status":          "Status",
+		"statusWorking":   "⏳ Working on a message from %s",
+		"statusAnswered":  "✓ Answered",
+		"statusFailed":    "✗ The run failed",
+		"statusWithdrawn": "Message withdrawn",
 	},
 	"ru": {
-		"linked":         "Telegram привязан к Fleet: %s. Пишите сюда, чтобы говорить с Fleet.",
-		"notDelivered":   "Не доставлено: %s",
-		"filesLater":     "Файлы без текста пока не доходят до Fleet; добавьте строку текста.",
-		"newHome":        "Следующее сообщение начнёт новый разговор.",
-		"newWork":        "Новое: %s",
-		"which":          "Это про:",
-		"newButton":      "Новое",
-		"noReply":        "Готово, без текстового ответа.",
-		"runFailed":      "Запуск завершился ошибкой без ответа.",
-		"open":           "Открыть во Fleet",
-		"status":         "Статус",
-		"statusWorking":  "⏳ В работе: сообщение от %s",
-		"statusAnswered": "✓ Ответ дан",
-		"statusFailed":   "✗ Запуск завершился ошибкой",
+		"linked":          "Telegram привязан к Fleet: %s. Пишите сюда, чтобы говорить с Fleet.",
+		"notDelivered":    "Не доставлено: %s",
+		"filesLater":      "Файлы без текста пока не доходят до Fleet; добавьте строку текста.",
+		"newHome":         "Следующее сообщение начнёт новый разговор.",
+		"newWork":         "Новое: %s",
+		"which":           "Это про:",
+		"newButton":       "Новое",
+		"noReply":         "Готово, без текстового ответа.",
+		"runFailed":       "Запуск завершился ошибкой без ответа.",
+		"open":            "Открыть во Fleet",
+		"status":          "Статус",
+		"statusWorking":   "⏳ В работе: сообщение от %s",
+		"statusAnswered":  "✓ Ответ дан",
+		"statusFailed":    "✗ Запуск завершился ошибкой",
+		"statusWithdrawn": "Сообщение отозвано",
 	},
 }
 

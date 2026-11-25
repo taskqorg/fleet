@@ -938,6 +938,16 @@ func (q *Queries) TelegramWorkList(ctx context.Context) ([]TelegramWork, error) 
 	return items, nil
 }
 
+const telegramWorkLock = `-- name: TelegramWorkLock :exec
+SELECT id FROM telegram_work WHERE id = $1 FOR UPDATE
+`
+
+// Serialises the reply steps of one work item, so the last one to end sees the others gone and writes the status.
+func (q *Queries) TelegramWorkLock(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, telegramWorkLock, id)
+	return err
+}
+
 const telegramWorkOpen = `-- name: TelegramWorkOpen :many
 SELECT id, room_id, session_id, title, created_by, created_at, last_at, closed_at FROM telegram_work WHERE room_id = $1 AND closed_at IS NULL ORDER BY last_at DESC LIMIT 8
 `
