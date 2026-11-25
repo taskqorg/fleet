@@ -12,9 +12,11 @@ import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, StageChip, Num, CostFigures, Ago, AgeChip, HarnessMark, Empty, ErrorBanner, copyText, SearchBox } from './primitives.tsx';
 import { EntityCode, linkCodes } from './overlays.tsx';
 import { TabBar } from './tables.tsx';
+import { Choice } from './forms.tsx';
 import { ToolLine } from './tool-line.tsx';
 import { QuestionCard } from './question-card.tsx';
 import { foldBlocks, type FoldedRow } from './tool-fold.ts';
+import { jsonRecords, parseDiff, type KvNode, type DiffFile } from '../result-formats.ts';
 
 const ROW = parseInt(tokens.size.row);
 
@@ -132,7 +134,10 @@ export function DecisionBlock(p: DecisionProps) {
 /* ---------- Result viewer shell ---------- */
 
 type ResultProps = {
-  name: string; type: string; size: number; source: string; href?: string;
+  /** The name as people read it (fileLabel: no UUID or hash, OR-38); the stored file name stays the download name. */
+  name: string; type: string; size: number; source: JSX.Element; href?: string;
+  /** The result's D17 code and id: the code shows beside the name, the id only as its copy tooltip (OR-38). */
+  code?: string | null; id?: string; download?: string;
   copies: { where: string; state: StateOf<'copy'> }[];
   tabs: string[]; tab: string; onTab: (t: string) => void; children: JSX.Element;
 };
@@ -141,6 +146,7 @@ export function ResultViewer(p: ResultProps) {
     <section class="rv" data-ui="result-viewer" aria-label={p.name}>
       <header class="rv-h">
         <Icon name="file-text" /><b class="nm">{p.name}</b>
+        <Show when={p.code}>{c => <EntityCode code={c()} id={p.id} kind="result" />}</Show>
         <span class="muted">{p.type} · {bytes(p.size).text} · {p.source}</span>
         <For each={p.copies}>{c => <StateBadge family="copy" state={c.state} reason={c.where} compact />}</For>
         <span class="grow" />
@@ -151,7 +157,7 @@ export function ResultViewer(p: ResultProps) {
           keyed
           fallback={<Button label="Download" icon={actions.download} iconOnly />}
         >
-          {href => <a class="btn default icon-only" data-ui="button" href={href} download={p.name} aria-label="Download" data-tip="Download"><Icon name={actions.download} /></a>}
+          {href => <a class="btn default icon-only" data-ui="button" href={href} download={p.download ?? p.name} aria-label="Download" data-tip="Download"><Icon name={actions.download} /></a>}
         </Show>
         <Button label="Share" icon={actions.share} iconOnly />
       </header>
@@ -168,9 +174,18 @@ const TEXTUAL = /^(text\/|application\/(json|xml|x-ndjson|javascript|x-yaml|yaml
 export const viewOf = (mediaType: string): 'image' | 'video' | 'text' | 'download' =>
   /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(mediaType) ? 'image' : /^video\//.test(mediaType) ? 'video' : TEXTUAL.test(mediaType) || mediaType === 'image/svg+xml' ? 'text' : 'download';
 /** The rendered view a text format has, if any. YAML has none: its source is already its readable form. */
-export const renderOf = (mediaType: string, name: string): 'html' | 'svg' | 'markdown' | 'json' | 'csv' | null =>
+export const renderOf = (mediaType: string, name: string): 'html' | 'svg' | 'markdown' | 'json' | 'jsonl' | 'csv' | 'diff' | null =>
   /^text\/html/.test(mediaType) ? 'html' : mediaType === 'image/svg+xml' ? 'svg' : /^text\/markdown/.test(mediaType) || /\.md$/i.test(name) ? 'markdown'
-    : /^application\/json/.test(mediaType) ? 'json' : /^text\/csv/.test(mediaType) ? 'csv' : null;
+    : /^application\/(x-)?ndjson/.test(mediaType) || /\.(jsonl|ndjson)$/i.test(name) ? 'jsonl'
+      : /^application\/json/.test(mediaType) || /\.json$/i.test(name) ? 'json' : /^text\/csv/.test(mediaType) ? 'csv'
+        : /^text\/x-(diff|patch)/.test(mediaType) || /\.(diff|patch)$/i.test(name) ? 'diff' : null;
+/** A type as people read it in the viewer head: "JSON lines", "Markdown", "Diff"; else the stored media type. */
+export const formatLabel = (mediaType: string, name: string): string => {
+  const f = renderOf(mediaType, name);
+  if (f) return ({ html: 'HTML page', svg: 'SVG image', markdown: 'Markdown', json: 'JSON', jsonl: 'JSON lines', csv: 'CSV table', diff: 'Diff' })[f];
+  const k = viewOf(mediaType);
+  return k === 'image' ? 'Image' : k === 'video' ? 'Video' : /^text\/plain/.test(mediaType) ? 'Text' : mediaType;
+};
 /** CSV rows (RFC 4180: quoted fields, doubled quotes, line breaks inside quotes). */
 export function parseCsv(t: string): string[][] {
   const rows: string[][] = []; let row: string[] = [], f = '', q = false;
@@ -184,7 +199,6 @@ export function parseCsv(t: string): string[][] {
   if (f || row.length) { row.push(f); rows.push(row); }
   return rows;
 }
-const pretty = (t: string) => { try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return t; /* not complete yet, or not JSON: shown as is */ } };
 // The chosen view per format lasts for the session (sessionStorage; a blocked store just falls back to the preview).
 const modeOf = (f: string) => { try { return sessionStorage.getItem('fleet.av.' + f) === 'source' ? 'source' : 'preview'; } catch { return 'preview'; } };
 const PAGE_BYTES = 65536;
@@ -254,7 +268,15 @@ export function ArtifactView(p: { a: ArtifactMeta; src: string }) {
     if (f === 'html') return <div class="av-frame page" data-tip="Agent output running in a sandbox: not part of Fleet"><iframe src={`${p.src}/preview`} sandbox="allow-scripts allow-forms allow-modals" title={p.a.name} referrerpolicy="no-referrer" /></div>;
     if (f === 'svg') return <div class="av-frame"><img src={p.src} alt={p.a.name} /></div>;
     if (f === 'markdown') return scroller(<Markdown text={text()} />);
-    if (f === 'json') return scroller(<pre><code>{next() < p.a.size ? text() : pretty(text())}</code></pre>);
+    if (f === 'json' || f === 'jsonl') {
+      const recs = createMemo(() => jsonRecords(text(), f === 'jsonl', next() >= p.a.size));
+      // Not JSON after all (or a JSON document still loading): its text, as stored.
+      return scroller(<Show when={recs()} fallback={<pre><code>{text()}</code></pre>}>{r => <KvRecords records={r()} lines={f === 'jsonl'} />}</Show>);
+    }
+    if (f === 'diff') {
+      const files = createMemo(() => parseDiff(text()));
+      return scroller(<Show when={files().length} fallback={<pre><code>{text()}</code></pre>}><DiffView files={files()} /></Show>);
+    }
     const csvRows = createMemo(() => {
       const all = parseCsv(text());
       const trimmed = next() < p.a.size ? all.slice(0, -1) : all; // the last row of a partial page may be cut
@@ -279,8 +301,9 @@ export function ArtifactView(p: { a: ArtifactMeta; src: string }) {
       <Show when={kind() === 'text'}>
         <div class="bar">
           <Show when={fmt()}>
-            <Button label={mode() === 'preview' ? 'Source' : 'Preview'} icon={mode() === 'preview' ? 'type' : 'panels-top-left'} onClick={flip} />
+            <Choice label="View" options={[{ id: 'preview', label: fmt() === 'diff' ? 'Unified' : 'Preview' }, { id: 'source', label: 'Source' }]} value={mode()} onChange={m => { if (m !== mode()) flip(); }} />
           </Show>
+          <span class="grow" />
           <Button
             label="Copy source"
             icon={actions.copy}
@@ -295,6 +318,90 @@ export function ArtifactView(p: { a: ArtifactMeta; src: string }) {
         <Empty text={`${p.a.mediaType} has no view here.`} />
       </Show>
       <Show when={err()} keyed>{e => <ErrorBanner text={`Did not load: ${e}`} onRetry={more} />}</Show>
+    </div>
+  );
+}
+
+/** JSON as key/value records (result-viewer.md): keys left, values right, objects and arrays folded under their key, null as "none". */
+function KvRecords(p: { records: KvNode[]; lines: boolean }) {
+  return (
+    <div class="kv-view" data-ui="kv-view">
+      <For each={p.records}>{(r, i) => (
+        <section class="kv-rec" aria-label={p.lines ? `Record ${i() + 1} of ${p.records.length}` : undefined}>
+          <Show when={p.lines}><div class="kv-rec-h muted type-sm">Record {i() + 1} of {p.records.length}</div></Show>
+          <KvNodeView node={r} />
+        </section>
+      )}</For>
+    </div>
+  );
+}
+
+/** One value: a leaf as text; an object or array as runs of key/value pairs (one `dl` each) with each nested value
+ *  folded under its key (a native `details`, so find-in-page still reaches it). */
+function KvNodeView(p: { node: KvNode }) {
+  const n = p.node;
+  if (!('entries' in n)) return <span class={['kv-v', n.kind]}>{n.text}</span>;
+  type Entry = { key: string; node: KvNode };
+  const runs: (Entry[] | Entry)[] = [];
+  for (const e of n.entries) {
+    if (e.node.kind === 'object' || e.node.kind === 'array') runs.push(e);
+    else if (Array.isArray(runs.at(-1))) (runs.at(-1) as Entry[]).push(e);
+    else runs.push([e]);
+  }
+  return (
+    <div class="kv">
+      <For each={runs}>{r => Array.isArray(r)
+        ? <dl class="kv-pairs"><For each={r}>{e => <div class="kv-row"><dt>{e.key}</dt><dd><KvNodeView node={e.node} /></dd></div>}</For></dl>
+        : (
+          <details class="kv-branch" open>
+            <summary><span class="kv-k">{r.key}</span><span class="muted type-sm">{(() => { const b = r.node as Extract<KvNode, { entries: unknown }>; return `${b.entries.length} ${b.kind === 'array' ? 'items' : 'fields'}`; })()}</span></summary>
+            <KvNodeView node={r.node} />
+          </details>
+        )}</For>
+    </div>
+  );
+}
+
+/** A unified diff (result-viewer.md): the file list beside the lines; a narrow viewer steps through files instead.
+ *  Added and removed lines are named in words for screen readers, not only by colour. */
+function DiffView(p: { files: DiffFile[] }) {
+  const [at, setAt] = createSignal(0, { ownedWrite: true });
+  const cur = createMemo(() => p.files[Math.min(at(), p.files.length - 1)]);
+  const name = (f: DiffFile) => f.path.split('/').pop() || f.path || 'diff';
+  return (
+    <div class="diff" data-ui="diff-view">
+      <nav class="diff-files" aria-label="Files">
+        <For each={p.files}>{(f, i) => (
+          <button type="button" class={['diff-file', { on: i() === at() }]} aria-current={i() === at() ? 'true' : undefined} data-tip={f.path} onClick={() => setAt(i())}>
+            <Icon name="file-text" /><span class="nm">{name(f)}</span>
+            <span class="add">+{f.added}</span><span class="del">−{f.removed}</span>
+          </button>
+        )}</For>
+      </nav>
+      <div class="diff-step">
+        <Button label="Previous file" icon="arrow-left" iconOnly kind="quiet" disabledReason={at() > 0 ? undefined : 'first file'} onClick={() => setAt(a => a - 1)} />
+        <span class="nm">{name(cur())}</span>
+        <span class="muted type-sm">{at() + 1} of {p.files.length}</span>
+        <Button label="Next file" icon="arrow-right" iconOnly kind="quiet" disabledReason={at() < p.files.length - 1 ? undefined : 'last file'} onClick={() => setAt(a => a + 1)} />
+      </div>
+      <div class="diff-body" tabindex="0" role="region" aria-label={`Changes in ${cur().path || 'the diff'}`}>
+        <div class="diff-path muted type-sm">{cur().path}</div>
+        <table class="diff-lines">
+          <For each={cur().hunks}>{h => (
+            <tbody>
+              <tr class="hunk"><td colspan="4">{h.head}</td></tr>
+              <For each={h.lines}>{l => (
+                <tr class={l.sign === '+' ? 'add' : l.sign === '-' ? 'del' : 'ctx'}>
+                  <td class="ln">{l.old ?? ''}</td>
+                  <td class="ln">{l.new ?? ''}</td>
+                  <td class="sg"><span aria-hidden="true">{l.sign === ' ' ? '' : l.sign === '-' ? '−' : '+'}</span><span class="sr-only">{l.sign === '+' ? 'added' : l.sign === '-' ? 'removed' : ''}</span></td>
+                  <td class="tx">{l.text}</td>
+                </tr>
+              )}</For>
+            </tbody>
+          )}</For>
+        </table>
+      </div>
     </div>
   );
 }

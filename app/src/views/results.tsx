@@ -4,7 +4,7 @@ import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'so
 import {
   EntityCode, ListDetail, StateBadge, Button, ResultViewer, ArtifactView, Empty, ErrorBanner, Skeleton,
   AgeChip, ShellStatus, OfflineMarker, RowFacts, Fact, DetailSection, Totals, Icon, KvRow, Num,
-  bytes, fileLabel, splitTerms, viewOf, states, actions, ARTIFACT_STATES,
+  bytes, fileLabel, formatLabel, splitTerms, viewOf, states, actions, ARTIFACT_STATES,
   type StateOf, type Chip, type IconName, type SortField, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import type { ArtifactRow } from '../../../contracts/generated/ops.ts';
@@ -469,17 +469,19 @@ function Result(props: { id: string; onClose: () => void; onFilter: (field: stri
       <Show when={artOp.data} fallback={<article class="detail" data-ui="detail" tabindex={-1}><Skeleton rows={6} /></article>}>{a => {
         const src = () => `/api/results/${encodeURIComponent(a().id)}`;
         const meta = () => ({ id: a().id, name: a().name, mediaType: a().mediaType, size: Number(a().size) || 0 });
+        // The name as people read it (OR-38): no UUID or hash from the writer's file name; the code names it otherwise.
+        const label = () => fileLabel(a().name) || a().code || 'Result';
         return (
-          <article class="detail" data-ui="detail" tabindex={-1} aria-label={a().name}>
+          <article class="detail" data-ui="detail" tabindex={-1} aria-label={label()}>
             <header class="detail-h">
               <Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} />
               <Show when={a().projectId}>{pid => <EntityCode code={pid()} id={pid()} kind="project" />}</Show>
-              <Show when={a().taskId}>{tid => <EntityCode id={tid()} kind="task" />}</Show>
-              <Show when={a().executionId}>{eid => <EntityCode id={eid()} kind="execution" />}</Show>
+              <Show when={a().taskId}>{tid => <EntityCode code={a().taskCode} id={tid()} kind="task" />}</Show>
               <span class="grow" />
               <Show when={a().taskId}>{tid => <Button label="Results of this task" icon="list-filter" iconOnly onClick={() => props.onFilter('task', tid())} />}</Show>
             </header>
-            <ResultViewer name={a().name} type={a().mediaType} size={meta().size} source={a().executionId ? 'agent run' : 'no run'} href={a().state === 'stored' ? src() : undefined}
+            <ResultViewer name={label()} code={a().code} id={a().id} download={a().name} type={formatLabel(a().mediaType, a().name)} size={meta().size}
+              source={<Show when={a().executionId} fallback="no run">{eid => <>from <EntityCode id={eid()} kind="execution" /></>}</Show>} href={a().state === 'stored' ? src() : undefined}
               copies={a().copies.map(c => ({ where: c.storeId, state: c.state === 'verified' ? 'stored' : ['failed', 'deleted', 'purge_pending'].includes(c.state) ? 'unavailable' : 'pending' }))} tabs={[]} tab={tab()} onTab={setTab}>
               <Show when={a().state === 'stored'} fallback={<Empty text={`This result is ${a().state}.`} />}>
                 <ArtifactView a={meta()} src={src()} />

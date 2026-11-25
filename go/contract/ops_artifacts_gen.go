@@ -327,6 +327,7 @@ func (v *ArtifactUploadBeginRequest) Validate() error {
 // ArtifactView: One artifact with its copies; availability available (with an authenticated same-origin /api/results/:id URL for people and agent tools), unavailable, or the artifact state. Host transfer reads retain presigned store URLs.
 type ArtifactView struct {
 	Availability          string              `json:"availability"`
+	Code                  *string             `json:"code,omitempty"`
 	Copies                []ArtifactCopyState `json:"copies"`
 	DerivedFromArtifactId *string             `json:"derivedFromArtifactId"`
 	Error                 *string             `json:"error"`
@@ -343,6 +344,7 @@ type ArtifactView struct {
 	Sha256                string              `json:"sha256"`
 	Size                  int64               `json:"size"`
 	State                 string              `json:"state"`
+	TaskCode              *string             `json:"taskCode,omitempty"`
 	TaskId                *string             `json:"taskId"`
 	Url                   *string             `json:"url,omitempty"`
 }

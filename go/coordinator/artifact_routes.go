@@ -61,7 +61,16 @@ func init() {
 
 	op("artifact_list", opArtifactList)
 	op("artifact_get", func(q *Request, r *contract.ArtifactGetRequest) (contract.ArtifactView, error) {
-		return artifactView(withTx(q), q.app, truncate(r.ArtifactId, 200), "")
+		v, err := artifactView(withTx(q), q.app, truncate(r.ArtifactId, 200), "")
+		if err != nil || v.TaskId == nil {
+			return v, err
+		}
+		// The viewer names the task by its code (OR-38), as artifact_list rows do.
+		cs, err := q.db().ArtTaskCodes(q.ctx(), []string{*v.TaskId})
+		if len(cs) > 0 {
+			v.TaskCode = cs[0].Code
+		}
+		return v, err
 	})
 	op("artifact_purge", func(q *Request, r *contract.ArtifactPurgeRequest) (contract.ArtifactPurgeReply, error) {
 		if err := operatorOnly(q); err != nil {

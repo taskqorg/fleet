@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -208,11 +209,37 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 	if r == nil || err != nil {
 		return nil, err
 	}
-	return &contract.EntityCardReply{Id: r.ID, Uuid: ptr(r.ID), Code: optStr(deref(r.Code)), Hash: optStr(r.ContentHash), Title: firstString(r.Name, "Result"), State: optStr(r.State),
-		ProjectId: optStr(deref(r.ProjectID)), At: optStr(cardTime(&r.CreatedAt)), AtLabel: ptr("stored"), Path: itemPath("results", r.ID),
+	return &contract.EntityCardReply{Id: r.ID, Uuid: ptr(r.ID), Code: optStr(deref(r.Code)), Hash: optStr(r.ContentHash), Title: firstString(resultLabel(r.Name), "Result"), State: optStr(r.State),
+		ProjectId: optStr(deref(r.ProjectID)), At: optStr(cardTime(&r.CreatedAt)), AtLabel: ptr("stored"), Path: itemPath("results", firstString(deref(r.Code), r.ID)),
 		Facts: facts(fact("Task", contract.EntityFactTypeCode, deref(r.TaskCode)), fact("Type", contract.EntityFactTypeCode, r.MediaType),
 			fact("Size", contract.EntityFactTypeBytes, count(r.Size)))}, nil
 }
+
+// resultLabel: a result's file name as people read it (OR-38): no UUID and no long hex run (a hash, a commit) in the
+// stem; the extension stays. The same rule as fileLabel in packages/ui/src/format.ts. Empty when nothing is left.
+func resultLabel(name string) string {
+	base := name[strings.LastIndex(name, "/")+1:]
+	stem, ext := base, ""
+	if dot := strings.LastIndex(base, "."); dot > 0 {
+		stem, ext = base[:dot], base[dot:]
+	}
+	stem = resultUUID.ReplaceAllString(stem, "")
+	for prev := ""; prev != stem; { // adjacent runs share a separator: repeat until none is left
+		prev, stem = stem, resultHex.ReplaceAllString(stem, "$1$2")
+	}
+	stem = resultSeps.ReplaceAllString(stem, "-")
+	stem = strings.Trim(stem, "-_.")
+	if stem == "" {
+		return ""
+	}
+	return stem + ext
+}
+
+var (
+	resultUUID = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	resultHex  = regexp.MustCompile(`(?i)(^|[-_.])[0-9a-f]{12,}([-_.]|$)`)
+	resultSeps = regexp.MustCompile(`[-_.]{2,}`)
+)
 
 // architect: definitions and Lab are the architect's to read (people.go architectOps); an agent without a person passes.
 func architect(q *Request) bool {

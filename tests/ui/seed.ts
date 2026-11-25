@@ -89,7 +89,7 @@ export function seeder(c: Coordinator, store?: {port: number, objects: Map<strin
     if (!storeRow) { storeRow = true; writeFileSync(join(store.secrets, 'check-store.key'), JSON.stringify({accessKeyId: 'k', secretAccessKey: 's'}), {mode: 0o600});
       sql(`INSERT INTO store(id,host_id,bucket,endpoint,state,observed_at) VALUES('check-store','pds18','fleet','http://127.0.0.1:${store.port}','reachable',now())`); }
     const hash = createHash('sha256').update(v.bytes).digest('hex');
-    store.objects.set(`/fleet/_/prod/${hash}`, v.bytes);
+    store.objects.set(`/fleet/${v.projectId ?? "_"}/prod/${hash}`, v.bytes); // keyOf: the project, or _ without one
     sql(`INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,state,project_id,task_id) VALUES(${lit(v.id)},'prod',${lit(hash)},${v.bytes.length},${lit(v.mediaType)},${lit(v.name)},${lit(v.executionId)},${lit(v.state ?? 'stored')},${lit(v.projectId ?? null)},${lit(v.taskId ?? null)})`);
     if ((v.state ?? 'stored') === 'stored') sql(`INSERT INTO artifact_copy(artifact_id,store_id,state,verified_at) VALUES(${lit(v.id)},'check-store','verified',now())`);
   };
