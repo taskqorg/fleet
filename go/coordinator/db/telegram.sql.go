@@ -852,6 +852,9 @@ func (q *Queries) TelegramRoomGet(ctx context.Context, id string) (TelegramRoom,
 
 const telegramRoomHistory = `-- name: TelegramRoomHistory :many
 SELECT h.at AS at, h.author AS author, h.text AS text, 'import'::text AS source FROM telegram_history h WHERE h.room_id = $2
+  -- An export may also hold messages Fleet saw live: those come from the journal and the outbox, once.
+  AND NOT EXISTS (SELECT 1 FROM telegram_update u2 WHERE u2.chat_id = $3 AND u2.message_id = h.message_id)
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o2 WHERE o2.chat_id = $3 AND o2.telegram_message_id = h.message_id)
 UNION ALL
 SELECT u.received_at, coalesce(nullif(trim(coalesce(u.payload->'message'->'from'->>'first_name', '') || ' ' ||
     coalesce(u.payload->'message'->'from'->>'last_name', '')), ''), 'someone'),

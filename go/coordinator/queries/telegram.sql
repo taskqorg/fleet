@@ -316,6 +316,9 @@ ON CONFLICT (id) DO UPDATE SET at = EXCLUDED.at, author = EXCLUDED.author, text 
 -- A room's newest messages, newest first: imported history, people's delivered messages (the journal, except the one
 -- being routed) and Fleet's sent replies. The context a new work item of a group room starts with (telegram_history).
 SELECT h.at AS at, h.author AS author, h.text AS text, 'import'::text AS source FROM telegram_history h WHERE h.room_id = @room_id
+  -- An export may also hold messages Fleet saw live: those come from the journal and the outbox, once.
+  AND NOT EXISTS (SELECT 1 FROM telegram_update u2 WHERE u2.chat_id = @chat_id AND u2.message_id = h.message_id)
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o2 WHERE o2.chat_id = @chat_id AND o2.telegram_message_id = h.message_id)
 UNION ALL
 SELECT u.received_at, coalesce(nullif(trim(coalesce(u.payload->'message'->'from'->>'first_name', '') || ' ' ||
     coalesce(u.payload->'message'->'from'->>'last_name', '')), ''), 'someone'),

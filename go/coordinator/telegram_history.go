@@ -41,8 +41,12 @@ func telegramHistoryImport(q *Request, r *contract.TelegramHistoryImportRequest)
 	if r.ChatId > 0 {
 		kind = "private"
 	}
-	room, err := q.db().TelegramRoomUpsert(q.ctx(), db.TelegramRoomUpsertParams{ID: telegramRoomID(r.ChatId, thread), ChatID: r.ChatId,
-		ThreadID: thread, Kind: kind, Title: deref(r.Title)})
+	// A room Fleet knows keeps its kind and last-seen time; the import only creates a missing one.
+	room, err := q.db().TelegramRoomGet(q.ctx(), telegramRoomID(r.ChatId, thread))
+	if errors.Is(err, pgx.ErrNoRows) {
+		room, err = q.db().TelegramRoomUpsert(q.ctx(), db.TelegramRoomUpsertParams{ID: telegramRoomID(r.ChatId, thread), ChatID: r.ChatId,
+			ThreadID: thread, Kind: kind, Title: deref(r.Title)})
+	}
 	if err != nil {
 		return contract.TelegramHistoryImportReply{}, err
 	}
