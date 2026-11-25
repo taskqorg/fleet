@@ -551,19 +551,20 @@ export function RowCheck(p: { checked: boolean; label: string; onToggle: () => v
 /* ---------- Row pin: the pin mark of a pinned row, before its state icon (OR-12, OR-37) ---------- */
 
 /**
- * Rendered only on pinned rows, as the first cell; the caller gives that row the class pin-row, which adds the one leading
- * column (styles.css), so other rows do not move. Both go together: the cell without the class shifts every cell.
- * A click unpins and the row leaves the Pinned group.
+ * On a pinned row, the first cell; the caller gives that row the class pin-row, which adds the one leading column
+ * (styles.css), so other rows do not move. Both go together: the cell without the class shifts every cell. A click unpins
+ * and the row leaves the Pinned group. With `off`, the pin of a row not pinned yet, after its title: shown on row hover and
+ * keyboard focus only (never on touch screens, where the row menu pins); a click pins (nav-rail.md, Pinned).
  */
-export function RowPin(p: { label: string; onUnpin: () => void }) {
+export function RowPin(p: { label: string; onToggle: () => void; /** Not pinned yet: shown on row hover and focus. */ off?: boolean }) {
   return (
     <button
       type="button"
-      class="row-pin"
+      class={['row-pin', { off: !!p.off }]}
       data-ui="row-pin"
-      aria-label={`Unpin ${p.label}`}
-      data-tip="Unpin"
-      onClick={e => { e.stopPropagation(); p.onUnpin(); }}
+      aria-label={`${p.off ? 'Pin' : 'Unpin'} ${p.label}`}
+      data-tip={p.off ? 'Pin' : 'Unpin'}
+      onClick={e => { e.stopPropagation(); p.onToggle(); }}
     >
       <Icon name="pin" />
     </button>

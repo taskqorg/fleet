@@ -3,7 +3,7 @@ import { createEffect, createSignal, For, Show } from 'solid-js';
 import { render, type JSX } from '@solidjs/web';
 import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
-  Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, RailBots, type RailBot, type RailBotsProps, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
+  Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, RailPinned, type RailPin, type RailPinnedProps, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, EntityCardLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
   Composer, DropZone, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
@@ -257,28 +257,24 @@ function RailDemo() {
     <figure class="pane rail-demo"><figcaption class="muted type-sm">{t}</figcaption><NavRail items={items} pinned={pinned()} current={cur()} onGo={setCur} onPins={setPinned} mini={mini} /></figure>}</For></div>;
 }
 
-/** The bots zone at the bottom of the rail (nav-rail.md, Bots): pinned, active, then recent; expanded and collapsed. */
-function RailBotsDemo() {
+/** The Pinned zone at the bottom of the rail (nav-rail.md, Pinned): conversations and bots the person pinned; expanded, collapsed, empty. */
+function RailPinnedDemo() {
   const [cur, setCur] = createSignal('home');
   const now = Date.now();
-  const [pins, setPins] = createSignal(['hal0', 'scout']);
-  const [recent, setRecent] = createSignal(1);
-  const all: Omit<RailBot, 'pinned'>[] = [
-    { id: 'hal0', name: 'HAL0', state: 'working', at: now - 4 * 60_000, href: '#' },
-    { id: 'scout', name: 'Scout', state: 'asleep', at: now - 2 * 3_600_000, href: '#' },
-    { id: 'relay', name: 'Relay', state: 'waiting', at: now - 9 * 60_000, href: '#' },
-    { id: 'docs', name: 'Docs', state: 'asleep', at: now - 86_400_000, href: '#' },
-    { id: 'probe', name: 'Probe', state: 'failed', at: now - 3 * 86_400_000, href: '#' },
+  const all: RailPin[] = [
+    { key: 'bot:hal0', name: 'HAL0', href: '#', mark: { letter: 'HAL0', tone: 'success' }, state: 'working', word: 'working', at: now - 2 * 60_000 },
+    { key: 'session:pm', name: 'PM · fleet · rail pins', href: '#', mark: { harness: 'claude', tone: 'neutral' }, state: 'waiting', word: 'waiting', asks: true, at: now - 5 * 60_000 },
+    { key: 'session:dam', name: 'LBG2-124 DAM documents', href: '#', mark: { harness: 'codex', tone: 'neutral' }, word: 'done', at: now - 4 * 60_000 },
+    { key: 'session:h2', name: 'HAL0 · H2 readiness', href: '#', mark: { letter: 'HAL0', tone: 'success' }, state: 'failed', word: 'failed', at: now - 86_400_000 },
   ];
-  const bots = () => [...pins().map(id => ({ ...all.find(b => b.id === id)!, pinned: true })), ...all.filter(b => !pins().includes(b.id)).map(b => ({ ...b, pinned: false }))];
-  const zone: RailBotsProps = {
-    get bots() { return bots(); }, get recent() { return recent(); }, allHref: '#',
-    onOpen: () => {}, onAll: () => {}, onLibrary: () => {}, onHide: () => {}, onRecent: setRecent,
-    onPin: (b, on) => setPins(p => on ? [...p.filter(x => x !== b.id), b.id] : p.filter(x => x !== b.id)),
-  };
-  return <div class="rail-demos"><For each={[['On', false], ['On, collapsed', true]] as const}>{([t, mini]) =>
+  const [keys, setKeys] = createSignal(all.map(p => p.key));
+  const zone = (empty: boolean): RailPinnedProps => ({
+    get pins() { return empty ? [] : keys().map(k => all.find(p => p.key === k)!); },
+    onOpen: () => {}, onHide: () => {}, onOrder: setKeys, onUnpin: p => setKeys(ks => ks.filter(k => k !== p.key)),
+  });
+  return <div class="rail-demos"><For each={[['On', false, false], ['On, collapsed', true, false], ['On, nothing pinned', false, true]] as const}>{([t, mini, empty]) =>
     <figure class="pane rail-demo" style={{ height: '640px', 'max-height': 'none' }}><figcaption class="muted type-sm">{t}</figcaption>
-      <NavRail items={NAV} pinned={[]} current={cur()} onGo={setCur} onPins={() => {}} mini={mini} zone={<RailBots {...zone} />} bots={{ on: true, set: () => {} }}
+      <NavRail items={NAV} pinned={[]} current={cur()} onGo={setCur} onPins={() => {}} mini={mini} zone={<RailPinned {...zone(empty)} />} pinnedZone={{ on: true, set: () => {} }}
         foot={<div class="rail-user"><span class="rail-user-b"><span class="avatar">K</span><span class="nm">Kirs</span></span></div>} /></figure>}</For></div>;
 }
 
@@ -473,7 +469,7 @@ function StartDemo() {
 const SECTIONS: [string, string, string | undefined, () => JSX.Element, (() => JSX.Element)?][] = [
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, () => <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, () => <>OR-3: one stable icon per workspace, from the registry.</>],
-  ['rail-bots', 'Bots zone in the navigation', 'nav-rail', () => <RailBotsDemo />, () => <>Turned on per person (railBots): the bots pinned in Library, then the active ones, then the recent ones up to the person's count, at the bottom above the user block. Right-click the heading for the count; right-click a bot to pin it.</>],
+  ['rail-pinned', 'Pinned zone in the navigation', 'nav-rail', () => <RailPinnedDemo />, () => <>Turned on per person (railPinned): the conversations and bots the person pinned, in their order. Right-click a row: Unpin, Open, Move up, Move down; right-click the heading: hide the zone.</>],
   ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, () => <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters count each section's counter view; with a focus they split into in focus and outside, collapsed only the in-focus badge stays. Search is the icon in the shell header (OR-31, OR-43).</>],
   ['spotlight', 'Spotlight palette', 'spotlight', () => <SpotlightDemo />, () => <>OR-32. Empty, it shows the focus presets (a preset of only ignored projects is not offered), recent items and the terms; type <code>deploy</code> for state icons, ages, the results outside the focus and the "All N" row. Close and reopen: the query and the highlighted row stay.</>],
   ['focus-control', 'Focus chip in the shell header', 'focus-control', () => <div class="stack"><HeaderDemo start={[]} /><HeaderDemo start={['fleet', 'desiign', 'cs']} /></div>, () => <>OR-34, OR-43. Neutral with every project; toned with a focus, names two projects then +N. The bell counts what needs you outside the focus. The panel floats under the chip: presets, projects with an ignore action, and the folded Ignored section to restore them.</>],

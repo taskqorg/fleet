@@ -15,7 +15,7 @@ import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setPanel, panelsOf, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
 import { useOp, touchedBy, setIdentity, startStore } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
-import { useRailBots } from './rail-bots.ts';
+import { useRailPinned } from './rail-pinned.ts';
 import { entityCards } from './entity-cards.ts';
 import { startFeed, stopFeed, subscribe, setResyncHandler, rebaseFeed } from './feed.ts';
 import { adopt, forget, mirrored } from './persist.ts';
@@ -305,8 +305,8 @@ function App() {
   // While the person is validated, a tab that kept a read mirror shows its pages from it at once (operator-app D3);
   // their reads wait for the gate, and another person's copy is cleared before it opens.
   const showPrivate = createMemo(() => isOpen() || (access.value.state === 'validating' && mirrored()));
-  const railBots = useRailBots(isOpen, go);
-  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() && !viewer() ? search : []} ready={shown()} wall={wall()} bots={isOpen() ? railBots : undefined}
+  const railPinned = useRailPinned(isOpen, go);
+  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() && !viewer() ? search : []} ready={shown()} wall={wall()} pinnedZone={isOpen() ? railPinned : undefined}
     searchIdle={<FocusPresets icon value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} onChange={setFocus} />}
     focus={isOpen() && !viewer() ? <Focus go={go} /> : undefined}
     widths={geometry().widths} onWidth={setWidth} panels={geometry().panels} onPanel={setPanel}

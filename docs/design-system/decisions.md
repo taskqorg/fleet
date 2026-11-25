@@ -576,7 +576,7 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 
 * **Question (owner):** a button in the left menu shows bots, off by default; on, a zone shows the pinned bots and the recently active ones, with a configurable count and a link to all bots.
 * **Options:** the zone at the bottom of the rail, above the user block, growing into free space (A); or at the top under the head, with a fixed number of rows so the sections do not move with bot activity (B).
-* **Choice (owner):** A, bottom. Placement is therefore not a setting. The switch and the recent count are the person setting `railBots`; pins stay the Library pins. Recorded in [nav-rail](controls/nav-rail.md) (**Bots**), board [shell](board/screens/shell.bl), frame "Shell · rail bots zone".
+* **Choice (owner):** A, bottom. Placement is therefore not a setting. The switch and the recent count are the person setting `railBots`; pins stay the Library pins. Recorded in [nav-rail](controls/nav-rail.md), board [shell](board/screens/shell.bl), frame "Shell · rail bots zone". Replaced on 2026-11-26 by the Pinned zone.
 
 ## 2026-11-25: Balancing lives on Live as items
 
@@ -650,3 +650,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
   * Phone row: the title wraps to two lines and the time stays rightmost on line 1. Line 2 holds the agent mark and the now line. The code is hidden.
 * **Where:** [conversations.md](pages/conversations.md#layout), [session.md](pages/session.md#layout), [fleet-conversations.md](../designs/fleet-conversations.md#work-item-threads); canvas [screens/conversations.bl](board/screens/conversations.bl), frames "Thread list v2 under the bot" and "Phone list row".
 * **Process:** walk the live pages on real data before drawing and after each deploy ([design board](README.md#design-board), steps 2 and 5).
+
+## 2026-11-26: Pinned in the navigation
+
+* **Question (owner):** the bots zone allowed only bots to be pinned; a PM conversation could not be. Replace it with a zone that shows or hides pinned objects, a bot or a conversation alike.
+* **Options:** the zone as drawn on the board ([board](board/screens/shell.bl), frame "Shell · rail Pinned zone (approved)"): one pin per object, pinned from the object itself, rows in the person's order with Move up and Move down; or a simpler order (bots, then conversations) with no reordering.
+* **Choice (owner, "как есть"):** as drawn, with Move up and Move down. The switch is the person setting `railPinned` (the `railBots` switch carried over, migration 119); the pins stay the Conversations and Library pins, so existing bot pins show at once; the order is `rowPins.nav`. Active and recent bots no longer show on their own. Recorded in [nav-rail](controls/nav-rail.md) (**Pinned**).

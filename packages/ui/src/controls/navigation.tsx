@@ -269,8 +269,8 @@ export function NavRail(p: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
   /** Collapsed to icons. */ mini?: boolean; /** Product name and need-you chip (app shell). */ head?: JSX.Element; /** The current user block, at the bottom. */ foot?: JSX.Element;
-  /** The bots zone above the user block (RailBots), when the person turned it on. */ zone?: JSX.Element;
-  /** The person's bots-zone switch, offered in every item's context menu (nav-rail.md, Bots). */ bots?: { on: boolean; set: (on: boolean) => void };
+  /** The Pinned zone above the user block (RailPinned), when the person turned it on. */ zone?: JSX.Element;
+  /** The person's Pinned-zone switch, offered in every item's context menu (nav-rail.md, Pinned). */ pinnedZone?: { on: boolean; set: (on: boolean) => void };
 }) {
   // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
   const pinned = createMemo(() => p.pinned.filter(id => p.items.some(i => i.id === id)));
@@ -379,10 +379,10 @@ export function NavRail(p: {
                 <Icon name="arrow-down" />Move down
               </button>
             </Show>
-            <Show when={p.bots} keyed>
+            <Show when={p.pinnedZone} keyed>
               {b => (
                 <button type="button" role="menuitem" onClick={act(() => b.set(!b.on))}>
-                  <Icon name={b.on ? 'x' : 'bot'} />{b.on ? 'Hide bots in navigation' : 'Show bots in navigation'}
+                  <Icon name={b.on ? 'pin-off' : 'pin'} />{b.on ? 'Hide pinned in navigation' : 'Show pinned in navigation'}
                 </button>
               )}
             </Show>
@@ -424,7 +424,7 @@ export function NavRail(p: {
  */
 export function BottomBar(p: {
   items: NavItem[]; current: string; onGo: (id: string) => void; foot?: JSX.Element;
-  /** First in the More menu: the bots zone when it is on (RailBotsStrip); done closes the menu. */ extra?: (done: () => void) => JSX.Element;
+  /** First in the More menu: the Pinned zone when it is on (RailPinnedStrip); done closes the menu. */ extra?: (done: () => void) => JSX.Element;
 }) {
   const [open, setOpen] = createSignal(false);
   const tabs = createMemo(() => p.items.slice(0, 4));

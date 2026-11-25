@@ -406,7 +406,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
             ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup, i.key)} tone={i.icon ? undefined : p.groupTone?.(g.rowsGroup, i.key)} label={i.label} count={i.count} open={!g.closed.has(i.key)} onToggle={() => g.toggleGroup(i.key)} />
             : <>
               <Show when={g.selecting}><span class="lead"><RowCheck checked={g.sel.includes(i.r.id)} label={'Select ' + p.title(i.r)} onToggle={() => g.select(i.r)} /></span></Show>
-              <Show when={i.pinned}><span class="lead"><RowPin label={p.title(i.r)} onUnpin={() => {
+              <Show when={i.pinned}><span class="lead"><RowPin label={p.title(i.r)} onToggle={() => {
                 // In selection mode the pin selects like the rest of the row; otherwise it unpins and focus follows the row to its group.
                 if (g.selecting) return g.select(i.r);
                 g.pins.toggle(i.r.id); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(i.r.id)}"] .row-link`)?.focus({ preventScroll: true }));
@@ -419,7 +419,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
                   if (e.key === 'p') { e.preventDefault(); g.pins.toggle(i.r.id); }
                   else if (e.key === 'x') { e.preventDefault(); g.select(i.r); }
                   // The Menu key and Shift+F10 fire contextmenu on the row: onRowMenu opens the menu.
-                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} kind={g.entity} /></span>
+                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} kind={g.entity} /><Show when={!i.pinned && !g.selecting}><RowPin off label={p.title(i.r)} onToggle={() => g.pins.toggle(i.r.id)} /></Show></span>
               <span class="rz">{p.facts(i.r)}</span>
               <Show when={p.after}>{a => a()(i.r)}</Show>
             </>} />}
