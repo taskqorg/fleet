@@ -25,6 +25,7 @@ The board has one home, like a shared design file: the persistent board worktree
 | [ia](board/ia.bl) | The sections, the question each answers, the journeys | The [information architecture](../designs/fleet-ia-and-journeys.md) changes |
 | [blocks](board/blocks.bl) | Every block of Home, Live and the session view as a component with all its states ([block list](controls/README.md#blocks-of-home-live-and-the-session-view)) | A block's spec changes; screens use its instances, so the change reaches them |
 | `screens/<page>` ([home](board/screens/home.bl), [live](board/screens/live.bl), [session](board/screens/session.bl), [conversations](board/screens/conversations.bl), [projects](board/screens/projects.bl), [lab](board/screens/lab.bl), [library](board/screens/library.bl), [system](board/screens/system.bl)) | The approved states of one page: a row at 1440 px, then phone 390 px, then the parts it adds | The owner approves a state; the [page spec](pages/README.md) links its canvas |
+| [screens/shell](board/screens/shell.bl) | The rail's user block: update strip, avatar, version and its overview in every state, expanded, collapsed and phone | The [nav rail](controls/nav-rail.md) user block or version changes |
 | [screens/flow](board/screens/flow.bl) | The journeys J1–J5, answering a question from Home and waking a bot as click paths over instances of the screens | A screen or a journey changes; screens are components, so their changes reach it |
 
 How a screen moves through the board:

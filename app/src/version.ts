@@ -7,6 +7,7 @@ import { cell } from './signal.ts';
 import type { Tone, VersionInfo, VersionRow } from '../../packages/ui/src/index.ts';
 import { op, type Ops } from './api.ts';
 import { accessGeneration, isAccessCurrent, onAccessInvalidated } from './access.ts';
+import { navigate } from './router.ts';
 
 type Versions = Ops['system_versions']['reply'];
 export const versions = cell<Versions | null>(null);
@@ -69,6 +70,8 @@ export const olderThan = (a: string | null | undefined, b: string | null | undef
 /**
  * Reload into the new app on the first click: the waiting service worker (if any) takes over first, so the reload is
  * served by the new worker and its cache; without one the reload alone fetches the new page (navigations go to the network).
+ * Once the reload is asked for, `updating` stays on until the page unloads: the control never turns back into Update in
+ * between (a busy state cleared before the reload landed showed the button again). A failure says why and allows Retry.
  */
 export async function applyUpdate() {
   if (updating.value) return;
@@ -76,7 +79,7 @@ export async function applyUpdate() {
   updateError.value = null;
   try {
     // A reload after an unreadable page could return an old offline shell, so verify the site before proceeding.
-    if (!await servedAssets()) throw Error('The current site app is unavailable. Retry when connected.');
+    if (!await servedAssets()) throw Error('The site app is unreachable. Retry when connected.');
     const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
     if (reg) {
       await reg.update();
@@ -97,25 +100,35 @@ export async function applyUpdate() {
       });
     }
     location.reload(); // navigation is network-first; the next tab confirms its assets against the site
-  } catch (error) { updateError.value = error instanceof Error ? error.message : String(error); }
-  finally { updating.value = false; }
+  } catch (error) {
+    updateError.value = error instanceof Error ? error.message : String(error);
+    updating.value = false;
+  }
 }
 
-/** Starts the checks: soon after load, when the tab gets focus (at most once a minute), and every 5 minutes. */
+/** Starts the checks: at load, when the tab gets focus (at most once a minute), and every 5 minutes. */
 export function startVersionChecks(): () => void {
   let last = 0;
   const run = () => { if (document.hidden || Date.now() - last < 60_000) return; last = Date.now(); void checkUpdate(); void loadVersions(); };
-  const first = setTimeout(run, 3000), every = setInterval(() => { last = 0; run(); }, 300_000);
+  const first = setTimeout(run, 0), every = setInterval(() => { last = 0; run(); }, 300_000);
   addEventListener('focus', run);
   return () => { clearTimeout(first); clearInterval(every); removeEventListener('focus', run); };
 }
 
+/** Only a confirmed problem tones the mark (nav-rail.md, Version): attention and danger rows; every other tone is the row's own. */
 const RANK: Record<Tone, number> = { neutral: 0, success: 0, running: 0, attention: 1, danger: 2 } as Record<Tone, number>;
 
-/** The navigation's version mark and the rows of its overview. */
+/**
+ * The navigation's version mark and the rows of its overview. A row is toned attention or danger only for a confirmed
+ * problem that is true now: a host update that failed, a host whose poll problem is open, a gateway that failed a probe
+ * and its re-probe, a host behind with auto-update off or held. Not yet checked, a probe not yet repeated, a failed or
+ * late read (the overview says when it last checked) and an offline host are facts, never warnings.
+ */
 export function versionInfo(now = Date.now()): VersionInfo {
   const v = versions.value, rows: VersionRow[] = [];
-  rows.push({ key: 'tab', part: 'This tab', icon: 'panels-top-left', version: tabVersion.value, state: updateChecked.value ? (updateReady.value ? 'update ready' : 'current') : 'unknown', tone: updateChecked.value ? (updateReady.value ? 'running' : 'success') : 'attention' });
+  rows.push({ key: 'tab', part: 'This tab', icon: 'panels-top-left', version: tabVersion.value,
+    state: updateChecked.value ? (updateReady.value ? 'older than the site' : 'current') : 'not checked yet',
+    tone: updateChecked.value ? (updateReady.value ? 'running' : 'success') : 'neutral' });
   if (v) {
     // Server moments keep their true time (the tooltip); their age counts from the server's present as this tab estimates it.
     const serverNow = v.serverNow + Math.max(0, now - (versionObservedAt.value ?? now)), at = (label: string, t: number) => [{ label, at: t, now: serverNow }];
@@ -125,45 +138,48 @@ export function versionInfo(now = Date.now()): VersionInfo {
       times: Number.isFinite(started) ? at('started', started) : undefined,
       note: v.coordinator.offered && v.coordinator.offered !== v.coordinator.version ? `offers ${v.coordinator.offered}` : undefined });
     if (v.gateway) {
-      const g = v.gateway, stale = g.observedAt == null || serverNow - g.observedAt > 60_000;
-      rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: g.version ?? null, state: stale ? 'unknown (probe pending)' : g.state,
-        times: g.observedAt != null ? at('checked', g.observedAt) : undefined, note: g.observedAt != null ? undefined : 'No probe result yet',
-        tone: stale ? 'attention' : g.state === 'ok' ? 'success' : g.state === 'draining' || g.state === 'pending' ? 'attention' : 'danger' });
+      // The coordinator probes the gateway when read and the last probe is older than a minute, and repeats a failed probe
+      // at once (go/coordinator/versions.go): an older probe is being repeated, so it reads "checking", not a problem.
+      const g = v.gateway, aged = g.observedAt == null || serverNow - g.observedAt > 60_000;
+      rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: g.version ?? null,
+        state: aged || g.state === 'pending' ? 'checking…' : g.state,
+        times: g.observedAt != null ? at(aged ? 'last checked' : 'checked', g.observedAt) : undefined,
+        note: aged && g.observedAt != null && g.state !== 'ok' ? `last: ${g.state}` : undefined,
+        tone: aged || g.state === 'pending' ? 'neutral' : g.state === 'ok' ? 'success' : g.state === 'draining' ? 'running' : 'danger' });
     }
     for (const h of v.hosts) {
       const { seen, failingSince, ...s } = hostState(h, serverNow, v.staleAfterMs);
       const times = [...seen !== undefined ? at('last seen', seen) : [], ...failingSince !== undefined ? at('failing since', failingSince) : []];
-      rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...s, times: times.length ? times : undefined });
+      rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...s, times: times.length ? times : undefined,
+        open: s.tone === 'attention' || s.tone === 'danger' || s.state === 'offline' || s.state === 'polls failing' ? () => navigate(`/hosts/${encodeURIComponent(h.id)}`) : undefined });
     }
   }
-  if (v && (versionError.value || versionObservedAt.value === null || now - versionObservedAt.value > 300_000)) {
-    for (const row of rows) if (row.key !== 'tab') {
-      row.state = `unknown (last: ${row.state})`; if (row.tone !== 'danger') row.tone = 'attention';
-      if (versionObservedAt.value !== null) row.times = [...row.times ?? [], { label: 'observed', at: versionObservedAt.value }];
-      row.note = [row.note, versionObservedAt.value === null ? 'Never observed' : '', versionError.value].filter(Boolean).join('; ') || undefined;
-    }
-  }
-  if (updateError.value) rows.unshift({ key: 'update', part: 'App update', icon: 'rotate-cw', version: null, state: 'pending / failed', tone: 'attention', note: updateError.value });
   const worst = rows.reduce((t, r) => RANK[r.tone] > RANK[t] ? r.tone : t, 'neutral' as Tone), n = rows.filter(r => RANK[r.tone] > 0).length;
-  return { current: v?.coordinator.version ?? null, tone: RANK[worst] > 0 ? worst : 'neutral', summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined, updateReady: updateChecked.value && updateReady.value, updating: updating.value, onUpdate: applyUpdate, rows, at: versionInfo, onOpen: () => { void loadVersions(); void checkUpdate(); } };
+  const ready = updateChecked.value && updateReady.value;
+  return { current: v?.coordinator.version ?? null, tone: worst, summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined,
+    updateReady: ready, newVersion: ready ? v?.ui.version ?? null : null, updating: updating.value, updateError: updateError.value, onUpdate: applyUpdate,
+    checkedAt: versionObservedAt.value, checkError: versionError.value, rows, at: versionInfo, onOpen: () => { void loadVersions(); void checkUpdate(); } };
 }
 
+/** One host's row. Danger and attention only for confirmed problems (versionInfo). */
 export function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string; seen?: number; failingSince?: number } {
   const offline = h.lastSeenAt === null || now - h.lastSeenAt > staleMs, seen = offline && h.lastSeenAt !== null ? h.lastSeenAt : undefined;
   // The coordinator answers this host's polls with an error (go/coordinator/host_poll_health.go): it gets no commands and
   // no update target while lastSeenAt still moves (the server sends it only while the host polls; an aged snapshot of a
-  // host gone since shows offline). The note is the reason code, never the message.
+  // host gone since shows offline). It is a problem once the coordinator has opened the host's poll problem (pollProblem);
+  // before that the next good poll may clear it. The note is the reason code, never the message.
   const pe = h.pollError;
-  if (pe && !offline) return { state: 'polls failing', tone: 'danger', failingSince: pe.since, note: `${pe.reason} (${pe.status})` };
+  if (pe && !offline) return { state: 'polls failing', tone: h.pollProblem ? 'danger' : 'neutral', failingSince: pe.since, note: `${pe.reason} (${pe.status})` };
   const u = (h.update ?? null) as { state?: string; version?: string; error?: string } | null;
   // A failed update stops mattering once the host runs that release or a newer one another way.
   const stale = olderThan(h.version, u?.version) === false;
   if (u && !stale && ['error', 'failed', 'refused'].includes(u.state ?? '')) return { state: `${offline ? 'offline; ' : ''}update ${u.state}`, tone: 'danger', seen, note: [u.error, offline && h.lastSeenAt === null ? 'never seen' : ''].filter(Boolean).join('; ') || undefined };
   if (offline) return { state: 'offline', tone: 'neutral', seen, note: h.lastSeenAt === null ? 'never seen' : undefined };
-  if (u?.state === 'pending') return { state: 'update pending', tone: 'running', note: u.version };
+  if (u?.state === 'pending') return { state: 'updating', tone: 'running', note: u.version };
   const auto = typeof h.autoUpdate === 'string' ? h.autoUpdate : 'on';
-  const held = auto === 'off' || (auto !== 'on' && Date.parse(auto) > now);
-  if (h.behind === null || !h.version) return { state: 'unknown', tone: 'attention', note: held ? (auto === 'off' ? 'auto-update off' : 'update held') : 'No comparable offered release' };
-  if (h.behind) return { state: 'behind', tone: 'attention', note: held ? (auto === 'off' ? 'auto-update off' : 'update held') : undefined };
-  return { state: 'current', tone: 'success', note: held ? (auto === 'off' ? 'auto-update off' : 'update held') : undefined };
+  const held = auto === 'off' || (auto !== 'on' && Date.parse(auto) > now), heldNote = auto === 'off' ? 'auto-update off' : 'update held';
+  if (h.behind === null || !h.version) return { state: 'unknown', tone: 'neutral', note: held ? heldNote : 'No comparable offered release' };
+  // Behind with auto-update on updates itself; behind while held waits for a person.
+  if (h.behind) return held ? { state: 'behind', tone: 'attention', note: heldNote } : { state: 'behind', tone: 'neutral', note: 'updates itself' };
+  return { state: 'current', tone: 'success', note: held ? heldNote : undefined };
 }

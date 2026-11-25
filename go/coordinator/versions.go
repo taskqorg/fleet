@@ -27,16 +27,28 @@ func systemVersions(q *Request) (contract.SystemVersionsReply, error) {
 	if err != nil {
 		return contract.SystemVersionsReply{}, err
 	}
-	return systemVersionsFromHosts(list), nil
+	return systemVersionsFromHosts(q, list)
 }
 
-func systemVersionsFromHosts(list contract.HostsListReply) contract.SystemVersionsReply {
+// systemVersionsFromHosts: the reply for a hosts list read in the same request. pollProblem says whether a failing host's
+// poll problem is open (host_poll_health.go): that confirmed failure tones the version mark; a single failed poll that
+// the next good poll clears does not.
+func systemVersionsFromHosts(q *Request, list contract.HostsListReply) (contract.SystemVersionsReply, error) {
 	target := healthyTarget()
 	hosts := []contract.HostVersion{}
 	for _, h := range list.Hosts {
 		row := contract.HostVersion{Id: h.Id, Version: h.Version, AutoUpdate: h.AutoUpdate, Update: h.Update, LastSeenAt: h.LastSeenAt, PollError: h.PollError}
 		if b, ok := versionBehindTarget(valueOr(h.Version), target).(bool); ok {
 			row.Behind = &b
+		}
+		if h.PollError != nil {
+			held, err := problemHeld(q, hostPollCause(h.Id))
+			if err != nil {
+				return contract.SystemVersionsReply{}, err
+			}
+			if held != nil {
+				row.PollProblem = ptr(true)
+			}
 		}
 		hosts = append(hosts, row)
 	}
@@ -48,7 +60,7 @@ func systemVersionsFromHosts(list contract.HostsListReply) contract.SystemVersio
 		coord.Commit = &c
 	}
 	return contract.SystemVersionsReply{Coordinator: coord, Ui: uiRelease(), Hosts: hosts, ServerNow: list.ServerNow, StaleAfterMs: list.StaleAfterMs,
-		Gateway: gatewayVersion()}
+		Gateway: gatewayVersion()}, nil
 }
 
 // Missing or non-release values do not establish an update comparison.
@@ -108,7 +120,8 @@ func uiRelease() contract.UiVersion {
 
 // The gateway's state is probed outside any request: a read returns the last probe at once (never holding its
 // transaction on the network) and starts a new probe (coalesced, background.go) when that one is older than a minute;
-// pending until the first probe.
+// pending until the first probe. A failed probe is repeated at once, so unreachable means the probe and its re-probe
+// both failed: one dropped request is not reported as an outage.
 var gatewayProbe struct {
 	sync.Mutex
 	at   time.Time
@@ -117,6 +130,9 @@ var gatewayProbe struct {
 
 var gatewayProbeNow = coalesced("gateway probe", func(ctx context.Context, _ struct{}) error {
 	d := probeGateway(ctx)
+	if d.State == contract.GatewayStateUnreachable {
+		d = probeGateway(ctx)
+	}
 	d.ObservedAt = ptr(float64(time.Now().UnixMilli()))
 	gatewayProbe.Lock()
 	gatewayProbe.last, gatewayProbe.at = &d, time.Now()

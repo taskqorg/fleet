@@ -406,10 +406,10 @@ export function AppShell(p: {
               </Show>
             </>
           }
-          foot={<Show when={p.user} keyed>{u => <UserBlock name={u.name} onLogout={u.onLogout} version={u.version} />}</Show>}
+          foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} />}</Show>}
         />
         {/* OR-60: below 760 px the bottom bar of five replaces the rail (CSS shows one of them). */}
-        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} foot={<Show when={p.user} keyed>{u => <UserBlock name={u.name} onLogout={u.onLogout} version={u.version} />}</Show>} />
+        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} />}</Show>} />
         <div class="shell-col">
           <Show when={!mini()}><Divider name="rail" /></Show>
           {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42),
@@ -521,20 +521,29 @@ export type VersionRow = {
   key: string; part: string; icon: IconName; version: string | null; state: string; tone: Tone; note?: string;
   /** Moments shown in compact form with the exact time on hover (OR-2), e.g. { label: 'last seen', at }; `now` is the present they count from (default: the panel's). */
   times?: { label: string; at: number; now?: number }[];
+  /** Opens the part's own page (a host), shown as "Open host" on rows that need a look. */
+  open?: () => void;
 };
 /**
- * The installed version beside the person (nav-rail.md, Version): the Fleet release, toned when a part needs a look (OR-18).
- * A click shows the overview of every part. When the site serves a newer app than this tab, Update reloads into it at once.
+ * The installed version beside the person (nav-rail.md, Version; board screens/shell): the Fleet release, toned only by a
+ * confirmed problem (OR-18). A click shows the overview of every part. When the site serves a newer app than this tab,
+ * an update strip above the user row names it and reloads into it.
  */
 export type VersionInfo = {
-  current: string | null; tone: Tone;
+  current: string | null;
+  /** attention or danger only for a confirmed problem; anything else is neutral. */ tone: Tone;
   /** Says in words what the tone shows (WCAG 1.4.1), e.g. "1 part needs a look"; absent when nothing does. */ summary?: string;
   updateReady: boolean; onUpdate: () => void; updating?: boolean; rows: VersionRow[]; onOpen?: () => void;
+  /** The version the site serves when an update is ready. */ newVersion?: string | null;
+  /** Why the last update did not finish; the strip offers Retry. */ updateError?: string | null;
+  /** When the versions were last read, and why the latest read failed (shown in the overview, never as a tone). */
+  checkedAt?: number | null; checkError?: string | null;
   /** The same info as of a moment: while the overview is open it is recounted on a timer, so the mark, states and ages move on together. */
   at?: (now: number) => VersionInfo;
 };
 /** How often the open version overview recounts its ages and states. */
 const VERSION_TICK = 15_000;
+const problem = (t: Tone) => t === 'attention' || t === 'danger';
 
 /** A floating layer fixed above its opener (OR-14 informational, OR-16): Esc, a click outside, a rail scroll or a resize closes it. */
 function useFloating(ref: () => HTMLElement | undefined, focusBack: string) {
@@ -572,83 +581,96 @@ function useFloating(ref: () => HTMLElement | undefined, focusBack: string) {
   return { open, setOpen, toggle };
 }
 
-/** The signed-in person at the bottom of the navigation: avatar and name (avatar only when collapsed); a click opens Logout. The version follows. */
+/**
+ * The update strip (board screens/shell): what is ready and one Reload; Reloading until the page goes; a failure with
+ * Retry. On the collapsed rail the same row, at the same height (OR-42), holds only the icon button.
+ */
+function UpdateStrip(p: { v: VersionInfo }) {
+  const failed = () => !!p.v.updateError && !p.v.updating;
+  return (
+    <div class={['upd-strip', { failed: failed() }]} data-ui="update-strip" role="status">
+      <span class="upd-text">
+        <Show when={failed()} fallback={<><b>{p.v.updating ? 'Reloading into' : 'New app ready'}</b><span class="mono">{p.v.newVersion ?? ''}</span></>}>
+          <b>Update failed</b><span>{p.v.updateError}</span>
+        </Show>
+      </span>
+      <span class="upd-full">
+        <Button label={p.v.updating ? 'Reloading' : failed() ? 'Retry' : 'Reload'} icon="rotate-cw" kind={failed() ? 'default' : 'primary'} busy={p.v.updating} onClick={p.v.onUpdate} />
+      </span>
+      <span class="upd-icon">
+        <Button label={p.v.updating ? 'Reloading' : failed() ? `Update failed: ${p.v.updateError}. Retry` : `Reload into ${p.v.newVersion ?? 'the new app'}`} icon="rotate-cw" iconOnly kind={failed() ? 'default' : 'primary'} busy={p.v.updating} onClick={p.v.onUpdate} />
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The signed-in person at the bottom of the navigation (board screens/shell): the update strip when a newer app is ready,
+ * then the avatar and name, then the version. The avatar never changes. Collapsed, the strip keeps its row with only its
+ * icon button, and the problem the hidden version mark shows floats above the block, so no row moves (OR-42).
+ */
 function UserBlock(p: { name: string; onLogout: () => void; version?: VersionInfo }) {
   let ref: HTMLDivElement | undefined;
   const menu = useFloating(() => ref, '.rail-user-b');
-  const panel = useFloating(() => ref, '.rail-ver, .rail-user-b');
+  const panel = useFloating(() => ref, '.rail-ver, .rail-prob, .rail-user-b');
   // One present for the mark and every row (OR-2), recounted every VERSION_TICK while the overview is open; closing clears the timer.
   const now = useTick(VERSION_TICK, () => !!panel.open());
   const v = createMemo(() => p.version?.at ? p.version.at(now()) : p.version);
-  const attention = createMemo(() => {
-    const info = v();
-    return !!info && (info.updateReady || info.tone !== 'neutral');
-  });
+  const offer = () => !!v() && (v()!.updateReady || !!v()!.updateError);
+  const openPanel = (e: Event) => { menu.setOpen(null); if (!panel.open()) v()?.onOpen?.(); panel.toggle(e); };
   return (
     <div class="rail-user" ref={el => { ref = el; }}>
-      <button
-        type="button"
-        class="rail-user-b"
-        aria-label={p.name}
-        aria-haspopup="menu"
-        aria-expanded={menu.open() ? 'true' : 'false'}
-        onClick={e => { panel.setOpen(null); menu.toggle(e); }}
-        onContextMenu={e => { panel.setOpen(null); menu.toggle(e); }}
-      >
-        <span
-          class={['avatar', attention() ? `dot t-${v()!.updateReady ? 'running' : v()!.tone}` : '']}
-          aria-hidden="true"
-          data-tip={p.name}
-          data-tip-narrow
+      <Show when={offer()}><UpdateStrip v={v()!} /></Show>
+      <Show when={v() && problem(v()!.tone)}>
+        <button type="button" class={['rail-prob', `t-${v()!.tone}`]} aria-label={`Versions: ${v()!.summary ?? ''}`} data-tip={`Versions: ${v()!.summary ?? ''}`} onClick={openPanel}>
+          <Icon name={v()!.tone === 'danger' ? 'octagon-x' : 'triangle-alert'} />
+        </button>
+      </Show>
+      <div class="rail-user-row">
+        <button
+          type="button"
+          class="rail-user-b"
+          aria-label={p.name}
+          aria-haspopup="menu"
+          aria-expanded={menu.open() ? 'true' : 'false'}
+          onClick={e => { panel.setOpen(null); menu.toggle(e); }}
+          onContextMenu={e => { panel.setOpen(null); menu.toggle(e); }}
         >
-          {p.name.slice(0, 1).toUpperCase()}
-        </span>
-        <span class="nm">{p.name}</span>
-      </button>
-      <Show when={v()} keyed>
-        {info => (
+          <span class="rail-av" aria-hidden="true" data-tip={p.name} data-tip-narrow>{p.name.slice(0, 1).toUpperCase()}</span>
+          <span class="nm">{p.name}</span>
+        </button>
+        <Show when={v()}>
           <button
             type="button"
-            class={['rail-ver', `t-${info.tone}`]}
+            class={['rail-ver', `t-${problem(v()!.tone) ? v()!.tone : 'neutral'}`]}
             aria-expanded={panel.open() ? 'true' : 'false'}
-            aria-label={`Version ${info.current ?? 'unknown'}${info.summary ? `, ${info.summary}` : ''}: show every part`}
-            data-tip={info.summary ? `Versions: ${info.summary}` : 'Versions'}
-            onClick={e => { menu.setOpen(null); if (!panel.open()) info.onOpen?.(); panel.toggle(e); }}
+            aria-label={`Version ${v()!.current ?? 'not read yet'}${v()!.summary ? `, ${v()!.summary}` : ''}: show every part`}
+            data-tip={v()!.summary ? `Versions: ${v()!.summary}` : 'Versions'}
+            onClick={openPanel}
           >
-            {info.current ?? '…'}
+            <Show when={problem(v()!.tone)}><Icon name={v()!.tone === 'danger' ? 'octagon-x' : 'triangle-alert'} /></Show>
+            {v()!.current ?? ''}
           </button>
-        )}
-      </Show>
-      <Show when={v()?.updateReady}>
-        <span class="rail-upd">
-          <Button label={v()!.updating ? 'Updating' : 'Update to the new version'} icon="rotate-cw" iconOnly kind="primary" busy={v()!.updating} onClick={v()!.onUpdate} />
+        </Show>
+      </div>
+      <Show when={menu.open()}>
+        <span class="menu rail-menu up float" role="menu" aria-label={p.name} style={{ left: menu.open()!.left + 'px', bottom: menu.open()!.bottom + 'px' }}>
+          <Show when={v()}>
+            <button type="button" role="menuitem" class="menu-ver" onClick={() => { const pos = menu.open(); menu.setOpen(null); v()?.onOpen?.(); panel.setOpen(pos); }}>
+              <Icon name="info" />Versions
+            </button>
+          </Show>
+          <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); p.onLogout(); }}><Icon name="log-out" />Logout</button>
         </span>
       </Show>
-      <Show when={menu.open()} keyed>
-        {pos => (
-          <span class="menu rail-menu up float" role="menu" aria-label={p.name} style={{ left: pos.left + 'px', bottom: pos.bottom + 'px' }}>
-            <Show when={v()?.updateReady}>
-              <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); v()!.onUpdate(); }}><Icon name="rotate-cw" />Update</button>
-            </Show>
-            <Show when={v()} keyed>
-              {info => (
-                <button type="button" role="menuitem" class="menu-ver" onClick={() => { menu.setOpen(null); info.onOpen?.(); panel.setOpen(pos); }}>
-                  <Icon name="info" />Versions
-                </button>
-              )}
-            </Show>
-            <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); p.onLogout(); }}><Icon name="log-out" />Logout</button>
-          </span>
-        )}
-      </Show>
-      <Show when={v() && panel.open() ? { v: v()!, at: panel.open()! } : null} keyed>
-        {state => <VersionPanel v={state.v} at={state.at} now={now()} />}
+      <Show when={v() && panel.open()}>
+        <VersionPanel v={v()!} at={panel.open()!} now={now()} />
       </Show>
     </div>
   );
 }
 
-/** The open version overview; every row counts from the same present. */
+/** The open version overview; every row counts from the same present. It stays open while its values change in place. */
 function VersionPanel(p: { v: VersionInfo; at: { left: number; bottom: number }; now: number }) {
   return (
     <div
@@ -658,25 +680,30 @@ function VersionPanel(p: { v: VersionInfo; at: { left: number; bottom: number };
       aria-label="Versions"
       style={{ left: p.at.left + 'px', bottom: p.at.bottom + 'px', '--ver-bottom': p.at.bottom + 'px' }}
     >
-      <Show when={p.v.updateReady}>
-        <div class="ver-update">
-          <span>A newer app is on the site.</span>
-          <Button label={p.v.updating ? 'Updating' : 'Update'} icon="rotate-cw" kind="primary" busy={p.v.updating} onClick={p.v.onUpdate} />
-        </div>
-      </Show>
+      <div class="ver-head">
+        <b>Versions</b>
+        <span class="muted">
+          <Show when={p.v.checkError}>could not check · </Show>
+          <Show when={p.v.checkedAt != null} fallback="checking…">{p.v.checkError ? 'last checked ' : 'checked '}<Ago t={p.v.checkedAt!} /> ago</Show>
+        </span>
+      </div>
+      <Show when={p.v.updateReady || p.v.updateError}><UpdateStrip v={p.v} /></Show>
       <table class="ver-table">
         <tbody>
-          <For each={p.v.rows}>
+          <For each={p.v.rows} keyed={(row: VersionRow) => row.key}>
             {r => (
               <tr>
-                <th scope="row"><Icon name={r.icon} /><span>{r.part}</span></th>
-                <td class="mono">{r.version ?? '—'}</td>
+                <th scope="row"><Icon name={r().icon} /><span>{r().part}</span></th>
+                <td class="mono">{r().version ?? '—'}</td>
                 <td>
-                  <span class={['ver-state', `t-${r.tone}`]}>{r.state}</span>
-                  <For each={r.times ?? []}>
-                    {x => <span class="muted"> {x.label} <Ago t={x.at} clockOffsetMs={x.now !== undefined ? x.now - p.now : 0} /></span>}
+                  <span class={['ver-state', `t-${r().tone}`]}>{r().state}</span>
+                  <For each={r().times ?? []}>
+                    {x => <span class="muted"> {x.label} <Ago t={x.at} clockOffsetMs={x.now !== undefined ? x.now! - p.now : 0} /></span>}
                   </For>
-                  <Show when={r.note} keyed>{note => <span class="muted"> {note}</span>}</Show>
+                  <Show when={r().note}><span class="muted"> {r().note}</span></Show>
+                </td>
+                <td class="ver-open">
+                  <Show when={r().open}><button type="button" onClick={() => r().open!()}>Open host<Icon name="arrow-right" /></button></Show>
                 </td>
               </tr>
             )}
