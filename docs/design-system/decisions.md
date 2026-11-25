@@ -591,3 +591,4 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Built into Live:** worker slots (attempts, time in work, agent mark in place of the harness name and tokens), a new In work list of every open task, Delivery rows (time since opened and in the stage), Just now (repeats as one event with `×N`, named by the task or the conversation), and `+K more` that opens the rest in place. Reads: `task_page` adds `lastStartedAt`, `executions_runners` adds `sessionTitle`; agents read both through ops and MCP.
 * **Next adopters:** Tasks (its row facts become `WorkFacts`), Conversations (agent mark and time in state), Results and Runners (time and agent), Home cards (time in state).
 * **Rule:** [OR-63](owner-rules.md).
+* **Board (OR-62):** built before OR-62 landed; the canvas is drawn from the book and approved by the owner before this merges.
