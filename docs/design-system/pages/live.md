@@ -44,9 +44,11 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 *Target* ([decision](../decisions.md#2026-11-25-balancing-lives-on-live-as-items), [work allocation and balancing](../../work-allocation.md#interface)). A Balance block answers "where may new work go, and why". One line per item, state first (OR-22):
 
 * host: In, Out until a time, or cap;
-* subscription: Preferred, Default, Avoid or Out, with what is left and when it resets; Only its holder for a personal one;
+* account: Preferred, Default, Avoid or Out, with what is left and when it resets; Only its holder for a personal one;
 * model class: its effective candidate order ("Antigravity first, then Codex, then Claude");
 * pinned project: the hosts and subscriptions it may use.
+
+Account lines list their logins (host and state: ready, not logged in, expired). Under the lines: the placement order in plain words, and the latest picks and moves, each with its reason.
 
 Each line says why in words: who set it, when, until, what it moved. A subscription with quota that will go unused carries the attention tone and the offered preference. The row menu (OR-37) offers In or Out, Prefer, Default or Avoid, Until and Undo; HAL0 makes the same changes by voice. An out host's band is dimmed with its state word. In wall mode the block only shows. Data: `balance_view`; writes: `balance_set`, `balance_undo`. Canvas: the frame "Live · Balance block (target)" on [screens/live.bl](../board/screens/live.bl). Not built.
 

@@ -8,7 +8,7 @@ What people must be able to do, in the owner's words where possible. Each line n
 
 | # | Requirement | Today |
 |---|---|---|
-| B1 | **Take a resource out.** "Nobody touches the Mac now": a host or a subscription takes no new work while the others keep working. Running work finishes where it is. It comes back on command or at a time given with the command. | Host and subscription `intake: paused` (`hosts_update`, `account_update`). Not built: a return time, a reason. |
+| B1 | **Take a resource out.** "Nobody touches the Mac now": a host or a subscription takes no new work while the others keep working. Running work finishes where it is. It comes back on command or at a time given with the command. | Host and subscription `intake: paused` (`hosts_update`, `account_update`); host `intake: spare` takes only work no other host can. Not built: a return time, a reason. |
 | B2 | **Pin a project.** "This project runs only here, only on this account": a project lists the hosts and subscriptions it may use; nothing else runs it. | Not built. The project's `subscriptions[]` only orders candidates; `environments[]` names checkouts, not a restriction. |
 | B3 | **Personal subscriptions stay personal.** A person who connects their own subscription uses only it, and nobody else's work runs on it unless that person lists the project in its take rule. | Built: the holder rule and `take.projects` ([people and access](designs/fleet-people-access.md#6-dispatch)). Not built: showing it as one line. |
 | B4 | **See quota that will go unused.** A subscription with quota left that resets before current use would spend it is visible, with how much and when, together with the work it could take. | Readings, burn, pace and projection exist (`subscription_limits`). Not built: the expected-unused figure and its place on Live. |
@@ -18,6 +18,8 @@ What people must be able to do, in the owner's words where possible. Each line n
 | B8 | **See the balance one item at a time.** Each host, subscription, model class and pinned project shows its effective state and why, on Live. | Not built. Hosts show on Live without balance state. |
 | B9 | **Change it by voice.** HAL0 applies every change the screen can make, says what it moved, and can undo it. | Not built. Agents can call `hosts_update` and `account_update`. |
 | B10 | **Explain.** Every queued run shows why it waits; every started run shows why it went where it went. | Built: `route_decision`, `waitReason` and `waitDetail`. |
+| B11 | **Accounts are understandable.** "Only 2 real Codex accounts, yet Fleet shows several": one screen says which real accounts exist, on which hosts each is logged in and whether that login works, the rules in plain words for which account a task takes, and the picks as they happen, with controls. | Not built. Each `managed_account` record has one host binding and no field naming the real provider identity: prod has five codex records for two real accounts, so picking a subscription picks a host, readings split per record, and the "two personal subscriptions of one holder" warning fires on every decision. |
+| B12 | **A conversation stays where it lives.** A conversation (bot or session) continues on the host and login that hold its native session. It moves only when forced: the host is gone or updating past the hold, the login is not ready, or the account is out or exhausted. Every move is visible with its reason. | Not built. `rankCandidates` loops subscriptions first and hosts second, so a momentary skip of the first subscription moves the turn to another host: HAL0 conversation C-FLT-592 moved host 45 times in 14 hours on 2026-11-25, each move a new native thread plus a growing handoff. |
 
 Constraints that hold for all of them:
 
@@ -39,7 +41,7 @@ Five kinds of field, each on the item it concerns. Each carries `until` (a time,
 
 | Field | On | Values | Effect on new work |
 |---|---|---|---|
-| **intake** (B1) | host, subscription | `in`, `out` | `out`: no new start on it. Existing column `intake` (`all` reads as `in`, `paused` as `out`). |
+| **intake** (B1) | host, account | `in`, `out`; a host also `spare` | `out`: no new start on it. `spare`: only work no other host can take now. Existing column `intake` (`all` reads as `in`, `paused` as `out`). |
 | **only** (B2) | project settings `placement` | `{hosts?: [host], subscriptions?: [subscription]}` | The project's work starts only on listed hosts and subscriptions. An empty or absent list leaves that side open. |
 | **preference** (B5) | subscription; harness and model in the director's person settings | `prefer`, `default`, `avoid` | Reorders candidates that pass every requirement (see below). `avoid` is used only when no `prefer` or `default` candidate can start now. |
 | **cap** (B7) | host | positive integer or none | Existing `maxConcurrent`. |
@@ -48,6 +50,15 @@ Five kinds of field, each on the item it concerns. Each carries `until` (a time,
 Who may set them follows existing authority: a host's or subscription's holder (or the owner) sets its intake, cap and preference; a project operator sets the project's `only`; each director sets the harness and model preference for the work they direct (the owner's covers the owner's work, which includes HAL0 and agents acting for the owner); architects edit model classes.
 
 `until` is either a time or "until reset", which resolves to the subscription's next `resetsAt` when set. When it passes, a background pass writes the previous value back with its own audit row.
+
+### Accounts and logins
+
+Two things that today share one record (B11):
+
+* **Account:** one real provider identity (a ChatGPT, Claude or Google login), with its holder, harness, intake, preference, take rule, `switchPct` and readings. Provider limits belong to the account, so readings are kept per account, not per host.
+* **Login:** that account authorized on one host, with a state: `ready`, `not logged in` or `expired` (from the existing binding readiness checks).
+
+Placement picks an account and one of its ready logins. The existing `managed_account` records of one real identity become one account with several logins; the provider's own account id or email, read at login, identifies the real identity (the record carries no such field today). The holder rule and take rules apply to the account, so "two personal subscriptions of one holder" stops firing for one person's one account. The "Account" in this document is the "subscription" of [people and access](designs/fleet-people-access.md).
 
 ### Model classes
 
@@ -66,6 +77,7 @@ For each subscription period with a reading, `expectedUnused = left − projecte
 ## Placement and selection
 
 1. Resolve task requirements, explicit choices, project rules, access and balance state.
+   **A continuation goes home first (B12).** For a run that continues a conversation, the candidate (the session's harness and model, its last login, that login's host) is tried before any other. It loses only when forced: the host is removed, offline past the hold or updating past `continuationHostWait`, the login is not ready, or the account is out, rejected or over `switchPct`. A momentary skip such as a full or overloaded host makes the run wait for its home within the same hold, not move. Preferences, `spare` and ordering apply to new conversations and to forced moves only. A move records `route_decision` with the forcing reason and shows in the conversation as one line ("moved from owner-mac to pds18: owner-mac updating").
 2. Find eligible candidates `(harness, model, subscription, host)`. Requirements filter: trust and grants, the project's `only` lists, intake `out`, host harness `allowed`, readiness, capabilities, `switchPct`, online, overload, cap and budgets (the existing order in `rankCandidates`, `go/coordinator/dispatch.go`). An alternate harness must come from the profile's model class and meet its requirements, not merely be installed.
 3. Order the eligible candidates:
    1. Harness and model: `prefer` first, then `default`, then `avoid`; ties keep the model class order.
@@ -81,7 +93,7 @@ Agents get every capability first (fleet.md R7); the web screen uses the same op
 
 | Operation | Does | Authority |
 |---|---|---|
-| `balance_view {project?}` | Every item with its effective state: hosts (intake, cap, running of slots), subscriptions (intake, preference, reading, `expectedUnused`, who may use it), model classes (effective candidate order for the caller), projects with `only` lists; each with `until`, set by, reason and `queuedAffected`. Plus the open suggestions. | Person; rows filtered by existing visibility |
+| `balance_view {project?}` | Every item with its effective state: hosts (intake, cap, running of slots), accounts (intake, preference, reading, `expectedUnused`, who may use it, and each login with its host and state), model classes (effective candidate order for the caller), projects with `only` lists; each with `until`, set by, reason and `queuedAffected`. Plus the open suggestions, the placement order in plain words ("New coding work: Antigravity first, then Codex; accounts: fleet-primary, then fleet-secondary; a conversation stays on its host and login unless forced"), and the latest picks and moves with their reasons. | Person; rows filtered by existing visibility |
 | `balance_set {item, field, value, until?, reason?, dryRun?}` | Writes one field above, with its audit row; wakes dispatch. With `dryRun`, writes nothing and returns what would change: queued runs that would move or wait, running work left as is. Without it, returns the same report and the change id. | As in [Balance state](#balance-state) |
 | `balance_undo {change}` | Writes back the value the change replaced. | Same as the change |
 | `route_decisions {execution}` | Why a run waits or went where it went. | Existing |
@@ -93,9 +105,9 @@ Agents get every capability first (fleet.md R7); the web screen uses the same op
 
 ## Interface
 
-Balancing lives on [Live](design-system/pages/live.md) as a **Balance** block: one line per item, each with its state word and why ("owner-mac · Out until 09:00 · HAL0, 14:02 · 2 running finish, 5 queued moved"; "antigravity-owner · Preferred · 82% left, resets 2d"; "alina-claude · Only Alina"; "Coding · Antigravity first, then Codex, then Claude"; "desiign · owner-mac, claude-owner"). There is no separate list of rules. A line's row menu (OR-37) offers In or Out, Prefer, Default or Avoid, Until and Undo; the same changes come by voice through HAL0. Host bands show an out host dimmed with its state word. Wall mode shows the block read-only. System keeps host and subscription configuration (registration, logins, `switchPct`, take rules) and links to Live for balance. The options drawn and the owner's pick are in the [decision](design-system/decisions.md#2026-11-25-balancing-lives-on-live-as-items).
+Balancing lives on [Live](design-system/pages/live.md) as a **Balance** block: one line per item, each with its state word and why ("owner-mac · Out until 09:00 · HAL0, 14:02 · 2 running finish, 5 queued moved"; "antigravity-owner · Preferred · 82% left, resets 2d"; "alina-claude · Only Alina"; "Coding · Antigravity first, then Codex, then Claude"; "desiign · owner-mac, claude-owner"). Each account line lists its logins as host and state ("owner-mac ready · pds18 ready · windows expired"). Under the lines, the placement order in plain words and the latest picks: which conversation or task took which account and host, and every move with its reason. There is no separate list of rules. A line's row menu (OR-37) offers In or Out, Prefer, Default or Avoid, Until and Undo; the same changes come by voice through HAL0. Host bands show an out host dimmed with its state word. Wall mode shows the block read-only. System keeps host and subscription configuration (registration, logins, `switchPct`, take rules) and links to Live for balance. The options drawn and the owner's pick are in the [decision](design-system/decisions.md#2026-11-25-balancing-lives-on-live-as-items).
 
-Not built: all of [Operations](#operations), the Balance block, `until`, `only`, preferences and model classes.
+Not built: all of [Operations](#operations), the Balance block, `until`, `only`, preferences, model classes, accounts with logins and continuation-first placement.
 
 ## Running work and disconnection
 

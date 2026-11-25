@@ -167,6 +167,8 @@ Where and on what new work runs ([work allocation and balancing](../work-allocat
 | What a change would move before it applies: queued runs that move or wait, running work left as is | View | `balance_set` with `dryRun` |
 | Quota that will go unused before its reset, with the work it could take; the offered preference | Signal, Decision | `balance_view` suggestions |
 | Who may use a personal subscription | View | `balance_view` |
+| Accounts as real provider identities, each with its logins per host and their state | View | `balance_view` |
+| Placement order in plain words; latest picks and moves with their reasons | View | `balance_view`, `route_decisions` |
 
 ### Connections and access
 

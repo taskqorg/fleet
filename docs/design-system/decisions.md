@@ -574,4 +574,5 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Options** (drawn in Fleet tokens on the board home's `drafts/balancing.bl`): A, a band of rules as sentences on top of Live; B, a Balancing root in System with Live showing one summary line; C, a Balance block on Live with one line per host, subscription, model class and pinned project, each with its own state and why, and no rule list.
 * **Choice (owner):** C. A profile names a shared model class, not one model. Quota that will go unused is shown and HAL0 offers the preference; Fleet never switches on its own.
 * **Reason:** the owner reads the balance per item on the technical screen; fields on items keep one fact in one place, with no rule engine.
+* **Added by the owner the same day:** accounts become understandable on the same block (one real account with its logins per host, the placement order in plain words, the latest picks), and a conversation stays on its host and login unless forced, every move shown with its reason.
 * **Recorded in:** [work allocation and balancing](../work-allocation.md), [Live](pages/live.md#balance), [inventory](inventory.md#balancing).
