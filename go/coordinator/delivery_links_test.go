@@ -22,7 +22,16 @@ INSERT INTO task(id,code,title,project_id,state) VALUES
 INSERT INTO session(id,project_id,task_id,payload) VALUES
  ('`+s1+`','desiign','t-link','{}'),
  ('`+s2+`','desiign','t-link','{}');
+INSERT INTO execution(id,kind,state,project_id,session_id,data) VALUES
+ ('e-forge','agent_run','succeeded','desiign','`+s1+`','{}');
 `)
+	// A project-forge record from a renamed branch links through its source execution (its session's task).
+	pubMu.Lock()
+	savedRecs := pubRecords
+	pubRecords = map[string]contract.PublishingRecord{"r": {ProjectId: "desiign", Repo: "taskqorg/fleet", Number: 13,
+		Stage: string(contract.DeliveryStageMqWait), Branch: ptr("feat/renamed"), SourceExecutionId: ptr("e-forge")}}
+	pubMu.Unlock()
+	t.Cleanup(func() { pubMu.Lock(); pubRecords = savedRecs; pubMu.Unlock() })
 	deliveryMu.Lock()
 	saved := deliveryLast
 	deliveryLast = deliveryState{source: contract.DeliverySourceKey, repos: map[string]*deliveryRepo{
@@ -53,8 +62,8 @@ INSERT INTO session(id,project_id,task_id,payload) VALUES
 			t.Fatalf("item %d names task %v", it.Number, it.TaskId)
 		}
 	}
-	if len(got) != 2 || got[11] != s1 || got[12] != s2 {
-		t.Fatalf("publishing_status taskId t-link: %v, want #11 from %s and #12 from %s", got, s1, s2)
+	if len(got) != 3 || got[11] != s1 || got[12] != s2 || got[13] != s1 {
+		t.Fatalf("publishing_status taskId t-link: %v, want #11 and #13 from %s, #12 from %s", got, s1, s2)
 	}
 
 	var del contract.DeliveryStatusReply

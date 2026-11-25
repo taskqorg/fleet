@@ -558,6 +558,36 @@ func (q *Queries) DeliverySamples(ctx context.Context, since time.Time) ([]Deliv
 	return items, nil
 }
 
+const deliverySessionTasks = `-- name: DeliverySessionTasks :many
+SELECT id, task_id::text AS task_id FROM session WHERE id = ANY($1::text[]) AND task_id IS NOT NULL
+`
+
+type DeliverySessionTasksRow struct {
+	ID     string
+	TaskID string
+}
+
+// The task of each named session that has one: a pull request from a session branch is that task's.
+func (q *Queries) DeliverySessionTasks(ctx context.Context, ids []string) ([]DeliverySessionTasksRow, error) {
+	rows, err := q.db.Query(ctx, deliverySessionTasks, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeliverySessionTasksRow
+	for rows.Next() {
+		var i DeliverySessionTasksRow
+		if err := rows.Scan(&i.ID, &i.TaskID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deliverySettingsGet = `-- name: DeliverySettingsGet :one
 SELECT ratio, min_samples, min_delta_ms, baseline FROM delivery_settings LIMIT 1
 `
@@ -605,6 +635,39 @@ func (q *Queries) DeliverySettingsPut(ctx context.Context, arg DeliverySettingsP
 		arg.ProjectID,
 	)
 	return err
+}
+
+const deliverySourceTasks = `-- name: DeliverySourceTasks :many
+SELECT e.id, coalesce(e.session_id, '')::text AS session_id, coalesce(e.task_id, s.task_id)::text AS task_id
+FROM execution e LEFT JOIN session s ON s.id = e.session_id
+WHERE e.id = ANY($1::text[]) AND coalesce(e.task_id, s.task_id) IS NOT NULL
+`
+
+type DeliverySourceTasksRow struct {
+	ID        string
+	SessionID string
+	TaskID    string
+}
+
+// The session and task (its own, else its session's) of each named source execution of a publishing record.
+func (q *Queries) DeliverySourceTasks(ctx context.Context, ids []string) ([]DeliverySourceTasksRow, error) {
+	rows, err := q.db.Query(ctx, deliverySourceTasks, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeliverySourceTasksRow
+	for rows.Next() {
+		var i DeliverySourceTasksRow
+		if err := rows.Scan(&i.ID, &i.SessionID, &i.TaskID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deliveryStatePut = `-- name: DeliveryStatePut :exec

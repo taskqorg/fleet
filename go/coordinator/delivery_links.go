@@ -36,18 +36,33 @@ func branchTasks(q *Request, branches []string) (map[string]string, error) {
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rs, err := typedRows[struct {
-		ID     string `db:"id"`
-		TaskID string `db:"task_id"`
-	}](q, `SELECT id, task_id FROM session WHERE id = ANY($1::text[]) AND task_id IS NOT NULL`, []any{ids})
+	rs, err := q.db().DeliverySessionTasks(q.ctx(), ids)
 	for _, r := range rs {
 		out[r.ID] = r.TaskID
 	}
 	return out, err
 }
 
+// sourceTasks: the session and task of each named source execution (a project-forge publishing record's
+// sourceExecutionId) that has a task, its own or its session's, by execution id. A worker that renamed its branch before
+// publishing through project-forge still links that way.
+func sourceTasks(q *Request, executions []string) (map[string][2]string, error) {
+	out := map[string][2]string{}
+	if len(executions) == 0 {
+		return out, nil
+	}
+	rs, err := q.db().DeliverySourceTasks(q.ctx(), executions)
+	for _, r := range rs {
+		out[r.ID] = [2]string{r.SessionID, r.TaskID}
+	}
+	return out, err
+}
+
 // linkDeliveryItems names the session and task of each item from a session branch.
 func linkDeliveryItems(q *Request, items []contract.DeliveryItem) error {
+	if q.tx == nil { // a caller without a transaction (a test of the reply alone) reads no links
+		return nil
+	}
 	branches := make([]string, 0, len(items))
 	for _, it := range items {
 		branches = append(branches, deref(it.Branch))
@@ -68,12 +83,14 @@ func linkDeliveryItems(q *Request, items []contract.DeliveryItem) error {
 
 // taskDeliveryStages: for each of the given tasks with a pull request delivery still holds, the stage of its first one
 // (the lowest number; a repository's own numbers, so the first repository by name on a tie across repositories). The
-// stage is publishing_status's: a host's publishing record of the pull request wins over the GitHub read.
+// stage is publishing_status's: a host's publishing record of the pull request wins over the GitHub read. A record's
+// source execution links it when its branch names no session.
 func taskDeliveryStages(q *Request, taskIDs []string) (map[string]contract.DeliveryStage, error) {
 	type pr struct {
 		repo   string
 		number int64
 		branch string
+		source string
 		stage  contract.DeliveryStage
 	}
 	byKey := map[string]pr{}
@@ -81,7 +98,7 @@ func taskDeliveryStages(q *Request, taskIDs []string) (map[string]contract.Deliv
 	for _, r := range deliveryLast.repos {
 		for _, it := range r.items {
 			if b := deref(it.Branch); branchSession(b) != "" {
-				byKey[strings.ToLower(it.Repo)+"#"+strconv.FormatInt(it.Number, 10)] = pr{it.Repo, it.Number, b, it.Stage}
+				byKey[strings.ToLower(it.Repo)+"#"+strconv.FormatInt(it.Number, 10)] = pr{it.Repo, it.Number, b, "", it.Stage}
 			}
 		}
 	}
@@ -97,8 +114,8 @@ func taskDeliveryStages(q *Request, taskIDs []string) (map[string]contract.Deliv
 		if !stage.Valid() {
 			stage = contract.DeliveryStagePrOpen
 		}
-		if branchSession(b) != "" {
-			byKey[key] = pr{rec.Repo, rec.Number, b, stage}
+		if src := deref(rec.SourceExecutionId); branchSession(b) != "" || src != "" {
+			byKey[key] = pr{rec.Repo, rec.Number, b, src, stage}
 		}
 	}
 	pubMu.Unlock()
@@ -107,10 +124,13 @@ func taskDeliveryStages(q *Request, taskIDs []string) (map[string]contract.Deliv
 		return out, nil
 	}
 	prs := make([]pr, 0, len(byKey))
-	branches := make([]string, 0, len(byKey))
+	branches, sources := make([]string, 0, len(byKey)), []string{}
 	for _, p := range byKey {
 		prs = append(prs, p)
 		branches = append(branches, p.branch)
+		if p.source != "" {
+			sources = append(sources, p.source)
+		}
 	}
 	slices.SortFunc(prs, func(a, b pr) int {
 		if a.number != b.number {
@@ -122,8 +142,16 @@ func taskDeliveryStages(q *Request, taskIDs []string) (map[string]contract.Deliv
 	if err != nil {
 		return nil, err
 	}
+	bySource, err := sourceTasks(q, sources)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range prs {
 		t, ok := tasks[branchSession(p.branch)]
+		if !ok && p.source != "" {
+			st, found := bySource[p.source]
+			t, ok = st[1], found
+		}
 		if _, seen := out[t]; ok && !seen && slices.Contains(taskIDs, t) {
 			out[t] = p.stage
 		}

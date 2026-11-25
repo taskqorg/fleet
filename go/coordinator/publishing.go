@@ -578,6 +578,26 @@ func publishingStatus(q *Request, r *contract.PublishingStatusRequest) (contract
 	if err := linkDeliveryItems(q, items); err != nil {
 		return none, err
 	}
+	// A project-forge record names its source execution: that links a pull request whose branch names no session.
+	srcByKey, srcs := map[string]string{}, []string{}
+	for _, rec := range recs {
+		if src := deref(rec.SourceExecutionId); src != "" {
+			srcByKey[fmt.Sprintf("%s|%s#%d", rec.ProjectId, strings.ToLower(rec.Repo), rec.Number)] = src
+			srcs = append(srcs, src)
+		}
+	}
+	bySource, err := sourceTasks(q, srcs)
+	if err != nil {
+		return none, err
+	}
+	for i, it := range items {
+		if st, ok := bySource[srcByKey[fmt.Sprintf("%s|%s#%d", it.ProjectId, strings.ToLower(it.Repo), it.Number)]]; ok && it.TaskId == nil {
+			items[i].TaskId = ptr(st[1])
+			if st[0] != "" {
+				items[i].SessionId = ptr(st[0])
+			}
+		}
+	}
 	if task := deref(r.TaskId); task != "" {
 		kept := map[string]bool{}
 		items = slices.DeleteFunc(items, func(it contract.DeliveryItem) bool {
