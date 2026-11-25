@@ -260,11 +260,12 @@ func (e *executor) startSweep() {
 }
 
 // sessionBusy: the journal holds an open command of the session (accepted, so preparation may be writing into its
-// directory) or a launch of it (a live run, or one whose end is not proven yet).
+// directory) or a launch of it (a live run, or one whose end is not proven yet). A host job without a session keeps its
+// directory under its executionId (workID).
 func (e *executor) sessionBusy(session string) bool {
 	var n int
 	err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches WHERE session=?1) +
-		(SELECT count(*) FROM commands WHERE terminal=0 AND json_extract(body,'$.sessionId')=?1)`, session).Scan(&n)
+		(SELECT count(*) FROM commands WHERE terminal=0 AND coalesce(nullif(json_extract(body,'$.sessionId'),''),json_extract(body,'$.executionId'))=?1)`, session).Scan(&n)
 	return err != nil || n > 0
 }
 
