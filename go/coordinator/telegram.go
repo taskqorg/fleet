@@ -36,6 +36,9 @@ import (
 
 const telegramConn = "telegram"
 
+// telegramLongPoll: how long one getUpdates waits for an update (below the gateway's 30 s request timeout).
+const telegramLongPoll = 20 * time.Second
+
 // telegramChunk: Telegram's text limit is 4096 characters; a reply longer than this goes out in parts.
 const telegramChunk = 4000
 
@@ -55,6 +58,10 @@ func init() {
 		Retry: kitRetry{Table: "telegram_outbox", Key: "id", Guard: `telegram_outbox.attempts=$5::int`, Class: func(error) string { return "telegram_send_failed" }}})
 	onStart(func(ctx context.Context, a *App) {
 		everyWake(ctx, "telegram-poll", 2*time.Second, nil, true, func(ctx context.Context, _ bool) error { return telegramPoll(ctx, a) })
+		// A healthy poll waits up to telegramLongPoll for updates before it completes, so the absence rule (rules.go,
+		// rulePassMisses periods) measures it against the wait plus the long poll, not the 2 s wait alone (a
+		// healthy poller opened Q-ALL-1368).
+		passIntervals.Store("telegram-poll", 2*time.Second+telegramLongPoll)
 	})
 }
 
@@ -213,7 +220,7 @@ func telegramPoll(ctx context.Context, a *App) error {
 	}); err != nil {
 		return err
 	}
-	args := tgArgs{Timeout: ptr(int64(20)), AllowedUpdates: []string{"message", "edited_message", "callback_query"}}
+	args := tgArgs{Timeout: ptr(int64(telegramLongPoll / time.Second)), AllowedUpdates: []string{"message", "edited_message", "callback_query"}}
 	if offset > 0 {
 		args.Offset = &offset
 	}
@@ -918,7 +925,7 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 	tool, args := "send_message", tgArgs{ChatID: o.ChatID}
 	switch o.Kind {
 	case "text":
-		args.Text, args.LinkPreview = &o.Text, map[string]bool{"is_disabled": true}
+		args.Text, args.LinkPreview = tgFormatted(o, &args), map[string]bool{"is_disabled": true}
 		if o.ThreadID != 0 {
 			args.MessageThreadID = &o.ThreadID
 		}
@@ -929,7 +936,8 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 			args.ReplyMarkup = json.RawMessage(o.Payload)
 		}
 	case "edit":
-		tool, args.MessageID, args.Text = "edit_message_text", o.EditMessageID, &o.Text
+		tool, args.MessageID = "edit_message_text", o.EditMessageID
+		args.Text = tgFormatted(o, &args)
 	case "reaction":
 		tool, args.MessageID, args.Reaction = "set_message_reaction", o.EditMessageID, json.RawMessage(o.Payload)
 	case "callback":
@@ -944,12 +952,22 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 	return nil
 }
 
+// tgFormatted: the item's text as Telegram HTML (tgHTML), or as plain text once Telegram refused its formatting.
+func tgFormatted(o db.TelegramOutbox, args *tgArgs) *string {
+	if deref(o.Error) == "html-refused" {
+		return &o.Text
+	}
+	args.ParseMode = "HTML"
+	return ptr(tgHTML(o.Text))
+}
+
 // tgArgs: the arguments of the Bot API calls Fleet makes; an absent field is omitted.
 type tgArgs struct {
 	ChatID          int64           `json:"chat_id,omitempty"`
 	MessageThreadID *int64          `json:"message_thread_id,omitempty"`
 	MessageID       *int64          `json:"message_id,omitempty"`
 	Text            *string         `json:"text,omitempty"`
+	ParseMode       string          `json:"parse_mode,omitempty"`
 	ReplyParameters *tgReplyTo      `json:"reply_parameters,omitempty"`
 	ReplyMarkup     json.RawMessage `json:"reply_markup,omitempty"`
 	LinkPreview     map[string]bool `json:"link_preview_options,omitempty"`
@@ -996,6 +1014,12 @@ func telegramSent(q *Request, now time.Time, o db.TelegramOutbox, line contract.
 	switch {
 	case code == "http-429" && r.Parameters.RetryAfter > 0:
 		return kitSchedule(q, "telegram-send", o.ID, now.Add(time.Duration(r.Parameters.RetryAfter)*time.Second))
+	case code == "http-400" && strings.Contains(r.Description, "can't parse entities") && deref(o.Error) != "html-refused":
+		// Formatting Telegram refuses: the same text again, plain, at once.
+		if err := q.db().TelegramOutboxMarkPlain(q.ctx(), o.ID); err != nil {
+			return err
+		}
+		return kitSchedule(q, "telegram-send", o.ID, now)
 	case o.Kind == "edit" && strings.Contains(r.Description, "message is not modified"):
 		return settle("sent", o.EditMessageID, nil)
 	case strings.HasPrefix(code, "http-4"):

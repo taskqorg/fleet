@@ -57,7 +57,7 @@ A new work item is a `discuss` conversation in the room's project hint (`telegra
 
 ### Replies
 
-Each delivered message has a `telegram_turn` row (kit queue `telegram-reply`). While the run works, the chat shows typing, refreshed every 4 s (L02). When the run ends, its last agent text block is the reply: sent as a reply to the person's message, split at 4000 characters on line breaks, with an [Open in Fleet] button on the last part (`FLEET_BROWSER_ORIGIN`). A run that ends without text answers a one-line notice. Outbox ids are `reply:<execution>:<part>`, so two messages answered by one run (a queued message joined into it) send the reply once.
+Each delivered message has a `telegram_turn` row (kit queue `telegram-reply`). While the run works, the chat shows typing, refreshed every 4 s (L02). When the run ends, its last agent text block is the reply: sent as a reply to the person's message, split at 4000 characters on line breaks, with an [Open in Fleet] button on the last part (`FLEET_BROWSER_ORIGIN`). Agent Markdown is sent as Telegram HTML (`telegram_format.go`: bold, italic, code, code blocks, links, headings, bullets; everything else escaped); when Telegram refuses the formatting the same text goes again as plain text. A run that ends without text answers a one-line notice. Outbox ids are `reply:<execution>:<part>`, so two messages answered by one run (a queued message joined into it) send the reply once.
 
 ### Outbox
 
@@ -85,6 +85,7 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 
 - Coordinator restart: unconfirmed updates come again and are skipped by `update_id`; routing, replies and sends resume from their rows.
 - Gateway or key down: the poll records the error (`telegram_status.pollError`, System › Access); the queues retry with the kit's backoff.
+- The poll pass completes after each long poll (20 s), so its absence rule counts the long poll in its period; a healthy poller raises nothing.
 - One coordinator polls. A second poller would make Telegram refuse both (HTTP 409); it shows as a poll error.
 
 ## Not built

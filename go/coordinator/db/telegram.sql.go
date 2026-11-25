@@ -180,6 +180,16 @@ func (q *Queries) TelegramOutboxGet(ctx context.Context, id string) (TelegramOut
 	return i, err
 }
 
+const telegramOutboxMarkPlain = `-- name: TelegramOutboxMarkPlain :exec
+UPDATE telegram_outbox SET error = 'html-refused' WHERE id = $1 AND state = 'pending'
+`
+
+// Telegram refused the item's formatting: its next send goes as plain text.
+func (q *Queries) TelegramOutboxMarkPlain(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, telegramOutboxMarkPlain, id)
+	return err
+}
+
 const telegramOutboxPending = `-- name: TelegramOutboxPending :one
 SELECT count(*) FROM telegram_outbox WHERE state = 'pending'
 `
