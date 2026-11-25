@@ -27,13 +27,13 @@ func systemVersions(q *Request) (contract.SystemVersionsReply, error) {
 	if err != nil {
 		return contract.SystemVersionsReply{}, err
 	}
-	return systemVersionsFromHosts(q, list)
+	return systemVersionsFromHosts(list), nil
 }
 
 // systemVersionsFromHosts: the reply for a hosts list read in the same request. pollProblem says whether a failing host's
-// poll problem is open (host_poll_health.go): that confirmed failure tones the version mark; a single failed poll that
-// the next good poll clears does not.
-func systemVersionsFromHosts(q *Request, list contract.HostsListReply) (contract.SystemVersionsReply, error) {
+// polls have failed long enough to open its poll problem (host_poll_health.go): that confirmed failure tones the version
+// mark; a single failed poll that the next good poll clears does not.
+func systemVersionsFromHosts(list contract.HostsListReply) contract.SystemVersionsReply {
 	target := healthyTarget()
 	hosts := []contract.HostVersion{}
 	for _, h := range list.Hosts {
@@ -41,14 +41,10 @@ func systemVersionsFromHosts(q *Request, list contract.HostsListReply) (contract
 		if b, ok := versionBehindTarget(valueOr(h.Version), target).(bool); ok {
 			row.Behind = &b
 		}
-		if h.PollError != nil {
-			held, err := problemHeld(q, hostPollCause(h.Id))
-			if err != nil {
-				return contract.SystemVersionsReply{}, err
-			}
-			if held != nil {
-				row.PollProblem = ptr(true)
-			}
+		// The same rule that opens the host's poll problem (notePollFailure), read from the record itself: the problem
+		// is owner-addressed with no project, so a project-scoped reader could not see the question row.
+		if h.PollError != nil && float64(list.ServerNow)-h.PollError.Since >= hostPollProblemAfterMs {
+			row.PollProblem = ptr(true)
 		}
 		hosts = append(hosts, row)
 	}
@@ -60,7 +56,7 @@ func systemVersionsFromHosts(q *Request, list contract.HostsListReply) (contract
 		coord.Commit = &c
 	}
 	return contract.SystemVersionsReply{Coordinator: coord, Ui: uiRelease(), Hosts: hosts, ServerNow: list.ServerNow, StaleAfterMs: list.StaleAfterMs,
-		Gateway: gatewayVersion()}, nil
+		Gateway: gatewayVersion()}
 }
 
 // Missing or non-release values do not establish an update comparison.

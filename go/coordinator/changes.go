@@ -76,9 +76,7 @@ func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.Syste
 	if err != nil {
 		return out, err
 	}
-	if out.Versions, err = systemVersionsFromHosts(q, hosts); err != nil {
-		return out, err
-	}
+	out.Versions = systemVersionsFromHosts(hosts)
 	for _, h := range hosts.Hosts {
 		for _, hv := range h.HarnessVersions {
 			if hv.Expected == "" {

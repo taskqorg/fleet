@@ -42,7 +42,11 @@ export async function checkUpdate() {
   const read = ++updateRead, generation = accessGeneration(), mine = own(), served = await servedAssets();
   if (!isAccessCurrent(generation) || read !== updateRead) return;
   updateChecked.value = !!mine && !!served;
-  if (mine && served) updateReady.value = served !== mine;
+  if (!mine || !served) return;
+  const was = updateReady.value;
+  updateReady.value = served !== mine;
+  // A newly served app: read its version now, so the strip names it.
+  if (updateReady.value && !was) void loadVersions();
 }
 
 export async function loadVersions() {
@@ -139,13 +143,14 @@ export function versionInfo(now = Date.now()): VersionInfo {
       note: v.coordinator.offered && v.coordinator.offered !== v.coordinator.version ? `offers ${v.coordinator.offered}` : undefined });
     if (v.gateway) {
       // The coordinator probes the gateway when read and the last probe is older than a minute, and repeats a failed probe
-      // at once (go/coordinator/versions.go): an older probe is being repeated, so it reads "checking", not a problem.
-      const g = v.gateway, aged = g.observedAt == null || serverNow - g.observedAt > 60_000;
+      // at once (go/coordinator/versions.go): an older probe is being repeated, so it reads "checking". The last confirmed
+      // outage (probe and re-probe failed) stays danger until a newer probe answers; an older "ok" is no warning.
+      const g = v.gateway, aged = g.observedAt == null || serverNow - g.observedAt > 60_000, down = g.state === 'unreachable';
       rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: g.version ?? null,
-        state: aged || g.state === 'pending' ? 'checking…' : g.state,
+        state: down ? 'unreachable' : aged || g.state === 'pending' ? 'checking…' : g.state,
         times: g.observedAt != null ? at(aged ? 'last checked' : 'checked', g.observedAt) : undefined,
-        note: aged && g.observedAt != null && g.state !== 'ok' ? `last: ${g.state}` : undefined,
-        tone: aged || g.state === 'pending' ? 'neutral' : g.state === 'ok' ? 'success' : g.state === 'draining' ? 'running' : 'danger' });
+        note: aged && g.observedAt != null && !down && g.state !== 'ok' ? `last: ${g.state}` : undefined,
+        tone: down ? 'danger' : aged || g.state === 'pending' ? 'neutral' : g.state === 'ok' ? 'success' : 'running' });
     }
     for (const h of v.hosts) {
       const { seen, failingSince, ...s } = hostState(h, serverNow, v.staleAfterMs);
@@ -157,7 +162,8 @@ export function versionInfo(now = Date.now()): VersionInfo {
   const worst = rows.reduce((t, r) => RANK[r.tone] > RANK[t] ? r.tone : t, 'neutral' as Tone), n = rows.filter(r => RANK[r.tone] > 0).length;
   const ready = updateChecked.value && updateReady.value;
   return { current: v?.coordinator.version ?? null, tone: worst, summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined,
-    updateReady: ready, newVersion: ready ? v?.ui.version ?? null : null, updating: updating.value, updateError: updateError.value, onUpdate: applyUpdate,
+    // The version the site serves, once a read shows one other than this tab's (a read older than the check names the old one).
+    updateReady: ready, newVersion: ready && v && v.ui.version !== tabVersion.value ? v.ui.version : null, updating: updating.value, updateError: updateError.value, onUpdate: applyUpdate,
     checkedAt: versionObservedAt.value, checkError: versionError.value, rows, at: versionInfo, onOpen: () => { void loadVersions(); void checkUpdate(); } };
 }
 

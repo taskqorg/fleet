@@ -66,6 +66,8 @@ test('the open overview recounts ages and states from one later present', () => 
   assert.equal(gateway(later).tone, 'neutral', 'a probe not yet repeated is not a warning');
   (data as any).gateway = { state: 'unreachable', observedAt: now - 5_000 }; v.versions.value = { ...data };
   assert.equal(v.versionInfo(now).tone, 'danger', 'a fresh unreachable (probe and re-probe failed) is danger');
+  (data as any).gateway = { state: 'unreachable', observedAt: now - 120_000 }; v.versions.value = { ...data };
+  assert.equal(v.versionInfo(now).tone, 'danger', 'a confirmed outage stays shown while the coordinator repeats the probe');
 });
 
 test('access invalidation clears private version data and rejects a late read', async () => {

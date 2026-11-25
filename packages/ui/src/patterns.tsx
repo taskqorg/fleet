@@ -585,10 +585,10 @@ function useFloating(ref: () => HTMLElement | undefined, focusBack: string) {
  * The update strip (board screens/shell): what is ready and one Reload; Reloading until the page goes; a failure with
  * Retry. On the collapsed rail the same row, at the same height (OR-42), holds only the icon button.
  */
-function UpdateStrip(p: { v: VersionInfo }) {
+function UpdateStrip(p: { v: VersionInfo; quiet?: boolean }) {
   const failed = () => !!p.v.updateError && !p.v.updating;
   return (
-    <div class={['upd-strip', { failed: failed() }]} data-ui="update-strip" role="status">
+    <div class={['upd-strip', { failed: failed() }]} data-ui="update-strip" role={p.quiet ? undefined : 'status'} aria-busy={p.v.updating ? 'true' : undefined}>
       <span class="upd-text">
         <Show when={failed()} fallback={<><b>{p.v.updating ? 'Reloading into' : 'New app ready'}</b><span class="mono">{p.v.newVersion ?? ''}</span></>}>
           <b>Update failed</b><span>{p.v.updateError}</span>
@@ -683,11 +683,13 @@ function VersionPanel(p: { v: VersionInfo; at: { left: number; bottom: number };
       <div class="ver-head">
         <b>Versions</b>
         <span class="muted">
-          <Show when={p.v.checkError}>could not check · </Show>
-          <Show when={p.v.checkedAt != null} fallback="checking…">{p.v.checkError ? 'last checked ' : 'checked '}<Ago t={p.v.checkedAt!} /> ago</Show>
+          <Show when={p.v.checkedAt != null} fallback={p.v.checkError ? `could not check: ${p.v.checkError}` : 'checking…'}>
+            {p.v.checkError ? 'could not check · last checked ' : 'checked '}<Ago t={p.v.checkedAt!} /> ago
+          </Show>
         </span>
       </div>
-      <Show when={p.v.updateReady || p.v.updateError}><UpdateStrip v={p.v} /></Show>
+      {/* The rail's strip is the live region; this copy is not announced again. */}
+      <Show when={p.v.updateReady || p.v.updateError}><UpdateStrip v={p.v} quiet /></Show>
       <table class="ver-table">
         <tbody>
           <For each={p.v.rows} keyed={(row: VersionRow) => row.key}>
