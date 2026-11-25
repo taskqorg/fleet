@@ -50,10 +50,11 @@ const telegramSendAttempts = 8
 // telegramFollowUp: how long after a person's message their next one counts as its follow-up.
 const telegramFollowUp = 5 * time.Minute
 
-// newWorkCue: words that say a message starts different work, so it never counts as a follow-up.
-// backReference: words that point back at the last answer ("these", "it", "этих", "его").
-var backReference = regexp.MustCompile(`(^|[^\pL])(эт(от|а|о|и|их|им|ими|ого|ой|ом|у)|он[аи]?|его|её|ее|их|ему|ним|нему|там|тут|it|its|them|these|those|that one|this one|there)([^\pL]|$)`)
+// backReference: words that point back at the last answer ("these", "them", "этих", "его"). Words common in any
+// question ("it", "there", "там") are left out: they would glue a new question to the last work.
+var backReference = regexp.MustCompile(`(^|[^\pL])(эт(от|а|о|и|их|им|ими|ого|ой|ом|у)|он[аи]|его|её|их|ему|ним|нему|them|these|those|that one|this one)([^\pL]|$)`)
 
+// newWorkCue: words that say a message starts different work, so it never counts as a follow-up.
 var newWorkCue = regexp.MustCompile(`^\s*(нов(ая|ое|ый)|друг(ой|ая|ое)|отдельн|ещё одн|еще одн|new\b|another\b|separate|different)`)
 
 // telegramChunk: Telegram's text limit is 4096 characters; the HTML form of a reply longer than this goes out in parts.
@@ -670,8 +671,7 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 	if len(open) == 0 {
 		return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{newWork: workTitle(messageText(m))})
 	}
-	// A follow-up shortly after the author's last message goes to that message's work item, without a model, unless
-	// it says it starts something new (owner-tester F19: "А какая из этих трёх самая старая?" 30 s after an answer).
+	// Owner-tester F19: "А какая из этих трёх самая старая?" 30 s after an answer went to an older work item.
 	// The author's last work item within the follow-up window. A short message that refers back ("этих", "it") goes
 	// there without a model; anything else goes to the model with it as a hint, so a short new question right after
 	// an answer can still open new work (owner-tester, 2026-11-25).
