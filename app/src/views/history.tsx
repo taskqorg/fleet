@@ -10,6 +10,7 @@ import {
 import type { Ops } from '../api.ts';
 import { useOpPages } from '../op-pages.ts';
 import { useOp } from '../store.ts';
+import { scopeIds } from '../prefs.ts';
 
 type Req = Ops['history_view']['request'];
 type Entry = Ops['history_view']['reply']['entries'][number];
@@ -147,7 +148,8 @@ export function History() {
   const kind = createMemo<KindTab>(() => (KINDS.find(k => k.id === q().get('kind'))?.id ?? 'all'));
   const failed = createMemo(() => q().get('outcome') === 'failed');
   const request = createMemo<Req>(() => {
-    const r: Req = {};
+    // The header focus, as Live and every cross-project screen apply it (prefs scopeIds).
+    const r: Req = { ...scopeIds() };
     for (const s of SCOPES) { const v = q().get(s.key); if (v) (r as Record<string, string>)[s.key] = v; }
     if (kind() !== 'all') r.kinds = [kind() as Exclude<KindTab, 'all'>];
     if (failed()) r.outcome = 'failed';
