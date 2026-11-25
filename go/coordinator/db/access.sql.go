@@ -297,14 +297,19 @@ func (q *Queries) AccessGrantLiveForUser(ctx context.Context, arg AccessGrantLiv
 }
 
 const accessGrantLockState = `-- name: AccessGrantLockState :one
-SELECT state FROM access_grant WHERE id = $1 FOR UPDATE
+SELECT state, project_id FROM access_grant WHERE id = $1 FOR UPDATE
 `
 
-func (q *Queries) AccessGrantLockState(ctx context.Context, id string) (string, error) {
+type AccessGrantLockStateRow struct {
+	State     string
+	ProjectID string
+}
+
+func (q *Queries) AccessGrantLockState(ctx context.Context, id string) (AccessGrantLockStateRow, error) {
 	row := q.db.QueryRow(ctx, accessGrantLockState, id)
-	var state string
-	err := row.Scan(&state)
-	return state, err
+	var i AccessGrantLockStateRow
+	err := row.Scan(&i.State, &i.ProjectID)
+	return i, err
 }
 
 const accessGrantMove = `-- name: AccessGrantMove :exec

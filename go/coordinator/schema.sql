@@ -5226,3 +5226,10 @@ WHERE payload ? 'railBots';
 -- needsYou): a few hundred of all runs, read on every Home reread. problem IS NOT NULL is a plain null test,
 -- which RLS lets an index serve, so the reads start from this index instead of scanning every execution.
 CREATE INDEX execution_problem ON execution (seq) WHERE problem IS NOT NULL;
+
+-- migration 121: an access grant's state moves name its project (access_states.go): before, only the asked row carried
+-- project_id, so a project's people did not see the later moves of its grants in the audit (history design, 2026-11-26).
+SELECT set_config('fleet.project_ids', '*', true);
+UPDATE audit_log a SET project_id = g.project_id
+FROM access_grant g
+WHERE a.target = 'access-grant:' || g.id AND a.project_id IS NULL;

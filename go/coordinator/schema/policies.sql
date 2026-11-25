@@ -576,6 +576,56 @@ CREATE POLICY live ON task_derived AS RESTRICTIVE FOR SELECT TO public USING ((f
 DROP POLICY IF EXISTS project_scope ON task_derived;
 CREATE POLICY project_scope ON task_derived FOR ALL TO public USING (fleet_visible(project_id));
 
+-- telegram_history
+ALTER TABLE telegram_history ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS room_scope ON telegram_history;
+CREATE POLICY room_scope ON telegram_history FOR ALL TO public USING ((EXISTS ( SELECT 1
+   FROM telegram_room r
+  WHERE (r.id = telegram_history.room_id))));
+
+-- telegram_link
+ALTER TABLE telegram_link ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS person_scope ON telegram_link;
+CREATE POLICY person_scope ON telegram_link FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR (email = current_setting('fleet.person'::text, true))));
+
+-- telegram_outbox
+ALTER TABLE telegram_outbox ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS session_scope ON telegram_outbox;
+CREATE POLICY session_scope ON telegram_outbox FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR ((session_id IS NOT NULL) AND (EXISTS ( SELECT 1
+   FROM session s
+  WHERE (s.id = telegram_outbox.session_id))))));
+
+-- telegram_person
+ALTER TABLE telegram_person ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS person_scope ON telegram_person;
+CREATE POLICY person_scope ON telegram_person FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR (email = current_setting('fleet.person'::text, true))));
+
+-- telegram_room
+ALTER TABLE telegram_room ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON telegram_room;
+CREATE POLICY project_scope ON telegram_room FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR ((project_hint <> ''::text) AND fleet_visible(project_hint)) OR (EXISTS ( SELECT 1
+   FROM telegram_work w
+  WHERE (w.room_id = telegram_room.id)))));
+
+-- telegram_turn
+ALTER TABLE telegram_turn ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS session_scope ON telegram_turn;
+CREATE POLICY session_scope ON telegram_turn FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR (EXISTS ( SELECT 1
+   FROM session s
+  WHERE (s.id = telegram_turn.session_id)))));
+
+-- telegram_update
+ALTER TABLE telegram_update ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS operator_scope ON telegram_update;
+CREATE POLICY operator_scope ON telegram_update FOR ALL TO public USING ((current_setting('fleet.project_ids'::text, true) = '*'::text));
+
+-- telegram_work
+ALTER TABLE telegram_work ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS session_scope ON telegram_work;
+CREATE POLICY session_scope ON telegram_work FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR (EXISTS ( SELECT 1
+   FROM session s
+  WHERE (s.id = telegram_work.session_id)))));
+
 -- transport_audit
 ALTER TABLE transport_audit ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON transport_audit;
