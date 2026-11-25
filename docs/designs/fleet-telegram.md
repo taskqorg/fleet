@@ -53,17 +53,27 @@ In order:
 3. Otherwise one model call (the first OpenAI connection open to all projects with model `gpt-6.2-sol`, or `FLEET_TELEGRAM_CONDUCTOR=<connection>/<model>`; Responses API, `text.format` `json_object`) answers `{choice: <work item> | new | ask, title}` from the open items' titles and the message. `telegram_status.conductor` shows the last call: connection, model, choice and why it gave no usable answer.
 4. `ask`, a failed call or no model: one message "Is this about: [A] [B] [Something new]". Only the author's tap counts; the tap edits the question to "→ <title>" and delivers the message.
 
-**Status message.** The "New: <title>" notice is the work item's status message, with an [Open in Fleet] button. Fleet edits it in place: the title and one line of where the work stands ("Working on a message from Simon", "Answered", "The run failed"). It stays "working" while any of the item's messages waits for its reply. Every answer in a room carries a [Status] button that opens the status message (supergroups only: `t.me/c/...` links). An edit resolves the message at send time; the chat's order sends the notice first.
+**Status message.** When a room already has open work, the "New: <title>" notice of the next work item is its status message, with an [Open in Fleet] button; the only work item of a room opens quietly and has none. Fleet edits it in place: the title and the facts below ("Working on a message from Simon", the task, the pull request). It stays "working" while any of the item's messages waits for its reply. Every answer in a room carries a [Status] button that opens the status message (supergroups only: `t.me/c/...` links). An edit resolves the message at send time; the chat's order sends the notice first.
 
 A new work item is a `discuss` conversation in the room's project hint (`telegram_room_set`; none: outside projects). Messages of different people are never merged: each is its own `message_send` by its author (L14). Nothing falls back to a wider chat: a reply goes to the room and topic the message came from (L13).
 
 ### Replies
 
-Each delivered message has a `telegram_turn` row (kit queue `telegram-reply`). While the run works, the chat shows typing, refreshed every 4 s (L02). When the run ends, its last agent text block is the reply: sent as a reply to the person's message, split at 4000 characters on line breaks, with an [Open in Fleet] button on the last part (`FLEET_BROWSER_ORIGIN`). Agent Markdown is sent as Telegram HTML (`telegram_format.go`: bold, italic, code, code blocks, links, headings, bullets; everything else escaped); when Telegram refuses the formatting the same text goes again as plain text. A run that ends without text answers a one-line notice. Outbox ids are `reply:<execution>:<part>`, so two messages answered by one run (a queued message joined into it) send the reply once.
+Each delivered message has a `telegram_turn` row (kit queue `telegram-reply`). While the run works, the chat shows typing, refreshed every 4 s (L02). When the run ends, its last agent text block is the reply: sent as a reply to the person's message, split at 4000 characters on line breaks, with an [Open in Fleet] button on the last part (`FLEET_BROWSER_ORIGIN`). Agent Markdown is sent as Telegram HTML (`telegram_format.go`: bold, italic, code, code blocks, links, headings, bullets; everything else escaped); when Telegram refuses the formatting the same text goes again as plain text, without its Markdown marks. A run that ends without text answers a one-line notice. Outbox ids are `reply:<execution>:<part>`, so two messages answered by one run (a queued message joined into it) send the reply once.
 
 ### Outbox
 
 Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, so a chat's messages keep their order. A flood limit (HTTP 429) waits its `retry_after`. A message Telegram refuses (HTTP 4xx) is `failed` with Telegram's reason. A `send_message` whose outcome is unknown is `unknown` and never repeated: a second copy is worse than a gap (L11). Edits, reactions and button answers repeat safely and retry. Nothing edits a reply after it is sent (L03, L12).
+
+### Status, commands, questions, milestones (`telegram_status.go`)
+
+Everything here is read from Fleet state; no worker turn runs.
+
+- **Facts** of a conversation, one line each: its newest run (working, waiting for an answer, done or failed, how long ago), open questions, its tasks (`sessionTasks`) and the stage of the newest pull request its runs published (`ThreadPublishingResults`).
+- **"So?"** A short message that only asks how things stand ("So?", "??", "ну?", "is it live?") is answered with the facts: of the replied-to work item, else of every open item of the room; in a private chat, `/now`. The conductor's model marks the same with `status: true` for longer phrasings. The message reaches no session.
+- **Commands** (`/cmd` or `/cmd@bot`): `/help`; `/now` (the room's open work; in a private chat the home conversation and the work items the person opened); `/needs` (open questions of the room's work, or the person's, each as a message to answer); `/status [task]` (one task by code or id within the person's projects; without an argument as "So?").
+- **Needs you** (pass `telegram-watch`, every 5 s): an open question of a work item's conversation goes to its room, one of a home conversation to the private chat, once (`q:<question>`). Options that are a list of strings become buttons. A tap or a Telegram reply answers through `question_answer` as that person, within their projects; a key request only links to Fleet and is never answered from chat. An answered or withdrawn question's message is edited to "✓ <who>: <answer>".
+- **Milestones** (same pass): a work item's room hears once when its pull request opens, fails its checks or merges, and when its task completes or fails (`ms:<work>:<event>`); the status message follows. Fleet knows delivery as pull request stages; a project's own DEV or LIVE deploys reach the chat as the worker's answers.
 
 ## Operations
 
@@ -92,7 +102,6 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 
 ## Not built
 
-- Status answers from Fleet state, milestone pushes, Needs you questions in chat (FLT-34).
 - Risk levels and approval cards for radical actions (FLT-35).
 - Overlap warnings, attachments and albums, edits, channel health on the System screen, moving the Hermes rooms (FLT-36).
 - Learning a room's project hint from use; the owner sets it with `telegram_room_set`.

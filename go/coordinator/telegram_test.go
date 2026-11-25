@@ -55,3 +55,18 @@ func TestTelegramMessageLink(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramStatusPing(t *testing.T) {
+	for text, want := range map[string]bool{"So?": true, "??": true, "sooo?": true, "ну?": true, "Что там?": true, "is it live?": true,
+		"so all is live?": true, "make mockup": false, "show mobile also": false, "so ull do it or?": false, "ok": false} {
+		if isStatusPing(text) != want {
+			t.Errorf("%q: %v", text, !want)
+		}
+	}
+}
+
+func TestTelegramPlainHasNoMarks(t *testing.T) {
+	if got := tgPlain("**1.261125.63** see [PR](https://x/1) and `code`"); got != "1.261125.63 see PR (https://x/1) and code" {
+		t.Fatal(got)
+	}
+}

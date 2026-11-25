@@ -179,3 +179,63 @@ SELECT count(*) FROM telegram_turn WHERE work_id = @work_id AND id <> @id;
 -- name: TelegramWorkLock :exec
 -- Serialises the reply steps of one work item, so the last one to end sees the others gone and writes the status.
 SELECT id FROM telegram_work WHERE id = $1 FOR UPDATE;
+
+-- name: TelegramSessionRun :one
+-- Where a work item's conversation stands: its newest run, its open questions and its recent runs (for delivery).
+SELECT coalesce((SELECT e.state::text FROM execution e WHERE e.session_id = @session_id ORDER BY e.seq DESC LIMIT 1), '')::text AS run_state,
+  (SELECT coalesce(e.ended_at, e.started_at, e.updated_at) FROM execution e WHERE e.session_id = @session_id ORDER BY e.seq DESC LIMIT 1)::timestamptz AS run_at,
+  (SELECT count(*) FROM question q WHERE q.session_id = @session_id AND q.state = 'open')::bigint AS open_questions,
+  coalesce((SELECT array_agg(r.id ORDER BY r.seq DESC) FROM (SELECT e.id, e.seq FROM execution e WHERE e.session_id = @session_id ORDER BY e.seq DESC LIMIT 20) r), '{}')::text[] AS execution_ids;
+
+-- name: TelegramWorkActive :many
+-- Open work items with activity in the last week: the milestone pass looks at their state.
+SELECT * FROM telegram_work WHERE closed_at IS NULL AND last_at > clock_timestamp() - interval '7 days' ORDER BY last_at DESC LIMIT 200;
+
+-- name: TelegramQuestionsToPush :many
+-- Open questions of a work item's or a home conversation not yet sent to Telegram, with where they go.
+SELECT q.id, q.kind::text AS kind, q.text, q.options, q.session_id::text AS session_id, w.id AS work_id, r.chat_id, r.thread_id,
+  ''::text AS email
+FROM question q
+JOIN telegram_work w ON w.session_id = q.session_id AND w.closed_at IS NULL
+JOIN telegram_room r ON r.id = w.room_id
+WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
+UNION ALL
+SELECT q.id, q.kind::text, q.text, q.options, q.session_id::text, ''::text, p.telegram_user_id, 0::bigint, p.email
+FROM question q
+JOIN telegram_person p ON p.home_session_id = q.session_id
+WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
+LIMIT 50;
+
+-- name: TelegramQuestionsEnded :many
+-- Questions sent to Telegram that were answered or withdrawn since, whose message does not say so yet.
+SELECT q.id, q.state::text AS state, coalesce(q.answer, '')::text AS answer, coalesce(q.answered_by, '')::text AS answered_by, q.text,
+  o.chat_id, o.telegram_message_id
+FROM telegram_outbox o JOIN question q ON o.id = 'q:' || q.id
+WHERE o.state = 'sent' AND o.telegram_message_id IS NOT NULL AND q.state <> 'open'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox e WHERE e.id = 'qend:' || q.id)
+LIMIT 50;
+
+-- name: TelegramQuestionMessage :one
+-- The question a Fleet message in a chat asks (a Telegram reply to it answers the question).
+-- Ids: q:<question> (the push) and qn:<question>:<update> (a /needs listing).
+SELECT split_part(id, ':', 2)::text AS question_id FROM telegram_outbox WHERE chat_id = @chat_id AND telegram_message_id = @telegram_message_id
+  AND (id LIKE 'q:%' OR id LIKE 'qn:%') LIMIT 1;
+
+-- name: TelegramQuestionGet :one
+SELECT id, kind::text AS kind, state::text AS state, text, options, session_id, project_id FROM question WHERE id = $1;
+
+-- name: TelegramTaskByRef :one
+-- A task by its code (FLT-12) or id, for /status and the milestone pass.
+SELECT id, code, title, state::text AS state, wait_reason, project_id FROM task WHERE id = $1 OR code = upper($1) LIMIT 1;
+
+-- name: TelegramOpenQuestions :many
+-- Open questions of a group room's work items, or (private) of the person's home conversation and the work items they
+-- opened, oldest first (/needs).
+SELECT q.id, q.kind::text AS kind, q.text, q.session_id FROM question q
+WHERE q.state = 'open' AND q.session_id IN (
+  SELECT w.session_id FROM telegram_work w WHERE w.closed_at IS NULL
+    AND ((NOT @private::boolean AND w.room_id = @room_id) OR (@private::boolean AND w.created_by = @email))
+  UNION SELECT p.home_session_id FROM telegram_person p WHERE @private::boolean AND p.email = @email AND p.home_session_id IS NOT NULL)
+ORDER BY q.asked_at LIMIT 10;
