@@ -136,6 +136,53 @@ func TestSweepTmp(t *testing.T) {
 	}
 }
 
+// Requirement: the sweep removes a session directory only when it holds no worktree (or set-aside copy), its session
+// has no journaled launch and nothing changed in it for the age. Risk: a session's work or a running turn's files go.
+func TestSweepSessions(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-48 * time.Hour)
+	for _, d := range []string{"done/input", "fresh", "busy", "wt/worktree", "aside/worktree.stale-1", "ws/workspaces/k/worktree"} {
+		os.MkdirAll(filepath.Join(root, d), 0o700)
+	}
+	os.WriteFile(filepath.Join(root, "done/input/f"), []byte("12345"), 0o600)
+	os.MkdirAll(filepath.Join(root, "done/go-cache/x"), 0o700)
+	os.Chmod(filepath.Join(root, "done/go-cache/x"), 0o500) // read-only, as a Go module cache is
+	filepath.Walk(root, func(p string, _ os.FileInfo, _ error) error {
+		if !strings.HasPrefix(p, filepath.Join(root, "fresh")) {
+			os.Chtimes(p, old, old)
+		}
+		return nil
+	})
+	c := sweepSessions([]string{root, filepath.Join(root, "missing")}, func(s string) bool { return s == "busy" }, 24*time.Hour, time.Now())
+	if c.dirs != 1 || c.bytes != 5 {
+		t.Fatalf("%+v", c)
+	}
+	for d, want := range map[string]bool{"done": false, "fresh": true, "busy": true, "wt": true, "aside": true, "ws": true} {
+		if _, err := os.Stat(filepath.Join(root, d)); (err == nil) != want {
+			t.Fatal(d, err)
+		}
+	}
+}
+
+// Requirement: a session counts as busy while it has an open command (preparing) or a journaled launch. Risk: the sweep
+// removes the directory a new turn is preparing into.
+func TestSessionBusy(t *testing.T) {
+	db, err := openJournal(filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	e := &executor{db: db}
+	db.Exec(`INSERT INTO commands(id,body) VALUES('c1','{"sessionId":"prep"}'),('c2','{"sessionId":"done"}')`)
+	db.Exec(`UPDATE commands SET terminal=1 WHERE id='c2'`)
+	db.Exec(`INSERT INTO launches(execution,command,session) VALUES('x','c3','run')`)
+	for s, want := range map[string]bool{"prep": true, "run": true, "done": false, "none": false} {
+		if e.sessionBusy(s) != want {
+			t.Fatal(s)
+		}
+	}
+}
+
 // Requirement: host readings name swap and the top memory consumers, the test process among them as not Fleet's
 // unless marked. Risk: a saturated host is reported without what saturates it.
 func TestHostPressureReadings(t *testing.T) {

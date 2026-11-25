@@ -32,6 +32,9 @@ import (
 // verRe is the strict release version N.yymmdd.M (section 1); the tag is "v" + version.
 var verRe = regexp.MustCompile(`^[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`)
 
+// legacyRe: a release directory of the layout before self-update (fleet-<commit sha12>-<os>-<arch>); nothing links to it.
+var legacyRe = regexp.MustCompile(`^fleet-[0-9a-f]{12}-[a-z0-9]+-[a-z0-9]+$`)
+
 // newer reports whether version a is newer than b, comparing numeric dot parts; b "" or "dev" is older than any.
 func newer(a, b string) bool {
 	if !verRe.MatchString(a) {
@@ -817,7 +820,8 @@ func flock(f *os.File) (unlock func(), ok bool, err error) {
 	return func() { f.Close() }, true, nil
 }
 
-// pruneReleases keeps current and previous: removes every other <ver>/ and leftover .tmp entries.
+// pruneReleases keeps current and previous: removes every other <ver>/, leftover .tmp entries and release directories
+// of the layout before self-update.
 func pruneReleases(r *os.Root) {
 	keep := map[string]bool{}
 	for _, l := range []string{"current", "previous"} {
@@ -828,7 +832,7 @@ func pruneReleases(r *os.Root) {
 	entries, _ := fs.ReadDir(r.FS(), ".")
 	for _, e := range entries {
 		n := e.Name()
-		if strings.Contains(n, ".tmp") || verRe.MatchString(n) && !keep[n] {
+		if strings.Contains(n, ".tmp") || (legacyRe.MatchString(n) || verRe.MatchString(n)) && !keep[n] {
 			r.RemoveAll(n)
 		}
 	}

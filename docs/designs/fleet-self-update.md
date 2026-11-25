@@ -159,7 +159,7 @@ Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/relea
 *   `R/<ver>/starts`, `R/<ver>/healthy`: unhealthy start count, healthy marker (COREQ-R16).
 *   State directory `S`: executor hosts `<data dir>/update/`; PDS18 `/var/lib/fleet-update/` (root, 0755) with `stage/` (0700). `S/update-state.json` (PDS18: `S/pds18-state.json`, 0644, with keys `coordinator` and `executor`, one `last` each) holds `{refused: {"<ver>": "<reason>"}, last: {version, state, error, at}}`, written durably (COREQ-R22). `S/update.lock` is `flock`ed for the whole run.
 *   The running version is read from `R/current/release.json`, never from the link name.
-*   Prune at start: leftover `stage/` and `.tmp` entries; every `R/<ver>/` that is neither `current` nor `previous`; on PDS18 every dump in `/backup/fleet/pre-deploy/` except those of `current`, `previous` and refused versions (a rolled-back release ran its migrations; its dump is the state before them).
+*   Prune at start: leftover `stage/` and `.tmp` entries; every `R/<ver>/` that is neither `current` nor `previous`; every `R/fleet-<sha12>-<os>-<arch>/` of the layout before self-update that neither link names ([host cleanup, section 9](fleet-host-cleanup.md#9-retention-releases-and-session-directories)); on PDS18 every dump in `/backup/fleet/pre-deploy/` except those of `current`, `previous` and refused versions (a rolled-back release ran its migrations; its dump is the state before them).
 
 #### 3.2 One run
 
@@ -250,7 +250,7 @@ Env values override defaults; section 5 applies to the executor only (the coordi
 
 Once per host: unpack a tarball with its `deploy/install-release.sh` (unpacks into `releases/<ver>/`, selftests every binary, links `current`), write the host secret with `scripts/host-secret.sh` at the default path, write `executor.env` with `FLEET_HOST_ID`, install the executor and `fleet-update` units from `deploy/`. Linux and WSL: `loginctl enable-linger <user>`; WSL also `systemd=true` in `/etc/wsl.conf`. PDS18: also copy `fleet-update` to `/opt/fleet/update/`, enable linger for `fleet` and `fleet-agent`, create `/var/lib/fleet-update`.
 
-The three current hosts do this once: their env files are reduced to `FLEET_HOST_ID`, their data directories move to the default path with the executor stopped, and old `fleet-<sha12>-…` release directories are deleted.
+The three current hosts do this once: their env files are reduced to `FLEET_HOST_ID`, their data directories move to the default path with the executor stopped, and old `fleet-<sha12>-…` release directories are deleted (since 2026-11-25 the prune does this).
 
 ### Deviations from CoreQ
 

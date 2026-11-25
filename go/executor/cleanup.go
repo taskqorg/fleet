@@ -1,8 +1,8 @@
 // Host cleanup (docs/designs/fleet-host-cleanup.md): every process a run starts carries the run marker
 // (FLEET_EXECUTION_ID plus FLEET_EXECUTION_OWNER, this executor's data directory) and the run's own TMPDIR. At run end
 // and at executor start, marked processes of runs that are not live are killed and run temporary directories removed;
-// with FLEET_TMP_SWEEP=owned, old entries of /tmp the executor user owns are removed every hour. Each pass that removed
-// something writes one host.cleanup span.
+// every hour, session directories nothing needs any more go and, with FLEET_TMP_SWEEP=owned, old entries of /tmp the
+// executor user owns. Each pass that removed something writes one host.cleanup span.
 package main
 
 import (
@@ -236,19 +236,82 @@ func cleanupAtStart(root string, unresolved map[string]bool) {
 	c.record("start")
 }
 
-// startTmpSweep: with FLEET_TMP_SWEEP=owned (a host whose executor has a user of its own), at start and every hour,
-// remove top-level entries of /tmp the executor user owns that nothing changed for FLEET_TMP_SWEEP_AGE_HOURS (24).
-func startTmpSweep() {
-	if os.Getenv("FLEET_TMP_SWEEP") != "owned" {
-		return
-	}
+// startSweep: at start and every hour, remove session directories nothing needs any more (sweepSessions) and, with
+// FLEET_TMP_SWEEP=owned (a host whose executor has a user of its own), top-level entries of /tmp the executor user owns.
+// Both use one age, FLEET_TMP_SWEEP_AGE_HOURS (24): nothing in the entry changed for that long.
+func (e *executor) startSweep() {
 	age := time.Duration(setting("FLEET_TMP_SWEEP_AGE_HOURS", 24)) * time.Hour
-	errtrack.Go("cleanup.tmp", func() {
+	tmp := os.Getenv("FLEET_TMP_SWEEP") == "owned"
+	roots := []string{e.sessions}
+	if legacy := filepath.Join(e.root, "sessions"); legacy != e.sessions {
+		roots = append(roots, legacy)
+	}
+	errtrack.Go("cleanup.sweep", func() {
 		for {
-			sweepTmp("/tmp", age, time.Now()).record("sweep")
+			now := time.Now()
+			c := sweepSessions(roots, e.sessionBusy, age, now)
+			if tmp {
+				c.add(sweepTmp("/tmp", age, now))
+			}
+			c.record("sweep")
 			time.Sleep(time.Hour)
 		}
 	})
+}
+
+// sessionBusy: the journal holds an open command of the session (accepted, so preparation may be writing into its
+// directory) or a launch of it (a live run, or one whose end is not proven yet).
+func (e *executor) sessionBusy(session string) bool {
+	var n int
+	err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches WHERE session=?1) +
+		(SELECT count(*) FROM commands WHERE terminal=0 AND json_extract(body,'$.sessionId')=?1)`, session).Scan(&n)
+	return err != nil || n > 0
+}
+
+// sweepSessions: a session directory goes when it holds no worktree and no set-aside copy of one (worktree*, also under
+// workspaces/*: teardown on delivery or archive removes those, keeping work it must keep), no launch of its session is
+// journaled, and nothing in it changed for age. What remains is rebuilt by the next turn: per-run logs already sent,
+// inputs fetched per run, caches.
+func sweepSessions(roots []string, busy func(string) bool, age time.Duration, now time.Time) cleanupLedger {
+	var c cleanupLedger
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, en := range entries {
+			p := filepath.Join(root, en.Name())
+			st, err := os.Lstat(p)
+			if err != nil || !st.IsDir() {
+				continue
+			}
+			if w, _ := filepath.Glob(filepath.Join(p, "worktree*")); len(w) > 0 {
+				continue
+			}
+			if w, _ := filepath.Glob(filepath.Join(p, "workspaces", "*", "worktree*")); len(w) > 0 {
+				continue
+			}
+			if newest, keep := recent(p, st, 2); keep || now.Sub(newest) < age {
+				continue
+			}
+			// The journal is asked last, and the directory is first renamed away: a command accepted after that check
+			// prepares into a fresh directory instead of one being removed.
+			if busy(en.Name()) {
+				continue
+			}
+			gone := filepath.Join(root, ".sweep-"+en.Name())
+			if os.Rename(p, gone) == nil {
+				c.removeDir(gone)
+			}
+		}
+	}
+	return c
+}
+
+func (c *cleanupLedger) add(o cleanupLedger) {
+	c.processes += o.processes
+	c.dirs += o.dirs
+	c.bytes += o.bytes
 }
 
 // sweepTmp: an entry is removed when the executor user owns it, its newest change within two levels is older than age,
