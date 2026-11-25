@@ -555,12 +555,12 @@ type ProjectPipelineViewReply struct {
 	Description *string               `json:"description"`
 	Experiments []LabExperimentRecord `json:"experiments"`
 	InUse       bool                  `json:"inUse"`
-	Input       *string               `json:"input"`
 	Method      *string               `json:"method"`
 	Outline     []PipelineOutlineLine `json:"outline"`
-	Output      *string               `json:"output"`
 	PipelineId  string                `json:"pipelineId"`
 	Ranking     []LabLeaderboardEntry `json:"ranking"`
+	Reads       *string               `json:"reads"`
+	Returns     *string               `json:"returns"`
 	Revision    int64                 `json:"revision"`
 	UseCaseId   *string               `json:"useCaseId"`
 }

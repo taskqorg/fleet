@@ -358,7 +358,7 @@ func projectPipelineView(q *Request, r *contract.ProjectPipelineViewRequest) (co
 		return out, fail(500, "Invalid pipeline")
 	}
 	out.Revision, out.Outline = xs[0].Revision, pipelineOutline(&d)
-	out.Description, out.Input, out.Output = textPtr(d.Description), textPtr(d.Input), textPtr(d.Output)
+	out.Description, out.Reads, out.Returns = textPtr(d.Description), textPtr(d.Input), textPtr(d.Output)
 
 	board, err := labLeaderboard(q, &contract.LabLeaderboardRequest{ProjectId: &id, Days: ptr(int64(projectViewLabDays))})
 	if err != nil {

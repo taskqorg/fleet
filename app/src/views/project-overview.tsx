@@ -306,7 +306,7 @@ export function PipelinePage(props: { projectId: string; projectName: string; pi
       }>{v => (
           <>
             <Show when={v().description}><p>{v().description}</p></Show>
-            <InOut input={v().input} output={v().output} />
+            <InOut input={v().reads} output={v().returns} />
             <TabBar cls="detail-tabs" label="Pipeline" tabs={PIPE_TABS} value={tab()} onChange={t => go(pipelinePath(props.projectId, props.pipelineId, t))} />
             <div role="tabpanel" aria-label={PIPE_TABS.find(t => t.id === tab())?.label}>
               <Switch>
