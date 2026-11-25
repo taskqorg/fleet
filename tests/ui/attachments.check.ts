@@ -38,9 +38,10 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     await p.setViewportSize({ width: 1440, height: 900 });
   };
   // Hold the upload of the second file (the dropped one), to see one file ready, one uploading, and that Send waits.
+  // Held by its bytes, not by arrival order: both files begin their uploads in parallel, so the dropped file's PUT can
+  // arrive first, and holding "the second PUT" then held the image.
   let release = () => {}; const held = new Promise<void>(r => { release = r; });
-  let puts = 0;
-  await p.route('**/api/uploads/*', async route => { if (++puts >= 2) await held; await route.continue(); });
+  await p.route('**/api/uploads/*', async route => { if (route.request().postDataBuffer()?.includes('heliotrope')) await held; await route.continue(); });
   try {
     await p.goto(`${origin}/conversations/${S}`);
     const composer = p.locator('[data-ui="composer"]'), box = composer.getByPlaceholder('Message', { exact: true });

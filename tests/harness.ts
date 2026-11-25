@@ -54,11 +54,15 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
   // A copy: people_set rewrites the file it was started with.
   const people = join(mkdtempSync(join(tmpdir(), 'fleet-people-')), 'people.json');
   copyFileSync(o.people ?? join(root, 'tests/trial/people.json'), people);
-  const port = await freePort(), secret = randomBytes(24).toString('hex'), base = `http://127.0.0.1:${port}`, config = testConfig();
+  // The coordinator binds the port itself (PORT=0 the first time) and names it on stderr: a port picked here and bound
+  // later can be taken in between (tests and their clients share the ephemeral range), and the coordinator then exits
+  // with "bind: address already in use". A restart binds the same port again.
+  let port = 0, base = '';
+  const secret = randomBytes(24).toString('hex'), config = testConfig();
   let server: ReturnType<typeof spawn>, exited = false, gone: Promise<void> = Promise.resolve();
   const launch = async () => {
     exited = false;
-    const child = server = spawn(process.env.FLEET_TRIAL_SERVER || 'go/bin/fleet-coordinator', {cwd: root, shell: true, detached: true, stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env,
+    const child = server = spawn(process.env.FLEET_TRIAL_SERVER || 'go/bin/fleet-coordinator', {cwd: root, shell: true, detached: true, stdio: ['ignore', 'inherit', 'pipe'], env: {...process.env,
       PORT: String(port), FLEET_DATABASE_URL: url('fleet_app'), FLEET_MIGRATION_DATABASE_URL: url('fleet'),
       FLEET_PEOPLE_FILE: people, FLEET_BROWSER_SECRET: secret, FLEET_HOST_ID: 'trial-host', FLEET_PROJECT_CONFIG_DIRECTORY: config,
       // Never the host's own span store (~/.config/fleet/clickhouse.env): a test names its ClickHouse.
@@ -69,8 +73,17 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
     FLEET_LOST_AFTER_MS: process.env.FLEET_LOST_AFTER_MS ?? '6000', ...o.env}});
     // Each process reports only its own exit: a late exit of the previous one never marks this one exited.
     gone = new Promise(r => child.on('exit', () => { if (server === child) exited = true; r(); }));
+    let log = '';
+    child.stderr!.on('data', (b: Buffer) => {
+      process.stderr.write(b);
+      if (port) return;
+      log = (log + b.toString()).slice(-4096);
+      const m = /serving on 127\.0\.0\.1:(\d+)/.exec(log);
+      if (m) { port = Number(m[1]); base = `http://127.0.0.1:${port}`; }
+    });
     for (let i = 0; ; i++) {
       if (exited) { dropDb(); throw Error('coordinator exited before it served requests'); }
+      if (!port) { if (i > 600) { await stop(); throw Error('coordinator did not bind in 60 s'); } await new Promise(r => setTimeout(r, 100)); continue; }
       try { await fetch(base + '/api/ops/me', {method: 'POST'}); break; } catch { if (i > 600) { await stop(); throw Error('coordinator did not start in 60 s'); } await new Promise(r => setTimeout(r, 100)); }
     }
   };

@@ -14,6 +14,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,11 +33,18 @@ var (
 	testPGPort int
 	testPGErr  error
 	testDBSeq  atomic.Int64
+	// testPGOwned: this process started the cluster and stops it; one inherited through testPGClusterEnv is not ours.
+	testPGOwned bool
 )
+
+// testPGClusterEnv hands a running test cluster ("sockdir|port|bindir") to a child go test (TestLawMutants), so the
+// child starts no cluster of its own: a cluster per child can exhaust the host's SysV shared memory (macOS allows 32
+// segments), and a child that cannot start one skips its tests and looks green.
+const testPGClusterEnv = "FLEET_TEST_PG_CLUSTER"
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if testPGDir != "" && testPGBin != "" {
+	if testPGOwned && testPGDir != "" && testPGBin != "" {
 		cmd := osexec.Command(filepath.Join(testPGBin, "pg_ctl"), "-D", testPGDir, "-m", "immediate", "-w", "stop")
 		cmd.Env = pgChildEnv()
 		_ = cmd.Run()
@@ -82,6 +90,17 @@ func ensureTestPostgres(t *testing.T) (sockDir string, port int, binDir string) 
 		pgUnavailable(t, "postgres unavailable: initdb cannot run as root")
 	}
 	testPGOnce.Do(func() {
+		if v := os.Getenv(testPGClusterEnv); v != "" {
+			parts := strings.Split(v, "|")
+			if len(parts) == 3 {
+				if p, err := strconv.Atoi(parts[1]); err == nil {
+					testPGDir, testPGPort, testPGBin = parts[0], p, parts[2]
+					return
+				}
+			}
+			testPGErr = fmt.Errorf("%s=%q is not sockdir|port|bindir", testPGClusterEnv, v)
+			return
+		}
 		bin, err := findPostgresBinDir()
 		if err != nil {
 			testPGErr = err
@@ -115,6 +134,7 @@ func ensureTestPostgres(t *testing.T) (sockDir string, port int, binDir string) 
 			return
 		}
 		testPGDir = dir
+		testPGOwned = true
 		testPGBin = bin
 		testPGPort = p
 	})
@@ -892,12 +912,32 @@ func TestNoOpStoreTriggerSuppression(t *testing.T) {
 	if err := migrateSQL(ctx, ownerURL, schemaSQL[:mig52At]); err != nil {
 		t.Fatalf("pre-52 migrate: %v", err)
 	}
-	t0 := time.Now()
+	// An existing database: a store row written before migration 52 must survive the upgrade, and its own
+	// timestamp-only touches must stop emitting change rows. (A wall-clock limit here measured every migration after
+	// 52 on a shared machine; migration 52 is one CREATE OR REPLACE FUNCTION, so it neither rewrites nor scans a table.)
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO store(id, host_id, kind, bucket, endpoint, capacity_bytes, used_bytes, state, observed_at, updated_at)
+		VALUES ('store-pre52', 'h-pre52', 's3', 'fleet-test', 'https://s3.test', 1000, 100, 'reachable', now(), now())`); err != nil {
+		t.Fatal(err)
+	}
 	if err := migrate(ctx, ownerURL); err != nil {
 		t.Fatalf("migration 52 upgrade: %v", err)
 	}
-	if elapsed := time.Since(t0); elapsed > time.Second {
-		t.Fatalf("migration 52 took %s (> 1s limit)", elapsed)
+	preChanges := func() int {
+		var n int
+		if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM change WHERE kind='host' AND id='h-pre52'").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	pre := preChanges()
+	if tag, err := s.pool.Exec(ctx, `UPDATE store SET observed_at = now() + interval '10 seconds' WHERE id='store-pre52' AND used_bytes=100`); err != nil {
+		t.Fatal(err)
+	} else if tag.RowsAffected() != 1 {
+		t.Fatalf("store row written before migration 52 did not survive the upgrade (%d rows)", tag.RowsAffected())
+	}
+	if n := preChanges(); n != pre {
+		t.Fatalf("timestamp-only UPDATE of a pre-52 store row emitted %d change rows", n-pre)
 	}
 
 	var maxVer int
@@ -915,7 +955,7 @@ func TestNoOpStoreTriggerSuppression(t *testing.T) {
 	}
 	countChanges := func() int {
 		var n int
-		if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM change WHERE kind='host'").Scan(&n); err != nil {
+		if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM change WHERE kind='host' AND id='h-trig'").Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n

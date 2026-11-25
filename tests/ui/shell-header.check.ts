@@ -86,7 +86,9 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     await panel.getByRole('button', { name: 'All projects' }).click();
     assert.ok(await until(async () => await row('Charlie').count() === 1 && await row('Alpha').count() === 1), 'All projects shows the others');
     assert.equal(await row('Bravo').count(), 0, 'an ignored project stays hidden with All projects');
-    const stored = await call('person_settings_get', {});
+    // The page shows a preference at once and saves it after (savePrefs), so the server copy can lag the screen.
+    let stored: any;
+    await until(async () => { stored = await call('person_settings_get', {}); return stored.ignored.length === 1 && stored.focus.length === 0; });
     assert.deepEqual([stored.ignored, stored.focus], [['hdr-bravo'], []], 'the ignore is stored on the server');
     await panel.getByRole('button', { name: 'Restore Bravo' }).click();
     assert.ok(await until(async () => await row('Bravo').count() === 1), 'a restored project shows again');

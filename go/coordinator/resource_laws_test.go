@@ -226,8 +226,16 @@ func (e *lawEnv) violate(law, format string, args ...any) {
 	if len(tail) > 80 {
 		tail = tail[len(tail)-80:]
 	}
-	e.t.Fatalf("LAW VIOLATION %s (seed %d, replay with FLEET_LAW_SEED=%d): %s\ntrace (last %d of %d):\n  %s", law, e.seed, e.seed,
+	msg := fmt.Sprintf("LAW VIOLATION %s (seed %d, replay with FLEET_LAW_SEED=%d): %s\ntrace (last %d of %d):\n  %s", law, e.seed, e.seed,
 		fmt.Sprintf(format, args...), len(tail), len(e.trace), strings.Join(tail, "\n  "))
+	if os.Getenv("FLEET_LAW_MUTANT") != "" {
+		// A mutant run (TestLawMutants) needs only the first violation: end now instead of waiting for the other
+		// seeds already running (-failfast starts no new ones but lets those finish). The parent's cluster, which
+		// holds this run's databases, goes with the parent.
+		fmt.Println(msg)
+		os.Exit(1)
+	}
+	e.t.Fatal(msg)
 }
 
 func (e *lawEnv) owner(sql string, args ...any) {
@@ -910,6 +918,9 @@ func lawBoundedRetry(e *lawEnv, failWrite bool) {
 	steps := 0
 	for elapsed := time.Duration(0); elapsed < 20*lawMax; elapsed += lawBase {
 		e.advance(lawBase)
+		// The failure is written at some processor time in [passStart, the read below]; real time moves that clock, so
+		// the pause is bounded from both ends rather than measured from the read (a loaded machine shortened it).
+		passStart := lawNow(e)
 		e.pass()
 		if h := hits(); h > steps {
 			steps = h
@@ -918,7 +929,8 @@ func lawBoundedRetry(e *lawEnv, failWrite bool) {
 			}
 			var attempts int
 			var left float64
-			if err := e.ownerDB.QueryRow(e.ctx, `SELECT max(attempts),extract(epoch FROM max(next_attempt_at)-$1)::float8 FROM resource_work WHERE execution_id='poison'`, lawNow(e)).Scan(&attempts, &left); err != nil {
+			readAt := lawNow(e)
+			if err := e.ownerDB.QueryRow(e.ctx, `SELECT max(attempts),extract(epoch FROM max(next_attempt_at)-$1)::float8 FROM resource_work WHERE execution_id='poison'`, readAt).Scan(&attempts, &left); err != nil {
 				e.t.Fatal(err)
 			}
 			if attempts < 1 {
@@ -929,8 +941,10 @@ func lawBoundedRetry(e *lawEnv, failWrite bool) {
 			if step >= float64(lawMax)/float64(time.Second) {
 				low = step * 0.75
 			}
-			if left < low-0.3 || left > high+0.3 {
-				e.violate("L6", "failure %d (attempts %d) paused %.3fs, bounds [%.3f, %.3f]", steps, attempts, left, low, high)
+			// left: the pause measured from the read (its lower estimate); most: measured from the pass start.
+			most := left + readAt.Sub(passStart).Seconds()
+			if most < low-0.3 || left > high+0.3 {
+				e.violate("L6", "failure %d (attempts %d) paused %.3f-%.3fs, bounds [%.3f, %.3f]", steps, attempts, left, most, low, high)
 			}
 		}
 	}
@@ -956,7 +970,10 @@ func TestLawMutants(t *testing.T) {
 	if os.Getenv("FLEET_LAW_MUTANT") != "" {
 		t.Skip("inside a mutant run")
 	}
-	ensureTestPostgres(t)
+	sock, port, bin := ensureTestPostgres(t)
+	// The children share this cluster; building one template here creates its cluster-wide roles before they start,
+	// so their own bootstraps do not race on CREATE ROLE.
+	lawTemplateDB(t)
 	files, err := filepathGlob("testdata/mutants/*.json")
 	if err != nil || len(files) == 0 {
 		t.Fatal("no mutants", err)
@@ -993,7 +1010,7 @@ func TestLawMutants(t *testing.T) {
 		wg.Add(1)
 		go func(i int, m lawMutant) {
 			defer wg.Done()
-			out, err := runGoTest(overlay, m.ID)
+			out, err := runGoTest(overlay, m.ID, sock, port, bin)
 			switch {
 			case err == nil:
 				results[i] = fmt.Sprintf("%s survived (%s)", m.ID, m.Defect)
