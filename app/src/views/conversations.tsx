@@ -209,13 +209,13 @@ function WaitingCards(props: { page: ListPage<SessionRow>; archived: boolean }) 
       <DetailSection title="Waiting for you" count={waiting().length}
         href={props.page.href({ state: WAITING, preset: undefined })} onOpen={() => props.page.set({ state: WAITING, preset: undefined })}>
         <div class="stack">
-          <Preview
-            n={3}
-            items={waiting().slice(0, 3).map(q => {
-              const name = () => names().get(q.sessionId);
-              return <OpenQuestion q={q} answers={answers} title={name() ? `${name()}: ${q.text}` : q.text} />;
-            })}
-          />
+          {/* Keyed by question: a live reread updates a card in place, never rebuilds it (its typed answer and focus stay). */}
+          <For each={waiting().slice(0, 3)} keyed={q => q.id}>
+            {q => {
+              const name = () => names().get(q().sessionId);
+              return <OpenQuestion q={q()} answers={answers} title={name() ? `${name()}: ${q().text}` : q().text} />;
+            }}
+          </For>
         </div>
       </DetailSection>
     </Show>

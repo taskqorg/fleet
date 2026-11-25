@@ -19,7 +19,7 @@
 - [`lists.ts`](lists.ts), [`threads.ts`](threads.ts), [`selection.ts`](selection.ts), and [`url.ts`](url.ts) hold pure list/thread/selection logic and URL hooks.
 - [`list-page.tsx`](list-page.tsx) exports `useListPage` and `ListPagePanel`, the list-view pattern Tasks, Conversations and Delivery share: saved views and system presets, pins read by id, grouping with collapse remembered per person (`listGroups`), selection mode with bulk actions, and the row menu. A page that reads its whole list itself (Delivery) passes `local` in place of a server list kind.
 - [`uploads.ts`](uploads.ts) exports `uploadFile` (`artifact_upload_begin`, then `PUT` parts with `Content-Range`, resuming at the server's `received`) and `useAttachments`, the composer's files for one target: upload on add with progress, remove, `ready()` before a send, clear after it ([Attachments](../../docs/designs/fleet-conversations.md#attachments)).
-- [`persist.ts`](persist.ts) is the read mirror ([operator app D3](../../docs/designs/fleet-operator-app.md#indexeddb-mirror)): `restore` and `persist` keep the last answer of each read in IndexedDB under the validated person and grants (`adopt`), so a reload renders at once; `purge` and `forget` drop it (another person, changed grants, sign-out). Without IndexedDB every call is a no-op.
+- [`persist.ts`](persist.ts) is the read mirror ([operator app D3](../../docs/designs/fleet-operator-app.md#5-offline-sign-in-state-and-the-pwa-shell-d2-d3)): `restore` and `persist` keep the last answer of each read in IndexedDB under the validated person and grants (`adopt`), so a reload renders at once; `purge` and `forget` drop it (another person, changed grants, sign-out). Without IndexedDB every call is a no-op.
 - [`offline.ts`](offline.ts) owns the synchronous in-memory store reset bus (`onClear`, `clearAll`); [`prefs.ts`](prefs.ts) reads and patches per-person settings and turns the focus and ignored projects into the scope of lists that name no project (`scopeIds`, `withFocus`): the focus as the project filter, otherwise the ignored projects as the server-side exclusion; focus-dependent loads wait for `prefsRead`.
 - [`system-views.ts`](system-views.ts) turns the system presets and navigation counter defaults of [`contracts/vocabulary.json`](../../contracts/vocabulary.json) into views; the coordinator's `nav_counts` reads the same file. [`nav-counts.ts`](nav-counts.ts) `useNavCounts` reads `nav_counts` for the rail counters ([nav rail](../../docs/design-system/controls/nav-rail.md)) through `useOp`: again when a change touches it (this person's settings included) at most once per 5 s, and every 30 s; `navCounted` names the counted view as the server resolved it, and `prefs.ts` `setNavCounter` chooses it.
 - [`views`](views/README.md) exports the routed screen components.
@@ -34,6 +34,8 @@
 - Invalidation has one rule, `store.ts:touchedBy`: the change's `touches` names the operation, and the change names no other task, session, host, artifact, execution, experiment, question or project than the request (a definition other than `project/<id>` touches every project); a setting-change of another known person touches nothing. Views write no predicates.
 - Stored in-memory app state is cleared on identity/grant invalidation or sign-out (`offline.ts:clearAll`, `main.tsx:App`).
 - A read's mirrored answer shows (`restored`, freshness `updating`) only until the first read of this page answers, and never after a clear that began after its restore started (`store.ts:docEntry`, `entry`). A newly mounted reader joins a read already on its way; a resync rereads only what has answered before (`store.ts:holdDoc`, `watch`).
+- Live updates keep what is on screen: a doc reread or list reload keeps every object equal to the one shown (`share.ts`; array items matched by `id`), so `<For>` and keyed `<Show>` rebuild only what changed. Lists of cards with inputs key `<For>` by id as well (`session.tsx` and `conversations.tsx` open questions).
+- Typed text lives in the draft store, never only in a component: `Composer` (app persistence or `draftKey`), `QuestionCard` (`question:<id>`) and `createDraft` fields (packages/ui `drafts.ts`; backend `api.ts`, localStorage `fleet-draft:[identity, key]`). A remount or reload restores it; text typed before the person is known is stored once they are. Design rule `UI-INPUT`: no raw `<input>`/`<textarea>` in `app/src`.
 - A focus or resync that cannot confirm the person keeps the page and asks again; only another person or changed grants clear it (`main.tsx:recheck`, `feed.ts:rebaseFeed`).
 
 ## Side Effects
@@ -49,8 +51,9 @@
 
 - Run: `pnpm run typecheck`
 - Build: `pnpm run app:build`
-- S9 AST design rules (`UI-ANY`, `UI-OP`, `UI-VOCAB`): `node --test tests/ui/design-rules.test.ts` ([`design-rules.test.ts`](../../tests/ui/design-rules.test.ts), part of `node --test tests/ui/*.test.ts`)
+- S9 AST design rules (`UI-ANY`, `UI-INPUT`, `UI-OP`, `UI-VOCAB`): `node --test tests/ui/design-rules.test.ts` ([`design-rules.test.ts`](../../tests/ui/design-rules.test.ts), part of `node --test tests/ui/*.test.ts`)
 - Design warnings: `pnpm run check:design`
+- Drafts through live updates and reload: `pnpm run app:bundle && node tests/ui/drafts.check.ts` ([`drafts.check.ts`](../../tests/ui/drafts.check.ts))
 - Read mirror, person check and idle update: `pnpm run app:bundle && node tests/ui/mirror.check.ts` ([`mirror.check.ts`](../../tests/ui/mirror.check.ts); every API answer held back 400 ms)
 
 ## Authorized prepared reads

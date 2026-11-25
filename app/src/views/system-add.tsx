@@ -2,7 +2,7 @@
 // work-area forms over the existing operations hosts_register and connections_create, as agents call them.
 import { createSignal, Show } from 'solid-js';
 import {
-  Button, Choice, DetailHead, DetailSection, ErrorBanner, KvRow, ProblemRow, TextField, copyText,
+  Button, Choice, DetailHead, DetailSection, ErrorBanner, KvRow, ProblemRow, TextField, copyText, createDraft,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useOp } from '../store.ts';
@@ -15,11 +15,13 @@ const HEX64 = /^[0-9a-f]{64}$/;
 
 /** Add host: hosts_register with the host's own secret hash, or a minted secret shown here once. */
 export function HostAdd(props: { onClose: () => void; onOpen: (path: string) => void }) {
-  const [id, setId] = createSignal('');
-  const [holder, setHolder] = createSignal('');
-  const [hash, setHash] = createSignal('');
-  const [roles, setRoles] = createSignal('');
-  const [harnesses, setHarnesses] = createSignal('claude, codex');
+  // Typed fields are drafts (drafts.ts): a remount or reload keeps them until the host is added.
+  const [id, setId, clearId] = createDraft('system-add:host:id');
+  const [holder, setHolder, clearHolder] = createDraft('system-add:host:holder');
+  const [hash, setHash, clearHash] = createDraft('system-add:host:hash');
+  const [roles, setRoles, clearRoles] = createDraft('system-add:host:roles');
+  const [harnesses, setHarnesses, clearHarnesses] = createDraft('system-add:host:harnesses', 'claude, codex');
+  const clearDrafts = () => { clearId(); clearHolder(); clearHash(); clearRoles(); clearHarnesses(); };
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal('');
   // The minted secret lives only in this view: never stored, gone when the person leaves.
@@ -37,7 +39,7 @@ export function HostAdd(props: { onClose: () => void; onOpen: (path: string) => 
       ...(list(roles()).length ? { roles: list(roles()) } : {}),
       ...(hs.length ? { harnesses: Object.fromEntries(hs.map(h => [h, { allowed: true }])) } : {}),
     }).then(r => {
-      setBusy(false);
+      setBusy(false); clearDrafts();
       if (r.secret) setMinted({ id: r.host.id, secret: r.secret });
       else props.onOpen(`/hosts/${encodeURIComponent(r.host.id)}`);
     }, e => { setBusy(false); setErr(String(e.message ?? e)); });
@@ -80,10 +82,11 @@ export function HostAdd(props: { onClose: () => void; onOpen: (path: string) => 
 /** Add connection: connections_create; its key is added on the connection page, where the value goes to the secret file. */
 export function ConnectionAdd(props: { onClose: () => void; onOpen: (path: string) => void }) {
   const conns = useOp('connections_list', {});
-  const [name, setName] = createSignal('');
+  // Typed fields are drafts (drafts.ts): a remount or reload keeps them until the connection is created.
+  const [name, setName, clearName] = createDraft('system-add:connection:name');
   const [provider, setProvider] = createSignal('');
-  const [holder, setHolder] = createSignal('');
-  const [comment, setComment] = createSignal('');
+  const [holder, setHolder, clearHolder] = createDraft('system-add:connection:holder');
+  const [comment, setComment, clearComment] = createDraft('system-add:connection:comment');
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal('');
   const providers = () => Object.keys(conns.data?.providers ?? {}).toSorted().map(p => ({ id: p, label: p }));
@@ -95,7 +98,7 @@ export function ConnectionAdd(props: { onClose: () => void; onOpen: (path: strin
       name: name(), provider: provider(),
       ...(holder().trim() ? { holder: holder().trim() } : {}),
       ...(comment().trim() ? { comment: comment().trim() } : {}),
-    }).then(() => { setBusy(false); void conns.reload(); props.onOpen(`/keys/${encodeURIComponent(name())}`); },
+    }).then(() => { const n = name(); setBusy(false); clearName(); clearHolder(); clearComment(); void conns.reload(); props.onOpen(`/keys/${encodeURIComponent(n)}`); },
       e => { setBusy(false); setErr(String(e.message ?? e)); });
   };
   return <article class="detail" data-ui="detail" tabindex={-1} aria-label="New connection">

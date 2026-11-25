@@ -13,6 +13,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { op, online, writeOnce, prepareSending, submissionKey, sendingId, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
+import { access } from '../access.ts';
 import { useAttachments } from '../uploads.ts';
 import { useOp } from '../store.ts';
 import type { SessionAgent, SessionGetReply } from '../../../contracts/generated/ops.ts';
@@ -332,7 +333,9 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
     const running = view()?.executions.rows.find(e => e.id === active());
     return a && sid ? composerChips(a, running ? { harness: running.harness ?? undefined, model: running.model ?? undefined } : undefined, () => setPanel({ sessionId: sid, profileId: a.profileId, handoff: false })) : [];
   });
-  const draftPersistence = createMemo(() => (s() && !sDoc.restored && verifiedTarget() === props.id ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id: props.id })) : undefined));
+  // The draft belongs to the person and the session from the first keystroke, before the target is verified (sending
+  // waits for that): a reload or remount restores it, and the mirror-to-server swap never resets the box.
+  const draftPersistence = createMemo(() => (access.value.identity ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id: props.id })) : undefined));
   const send = async (text: string) => {
     const sid = untrack(targetID), executionId = untrack(active) ?? null;
     if (!sid || untrack(composerReason)) throw Error('Session target unavailable');
@@ -458,8 +461,9 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
             </Show>
 
             {/* The open question, pinned above the transcript (OR-53); a failed run asks to retry (UR-63). */}
-            <For each={openQs()}>
-              {oq => <OpenQuestion q={{ ...oq, options: optionsOf(oq) }} answers={answers} />}
+            {/* Keyed by question: a live reread updates the card in place (its typed answer and focus stay). */}
+            <For each={openQs()} keyed={q => q.id}>
+              {oq => <OpenQuestion q={{ ...oq(), options: optionsOf(oq()) }} answers={answers} />}
             </For>
             <Show when={life() === 'failed' && !openQs().length}>
               <QuestionCard tone="danger" question={`The last run failed${runError() ? `: ${runError()}` : ''}`} choices={[{ label: 'Retry', primary: true }]} onAnswer={retryLast} />

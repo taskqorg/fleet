@@ -4,7 +4,7 @@ import { captureRender, configureErrors } from './errors.ts';
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, Match, onSettled, Show, Switch } from 'solid-js';
 import { render, type JSX } from '@solidjs/web';
 import { createAgent, registerTools } from '@ui-sdk/core/agent';
-import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, refreshDrafts, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { useLocation, useSearch, syncLocation } from './router.ts';
 import { setProjectCodes } from './routes.ts';
 import type { InfraSection } from './views/hosts.tsx';
@@ -254,6 +254,8 @@ function App() {
     const stopChecks = startVersionChecks();
     return () => { unregister(); setResyncHandler(null); clearTimeout(retryTimer); stopFeed(); offPrefs(); stopChecks(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
   });
+  // Drafts of answers and form fields are kept per person: once the person is known they load from storage (drafts.ts).
+  createEffect(() => access.value.identity?.identityKey, k => { if (k) refreshDrafts(); });
   createEffect(() => signedOut.value, out => { if (out) { invalidateAccess('signed out'); void forget(); void clearAll(true); } });
   // Each section's list view is noted as it changes and saved when the person leaves the section or the tab hides, so the
   // navigation returns to it (prefs.ts). The open item and checked rows are not part of it (view-url drops focus and sel).

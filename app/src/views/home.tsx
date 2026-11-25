@@ -438,6 +438,7 @@ function HomePage() {
       </header>
       <Composer
         placeholder="Talk to anyone…"
+        draftKey="home:talk"
         onSend={text => send(text)}
         disabledReason={!targets().length ? 'Nobody to talk to yet' : undefined}
         target={<TargetPicker targets={targets()} value={target()} onPick={pick} onNew={() => go('/conversations/new')} />}
