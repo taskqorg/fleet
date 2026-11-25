@@ -26,6 +26,8 @@ export type VirtualListProps<T> = {
   keepRowFocus?: boolean;
   /** Extra class per row, e.g. group headers. */
   rowClass?: (item: T) => string;
+  /** Extra attributes and handlers for an item's row element (drag to reorder, reorder.tsx). */
+  rowProps?: (item: T) => Record<string, unknown> | undefined;
   /** Right click (or long press) on a row: the page opens its row menu (ContextMenu) at the pointer. */
   onRowMenu?: (item: T, at: { x: number; y: number }) => void;
   /** Infinite scroll (OR-11): called once per list length when the last rows come into view. */
@@ -347,6 +349,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
                   ref={el => { rowEl = el; }}
                   role="row"
                   aria-rowindex={vi().index + 1}
+                  {...(props.rowProps && item() !== undefined ? props.rowProps(item()!) : {})}
                   class={['vl-row', { dyn: !!props.dynamic }, props.rowClass && item() !== undefined ? props.rowClass(item()!) : '']}
                   style={{ transform: `translateY(${vi().start}px)`, height: props.dynamic ? undefined : `${rowHeight()}px` }}
                   onContextMenu={e => {

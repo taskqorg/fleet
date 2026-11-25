@@ -79,6 +79,12 @@ export function usePins(list: string) {
       const pinned = !(prefs.peek().rowPins[list] ?? []).includes(id); // the live state, not the render's
       savePrefs(s => { const xs = (s.rowPins[list] ?? []).filter(x => x !== id); return { rowPins: { ...s.rowPins, [list]: pinned ? [...xs, id] : xs } }; }, { rowPin: { list, id, pinned } });
     },
+    /** A new order of the pins (drag to reorder): the given ids first, then pins the caller did not show, as they were. */
+    order: (ids: string[]) => {
+      const cur = prefs.peek().rowPins[list] ?? [], given = ids.filter(x => cur.includes(x));
+      const next = [...given, ...cur.filter(x => !given.includes(x))];
+      savePrefs(s => ({ rowPins: { ...s.rowPins, [list]: next } }), { rowPins: { [list]: next } });
+    },
   };
 }
 

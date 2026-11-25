@@ -133,6 +133,11 @@
   .rail-pinned .nav-i a .nm:has(.pin-age) { flex: none; }
   .pin-age { font-size: var(--font-size-sm); color: var(--fg-faint); }
   .pin-age.t-attention, .pin-age.t-running { color: var(--tone-fg); }
+  .rail-pinned .nav-i { position: relative; -webkit-touch-callout: none; }
+  .reorder-grip { position: absolute; left: 0; top: 50%; translate: 0 -50%; display: inline-grid; color: var(--fg-faint); line-height: 0; opacity: 0; pointer-events: none; }
+  .reorder-grip .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .nav-i:is(:hover, :focus-within) > .reorder-grip, .nav-i[data-reorder] > .reorder-grip { opacity: 1; }
+  .rail.mini .reorder-grip { display: none; }
   .pinned-strip { --avatar-ring: var(--float); display: flex; flex-direction: column; }
   .pinned-strip-h { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); letter-spacing: 0.04em; text-transform: uppercase; }
   .pinned-strip-h .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
@@ -200,7 +205,6 @@
   .nav-i:hover .nav-pin, .nav-pin:focus-visible, .nav-i:focus-within .nav-pin, .nav-pin.on { opacity: 1; }
   .nav-pin.on { color: var(--fg); }
   .rail-g.pinned .nav-i { cursor: grab; }
-  .rail-g.pinned .nav-i.dragging { opacity: .5; }
   @media (pointer: coarse) { .nav-pin { opacity: 1; } }
 
   /* Phone bottom bar (OR-60): hidden above 760 px, where the rail shows. */

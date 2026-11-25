@@ -5,8 +5,9 @@ import { createSignal, For, Show } from 'solid-js';
 import { Icon, Ago, focusOnMount, popoverAttr, useAnchoredPopover } from './primitives.tsx';
 import { Avatar } from './avatar.tsx';
 
-import { railPinOrder, railPinMove, type RailPin, type RailPinnedProps } from './rail-pinned-rows.ts';
-export { railPinOrder, railPinMove, type RailPin, type RailPinnedProps };
+import { useReorder } from './reorder.tsx';
+import { railPinOrder, type RailPin, type RailPinnedProps } from './rail-pinned-rows.ts';
+export { railPinOrder, type RailPin, type RailPinnedProps };
 
 function PinAge(p: { p: RailPin }) {
   return (
@@ -39,24 +40,31 @@ const label = (p: RailPin) => `${p.name}, ${p.asks ? 'waits for your answer' : p
 /** The zone in the rail: the heading (Pinned), then one row per pinned object. Collapsed, rows keep their marks (OR-42). */
 export function RailPinned(p: RailPinnedProps) {
   const menu = useMenu();
-  const keys = () => p.pins.map(x => x.key);
+  let list: HTMLUListElement | undefined;
+  const byKey = () => new Map(p.pins.map(x => [x.key, x]));
+  const r = useReorder({
+    keys: () => p.pins.map(x => x.key), onOrder: p.onOrder, label: k => byKey().get(k)?.name ?? k, root: () => list,
+    focus: k => list?.querySelector<HTMLElement>(`[data-reorder-key="${CSS.escape(k)}"] a`)?.focus({ preventScroll: true }),
+  });
+  const shown = () => r.order().map(k => byKey().get(k)).filter((x): x is RailPin => !!x);
   const act = (f: () => void) => () => { menu.setAt(null); f(); };
   const ctx = (key: string) => (e: KeyboardEvent) => {
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) menu.open(key, e);
   };
   return (
     <div class="rail-pinned" data-ui="rail-pinned">
-      <ul class="rail-g" aria-label="Pinned">
+      <ul class="rail-g" aria-label="Pinned" ref={el => { list = el; }}>
         <li class="nav-i rail-pinned-h" onContextMenu={e => e.preventDefault()} onPointerUp={e => { if (e.button === 2) menu.open('h', e); }}>
           <span class="pin-h" role="button" tabindex={0} aria-haspopup="menu" aria-label="Pinned menu" onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') menu.open('h', e); else ctx('h')(e); }} onClick={e => menu.open('h', e)}>
             <span class="nav-ic" data-tip="Pinned"><Icon name="pin" /></span>
             <span class="nm">Pinned</span>
           </span>
         </li>
-        <For each={p.pins} fallback={<li class="nav-i rail-pinned-empty"><span class="nm">Pin a conversation or a bot: the pin in its head, or Pin in a row menu.</span></li>}>
+        <For each={shown()} fallback={<li class="nav-i rail-pinned-empty"><span class="nm">Pin a conversation or a bot: the pin in its head, or Pin in a row menu.</span></li>}>
           {x => (
-            <li class="nav-i" data-key={x.key} onContextMenu={e => e.preventDefault()} onPointerUp={e => { if (e.button === 2) menu.open(x.key, e); }}>
-              <a href={x.href} aria-label={label(x)} onClick={e => { e.preventDefault(); p.onOpen(x); }} onKeyDown={ctx(x.key)}>
+            <li class="nav-i" {...r.item(x.key)} onContextMenu={e => e.preventDefault()} onPointerUp={e => { if (e.button === 2) menu.open(x.key, e); }}>
+              <span class="reorder-grip" aria-hidden="true"><Icon name="grip" /></span>
+              <a href={x.href} aria-label={label(x)} aria-roledescription="draggable item" aria-description="Space to reorder" onClick={e => { e.preventDefault(); p.onOpen(x); }} onKeyDown={ctx(x.key)}>
                 <span class="nav-ic" data-tip={label(x)} data-tip-narrow><Avatar {...x.mark} size="sm" state={x.state} /></span>
                 <span class="nm">{x.name}</span>
                 <span class="nm"><PinAge p={x} /></span>
@@ -65,13 +73,13 @@ export function RailPinned(p: RailPinnedProps) {
           )}
         </For>
       </ul>
+      {r.view()}
       <span class="menu pinned-menu" {...popoverAttr('auto')} role="menu" aria-label="Pinned menu" ref={menu.ref}>
         <Show when={menu.at()} keyed>
         {m => {
           const x = p.pins.find(y => y.key === m.key);
           // The object left the zone (unpinned elsewhere) while its menu was open: close it rather than show another menu.
           if (m.key !== 'h' && !x) queueMicrotask(() => menu.setAt(null));
-          const i = () => keys().indexOf(m.key);
           return (
             <Show when={m.key === 'h' ? null : x} fallback={m.key !== 'h' ? undefined :
               <button type="button" role="menuitem" ref={focusOnMount} onClick={act(p.onHide)}><Icon name="pin-off" />Hide pinned in navigation</button>
@@ -80,12 +88,6 @@ export function RailPinned(p: RailPinnedProps) {
                 <>
                   <button type="button" role="menuitem" ref={focusOnMount} onClick={act(() => p.onUnpin(pin()))}><Icon name="pin-off" />Unpin</button>
                   <button type="button" role="menuitem" onClick={act(() => p.onOpen(pin()))}><Icon name="external-link" />Open</button>
-                  <Show when={i() > 0}>
-                    <button type="button" role="menuitem" onClick={act(() => p.onOrder(railPinMove(keys(), pin().key, -1)))}><Icon name="arrow-up" />Move up</button>
-                  </Show>
-                  <Show when={i() >= 0 && i() < keys().length - 1}>
-                    <button type="button" role="menuitem" onClick={act(() => p.onOrder(railPinMove(keys(), pin().key, 1)))}><Icon name="arrow-down" />Move down</button>
-                  </Show>
                 </>
               )}
             </Show>
@@ -99,20 +101,29 @@ export function RailPinned(p: RailPinnedProps) {
 
 /** The same objects first in the phone's More menu: the heading, then one row of marks (OR-60). */
 export function RailPinnedStrip(p: RailPinnedProps & { onDone?: () => void }) {
+  let strip: HTMLDivElement | undefined;
+  const byKey = () => new Map(p.pins.map(x => [x.key, x]));
+  const r = useReorder({
+    keys: () => p.pins.map(x => x.key), onOrder: p.onOrder, label: k => byKey().get(k)?.name ?? k, root: () => strip, axis: 'x',
+    focus: k => strip?.querySelector<HTMLElement>(`[data-reorder-key="${CSS.escape(k)}"]`)?.focus({ preventScroll: true }),
+  });
+  const shown = () => r.order().map(k => byKey().get(k)).filter((x): x is RailPin => !!x);
   return (
     <div class="pinned-strip" data-ui="rail-pinned">
       <div class="pinned-strip-h"><Icon name="pin" />Pinned</div>
       <Show when={p.pins.length > 0} fallback={<p class="pinned-strip-empty">Pin a conversation or a bot: the pin in its head, or Pin in a row menu.</p>}>
-        <div class="pinned-marks">
-          <For each={p.pins}>
+        <div class="pinned-marks" ref={el => { strip = el; }}>
+          <For each={shown()}>
             {x => (
-              <button type="button" role="menuitem" class="pin-tile" aria-label={label(x)} onClick={() => { p.onDone?.(); p.onOpen(x); }}>
+              <button type="button" role="menuitem" class="pin-tile" {...r.item(x.key)} aria-label={label(x)} aria-roledescription="draggable item" aria-description="Space to reorder"
+                onContextMenu={e => e.preventDefault()} onClick={() => { p.onDone?.(); p.onOpen(x); }}>
                 <Avatar {...x.mark} size="md" state={x.state} />
                 <span class="nm">{x.name}</span>
               </button>
             )}
           </For>
         </div>
+        {r.view()}
       </Show>
       <div class="menu-sep" />
     </div>

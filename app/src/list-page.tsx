@@ -4,12 +4,12 @@
 import { createEffect, createMemo, createSignal, onSettled, Show, untrack, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, RowCheck, copyText, actions,
+  useReorder, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, RowCheck, copyText, actions,
   EntityCode, ErrorBanner, type EntityKind, Skeleton, catalogueRow, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
 } from '../../packages/ui/src/index.ts';
 import { online } from './api.ts';
 import { useList, useOp, type Kind } from './store.ts';
-import { compareKeys, closedGroups, flipGroup } from './lists.ts';
+import { closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
 import { currentUrl } from './router.ts';
@@ -130,10 +130,16 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     return new Map(((localMemo?.().all as R[] | undefined) ?? pinRows ?? []).map(r => [r.id, r]));
   });
   // The page supplies a just-pinned row while its independent read is pending. Its grouping key is irrelevant here.
-  const pinned = createMemo(() =>
-    pins.ids.map(x => byId().get(x) ?? rows().find(r => r.id === x))
-      .filter((r): r is R => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1))),
-  );
+  // Pinned rows in the person's order (drag to reorder, reorder.tsx; owner 26 Nov), shown in the order a keyboard move previews.
+  const pinnedRows = createMemo(() => pins.ids.map(x => byId().get(x) ?? rows().find(r => r.id === x)).filter((r): r is R => !!r));
+  let pinRoot: HTMLElement | undefined;
+  let pinLabel: (r: R) => string = r => r.id;
+  const reorder = useReorder({
+    keys: () => pinnedRows().map(r => r.id), onOrder: pins.order, root: () => pinRoot,
+    label: id => { const r = pinnedRows().find(x => x.id === id); return r ? pinLabel(r) : id; },
+    focus: id => pinRoot?.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(id)}"] .row-link`)?.focus({ preventScroll: true }),
+  });
+  const pinned = createMemo(() => { const m = new Map(pinnedRows().map(r => [r.id, r])); return reorder.order().map(id => m.get(id)).filter((r): r is R => !!r); });
   const rest = createMemo(() => rows().filter(r => !pins.has(r.id)));
   const displayed = createMemo(() => [...pinned(), ...rest()]);
   // Collapsed groups: the page's defaults for the grouping on screen with the person's flips (prefs listGroups), read in
@@ -276,6 +282,9 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     bulk,
     get off() { return off(); },
     pinAll,
+    /** Drag to reorder the Pinned group: the panel sets its root and the row names, rows take reorder.item. */
+    reorder,
+    setPinRoot: (el: HTMLElement, label: (r: R) => string) => { pinRoot = el; pinLabel = label; },
     get menu() { return menu(); },
     setMenu,
     closeMenu,
@@ -375,7 +384,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
     { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + targetUrl(formatView({ view: g.view.view, focus: g.focusOf(r), project: g.scope() ? [g.scope()!] : undefined, extra: g.view.extra?.project ? { project: g.view.extra.project } : undefined }))) },
     ...p.menu(r),
   ];
-  return <section class={['panel', p.cls]}>
+  return <section class={['panel', p.cls]} ref={el => g.setPinRoot(el, p.title)}>
     <ListFrame pending={g.list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={g.list.total} chips={p.chips} onRemove={p.onRemoveChip}
       extra={<Presets system={g.views.list.filter(v => v.system).map(v => v.name)} systemTips={p.systemTips} presets={g.views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
         onSave={g.save} onUnpin={g.views.remove} counted={navCounted(g.view.view, g.views.list.map(v => v.name))} onCount={g.view.view in NAV_COUNTER_DEFAULTS ? n => setNavCounter(g.view.view, n) : undefined} />}
@@ -402,6 +411,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
         : <VirtualList keepRowFocus items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} dynamic={p.dynamic} follow="top" label={p.listLabel} onEnd={g.list.more} endKey={g.endKey}
           columns={`${g.selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${p.focused !== undefined && (i.r.id === p.focused || g.focusOf(i.r) === p.focused) ? 'sel' : ''}${g.sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
+          rowProps={i => (i.kind === 'row' && i.pinned && !g.selecting ? g.reorder.item(i.r.id) : undefined)}
           render={i => i.kind === 'group'
             ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup, i.key)} tone={i.icon ? undefined : p.groupTone?.(g.rowsGroup, i.key)} label={i.label} count={i.count} open={!g.closed.has(i.key)} onToggle={() => g.toggleGroup(i.key)} />
             : <>
@@ -423,6 +433,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
               <span class="rz">{p.facts(i.r)}</span>
               <Show when={p.after}>{a => a()(i.r)}</Show>
             </>} />}
+      {g.reorder.view()}
     </ListFrame>
     <Show when={g.menu} keyed>{m => <ContextMenu at={m.at} label={p.title(m.r)} items={rowMenu(m.r)} onClose={g.closeMenu} />}</Show>
   </section>;

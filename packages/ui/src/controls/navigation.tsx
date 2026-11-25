@@ -6,6 +6,7 @@ import { type IconName, type Family, type StateDef, type Tone, states, actions }
 import { matchSearch, searchFields } from '../search.ts';
 import { isSubmitEnter } from '../keys.ts';
 import { Icon, Button, StateBadge, Ago, SearchBox, focusOnMount } from './primitives.tsx';
+import { useReorder } from './reorder.tsx';
 
 /* ---------- Focus: one project multi-select for the whole app, with presets and ignore (OR-34, controls/focus-control.md) ---------- */
 
@@ -275,7 +276,6 @@ export function NavRail(p: {
   // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
   const pinned = createMemo(() => p.pinned.filter(id => p.items.some(i => i.id === id)));
   const [menu, setMenu] = createSignal<string | null>(null);
-  const [drag, setDrag] = createSignal<string | null>(null);
   let navRef: HTMLElement | undefined;
 
   const focusItem = (id: string, inPinned: boolean) => requestAnimationFrame(() =>
@@ -303,13 +303,12 @@ export function NavRail(p: {
     p.onPins(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
     if (inPinned) focusItem(id, false);
   };
-  // move: the pinned item to position `to` (clamped); keeps focus on the moved item for keyboard reorder.
-  const move = (id: string, to: number, refocus = false) => {
-    const cur = pinned(), rest = cur.filter(x => x !== id), at = Math.max(0, Math.min(rest.length, to));
-    if (cur.indexOf(id) === at) return;
-    p.onPins([...rest.slice(0, at), id, ...rest.slice(at)]);
-    if (refocus) focusItem(id, true);
-  };
+  // Pinned sections reorder by drag (reorder.tsx; owner 26 Nov: no Move up / Move down).
+  let pinnedRef: HTMLUListElement | undefined;
+  const reorder = useReorder({
+    keys: pinned, onOrder: p.onPins, root: () => pinnedRef, label: id => p.items.find(i => i.id === id)?.label ?? id,
+    focus: id => pinnedRef?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"] a`)?.focus({ preventScroll: true }),
+  });
   const act = (f: () => void) => () => { setMenu(null); f(); };
 
   const renderItem = (it: NavItem, inPinned: boolean) => {
@@ -319,34 +318,18 @@ export function NavRail(p: {
     return (
       <li
         data-id={it.id}
-        class={['nav-i', { cur: it.id === p.current, pinned: isPinned(), dragging: drag() === it.id && inPinned }]}
-        draggable={inPinned ? 'true' : undefined}
-        onDragStart={e => {
-          if (!inPinned) return;
-          setDrag(it.id);
-          e.dataTransfer?.setData('text/plain', it.id);
-        }}
-        onDragOver={e => { if (inPinned && drag()) e.preventDefault(); }}
-        onDrop={e => {
-          const d = drag();
-          if (!inPinned || !d) return;
-          e.preventDefault();
-          const r = e.currentTarget.getBoundingClientRect();
-          const after = e.clientY > r.top + r.height / 2;
-          if (d !== it.id) move(d, pinned().filter(x => x !== d).indexOf(it.id) + (after ? 1 : 0));
-          setDrag(null);
-        }}
-        onDragEnd={() => setDrag(null)}
+        class={['nav-i', { cur: it.id === p.current, pinned: isPinned() }]}
+        {...(inPinned ? reorder.item(it.id) : {})}
         onContextMenu={e => { e.preventDefault(); setMenu(menuKey()); }}
       >
         <a
           href={`#/${it.id}`}
           aria-current={it.id === p.current ? 'page' : undefined}
-          aria-keyshortcuts={inPinned ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
+          aria-roledescription={inPinned ? 'draggable item' : undefined}
+          aria-description={inPinned ? 'Space to reorder' : undefined}
           onClick={e => { e.preventDefault(); p.onGo(it.id); }}
           onKeyDown={e => {
             if (e.key === 'p' && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggle(it.id, inPinned); }
-            else if (inPinned && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); move(it.id, idx() + (e.key === 'ArrowUp' ? -1 : 1), true); }
             else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); setMenu(menuKey()); }
           }}
         >
@@ -369,16 +352,6 @@ export function NavRail(p: {
             <button type="button" role="menuitem" ref={focusOnMount} onClick={act(() => toggle(it.id, inPinned))}>
               <Icon name={idx() < 0 ? 'pin' : 'pin-off'} />{idx() < 0 ? 'Pin' : 'Unpin'}
             </button>
-            <Show when={idx() > 0}>
-              <button type="button" role="menuitem" onClick={act(() => move(it.id, idx() - 1, true))}>
-                <Icon name="arrow-up" />Move up
-              </button>
-            </Show>
-            <Show when={idx() >= 0 && idx() < pinned().length - 1}>
-              <button type="button" role="menuitem" onClick={act(() => move(it.id, idx() + 1, true))}>
-                <Icon name="arrow-down" />Move down
-              </button>
-            </Show>
             <Show when={p.pinnedZone} keyed>
               {b => (
                 <button type="button" role="menuitem" onClick={act(() => b.set(!b.on))}>
@@ -393,15 +366,16 @@ export function NavRail(p: {
   };
 
   const groups = createMemo(() => [...new Set(p.items.map(i => i.group))]);
-  const pins = createMemo(() => pinned().map(id => p.items.find(i => i.id === id)).filter((x): x is NavItem => !!x));
+  const pins = createMemo(() => reorder.order().map(id => p.items.find(i => i.id === id)).filter((x): x is NavItem => !!x));
 
   return (
     <nav class={['rail', { mini: !!p.mini }]} data-ui="nav-rail" aria-label="Sections" ref={el => { navRef = el; }}>
       <Show when={p.head} keyed>{h => <div class="rail-head">{h}</div>}</Show>
       <Show when={pins().length > 0}>
-        <ul class="rail-g pinned" aria-label="Pinned">
+        <ul class="rail-g pinned" aria-label="Pinned" ref={el => { pinnedRef = el; }}>
           <For each={pins()}>{i => renderItem(i, true)}</For>
         </ul>
+        {reorder.view()}
       </Show>
       <For each={groups()}>
         {g => (
