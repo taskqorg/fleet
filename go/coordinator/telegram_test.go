@@ -131,3 +131,12 @@ func TestTelegramNewWorkCue(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramBackReference(t *testing.T) {
+	for text, want := range map[string]bool{"А какая из этих трёх самая старая?": true, "а его когда закрыли?": true, "which of them is oldest?": true,
+		"Сколько хостов онлайн?": false, "how many hosts are online?": false, "этаж": false} {
+		if backReference.MatchString(strings.ToLower(text)) != want {
+			t.Errorf("%q: %v", text, !want)
+		}
+	}
+}
