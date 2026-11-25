@@ -401,7 +401,7 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 	if r := m.ReplyToMessage; r != nil {
 		qm, err := q.db().TelegramQuestionMessage(q.ctx(), db.TelegramQuestionMessageParams{ChatID: m.Chat.ID, TelegramMessageID: &r.MessageID})
 		if err == nil {
-			telegramAnswer(q, c, p, qm, text)
+			telegramAnswer(q, c, p, qm, text, tgAnswerAt{chat: m.Chat.ID, thread: m.thread(), message: m.MessageID, roomID: room.ID, email: tp.Email})
 			return nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err

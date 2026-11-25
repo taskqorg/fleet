@@ -312,6 +312,21 @@ func tgChoices(options []byte) []string {
 func telegramQuestionMessage(q *Request, id, questionID, kind, text, lang string, chat, thread int64, workID, sessionID string, replyTo *int64) error {
 	rows := [][]map[string]string{}
 	body := "❓ " + text
+	if a, err := q.db().ApprovalOf(q.ctx(), questionID); err == nil {
+		// An approval card in the reader's language: the scope as the agent wrote it, Fleet's labels translated.
+		var sc approvalScope
+		_ = json.Unmarshal(a.Approval, &sc)
+		body = "⚠️ " + say(lang, "approvalNeeded", sc.What) + "\n" + say(lang, "approvalWhere", sc.Where)
+		if sc.Version != "" {
+			body += "\n" + say(lang, "approvalVersion", sc.Version)
+		}
+		if sc.Rollback != "" {
+			body += "\n" + say(lang, "approvalRollback", sc.Rollback)
+		}
+		body += "\n" + say(lang, "approvalWaiting", strings.Join(approverNames(approvers(q, a.ProjectID, sc.Action)), ", "))
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	if kind == "secret" {
 		body = "🔑 " + text + "\n" + say(lang, "keyInFleet", "")
 	}
@@ -325,7 +340,11 @@ func telegramQuestionMessage(q *Request, id, questionID, kind, text, lang string
 			if i == 6 {
 				break
 			}
-			row = append(row, map[string]string{"text": clip(c, 30), "callback_data": "q:" + questionID + ":" + strconv.Itoa(i)})
+			label := c
+			if c == approvalYes || c == approvalNo {
+				label = say(lang, "btn"+strings.ReplaceAll(c, " ", ""), "")
+			}
+			row = append(row, map[string]string{"text": clip(label, 30), "callback_data": "q:" + questionID + ":" + strconv.Itoa(i)})
 			if len(row) == 2 {
 				rows, row = append(rows, row), []map[string]string{}
 			}
@@ -389,7 +408,13 @@ func telegramNeeds(q *Request, row *db.TelegramUpdate, room db.TelegramRoom, tp 
 }
 
 // telegramAnswer answers a question as the person who tapped or replied, through question_answer in their scope.
-func telegramAnswer(q *Request, c *kitClaim, p *Person, questionID, answer string) {
+// tgAnswerAt: where an answer was given in Telegram, so the run the reply starts answers there too.
+type tgAnswerAt struct {
+	chat, thread, message int64
+	roomID, email         string
+}
+
+func telegramAnswer(q *Request, c *kitClaim, p *Person, questionID, answer string, at tgAnswerAt) {
 	a := q.app
 	c.Call = func(ctx context.Context) any {
 		var out tgDelivered
@@ -425,8 +450,25 @@ func telegramAnswer(q *Request, c *kitClaim, p *Person, questionID, answer strin
 				return err
 			}
 			pq.body = jsonBytes(contract.QuestionsAnswerRequest{QuestionId: questionID, Answer: answer})
-			_, err := operations["questions_answer"].h(pq) // as the web app: an agent's question gets the reply delivered
-			return err
+			if _, err := operations["questions_answer"].h(pq); err != nil { // as the web app: an agent's question gets the reply delivered
+				return err
+			}
+			if qr.SessionID == nil || qr.Kind != "agent_question" {
+				return nil
+			}
+			// The reply starts (or joins) a run of the asking session: its answer comes back where the person answered,
+			// as for any message they send (owner-tester F12).
+			var work *string
+			if w, err := pq.db().TelegramWorkBySession(pq.ctx(), db.TelegramWorkBySessionParams{RoomID: at.roomID, SessionID: *qr.SessionID}); err == nil {
+				work = &w.ID
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if err := pq.db().TelegramTurnAdd(pq.ctx(), db.TelegramTurnAddParams{ID: "ans:" + questionID, SessionID: *qr.SessionID, RequestID: "reply:" + questionID,
+				WorkID: work, ChatID: at.chat, ThreadID: at.thread, MessageID: at.message, Email: at.email}); err != nil {
+				return err
+			}
+			return kitNotify(pq, "telegram-reply")
 		})
 		return out
 	}
@@ -679,7 +721,12 @@ func telegramQuestionTap(q *Request, c *kitClaim, row *db.TelegramUpdate, cb *tg
 	if qr.State != "open" || err != nil || i < 0 || i >= len(choices) {
 		return telegramDone(q, row.ID, "tap-stale", "")
 	}
-	telegramAnswer(q, c, p, questionID, choices[i])
+	at := tgAnswerAt{email: tp.Email}
+	if cb.Message != nil {
+		at = tgAnswerAt{chat: cb.Message.Chat.ID, thread: cb.Message.thread(), message: cb.Message.MessageID,
+			roomID: telegramRoomID(cb.Message.Chat.ID, cb.Message.thread()), email: tp.Email}
+	}
+	telegramAnswer(q, c, p, questionID, choices[i], at)
 	return nil
 }
 
@@ -703,19 +750,21 @@ func init() {
 			"task_paused": "paused", "task_completed": "completed", "task_failed": "failed", "task_cancelled": "cancelled",
 			"stage_pr_open": "open", "stage_checks": "checks running", "stage_checks_failed": "checks failed",
 			"stage_merging": "merging", "stage_merged": "merged", "stage_unknown": "state unknown",
-			"noNeeds":       "No open questions here.",
-			"noWork":        "No open work here.",
-			"home":          "Your conversation",
-			"noTask":        "No task %s that you can see.",
-			"keyInFleet":    "Keys are never typed in chat: add it in Fleet (Open in Fleet).",
-			"replyToAnswer": "Reply to this message to answer.",
-			"withdrawn":     "withdrawn",
-			"finished":      "Finished (%s)",
-			"overlap":       "Another Fleet conversation works on the same task: %s",
-			"join":          "Join it",
-			"separate":      "Work separately",
-			"joined":        "Joined: messages go to that conversation now",
-			"separately":    "Working separately",
+			"noNeeds":        "No open questions here.",
+			"noWork":         "No open work here.",
+			"home":           "Your conversation",
+			"noTask":         "No task %s that you can see.",
+			"keyInFleet":     "Keys are never typed in chat: add it in Fleet (Open in Fleet).",
+			"replyToAnswer":  "Reply to this message to answer.",
+			"withdrawn":      "withdrawn",
+			"approvalNeeded": "Approval needed: %s", "approvalWhere": "Where: %s", "approvalVersion": "Version: %s",
+			"approvalRollback": "Rollback: %s", "approvalWaiting": "Waiting for: %s", "btnApprove": "Approve", "btnNotnow": "Not now",
+			"finished":   "Finished (%s)",
+			"overlap":    "Another Fleet conversation works on the same task: %s",
+			"join":       "Join it",
+			"separate":   "Work separately",
+			"joined":     "Joined: messages go to that conversation now",
+			"separately": "Working separately",
 		},
 		"ru": {
 			"runNone":       "Запусков ещё не было",
@@ -735,19 +784,21 @@ func init() {
 			"task_paused": "на паузе", "task_completed": "готова", "task_failed": "упала", "task_cancelled": "отменена",
 			"stage_pr_open": "открыт", "stage_checks": "идут проверки", "stage_checks_failed": "проверки упали",
 			"stage_merging": "вливается", "stage_merged": "влит", "stage_unknown": "состояние неизвестно",
-			"noNeeds":       "Открытых вопросов здесь нет.",
-			"noWork":        "Открытой работы здесь нет.",
-			"home":          "Ваш разговор",
-			"noTask":        "Задачи %s среди доступных вам нет.",
-			"keyInFleet":    "Ключи не вводятся в чат: добавьте его во Fleet (Открыть во Fleet).",
-			"replyToAnswer": "Ответьте на это сообщение, чтобы ответить.",
-			"withdrawn":     "отозван",
-			"finished":      "Завершено (%s)",
-			"overlap":       "Над той же задачей работает другой разговор Fleet: %s",
-			"join":          "Присоединиться",
-			"separate":      "Работать отдельно",
-			"joined":        "Присоединено: сообщения теперь идут в тот разговор",
-			"separately":    "Работаем отдельно",
+			"noNeeds":        "Открытых вопросов здесь нет.",
+			"noWork":         "Открытой работы здесь нет.",
+			"home":           "Ваш разговор",
+			"noTask":         "Задачи %s среди доступных вам нет.",
+			"keyInFleet":     "Ключи не вводятся в чат: добавьте его во Fleet (Открыть во Fleet).",
+			"replyToAnswer":  "Ответьте на это сообщение, чтобы ответить.",
+			"withdrawn":      "отозван",
+			"approvalNeeded": "Нужно согласие: %s", "approvalWhere": "Где: %s", "approvalVersion": "Версия: %s",
+			"approvalRollback": "Откат: %s", "approvalWaiting": "Ждёт: %s", "btnApprove": "Одобрить", "btnNotnow": "Не сейчас",
+			"finished":   "Завершено (%s)",
+			"overlap":    "Над той же задачей работает другой разговор Fleet: %s",
+			"join":       "Присоединиться",
+			"separate":   "Работать отдельно",
+			"joined":     "Присоединено: сообщения теперь идут в тот разговор",
+			"separately": "Работаем отдельно",
 		},
 	} {
 		for k, v := range words {
@@ -819,7 +870,7 @@ func telegramApprovalText(q *Request, c *kitClaim, row *db.TelegramUpdate, room 
 	case 0:
 		return false, nil
 	case 1:
-		telegramAnswer(q, c, p, cards[0], approvalYes)
+		telegramAnswer(q, c, p, cards[0], approvalYes, tgAnswerAt{chat: m.Chat.ID, thread: m.thread(), message: m.MessageID, roomID: room.ID, email: tp.Email})
 		return true, nil
 	}
 	for _, id := range cards {
