@@ -696,6 +696,9 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	if cs, ok := sess.(*codexSession); ok {
 		cs.marks = filepath.Join(e.root, "codex-instructions")
 	}
+	if as, ok := sess.(*acpSession); ok {
+		as.readRoots = []string{inputDir}
+	}
 	protocol := sess != nil
 	var stdin io.WriteCloser
 	if nativeInput != nil || protocol {

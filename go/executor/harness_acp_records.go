@@ -56,6 +56,9 @@ type acpParams struct {
 		Kind       string `json:"kind"`
 		Status     string `json:"status"`
 		ToolCallID string `json:"toolCallId"`
+		RawInput   struct {
+			Path string `json:"Path"`
+		} `json:"rawInput"`
 	} `json:"toolCall"`
 	Options []struct {
 		OptionID string `json:"optionId"`

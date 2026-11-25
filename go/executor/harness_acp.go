@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -20,6 +21,9 @@ type acpSession struct {
 	profile                 M
 	servers                 M
 	promptStartedAtMs       int64
+	// readRoots: folders outside the workspace whose files the agent may read (the run's FLEET_INPUT_DIR, where its
+	// staged inputs are); a read_file request for a path inside one is granted once, any other path is refused.
+	readRoots []string
 }
 
 func newACPSession(root, resume string, profile, servers M) *acpSession {
@@ -182,7 +186,8 @@ func (s *acpSession) selectModel(result acpResult, model string) (M, error) {
 // Antigravity requests ACP permission during its active turn. Fleet grants a single
 // allow_once only for explicitly injected Code Mode MCP tools (when codeMode is
 // enabled), other Fleet-injected s.servers MCP tools, or run_command (kind
-// "execute") when the session runs in sandboxed accept-edits mode.
+// "execute") when the session runs in sandboxed accept-edits mode, or read_file (kind "read") of a file inside one of
+// readRoots, the run's staged inputs.
 func (s *acpSession) permission(params acpParams) string {
 	if pharness(s.profile) != "antigravity" || s.stage != 5 || s.session == "" || params.SessionID != s.session {
 		return ""
@@ -198,6 +203,8 @@ func (s *acpSession) permission(params acpParams) string {
 		allowed = (mode == "add" || mode == "only") && has(s.servers, "code")
 	case call.Kind == "other" && s.hasInjectedMCPTool(call.Name):
 		allowed = true
+	case call.Name == "read_file" && call.Kind == "read":
+		allowed = s.mayRead(call.RawInput.Path)
 	case call.Name == "run_command" && call.Kind == "execute":
 		allowed = s.mode == "accept-edits" && !jIsTrue(s.profile, "readOnly") && jIsTrue(s.config(), "settings", "sandbox")
 	}
@@ -210,6 +217,28 @@ func (s *acpSession) permission(params acpParams) string {
 		}
 	}
 	return ""
+}
+
+// mayRead: path names a file inside one of readRoots, symbolic links resolved on both sides, so neither ".." nor a
+// link leads out of it.
+func (s *acpSession) mayRead(path string) bool {
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	for _, root := range s.readRoots {
+		r, err := filepath.EvalSymlinks(root)
+		if err != nil || root == "" {
+			continue
+		}
+		if rel, err := filepath.Rel(r, target); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // acpSanitizeMCPServer mirrors Antigravity ACP's sanitizeMCPServerName: ASCII
