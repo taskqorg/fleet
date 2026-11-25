@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +23,9 @@ const (
 	pinsWatchMinFails = 3    // and failures among them
 	pinsWatchMargin   = 0.25 // its failure share above the host's other versions
 )
+
+// pinsSemver: the version a run recorded ("codex-cli 0.172.0" is 0.172.0).
+var pinsSemver = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
 var (
 	pinsWatchMu   sync.Mutex
@@ -55,7 +58,7 @@ func pinsRegressions(runs []pinsWatchRun, pinned map[string]string, now time.Tim
 	for _, r := range runs {
 		v := pinned[r.Harness]
 		k := key{r.Host, r.Harness}
-		if v != "" && strings.Contains(r.Version, v) {
+		if v != "" && pinsSemver.FindString(r.Version) == v {
 			newer[k] = r
 		} else {
 			b := base[k]

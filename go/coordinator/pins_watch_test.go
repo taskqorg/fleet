@@ -18,6 +18,7 @@ func TestPinsRegressions(t *testing.T) {
 		{Host: "win", Harness: "codex", Version: "0.172.0", Failed: 5, Total: 8, FirstAt: old},       // window over
 		{Host: "pds18", Harness: "claude", Version: "2.1.332", Failed: 3, Total: 10, FirstAt: fresh}, // 30% vs 20%
 		{Host: "pds18", Harness: "claude", Version: "2.1.326", Failed: 4, Total: 20, FirstAt: old},
+		{Host: "mac", Harness: "claude", Version: "2.1.3320", Failed: 9, Total: 9, FirstAt: fresh}, // another version
 	}
 	got := pinsRegressions(runs, pinned, now)
 	if len(got) != 1 || got[0].Host != "pds18" || got[0].Harness != "codex" || got[0].describe()[:21] != "revert codex 0.172.0:" {
