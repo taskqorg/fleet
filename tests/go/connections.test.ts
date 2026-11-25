@@ -718,6 +718,11 @@ test('A3 Promote saves the method as a catalogue revision (source lab) and sets 
   const g = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'}));
   assert.equal(g.meta.source, 'lab');
   assert.ok(g.content.catalogue.methods.some((m: any) => m.id === p.method.id));
+  // Library idle reads the promotion back as a recommendation change of this week, with its name and source (J3).
+  const {changes} = ok(await op('recommendation_changes', {}));
+  const c = changes.find((x: any) => x.projectId === 'hello-world');
+  assert.deepEqual([c?.methodId, c?.methodName, c?.sourceExperiment], [p.method.id, p.method.name, e.id]);
+  assert.equal((await op('recommendation_changes', {days: 0})).status, 400);
   const again = ok(await op('lab_promote', {experimentId: e.id, variant: 'promoted'}));
   assert.equal(again.catalogue ?? null, null, 'a second promote finds the method and saves nothing');
 });

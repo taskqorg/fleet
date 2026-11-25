@@ -74,6 +74,7 @@ export function Conversations(props: { id?: string }) {
       <ShellActions><Button label="New conversation" icon="plus" iconOnly kind="primary" pressed={isNew()} disabledReason={online.value ? undefined : 'offline'} onClick={create} /></ShellActions>
       <ListPagePanel
         page={page}
+        lead={!props.id && !isNew() ? <div class="narrow-lead"><WaitingCards page={page} archived={archived()} /></div> : undefined}
         noun="Conversations"
         placeholder="Search conversations"
         family="session"
@@ -148,6 +149,30 @@ function groupIcon(group: string, key: string): IconName {
 }
 type QuestionRow = Ops['questions_list']['reply']['questions'][number];
 
+/** The sessions waiting for an answer, as question cards answered in place (OR-53): the idle work area leads with them,
+ *  and on a narrow screen with nothing open they lead the list (pages/conversations.md, Phone). */
+function WaitingCards(props: { page: ListPage<SessionRow>; archived: boolean }) {
+  const questions = useOp('questions_list', () => (prefsRead.value && !props.archived ? { state: 'open', ...scopeIds() } : null));
+  const waiting = createMemo(() => (questions.data?.questions ?? []).filter((q): q is QuestionRow & { sessionId: string } => !!q.sessionId));
+  const names = createMemo(() => new Map(props.page.displayed.map(r => [r.id, titleOf(r)])));
+  const answers = useAnswers();
+  return (
+    <Show when={waiting().length > 0}>
+      <DetailSection title={`Waiting for you · ${waiting().length}`}>
+        <div class="stack">
+          <Latest
+            n={3}
+            items={waiting().map(q => {
+              const name = () => names().get(q.sessionId);
+              return <OpenQuestion q={q} answers={answers} title={name() ? `${name()}: ${q.text}` : q.text} />;
+            })}
+          />
+        </div>
+      </DetailSection>
+    </Show>
+  );
+}
+
 /**
  * The work area while no session is open (pages/conversations.md, Target): what waits for the person first, as question
  * cards answered in place (OR-53), then the summary by project and state as counters (OR-29), then the latest finished
@@ -166,8 +191,6 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
       filter: { state: [...finishedStates.session], ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) },
     };
   }, { every: 30_000 }); // sessions_list names no change kinds, so the feed does not reread it
-  const names = createMemo(() => new Map(props.page.displayed.map(r => [r.id, titleOf(r)])));
-  const answers = useAnswers();
   const counts = () => props.page.list.counts as Partial<Record<StateOf<'session'>, number>>;
   const hasCounts = createMemo(() => Object.values(counts()).some(n => (n ?? 0) > 0));
   // Project groups of the list; the waiting group is the cards above.
@@ -180,19 +203,7 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
     <article class="detail" aria-label="Conversations summary">
       <OpsSummary>
         <Show when={questions.error} keyed>{e => <ErrorBanner text={`Questions did not load: ${e}`} onRetry={questions.reload} />}</Show>
-        <Show when={waiting().length > 0}>
-          <DetailSection title={`Waiting for you · ${waiting().length}`}>
-            <div class="stack">
-              <Latest
-                n={3}
-                items={waiting().map(q => {
-                  const name = () => names().get(q.sessionId);
-                  return <OpenQuestion q={q} answers={answers} title={name() ? `${name()}: ${q.text}` : q.text} />;
-                })}
-              />
-            </div>
-          </DetailSection>
-        </Show>
+        <WaitingCards page={props.page} archived={props.archived} />
         <Show when={!(props.page.list.pending && !props.page.list.total)} fallback={<Skeleton rows={3} />}>
           <Switch fallback={<Show when={!waiting().length}><Empty text={props.filtered ? 'No matching conversations to summarize.' : props.archived ? 'Archived summary is empty.' : 'No conversations to summarize.'} /></Show>}>
             <Match when={groups().length > 0 && props.page.rowsGroup !== 'none'}>

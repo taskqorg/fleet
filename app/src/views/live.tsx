@@ -8,7 +8,7 @@ import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
   Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, WorkFacts, bytes, causeOf, clock, count, duration, lifeOf, money, states, peerFence, useTick,
-  type DataTone, type Life, type GaugeProps, type HostBandProps, type Measured, type Stage, type Tone, type WorkerSlotProps,
+  type DataTone, type Life, type GaugeProps, type HostBandProps, type Measured, type Tone, type WorkerSlotProps,
   statesOf, openStates,
   timeOf, usdOf,
 } from '../../../packages/ui/src/index.ts';
@@ -16,6 +16,7 @@ import { useOp } from '../store.ts';
 import { prefs, scopeIds, noProject } from '../prefs.ts';
 import { useClockOffset } from './hosts.tsx';
 import { firstSentence } from './system-idle.tsx';
+import { CHIP_STAGE } from './delivery-model.tsx';
 import type { CostFigure, DeliveryStage, HostRow } from '../../../contracts/generated/ops.ts';
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 24 * HOUR;
@@ -53,7 +54,7 @@ function buckets<T>(items: readonly T[], at: (x: T) => number | null, now: numbe
   return out;
 }
 /** Delivery stages as the shared stage chip names them (registry stages). */
-const STAGE: Record<DeliveryStage, Stage> = { pr_open: 'pr_open', pr_ci: 'checks', mq_wait: 'merging', mq_ci: 'merging', pr_failed: 'checks_failed', mq_failed: 'checks_failed', releasing: 'deploying', installing: 'deploying', installed: 'merged', merged: 'merged' };
+const STAGE = CHIP_STAGE;
 const IN_FLIGHT = new Set<DeliveryStage>(['pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing']);
 
 /** One problem on Live: repeats of a cause on a host collapse into one with ×N (OR-58). */
@@ -178,7 +179,8 @@ export function Live(props: { wall: boolean }) {
           day: day.length ? `${day.length} runs · ${duration(active).text}` : undefined,
           problem: problemLine, slots, seen: h.lastSeenAt ? h.lastSeenAt - offset() : undefined,
           strip: { now: t - offset(), runs: mine.filter(r => r.startedAt != null).map(r => ({ start: r.startedAt! - offset(), end: ACTIVE.has(r.state) ? null : (r.endedAt ?? r.startedAt! + (r.wallMs ?? 0)) - offset(), failed: r.state === 'failed' })) },
-          onOpen: open(`/hosts/${encodeURIComponent(h.id)}`),
+          // A red band leads to System, where the host's problem row names its cause and fix (J5); a healthy one opens the host.
+          onOpen: open(trouble ? '/system' : `/hosts/${encodeURIComponent(h.id)}`),
         },
       };
     // Hosts with a problem first, then by busy slots (pages/live.md, Layout 3).
@@ -300,7 +302,7 @@ export function Live(props: { wall: boolean }) {
       <header class="live-bar">
         <Show when={props.wall}><b class="brand">Fleet live</b></Show>
         <StatusPill state={pill().state} text={(pill() as { text?: string }).text} more={(pill() as { more?: number }).more} at={(pill() as { at?: number }).at}
-          onOpen={(() => { const h = (pill() as { host?: string | null }).host; return h ? open(`/hosts/${encodeURIComponent(h)}`) : undefined; })()} />
+          onOpen={(pill() as { host?: string | null }).host ? open('/system') : undefined} />
         <span class="grow" />
         <Show when={props.wall}>
           <span class="live-focus muted">focus: {focus()}</span>

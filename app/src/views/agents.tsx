@@ -6,7 +6,7 @@ import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
   Ago, Avatar, Button, CatalogueTree, Choice, ContextMenu, DetailSection, Empty, EntityCode, ErrorBanner, FigureTile, HarnessMark,
-  KvRow, ListDetail, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
+  KvRow, ListDetail, LiveRow, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, copyText, harnesses, matchSearch,
   type CatalogueTreeNode, type Harness, type IconName, type StateOf,
   plural,
@@ -146,6 +146,8 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
   const projectsOp = useOp('project_list', {});
   // Host observations touch system_changes every few seconds; reread it at most every 30 s (FLT-38).
   const changesOp = useOp('system_changes', {}, { quiet: 30_000 });
+  // Recommendations projects selected this week: a Lab promotion names its experiment (J3).
+  const recentRecs = useOp('recommendation_changes', {});
 
   const agentItems = createMemo(() => agentsOp.data?.items ?? []);
   const pipelineItems = createMemo(() => pipelinesOp.data?.items ?? []);
@@ -471,6 +473,25 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
               actions={[{ label: 'Save to repository', icon: 'git-merge', onClick: () => go('/library/changes') }]}
             />
           </Show>
+        </DetailSection>
+      </Show>
+
+      <Show when={recentRecs.error || (recentRecs.data?.changes.length ?? 0) > 0}>
+        <DetailSection title={`Recommendations this week · ${recentRecs.data?.changes.length ?? 0}`}>
+          <Show when={recentRecs.error}>{err => (
+            <ProblemRow severity="failure" title="Recommendations could not be read" facts={err()}
+              actions={[{ label: 'Retry', icon: actions.retry, primary: true, onClick: () => void recentRecs.reload() }]} />
+          )}</Show>
+          <ul class="live-list" aria-label="Recommendations this week">
+            <For each={recentRecs.data?.changes ?? []}>{c => {
+              const name = c.methodName ?? c.methodId;
+              const exp = c.sourceExperiment;
+              return exp
+                ? <LiveRow kind="event" at={c.selectedAt} state="done" text={`${name} promoted from ${exp}`} onOpen={() => go('/lab/' + encodeURIComponent(exp))} />
+                : <LiveRow kind="event" at={c.selectedAt} state="done" text={`${name} set for ${projectNames().get(c.projectId) ?? c.projectId}`}
+                    onOpen={() => go('/projects/' + encodeURIComponent(c.projectId))} />;
+            }}</For>
+          </ul>
         </DetailSection>
       </Show>
 

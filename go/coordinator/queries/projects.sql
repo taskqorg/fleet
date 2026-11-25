@@ -32,3 +32,10 @@ FROM project_recommendation WHERE project_id = @project_id::text;
 -- name: ProjectRecommendationSet :exec
 INSERT INTO project_recommendation(id, project_id, method_id, actor) VALUES (@id::text, @project_id::text, @method_id::text, @actor::text)
 ON CONFLICT (id) DO UPDATE SET method_id=excluded.method_id, selected_at=now(), actor=excluded.actor, updated_at=now();
+
+-- name: RecommendationChanges :many
+-- Recommendations projects selected in the last @days days, newest first (recommendation_changes).
+SELECT project_id, method_id, (extract(epoch FROM selected_at) * 1000)::bigint AS selected_at_ms, actor
+FROM project_recommendation
+WHERE tombstoned_at IS NULL AND selected_at > now() - make_interval(days => @days::integer)
+ORDER BY selected_at DESC, project_id;

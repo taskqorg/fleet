@@ -177,6 +177,7 @@ function Catalogue(props: {
                         <Show when={asks().get(p.id)}>{n => <Fact tip="Open questions"><span class="t-attention">{n()} {n() === 1 ? 'question' : 'questions'}</span></Fact>}</Show>
                         <Show when={working().get(p.id)}>{n => <Fact tip="Sessions working"><span class="t-running">{n()} working</span></Fact>}</Show>
                         <Show when={inFlight().get(p.id)}>{n => <Fact text={`${n()} in flight`} tip="Tasks not finished" />}</Show>
+                        <Show when={sessions.data && tasks.data && questions.data && !asks().get(p.id) && !working().get(p.id) && !inFlight().get(p.id)}><span class="muted">nothing in flight</span></Show>
                       </RowFacts>
                     </span>
                   </>

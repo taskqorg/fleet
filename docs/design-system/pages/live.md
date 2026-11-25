@@ -64,6 +64,7 @@ Each line says why in words: who set it, when, until, what it moved. A subscript
   * The failing slot names the error and the next retry.
   * Ticks in the danger tone appear on that host's strip, and the failed-starts figure rises.
   * Repeats aggregate into one problem with `×N` (OR-58).
+  * A red host band and the status pill open System (`/system`), whose problem row names the cause and the fix and opens the host (J5). A healthy band opens its host; a failing slot opens its host.
 * **Recovery.** When the cause clears, the danger tone fades within one update.
 
 ## States

@@ -333,6 +333,8 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   actions: () => BarActions;
   /** Row menu items after Open, Pin, Select, Copy code and Copy link. */
   menu: (r: R) => MenuItems;
+  /** Shown above the confirmation and the rows: what the page leads with on a narrow screen (Conversations: the waiting cards). */
+  lead?: JSX.Element;
   /** A pending confirmation, shown above the banners. */
   confirm?: JSX.Element;
   /** The empty state when nothing loaded and nothing failed. */
@@ -376,6 +378,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
         { label: 'Unpin', icon: 'pin-off', onClick: () => g.pinAll(false), disabledReason: g.chosen.some(r => g.pins.has(r.id)) ? undefined : 'None pinned' },
         ...p.actions(),
       ]} />} />}>
+      {p.lead}
       {p.confirm}
       {g.bulkError && <ErrorBanner text={g.bulkError} />}
       {g.list.error && <ErrorBanner text={g.list.at ? `${p.noun} may be out of date: ${g.list.error}` : `${p.noun} did not load: ${g.list.error}`} onRetry={g.list.reload} />}
