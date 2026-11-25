@@ -67,6 +67,15 @@
       "status": "experimental"
     },
     {
+      "capability": "video-clip",
+      "description": "Make a short MP4 clip (3 to 15 s, 16:9 or 9:16) from a prompt and an optional first-frame image with Gemini Omni Flash, run in the background and polled.",
+      "id": "video-make",
+      "name": "Video clip",
+      "pipeline": "video-make.json",
+      "scope": "shared",
+      "status": "experimental"
+    },
+    {
       "capability": "language-verification",
       "description": "Verify that localized event text is genuinely written in the expected language via System One Jev.",
       "id": "lang-check-jev",

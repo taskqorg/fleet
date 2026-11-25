@@ -792,8 +792,92 @@ const providersJSON = `
  "google-ai": {
   "baseUrl": "https://generativelanguage.googleapis.com",
   "keyHeader": "x-goog-api-key",
-  "instructions": "generate_content calls a Gemini model; the body is the Gemini generateContent body plus model.",
+  "instructions": "Gemini API (AI Studio key). generate_content calls a Gemini model; the body is the Gemini generateContent body plus model. Images: generate_content with model gemini-3.1-flash-image (Nano Banana 2) or gemini-3-pro-image (Nano Banana Pro) and generationConfig.responseModalities [\"IMAGE\"]; the image is candidates[].content.parts[].inlineData (base64). Video: interaction_create with model gemini-omni-1.2-flash, input (text, or a list of text/image parts) and response_format {type: video, aspect_ratio 16:9|9:16, duration \"3s\"..\"15s\"}; set background true and read interaction_get {jobId: id} until status is completed, then the video is steps[type=model_output].content[type=video].data (base64 mp4). Deep Research: interaction_create with agent deep-research-preview-04-2026, input, background true, then interaction_get. Image and video models need a key on a billed project (the free tier answers 429 with limit 0). Imagen and Veo are not in the Gemini API any more. models_list shows the models this key can call.",
   "tools": {
+   "models_list": {
+    "method": "GET",
+    "path": "/v1beta/models?pageSize=1000",
+    "unit": "requests",
+    "idempotent": true,
+    "description": "List the models this key can call, with their supported methods and token limits.",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    }
+   },
+   "interaction_create": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "unit": "tokens",
+    "idempotent": false,
+    "usageField": "usage.total_tokens",
+    "description": "Create a Gemini interaction (Interactions API). Body {model | agent, input, response_format?, generation_config?, agent_config?, system_instruction?, tools?, previous_interaction_id?, background?, store?}. With background true the reply is {id, status: in_progress}; read it with interaction_get. Video (gemini-omni-1.2-flash) and agents (deep-research-preview-04-2026) should run in the background.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "input"
+     ],
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "agent": {
+       "type": "string"
+      },
+      "input": {},
+      "response_format": {
+       "type": "object"
+      },
+      "generation_config": {
+       "type": "object"
+      },
+      "agent_config": {
+       "type": "object"
+      },
+      "system_instruction": {},
+      "tools": {
+       "type": "array"
+      },
+      "previous_interaction_id": {
+       "type": "string"
+      },
+      "background": {
+       "type": "boolean"
+      },
+      "store": {
+       "type": "boolean"
+      }
+     }
+    }
+   },
+   "interaction_get": {
+    "method": "GET",
+    "path": "/v1beta/interactions/{jobId}",
+    "unit": "tokens",
+    "idempotent": true,
+    "pathPatterns": {
+     "jobId": "^[A-Za-z0-9_-]{1,200}$"
+    },
+    "usageField": "usage.total_tokens",
+    "usageWhen": {
+     "field": "status",
+     "equals": "completed"
+    },
+    "usageOnce": "jobId",
+    "description": "Read a Gemini interaction by id: status (in_progress, requires_action, completed, failed, cancelled, incomplete), steps with the model output (a video is base64 in content[].data) and usage once completed.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "jobId"
+     ],
+     "properties": {
+      "jobId": {
+       "type": "string",
+       "description": "interaction id from interaction_create"
+      }
+     }
+    }
+   },
    "generate_content": {
     "method": "POST",
     "path": "/v1beta/models/{model}:generateContent",
