@@ -6,14 +6,15 @@ import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from
 import type { JSX } from '@solidjs/web';
 import { useLocation, useSearch } from '../router.ts';
 import {
-  StateBadge, Button, CopyButton, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow,
+  StateBadge, Button, CopyButton, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, AnswerNote, ProblemRow,
   RowCheck, VirtualList, Empty, OfflineMarker, Icon, ListDetail, DataTable, Choice, TextField,
   SearchField, CatalogueTree, ContextMenu, ErrorBanner, Skeleton, ROW2, percent, SettingField, StepList, msMeasured,
   type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem,
   type IconName, ShellStatus, ShellActions, actions, Presets, QuestionCard, DetailHead, StateDot, MatrixCell, DiffRow,
   InheritedRows, AgeChip, cause, type Life, type MatrixCellState, type View,
 } from '../../../packages/ui/src/index.ts';
-import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
+import { op, useAlive, type OpName, type Ops } from '../api.ts';
+import { useAnswers } from '../answers.ts';
 import { useOp } from '../store.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, setListGroups, usePins, useViews } from '../prefs.ts';
@@ -681,14 +682,14 @@ function UseCaseCard(props: {
 
 // One rating or approval question with its blind outputs and keyboard answers.
 function Rating(props: { r: LabRating; now: number }) {
-  const [busy, setBusy] = createSignal(false);
+  const answers = useAnswers();
+  const busy = () => !!answers.answering(props.r.id);
   const opts = createMemo(() => {
     const r = props.r;
     return r.form === 'pick_best' ? r.items.map(i => ({ label: i.label, kbd: i.label.toLowerCase() }))
       : r.form === 'scale' ? [1, 2, 3, 4, 5].map(n => ({ label: String(n), kbd: String(n) }))
       : [{ label: 'Pass', kbd: 'p', primary: true }, { label: 'Fail', kbd: 'f' }];
   });
-  const alive = useAlive();
   const toAnswer = (a: string) => {
     const r = props.r;
     return r.form === 'pick_best' ? (r.items.find(i => i.label === a.toUpperCase())?.trialId ?? a) : /^(pass|fail)\b/i.test(a) ? a.replace(/^(pass|fail)/i, m => m.toLowerCase()) : a;
@@ -715,7 +716,8 @@ function Rating(props: { r: LabRating; now: number }) {
       <div id={`rating-${props.r.id}`}>
         <DecisionBlock question={props.r.text} askedBy="lab" addressedTo="you" since={props.now} now={props.now} waits={busy() ? 'saving' : 'never blocks'} context={files()} options={opts()}
           answered={props.r.state === 'answered' ? { by: 'you', answer: shown(String(props.r.answer)), at: props.now, delivered: true } : undefined}
-          onAnswer={a => { setBusy(true); writeOnce('questions_answer', { questionId: props.r.id, answer: toAnswer(a) }, () => {}, { signal: alive }).catch(() => { /* the rating stays open */ }).finally(() => setBusy(false)); }} />
+          onAnswer={a => answers.send(props.r, toAnswer(a))} />
+        <AnswerNote answers={answers} id={props.r.id} />
       </div>
     </Show>
   );

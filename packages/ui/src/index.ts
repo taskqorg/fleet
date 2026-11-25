@@ -6,6 +6,7 @@ export * from './patterns.tsx';
 export * from '../../view-url/view-url.ts';
 export * from './clip.ts';
 export * from './keys.ts';
+export * from './answer.ts';
 export * from './search.ts';
 export * from './charts.tsx';
 export * from './result-formats.ts';

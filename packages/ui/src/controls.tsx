@@ -13,6 +13,7 @@ export * from './controls/entity-picker.tsx';
 export * from './controls/state-dot.tsx';
 export * from './controls/avatar.tsx';
 export * from './controls/question-card.tsx';
+export * from './controls/open-question.tsx';
 export * from './controls/session-card.tsx';
 export * from './controls/bot-tile.tsx';
 export * from './controls/pulse-line.tsx';

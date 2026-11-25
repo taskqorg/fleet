@@ -15,6 +15,7 @@ import { TabBar } from './tables.tsx';
 import { Choice } from './forms.tsx';
 import { ToolLine } from './tool-line.tsx';
 import { QuestionCard } from './question-card.tsx';
+import { keyConnection } from '../answer.ts';
 import { foldBlocks, type FoldedRow } from './tool-fold.ts';
 import { jsonRecords, parseDiff, type KvNode, type DiffFile } from '../result-formats.ts';
 
@@ -714,11 +715,6 @@ export function QuestionRow(p: {
     </div>
   );
 }
-/** The connection a key request (a secret question) asks a key for: its options are {connection}. */
-export const keyConnection = (options: unknown): string | undefined => {
-  const c = options && !Array.isArray(options) && typeof options === 'object' ? (options as { connection?: unknown }).connection : undefined;
-  return typeof c === 'string' ? c : undefined;
-};
 /** Results are listed one per line. Disambiguate matching short names without exposing full paths. */
 export function ResultRow(p: { artifacts: ArtifactMeta[]; deliveryStage?: ThreadDeliveryStage; onOpen?: (id: string) => void }) {
   const items = createMemo(() => namedFiles(p.artifacts, 'Result'));

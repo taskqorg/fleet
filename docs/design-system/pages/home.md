@@ -85,7 +85,7 @@ Behaviour:
 | Groups and cards | `sessions_list` grouped by state, in attention order (waiting, failed, running, preparing); rows carry `activityAt` and `now` |
 | Now line | `now` on each `sessions_list` row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
 | Quiet summary | `person_visit {page: "home"}` on each Home open: it records the visit and answers `previousAt`, the visit before; the summary counts from there |
-| Questions on cards | `questions_list` (open, in the focus), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) is a blocker chip instead. Answered with `questions_answer`; a key request opens Connections |
+| Questions on cards | `questions_list` (open, in the focus), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) is a blocker chip instead. Answered in place with `OpenQuestion` ([decision block](../controls/decision-block.md#open-question)); a key request takes the key on the card |
 | Asleep bots | `bot_list` rows with no `activeRunId`; Wake is `bot_run`; a message to a bot's Home is `message_send`, or `bot_run` with the text when it sleeps |
 | Composer | Project PMs from `project_list` and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets`, `session_start`); bots from `bot_list`. The last target picked stays in this browser |
 | Failed cards by cause | `executions_list` `problem` (up to 500, in the focus): the newest failed run of each failed session names its `failure.cause` |

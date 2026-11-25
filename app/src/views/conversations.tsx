@@ -7,10 +7,11 @@ import {
   StateBadge, StateCounters, Button, DetailSection,
   OpsSummary, KvRow, Num, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
-  QuestionCard, Latest, StateDot, type Tone,
+  OpenQuestion, Latest, StateDot, type Tone,
   ShellStatus, ShellActions,
 } from '../../../packages/ui/src/index.ts';
-import { op, online, writeOnce, useAlive, type Ops } from '../api.ts';
+import { op, online, type Ops } from '../api.ts';
+import { useAnswers } from '../answers.ts';
 import { NewConversation } from './conversation-new.tsx';
 import { SessionView } from './session.tsx';
 import { useOp } from '../store.ts';
@@ -25,7 +26,6 @@ const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], 
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
 /** The contract's session row. */
 type SessionRow = ContractSessionRow & { state: StateOf<'session'> };
-const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
 
@@ -168,23 +168,7 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
     };
   }, { every: 30_000 }); // sessions_list names no change kinds, so the feed does not reread it
   const names = createMemo(() => new Map(props.page.displayed.map(r => [r.id, titleOf(r)])));
-  const [answering, setAnswering] = createSignal<Record<string, string>>({});
-  const [answered, setAnswered] = createSignal<Record<string, { answer: string; at: number }>>({});
-  const [failure, setFailure] = createSignal<string | null>(null);
-  const alive = useAlive();
-  const answer = async (q: QuestionRow, a: string) => {
-    setFailure(null);
-    setAnswering(cur => ({ ...cur, [q.id]: a }));
-    try {
-      await writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('Answer outcome unknown, retrying'), { signal: alive });
-      setAnswered(cur => ({ ...cur, [q.id]: { answer: a, at: Date.now() } }));
-      setFailure(null);
-    } catch (e) {
-      if (!alive.aborted) setFailure(`Answer not sent: ${errText(e)}`);
-    } finally {
-      setAnswering(cur => { const { [q.id]: _, ...rest } = cur; return rest; });
-    }
-  };
+  const answers = useAnswers();
   const counts = () => props.page.list.counts as Partial<Record<StateOf<'session'>, number>>;
   const hasCounts = createMemo(() => Object.values(counts()).some(n => (n ?? 0) > 0));
   // Project groups of the list; the waiting group is the cards above.
@@ -196,7 +180,6 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
   return (
     <article class="detail" aria-label="Conversations summary">
       <OpsSummary>
-        <Show when={failure()} keyed>{f => <ErrorBanner text={f} />}</Show>
         <Show when={questions.error} keyed>{e => <ErrorBanner text={`Questions did not load: ${e}`} onRetry={questions.reload} />}</Show>
         <Show when={waiting().length > 0}>
           <DetailSection title={`Waiting for you · ${waiting().length}`}>
@@ -204,17 +187,8 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
               <Latest
                 n={3}
                 items={waiting().map(q => {
-                  const options = Array.isArray(q.options) ? (q.options as unknown[]).map(String) : [];
                   const name = () => names().get(q.sessionId);
-                  return (
-                    <QuestionCard
-                      question={name() ? `${name()}: ${q.text}` : q.text}
-                      choices={options.map((label, i) => ({ label, primary: i === 0 }))}
-                      answering={answering()[q.id]}
-                      answered={answered()[q.id]}
-                      onAnswer={a => answer(q, a)}
-                    />
-                  );
+                  return <OpenQuestion q={q} answers={answers} title={name() ? `${name()}: ${q.text}` : q.text} />;
                 })}
               />
             </div>
