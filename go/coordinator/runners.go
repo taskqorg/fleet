@@ -30,6 +30,7 @@ type runnerRow struct {
 	calls, failedCalls                                                         *int64
 	usages                                                                     []usage // a tool-call group, priced already per call
 	grouped                                                                    bool
+	cost                                                                       []contract.CostFigure // set: priced already (a call group)
 }
 
 // runnerMs: a time as Unix milliseconds, rounded as PostgreSQL rounds (extract(epoch)*1000)::bigint.
@@ -125,6 +126,48 @@ func runnerCost(prices []db.PriceEntry, subscription bool, us []usage) []contrac
 	return out
 }
 
+// runCost: the run's cost figures, priced here unless its group came priced from SQL.
+func (r *runnerRow) runCost(prices []db.PriceEntry) []contract.CostFigure {
+	if r.cost != nil {
+		return r.cost
+	}
+	return runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))
+}
+
+// callGroupCost: a call group's cost figures from its sums per currency and basis (RunnerCallGroups costs): one
+// figure per currency and basis, and the unpriced calls as one unavailable figure.
+func callGroupCost(raw []byte) []contract.CostFigure {
+	var sums []struct {
+		Currency *string  `json:"currency"`
+		Basis    *string  `json:"basis"`
+		Value    *float64 `json:"value"`
+		Unpriced int64    `json:"unpriced"`
+	}
+	out := []contract.CostFigure{}
+	if json.Unmarshal(raw, &sums) != nil {
+		return out
+	}
+	unpriced := int64(0)
+	for _, z := range sums {
+		unpriced += z.Unpriced
+		if z.Currency == nil || z.Value == nil {
+			continue
+		}
+		basis := contract.ResourceBasisEstimated
+		if z.Basis != nil && *z.Basis != "" {
+			basis = contract.ResourceBasis(*z.Basis)
+		}
+		cur, val := *z.Currency, *z.Value
+		out = append(out, contract.CostFigure{Value: &val, Currency: &cur, Basis: basis, Prices: []contract.CostPriceRef{}})
+	}
+	if unpriced > 0 {
+		reason := unavailableCostReason
+		out = append(out, contract.CostFigure{Basis: contract.ResourceBasisUnavailable, Reason: &reason, Usages: &unpriced})
+	}
+	sortCostFigures(out)
+	return out
+}
+
 func runnerUsages(r *runnerRow) []usage {
 	if r.grouped {
 		return r.usages
@@ -145,62 +188,6 @@ func runnerUsages(r *runnerRow) []usage {
 			v := float64(*u.v)
 			out = append(out, usage{deref(r.model), u.unit, &v, r.at})
 		}
-	}
-	return out
-}
-
-// toolCallGroups: the tool calls of one caller (parent execution, else task, else connection) as one row: calls and
-// failed calls, first start, last end, summed wall time, all usages priced together; failed when any call failed,
-// running while any runs.
-func toolCallGroups(calls []runnerRow) []runnerRow {
-	groups, order := map[string]*runnerRow{}, []string{}
-	for i := range calls {
-		c := &calls[i]
-		// Per host (the screen lists runs by host), then the caller: its parent run when that run exists, else its task,
-		// else the connection (the coordinator's own reads, e.g. GitHub, carry a fresh session and parent id per call).
-		key := deref(c.hostID) + "/" + firstString(deref(c.callerRun), deref(c.taskID), "conn:"+strings.SplitN(c.subject, "/", 2)[0])
-		g := groups[key]
-		if g == nil {
-			zero := int64(0)
-			failed := int64(0)
-			g = &runnerRow{id: "calls:" + key, kind: "tool_run", state: "succeeded", hostID: c.hostID, sessionID: c.sessionID, taskID: c.taskID, title: c.title,
-				parentID: c.parentID, calls: &zero, failedCalls: &failed, usages: []usage{}, grouped: true}
-			groups[key], order = g, append(order, key)
-		}
-		*g.calls++
-		switch c.state {
-		case "failed", "cancelled":
-			*g.failedCalls++
-			if g.state != "running" {
-				g.state = "failed"
-			}
-		case "preparing", "running", "waiting":
-			g.state = "running"
-		}
-		if v := c.started; v != nil && (g.started == nil || *v < *g.started) {
-			g.started = ptr(*v)
-		}
-		if v := c.ended; v != nil && (g.ended == nil || *v > *g.ended) {
-			g.ended = ptr(*v)
-		}
-		if v := c.wallMs; v != nil {
-			w := *v
-			if g.wallMs != nil {
-				w += *g.wallMs
-			}
-			g.wallMs = &w
-		}
-		if c.problem != nil && g.problem == nil { // calls come newest first: the latest cause
-			g.problem = c.problem
-		}
-		g.usages = append(g.usages, runnerUsages(c)...)
-	}
-	out := make([]runnerRow, 0, len(order))
-	for _, k := range order {
-		if g := groups[k]; g.state == "running" {
-			g.ended = nil
-		}
-		out = append(out, *groups[k])
 	}
 	return out
 }
@@ -228,27 +215,43 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 			subject: r.Subject, connectionCost: r.ConnectionCost, billingBasis: r.BillingBasis, model: r.Model, accountID: r.AccountID, isAPIConn: r.IsApiConn,
 			tokensInput: r.TokensInput, tokensOutput: r.TokensOutput, tokensCacheRead: r.TokensCacheRead, tokensCacheWrite: r.TokensCacheWrite, at: runnerTime(r.At)})
 	}
-	// ponytail: the newest 20000 calls of the day; a busier gateway needs the sums in SQL.
-	cs, err := q.db().RunnerCalls(q.ctx())
+	// Tool calls (gateway calls, tens of thousands a day) are summed per host and caller in SQL, priced from
+	// execution_spend (queries/runners.sql RunnerCallGroups).
+	gs, err := q.db().RunnerCallGroups(q.ctx())
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
 	}
-	calls := make([]runnerRow, 0, len(cs))
-	for _, r := range cs {
-		calls = append(calls, runnerRow{callerRun: r.CallerRun, id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title,
-			sessionID: r.SessionID, parentID: r.ParentExecutionID, problem: r.Problem, started: runnerMs(r.At), ended: runnerMs(r.EndedAt), seen: runnerMs(r.LastSeenAt),
-			wallMs: runnerF(r.WallMs), cpuMs: runnerF(r.CpuMs), peakMemoryBytes: runnerF(r.PeakMemoryBytes), tokens: runnerTokens(r.TokensInput, r.TokensOutput, r.TokensCacheRead, r.TokensCacheWrite),
-			subject: r.Subject, connectionCost: r.ConnectionCost, billingBasis: r.BillingBasis, model: r.Model, accountID: r.AccountID, isAPIConn: r.IsApiConn,
-			tokensInput: r.TokensInput, tokensOutput: r.TokensOutput, tokensCacheRead: r.TokensCacheRead, tokensCacheWrite: r.TokensCacheWrite, at: runnerTime(r.At)})
+	groups := make([]runnerRow, 0, len(gs))
+	for _, g := range gs {
+		calls, failed := g.Calls, g.Failed
+		state := "succeeded"
+		if g.Running {
+			state = "running"
+		} else if failed > 0 {
+			state = "failed"
+		}
+		r := runnerRow{id: "calls:" + g.Host + "/" + g.Caller, kind: "tool_run", state: state, hostID: optStr(g.Host), sessionID: optStr(g.SessionID),
+			taskID: optStr(g.TaskID), title: optStr(g.Title), parentID: optStr(g.ParentExecutionID), problem: optStr(g.Problem),
+			calls: &calls, failedCalls: &failed, grouped: true, usages: []usage{}, cost: callGroupCost(g.Costs)}
+		if g.StartedAt.Valid {
+			r.started = runnerMs(&g.StartedAt.Time)
+		}
+		if g.EndedAt.Valid && !g.Running {
+			r.ended = runnerMs(&g.EndedAt.Time)
+		}
+		if g.WallMs >= 0 {
+			r.wallMs = runnerF(&g.WallMs)
+		}
+		groups = append(groups, r)
 	}
 	out := contract.ExecutionsRunnersReply{ServerNow: time.Now().UnixMilli(), Runs: []contract.RunnerRun{}, Spend: []contract.RunnerSpend{}}
-	runs = append(runs, toolCallGroups(calls)...)
+	runs = append(runs, groups...)
 	for i := range runs {
 		r := &runs[i]
 		out.Runs = append(out.Runs, contract.RunnerRun{Id: r.id, Kind: r.kind, State: contract.ExecutionState(r.state), HostId: r.hostID, Harness: r.harness, Model: r.model,
 			TaskId: r.taskID, TaskTitle: r.title, SessionTitle: r.sessionTitle, SessionId: r.sessionID, Problem: r.problem, StartedAt: r.started, EndedAt: r.ended, LastSeenAt: r.seen,
 			WallMs: r.wallMs, CpuMs: r.cpuMs, PeakMemoryBytes: r.peakMemoryBytes, Tokens: r.tokens, Calls: r.calls, FailedCalls: r.failedCalls,
-			ParentExecutionId: r.parentID, Attempt: r.attempt, Cost: runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
+			ParentExecutionId: r.parentID, Attempt: r.attempt, Cost: r.runCost(prices)})
 	}
 	// Spend today and this month per host, from execution_spend (spend_summary by host: the cost priced once per
 	// execution, read index-only), as rows of kind "all"; today's runs per host and kind come as rows of their kind
