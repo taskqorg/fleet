@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -119,6 +122,37 @@ func TestPinsReview(t *testing.T) {
 	} {
 		if f := pinsReview(files, "cli"); len(f) == 0 {
 			t.Errorf("%s: no finding", name)
+		}
+	}
+}
+
+// TestPinsQualifyExampleCheck: the example's check passes on the real answer (the shell's own rev of the string and an
+// execution id) and fails on a wrong one, so a trial fails only for its CLI, never for the check.
+func TestPinsQualifyExampleCheck(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "config", "lab", "examples", pinsQualifyExample+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ex struct {
+		Version int64 `json:"version"`
+		Checks  []struct {
+			Run string `json:"run"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(b, &ex); err != nil || len(ex.Checks) != 1 || ex.Version != pinsQualifyVersion {
+		t.Fatalf("%v %+v", err, ex)
+	}
+	rev, err := osexec.Command("sh", "-c", "printf %s fleet-qualify | rev").Output()
+	if err != nil {
+		t.Skip("no rev here: ", err)
+	}
+	for answer, pass := range map[string]bool{string(rev): true, "yfilauq-steelf": false} {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "qualify.json"), jsonBytes(map[string]string{"reversed": answer, "executionId": "4b57a3be-64d0-424c"}), 0o644)
+		cmd := osexec.Command("sh", "-c", ex.Checks[0].Run)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); (err == nil) != pass {
+			t.Fatalf("answer %q: pass=%v want %v: %s", answer, err == nil, pass, out)
 		}
 	}
 }
