@@ -55,6 +55,9 @@ const telegramFollowUp = 5 * time.Minute
 var backReference = regexp.MustCompile(`(^|[^\pL])(эт(от|а|о|и|их|им|ими|ого|ой|ом|у)|он[аи]|его|её|их|ему|ним|нему|them|these|those|that one|this one)([^\pL]|$)`)
 
 // newWorkCue: words that say a message starts different work, so it never counts as a follow-up.
+// forceNewWork: an explicit "new task" prefix; the message always opens new work.
+var forceNewWork = regexp.MustCompile(`(?i)^\s*(нов(ая|ое) (задача|дело|вопрос)|друг(ой|ая) (вопрос|задача)|new (task|question|topic)|another (task|question))\s*[:.,—-]*\s*`)
+
 var newWorkCue = regexp.MustCompile(`^\s*(нов(ая|ое|ый)|друг(ой|ая|ое)|отдельн|ещё одн|еще одн|new\b|another\b|separate|different)`)
 
 // telegramChunk: Telegram's text limit is 4096 characters; the HTML form of a reply longer than this goes out in parts.
@@ -674,8 +677,14 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 		}
 		return telegramDone(q, row.ID, "status", "")
 	}
-	if len(open) == 0 {
-		return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{newWork: workTitle(messageText(m))})
+	// "Новая задача: …", "Другой вопрос: …", "New task: …" is the person's way to say "start fresh": always new work,
+	// never the model's choice (owner-tester F24).
+	if len(open) == 0 || forceNewWork.MatchString(strings.ToLower(messageText(m))) {
+		title := workTitle(forceNewWork.ReplaceAllString(messageText(m), ""))
+		if title == "" {
+			title = workTitle(messageText(m))
+		}
+		return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{newWork: title})
 	}
 	// Owner-tester F19: "А какая из этих трёх самая старая?" 30 s after an answer went to an older work item.
 	// The author's last work item within the follow-up window. A short message that refers back ("этих", "it") goes

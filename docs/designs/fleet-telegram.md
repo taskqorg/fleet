@@ -49,7 +49,7 @@ The `telegram` catalogue entry (`go/coordinator/providers.go`) sets `keyPath: "/
 In order:
 
 1. A Telegram reply to a Fleet message or to a routed human message goes to that message's work item (no model).
-2. A room with no open work item: the message opens one, titled by its first line; the room gets "New: <title>".
+2. A room with no open work item, or a message that opens with "Новая задача", "Другой вопрос", "New task" (the person's way to say "start fresh"): the message opens one, titled by its first line; the room gets "New: <title>".
 3. A short message (up to 120 characters) that refers back ("этих", "его", "it", "them") within 5 minutes of the author's last routed message in the room goes to that message's work item, unless it opens with a new-work cue ("Новая задача", "Другой вопрос", "new", "another"). Per author, so two people's threads never mix. Any other message within the window goes to the model with that work item as a hint, so a short new question can still open new work.
 4. Otherwise one model call (the first OpenAI connection open to all projects with model `gpt-6.2-sol`, or `FLEET_TELEGRAM_CONDUCTOR=<connection>/<model>`; Responses API, `text.format` `json_object`) answers `{choice: <work item> | new | ask, title}` from the open items' titles, how long ago each was active and its last answer, and the message. `telegram_status.conductor` shows the last call: connection, model, choice and why it gave no usable answer.
 5. `ask`, a failed call or no model: one message "Is this about: [A] [B] [Something new]". Only the author's tap counts; the tap edits the question to "→ <title>" and delivers the message.

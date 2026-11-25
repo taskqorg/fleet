@@ -140,3 +140,15 @@ func TestTelegramBackReference(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramForceNewWork(t *testing.T) {
+	for text, want := range map[string]bool{"Новая задача: какие варианты приёма платежей": true, "Другой вопрос: сколько всего": true,
+		"New task: list hosts": true, "новый дизайн шапки": false, "А какая из этих новая?": false} {
+		if forceNewWork.MatchString(strings.ToLower(text)) != want {
+			t.Errorf("%q: %v", text, !want)
+		}
+	}
+	if got := workTitle(forceNewWork.ReplaceAllString("Новая задача: какие варианты оплаты", "")); got != "какие варианты оплаты" {
+		t.Errorf("title %q", got)
+	}
+}
