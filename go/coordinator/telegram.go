@@ -1075,7 +1075,7 @@ func telegramDraftResult(turn string, result any) {
 	if line, ok := result.(contract.CallLine); ok {
 		if _, err := tgParse(line); err != nil {
 			draft.shown = ""
-			draft.off = strings.HasPrefix(deref(line.ErrorCode), "http-4")
+			draft.off = strings.HasPrefix(deref(line.ErrorCode), "http-4") || deref(line.ErrorCode) == "unknown-tool"
 		}
 	}
 }
