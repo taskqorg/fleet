@@ -726,7 +726,12 @@ func activatedListener(addr string) (net.Listener, error) {
 		log.Printf("serving on activated socket %s", ln.Addr())
 		return ln, nil
 	}
-	return net.Listen("tcp", addr)
+	ln, err := net.Listen("tcp", addr)
+	if err == nil {
+		// PORT=0 binds a free port; tests read it from this line (tests/harness.ts).
+		log.Printf("serving on %s", ln.Addr())
+	}
+	return ln, err
 }
 
 // hostOf: the authenticated host's id.
