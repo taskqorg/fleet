@@ -124,8 +124,8 @@ type pinsQualifyState struct {
 	Passed   bool
 	Failures []string
 	Trials   int
-	Ok       int // trials that succeeded and passed their check
-	Unscored int // of Failures: succeeded with no pass_fail score yet (still pending while the experiment runs)
+	Ok       int      // trials that succeeded and passed their check
+	Unscored []string // of Failures: trials that succeeded with no pass_fail score yet (pending while the experiment runs)
 }
 
 // pinsTrialOutcome: the verdict of the experiment's trials: done when every variant has a terminal trial; passed when each
@@ -162,7 +162,7 @@ func pinsTrialOutcome(variants []string, runs []*labRun, scores []labScore) pins
 			st.Passed = false
 			st.Failures = append(st.Failures, v+": shell, Fleet tool or result check failed")
 			if !scored[r.ID] {
-				st.Unscored++
+				st.Unscored = append(st.Unscored, st.Failures[len(st.Failures)-1])
 			}
 		default:
 			st.Ok++

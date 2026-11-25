@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,12 +120,14 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 	// What the proposal changes is read against its base, so a landed proposal still names its versions once this
 	// release pins them.
 	pinned, err := pinsProposedVersions(ctx, a, k, pr.Base.SHA)
-	if err != nil { // no pin file at the base (a kind's first proposal): this release's pins
+	if err != nil && strings.Contains(err.Error(), "404") { // no pin file at the base (a kind's first proposal): this release's pins
 		_, current, perr := k.Pinned(releaseDir())
 		if perr != nil {
 			return pinsViewKind{}, perr
 		}
 		pinned = pinsTargetVersions(current)
+	} else if err != nil {
+		return pinsViewKind{}, err
 	}
 	changed := map[string]string{}
 	for name, v := range proposed {
@@ -156,14 +159,12 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 			if err != nil || !ok {
 				return err
 			}
-			failed := len(st.Failures)
+			failures := st.Failures
 			if !st.Done { // a succeeded trial whose check is not scored yet is pending, not failed
-				failed -= st.Unscored
+				failures = slices.DeleteFunc(slices.Clone(failures), func(f string) bool { return slices.Contains(st.Unscored, f) })
 			}
-			p.Trials = &contract.SystemPinsTrials{Passed: int64(st.Ok), Failed: int64(failed), Total: int64(st.Trials)}
-			if st.Done || st.Unscored == 0 {
-				p.Failures = append(p.Failures, st.Failures...)
-			}
+			p.Trials = &contract.SystemPinsTrials{Passed: int64(st.Ok), Failed: int64(len(failures)), Total: int64(st.Trials)}
+			p.Failures = append(p.Failures, failures...)
 			return nil
 		}); err != nil {
 			return pinsViewKind{}, err

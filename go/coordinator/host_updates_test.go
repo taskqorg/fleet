@@ -82,6 +82,13 @@ func TestComponentHostCell(t *testing.T) {
 	if c := componentHost(harnessrelease.CLIs, "codex", true, "0.169.0", h, pinsRegression{}); c.State != contract.ComponentHostStateBehind || *c.Observed != "0.168.0" {
 		t.Fatalf("behind: %+v", c)
 	}
+	h.Update = []byte(`{"version":"9.9.9","state":"pending","at":"2026-11-26T10:00:00Z"}`)
+	if c := componentHost(harnessrelease.CLIs, "codex", true, "0.169.0", h, pinsRegression{}); c.State != contract.ComponentHostStateBehind {
+		t.Fatalf("pending another release is not installing this pin: %+v", c)
+	}
+	if b := componentsBrought(map[string]string{"cli/codex": "2", "tool/node": "1", "cli/uv": "1"}, map[string]string{"cli/codex": "1"}); len(b) != 2 || b["tool/node"] != "" {
+		t.Fatalf("brought %v: codex changed, uv is new to the CLIs, tools are unknown to a CLI-only base", b)
+	}
 	// Installing: a pending update to the release that pins the version (this coordinator's).
 	h.Update = []byte(`{"version":"` + ownRelease().Version + `","state":"pending","at":"2026-11-26T10:00:00Z"}`)
 	if c := componentHost(harnessrelease.CLIs, "codex", true, "0.169.0", h, pinsRegression{}); c.State != contract.ComponentHostStateInstalling {
