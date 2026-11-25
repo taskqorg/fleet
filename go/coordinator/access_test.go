@@ -213,7 +213,7 @@ func TestAccessSSH(t *testing.T) {
 // Requirement: every recipe the provisioner names is one fleet-provision dispatches.
 func TestAccessRecipesKnown(t *testing.T) {
 	script := string(fleetProvisionScript)
-	for _, r := range []string{"version", "os-user", "revoke-os-user", "mysql-user", "revoke-mysql", "probe-mysql", "probe-files", "jump-allow", "jump-deny"} {
+	for _, r := range []string{"version", "os-user", "revoke-os-user", "mysql-user", "revoke-mysql", "probe-mysql", "probe-files", "jump-allow", "jump-deny", "mysql-databases"} {
 		if !strings.Contains(script, "\n\t"+r+") ") {
 			t.Errorf("fleet-provision does not dispatch %s", r)
 		}

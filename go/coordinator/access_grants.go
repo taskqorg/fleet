@@ -309,13 +309,20 @@ func accessServerCheck(q *Request, r *contract.AccessServerCheckRequest) (contra
 		res.Error = new(err.Error())
 	} else {
 		v, err := accessRun(c, []string{"version"}, "")
-		c.Close()
+		defer c.Close()
 		if err != nil {
 			res.Error = new(err.Error())
 		} else {
 			res.Ok, res.Version = true, new(strings.TrimPrefix(v, "fleet-provision "))
 			if *res.Version != fleetProvisionVersion() {
 				res.Steps = []string{"fleet-provision " + *res.Version + " is installed, " + fleetProvisionVersion() + " is current: run the enroll command again"}
+			}
+			if out, err := accessRun(c, []string{"mysql-databases"}, ""); err == nil {
+				for _, line := range strings.Split(out, "\n") {
+					if name, ok := strings.CutPrefix(strings.TrimSpace(line), "database "); ok {
+						res.Databases = append(res.Databases, name)
+					}
+				}
 			}
 		}
 	}
