@@ -508,6 +508,8 @@ export type VersionInfo = {
   updateReady: boolean; onUpdate: () => void; updating?: boolean; rows: VersionRow[]; onOpen?: () => void;
   /** The version the site serves when an update is ready. */ newVersion?: string | null;
   /** Why the last update did not finish; the strip offers Retry. */ updateError?: string | null;
+  /** Seconds left before the tab updates itself (it counts while nobody uses the tab); null when not counting. */ updateIn?: number | null;
+  /** What holds the count: unsent input, an open dialog, a request still in flight. */ updateHold?: 'draft' | 'dialog' | 'save' | null;
   /** When the versions were last read, and why the latest read failed (shown in the overview, never as a tone). */
   checkedAt?: number | null; checkError?: string | null;
   /** The same info as of a moment: while the overview is open it is recounted on a timer, so the mark, states and ages move on together. */
@@ -553,24 +555,47 @@ function useFloating(ref: () => HTMLElement | undefined, focusBack: string) {
   return { open, setOpen, toggle };
 }
 
+/** The full count of the idle update, for the strip's bar. */
+const UPDATE_IDLE_S = 30;
+const HOLD_TEXT = { draft: 'Waits for your draft', dialog: 'Waits for the open dialog', save: 'Waits for a save' } as const;
+
 /**
- * The update strip (board screens/shell): what is ready and one Reload; Reloading until the page goes; a failure with
- * Retry. On the collapsed rail the same row, at the same height (OR-42), holds only the icon button.
+ * The update strip (board screens/shell): when a new app is ready it counts down the seconds of no activity, with a bar
+ * that empties, and reloads at 0; activity puts it back to the full count. Update reloads at once. Unsent input, an open
+ * dialog or a save in flight hold it ("Waits for your draft"), with an icon button to update anyway. Reloading until the
+ * page goes; a failure with Retry. On the collapsed rail the same row, at the same height (OR-42), holds one button: the
+ * seconds, pause while held, the spinner, or Retry. The seconds are not announced; the live region says what happens once.
  */
 function UpdateStrip(p: { v: VersionInfo; quiet?: boolean }) {
   const failed = () => !!p.v.updateError && !p.v.updating;
+  const hold = () => !p.v.updating && !failed() ? p.v.updateHold ?? null : null;
+  const left = () => !p.v.updating && !failed() && !hold() && p.v.updateIn != null ? p.v.updateIn : null;
+  const version = () => p.v.newVersion ?? '';
+  const title = () => p.v.updating ? 'Reloading into' : hold() ? HOLD_TEXT[hold()!] : left() != null ? `Updating in ${left()}s` : 'New app ready';
+  const fullLabel = () => p.v.updating ? 'Reloading' : failed() ? 'Retry' : left() != null ? 'Update' : 'Reload';
+  const tip = () => p.v.updating ? `Reloading into ${version() || 'the new app'}`
+    : failed() ? `Update failed: ${p.v.updateError}. Retry`
+    : hold() ? `${HOLD_TEXT[hold()!].replace('Waits', 'Update waits')}. Update now`
+    : left() != null ? `Updating to ${version() || 'the new app'} in ${left()} s. Update now`
+    : `Reload into ${version() || 'the new app'}`;
   return (
-    <div class={['upd-strip', { failed: failed() }]} data-ui="update-strip" role={p.quiet ? undefined : 'status'} aria-busy={p.v.updating ? 'true' : undefined}>
+    <div class={['upd-strip', { failed: failed(), counting: left() != null }]} data-ui="update-strip" role={p.quiet ? undefined : 'status'}
+      aria-busy={p.v.updating ? 'true' : undefined} style={left() != null ? { '--upd-left': String(left()! / UPDATE_IDLE_S) } : undefined}>
       <span class="upd-text">
-        <Show when={failed()} fallback={<><b>{p.v.updating ? 'Reloading into' : 'New app ready'}</b><span class="mono">{p.v.newVersion ?? ''}</span></>}>
+        <Show when={failed()} fallback={<><b aria-hidden={left() != null ? 'true' : undefined}>{title()}</b><span class="mono">{version()}</span></>}>
           <b>Update failed</b><span>{p.v.updateError}</span>
         </Show>
+        <Show when={left() != null}><span class="sr-only">New app ready: it updates itself after {UPDATE_IDLE_S} seconds without activity</span></Show>
       </span>
       <span class="upd-full">
-        <Button label={p.v.updating ? 'Reloading' : failed() ? 'Retry' : 'Reload'} icon="rotate-cw" kind={failed() ? 'default' : 'primary'} busy={p.v.updating} onClick={p.v.onUpdate} />
+        <Show when={hold()} fallback={<Button label={fullLabel()} icon="rotate-cw" kind={failed() ? 'default' : 'primary'} busy={p.v.updating} onClick={p.v.onUpdate} />}>
+          <Button label="Update now" icon="rotate-cw" iconOnly onClick={p.v.onUpdate} />
+        </Show>
       </span>
       <span class="upd-icon">
-        <Button label={p.v.updating ? 'Reloading' : failed() ? `Update failed: ${p.v.updateError}. Retry` : `Reload into ${p.v.newVersion ?? 'the new app'}`} icon="rotate-cw" iconOnly kind={failed() ? 'default' : 'primary'} busy={p.v.updating} onClick={p.v.onUpdate} />
+        <Show when={left() != null} fallback={<Button label={tip()} icon={hold() ? 'pause' : 'rotate-cw'} iconOnly kind={failed() || hold() ? 'default' : 'primary'} busy={p.v.updating} onClick={p.v.onUpdate} />}>
+          <button type="button" class="btn primary icon-only upd-count" aria-label={tip()} data-tip={tip()} onClick={() => p.v.onUpdate()}>{left()}</button>
+        </Show>
       </span>
     </div>
   );

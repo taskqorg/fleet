@@ -5,7 +5,7 @@
 // events, so it gives the same answer on every check, and after an update the reloaded tab matches the site.
 import { cell } from './signal.ts';
 import type { Tone, VersionInfo, VersionRow } from '../../packages/ui/src/index.ts';
-import { op, type Ops } from './api.ts';
+import { op, requestsInFlight, type Ops } from './api.ts';
 import { access, accessGeneration, isAccessCurrent, onAccessInvalidated, onAccessOpen } from './access.ts';
 import { navigate } from './router.ts';
 
@@ -17,6 +17,9 @@ export const updateChecked = cell(false);
 export const versionObservedAt = cell<number | null>(null);
 export const versionError = cell<string | null>(null);
 export const updateError = cell<string | null>(null);
+/** Seconds until the tab updates itself (null: not counting), and what holds the count (UpdateHold). */
+export const updateIn = cell<number | null>(null);
+export const updateHold = cell<UpdateHold | null>(null);
 onAccessInvalidated.add(() => {
   versions.value = null; tabVersion.value = null; versionRead++; updateRead++; versionObservedAt.value = null;
   versionError.value = null; updateChecked.value = false; updateReady.value = false; updateError.value = null;
@@ -47,6 +50,97 @@ export async function checkUpdate() {
   updateReady.value = served !== mine;
   // A newly served app: read its version now, so the strip names it.
   if (updateReady.value && !was) void loadVersions();
+  if (!updateReady.value) return;
+  // Newly offered to a person looking at the tab: the full count shows first. A hidden tab updates without waiting.
+  if (!was && document.visibilityState === 'visible') lastActive = Date.now();
+  // A reload this tab made itself that brought back the same old app (a cache in between): no second automatic reload.
+  if (!updating.value && reloadedInto() === mine) { updateError.value = 'The reload kept the old app. Retry.'; return; }
+  // A failed update counts down again at the next check, from a full count.
+  if (updateError.value && !updating.value) { updateError.value = null; lastActive = Date.now(); }
+  countdown();
+}
+
+/*
+ * The idle update (nav-rail.md, Update; board screens/shell). While a new app is ready, the tab reloads into it after
+ * IDLE_MS with no activity: a pointer move, key, wheel, touch or focus change in this tab sets the one timestamp
+ * back (passive listeners, written at most every ACTIVE_STEP). A hidden tab has no activity, so it updates in the
+ * background. One 1 s timer runs only while a new app is ready. Work is never lost: input a person typed and did not send,
+ * an open modal dialog, or a request still in flight hold the count (holding was chosen over restoring drafts after the
+ * reload: it cannot lose what a page did not save). The reload keeps the route (location.reload) and the scroll of the
+ * page's scroll areas.
+ */
+export type UpdateHold = 'draft' | 'dialog' | 'save';
+export const IDLE_MS = 30_000;
+const ACTIVE_STEP = 250, RELOADED_KEY = 'fleet-update:reloaded', SCROLL_KEY = 'fleet-update:scroll';
+let lastActive = Date.now(), timer: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * Fields a person typed into, with the value they had before the first keystroke: a field whose value differs and is not
+ * empty is a draft (a composer emptied by its send is not). Search and filter fields hold no work, so they are not kept.
+ */
+const edited = new Map<HTMLElement, string>();
+const valueOf = (el: HTMLElement) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? el.value : el.isContentEditable ? el.textContent ?? '' : '';
+function holdReason(): UpdateHold | null {
+  for (const [el, before] of edited) {
+    if (!el.isConnected) { edited.delete(el); continue; }
+    const now = valueOf(el);
+    if (now.trim() && now !== before) return 'draft';
+  }
+  // A side sheet is the phone's detail view, not a dialog with state of its own.
+  if (document.querySelector(':modal:not(.side-sheet)')) return 'dialog';
+  return null;
+}
+
+function countdown() {
+  if (!timer) timer = setInterval(countdown, 1000);
+  if (!updateReady.peek() || updating.peek() || updateError.peek()) { clearInterval(timer); timer = undefined; updateIn.value = null; updateHold.value = null; return; }
+  const now = Date.now(), hold = holdReason();
+  if (hold) { lastActive = now; updateIn.value = null; updateHold.value = hold; return; }
+  const left = Math.max(0, Math.ceil((IDLE_MS - (now - lastActive)) / 1000));
+  updateIn.value = left;
+  // At 0 a request still in flight (a save, a send) finishes first; past 2 s the strip says what it waits for.
+  if (left === 0 && requestsInFlight() > 0) { updateHold.value = now - lastActive > IDLE_MS + 2000 ? 'save' : null; return; }
+  updateHold.value = null;
+  if (left === 0) void applyUpdate(true);
+}
+
+function active(e: Event) {
+  // A pointer that did not move (the page moved under a resting pointer) is not activity.
+  if (e instanceof PointerEvent && e.type === 'pointermove' && !e.movementX && !e.movementY) return;
+  const now = Date.now();
+  if (now - lastActive >= ACTIVE_STEP) lastActive = now;
+}
+
+/** The assets of the tab that reloaded itself in the last 10 minutes: when this tab has them too, the reload brought back the old app. */
+function reloadedInto(): string | null {
+  try { const r = JSON.parse(sessionStorage.getItem(RELOADED_KEY) ?? 'null'); return r && Date.now() - r.at < 600_000 ? r.assets : null; } catch { return null; }
+}
+
+/** The scroll areas of the page, by their class and place, so the reloaded page can find them again. */
+const SCROLLERS = '.shell-main, .split-list, .detail, .work-idle, .side-body, .limits, .runners';
+function keepScroll() {
+  const all = [...document.querySelectorAll<HTMLElement>(SCROLLERS)];
+  const at = all.map((el, i) => ({ i, cls: el.className, top: el.scrollTop })).filter(x => x.top > 0);
+  try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ path: location.pathname + location.search, window: scrollY, at })); } catch { /* the scroll is not kept */ }
+}
+/** After a reload into a new app: puts the scroll areas back as they render, until each is restored, the person acts, or 5 s pass. */
+function restoreScroll() {
+  let kept: { path: string; window: number; at: { i: number; cls: string; top: number }[] } | null = null;
+  try { kept = JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? 'null'); sessionStorage.removeItem(SCROLL_KEY); } catch { return; }
+  if (!kept || kept.path !== location.pathname + location.search) return;
+  const k = kept;
+  let left = [...k.at], win = k.window;
+  const done = () => { obs.disconnect(); clearTimeout(stop); removeEventListener('pointerdown', done, true); removeEventListener('keydown', done, true); removeEventListener('wheel', done, true); };
+  const apply = () => {
+    if (win > 0 && document.documentElement.scrollHeight - innerHeight >= win) { scrollTo(0, win); win = 0; }
+    const all = [...document.querySelectorAll<HTMLElement>(SCROLLERS)];
+    left = left.filter(x => { const el = all[x.i]; if (!el || el.className !== x.cls || el.scrollHeight - el.clientHeight < x.top) return true; el.scrollTop = x.top; return false; });
+    if (!left.length && !win) done();
+  };
+  const obs = new MutationObserver(apply), stop = setTimeout(done, 5000);
+  obs.observe(document.body, { childList: true, subtree: true });
+  for (const t of ['pointerdown', 'keydown', 'wheel']) addEventListener(t, done, { capture: true, passive: true });
+  apply();
 }
 
 export async function loadVersions() {
@@ -77,7 +171,7 @@ export const olderThan = (a: string | null | undefined, b: string | null | undef
  * Once the reload is asked for, `updating` stays on until the page unloads: the control never turns back into Update in
  * between (a busy state cleared before the reload landed showed the button again). A failure says why and allows Retry.
  */
-export async function applyUpdate() {
+export async function applyUpdate(auto = false) {
   if (updating.value) return;
   updating.value = true;
   updateError.value = null;
@@ -103,6 +197,8 @@ export async function applyUpdate() {
         navigator.serviceWorker.addEventListener('controllerchange', changed); w.postMessage('skip-waiting'); changed();
       });
     }
+    keepScroll();
+    try { if (auto) sessionStorage.setItem(RELOADED_KEY, JSON.stringify({ assets: own(), at: Date.now() })); else sessionStorage.removeItem(RELOADED_KEY); } catch { /* no loop guard */ }
     location.reload(); // navigation is network-first; the next tab confirms its assets against the site
   } catch (error) {
     updateError.value = error instanceof Error ? error.message : String(error);
@@ -124,7 +220,25 @@ export function startVersionChecks(): () => void {
   const first = setTimeout(opened, 0), every = setInterval(opened, 300_000);
   onAccessOpen.add(afterOpen);
   addEventListener('focus', run);
-  return () => { clearTimeout(first); clearInterval(every); onAccessOpen.delete(afterOpen); removeEventListener('focus', run); };
+  // Activity for the idle update: passive and captured, so a handler that stops the event still counts it.
+  const opts = { capture: true, passive: true } as const, typed = (e: Event) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement) || edited.has(t) || t.matches('input[type=search], [role=searchbox], [role=combobox]') || t.closest('[role=search], .spotlight')) return;
+    edited.set(t, valueOf(t));
+  };
+  const shown = () => { if (document.visibilityState === 'visible') lastActive = Date.now(); };
+  // Scrolling counts through its input (wheel, keys, touch, the scrollbar's pointer); a scroll event alone may be the page's own.
+  const ACTIVITY = ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart', 'focusin'];
+  for (const t of ACTIVITY) addEventListener(t, active, opts);
+  addEventListener('beforeinput', typed, opts);
+  document.addEventListener('visibilitychange', shown);
+  restoreScroll();
+  return () => {
+    clearTimeout(first); clearInterval(every); onAccessOpen.delete(afterOpen); removeEventListener('focus', run);
+    for (const t of ACTIVITY) removeEventListener(t, active, opts);
+    removeEventListener('beforeinput', typed, opts); document.removeEventListener('visibilitychange', shown);
+    clearInterval(timer); timer = undefined;
+  };
 }
 
 /** Only a confirmed problem tones the mark (nav-rail.md, Version): attention and danger rows; every other tone is the row's own. */
@@ -171,7 +285,8 @@ export function versionInfo(now = Date.now()): VersionInfo {
   const ready = updateChecked.value && updateReady.value;
   return { current: v?.coordinator.version ?? null, tone: worst, summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined,
     // The version the site serves, once a read shows one other than this tab's (a read older than the check names the old one).
-    updateReady: ready, newVersion: ready && v && v.ui.version !== tabVersion.value ? v.ui.version : null, updating: updating.value, updateError: updateError.value, onUpdate: applyUpdate,
+    updateReady: ready, newVersion: ready && v && v.ui.version !== tabVersion.value ? v.ui.version : null, updating: updating.value, updateError: updateError.value, onUpdate: () => void applyUpdate(),
+    updateIn: updateIn.value, updateHold: updateHold.value,
     checkedAt: versionObservedAt.value, checkError: versionError.value, rows, at: versionInfo, onOpen: () => { void loadVersions(); void checkUpdate(); } };
 }
 

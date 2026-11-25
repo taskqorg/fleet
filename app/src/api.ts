@@ -33,7 +33,15 @@ export function accessControlOp<K extends 'me' | 'changes_since'>(name: K, body:
   if (name === 'changes_since' && Object.keys(body).length) throw new Error('Access baseline must have no cursor or options');
   return request(name, body, opts.signal, () => { if (opts.signal?.aborted) throw new AccessChanged(); });
 }
+let inFlight = 0;
+/** Operation requests sent and not yet answered; the app update waits for them (version.ts). A keepalive request outlives the page anyway. */
+export const requestsInFlight = () => inFlight;
 async function request<K extends OpName>(name: K, body: unknown, signal: AbortSignal | undefined, fence: () => void, path = '/api/ops/' + name, keepalive = false): Promise<Ops[K]['reply']> {
+  if (keepalive) return send<Ops[K]['reply']>(body, signal, fence, path, true);
+  inFlight++;
+  try { return await send<Ops[K]['reply']>(body, signal, fence, path, false); } finally { inFlight--; }
+}
+async function send<R>(body: unknown, signal: AbortSignal | undefined, fence: () => void, path: string, keepalive: boolean): Promise<R> {
   fence();
   let r: Response;
   try { r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin', redirect: 'manual', signal, keepalive }); }
@@ -42,7 +50,7 @@ async function request<K extends OpName>(name: K, body: unknown, signal: AbortSi
   if (r.type === 'opaqueredirect' || r.status === 401 || r.status === 403) { signedOut.value = true; throw new OpError('signed out', r.status); }
   const data = await r.json().catch(() => { fence(); if (signal?.aborted) throw new OpError('aborted', 0); if (r.ok) throw new OpError('incomplete reply', r.status); return {}; });
   fence(); if (!r.ok) throw new OpError(data?.message || r.statusText, r.status);
-  return data as Ops[K]['reply'];
+  return data as R;
 }
 
 // A key request (connections_key_request): the owner's value goes straight to connections_key_add, which answers the
