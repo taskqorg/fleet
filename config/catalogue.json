@@ -58,6 +58,15 @@
       "status": "experimental"
     },
     {
+      "capability": "bot-avatar",
+      "description": "Make a square 512 px bot avatar PNG from a description and optional reference image, optionally as an animated SVG with a breathing glow.",
+      "id": "avatar-make",
+      "name": "Bot avatar",
+      "pipeline": "avatar-make.json",
+      "scope": "shared",
+      "status": "experimental"
+    },
+    {
       "capability": "language-verification",
       "description": "Verify that localized event text is genuinely written in the expected language via System One Jev.",
       "id": "lang-check-jev",

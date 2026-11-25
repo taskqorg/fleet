@@ -16,7 +16,7 @@ import { useOp } from '../store.ts';
 import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import type { SessionRow, QuestionRow, ExecutionRow } from '../../../contracts/generated/ops.ts';
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
-import { reasonLabel } from '../bot-view.ts';
+import { botPicture, reasonLabel } from '../bot-view.ts';
 
 const SessionView = lazy(() => import('./session.tsx'), { export: 'SessionView' });
 
@@ -81,7 +81,7 @@ function blockers(problems: ExecutionRow[], questions: QuestionRow[]): Blocker[]
 
 /** Who a session is: its bot, its project's PM, or the work it does. */
 function who(s: SessionRow, bot: BotListItem | undefined): { name: string; avatar: AvatarMark } {
-  if (bot) return { name: bot.name, avatar: { letter: bot.name, tone: 'success' } };
+  if (bot) return { name: bot.name, avatar: { letter: bot.name, tone: 'success', picture: botPicture(bot) } };
   if (s.profileId === 'pm') return { name: `PM · ${s.projectId ?? 'Fleet'}`, avatar: { letter: 'P' } };
   return { name: s.title || s.code || 'Session', avatar: s.harness ? { harness: s.harness } : { letter: (s.title || 'S').trim() } };
 }
@@ -285,7 +285,7 @@ function HomePage() {
       const s = pmSession(p);
       return { id: 'pm:' + p, kind: 'pm' as const, name: `PM · ${p}`, about: s?.now ?? 'Project manager', project: p, avatar: { letter: 'P' }, state: s ? lifeOfSession(s.state) : 'asleep' };
     }),
-    ...scopedBots().map(b => ({ id: 'bot:' + b.id, kind: 'bot' as const, name: b.name, about: b.purpose, project: b.projectId, avatar: { letter: b.name, tone: 'success' as const }, state: (b.activeRunId ? 'working' : 'asleep') as Life })),
+    ...scopedBots().map(b => ({ id: 'bot:' + b.id, kind: 'bot' as const, name: b.name, about: b.purpose, project: b.projectId, avatar: { letter: b.name, tone: 'success' as const, picture: botPicture(b) }, state: (b.activeRunId ? 'working' : 'asleep') as Life })),
   ]);
   const [picked, setPicked] = createSignal<string | null>(typeof localStorage === 'undefined' ? null : localStorage.getItem(TARGET_KEY));
   const target = createMemo(() => targets().find(t => t.id === picked())?.id ?? targets()[0]?.id ?? '');
@@ -486,7 +486,7 @@ function HomePage() {
                   <BotTile
                     name={b().name}
                     about={b().purpose}
-                    avatar={{ letter: b().name, tone: 'success' }}
+                    avatar={{ letter: b().name, tone: 'success', picture: botPicture(b()) }}
                     lastUsed={b().lastRunAt ? ms(b().lastRunAt) : undefined}
                     state={wakeOf(b())?.state ?? 'asleep'}
                     reason={wakeOf(b())?.reason}

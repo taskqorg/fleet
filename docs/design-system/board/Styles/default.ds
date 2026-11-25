@@ -125,3 +125,5 @@ fleet.size.phone: 390
 fleet.size.phone-h: 560
 fleet.size.ctl: 520
 fleet.size.row-2: 44
+fleet.size.avatar-lg: 40
+fleet.size.avatar-xl: 96

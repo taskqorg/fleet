@@ -562,3 +562,26 @@ export function InlineForm(p: {
 }) {
   return <form class={p.cls} data-ui="inline-form" onSubmit={e => p.onSubmit(e)} onKeyDown={e => p.onKeyDown?.(e)}>{p.children}</form>;
 }
+
+/** A button that opens the file picker and hands back the chosen file (controls/button.md); `accept` narrows the picker. */
+export function FileButton(p: { label: string; accept?: string; icon?: IconName; kind?: 'primary' | 'default' | 'quiet'; busy?: boolean; disabledReason?: string; onFile: (file: File) => void }) {
+  let input: HTMLInputElement | undefined;
+  return (
+    <>
+      <Button label={p.label} icon={p.icon} kind={p.kind} busy={p.busy} disabledReason={p.disabledReason} onClick={() => input?.click()} />
+      <input
+        ref={el => { input = el; }}
+        type="file"
+        accept={p.accept}
+        hidden
+        aria-hidden="true"
+        tabindex={-1}
+        onChange={e => {
+          const f = e.currentTarget.files?.[0];
+          e.currentTarget.value = '';
+          if (f) p.onFile(f);
+        }}
+      />
+    </>
+  );
+}

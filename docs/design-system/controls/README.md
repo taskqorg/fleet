@@ -68,6 +68,7 @@ The screens of the conversation-first interface, and the catalogues and opened i
 | Block | Spec | `packages/ui` | Screens |
 |---|---|---|---|
 | Session card | [session-card](session-card.md) | `SessionCard`, `Avatar`, `ProjectChip` | Home |
+| Bot avatar | [avatar](avatar.md) | `Avatar` | Library, Home, rail |
 | Question card | [decision block, card](decision-block.md#card) | `QuestionCard` | Home, session view |
 | Bot tile | [bot-tile](bot-tile.md) | `BotTile` | Home |
 | Quiet summary | [quiet-summary](quiet-summary.md) | New (`QuietSummary`) | Home |

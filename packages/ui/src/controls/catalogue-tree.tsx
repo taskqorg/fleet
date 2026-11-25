@@ -20,6 +20,8 @@ export type CatalogueTreeNode = {
   label: string;
   sub?: string;
   icon?: IconName;
+  /** A leaf's own mark in place of its state dot (a bot's avatar, which shows the state itself); state still filters. */
+  lead?: JSX.Element;
   /** A top-level root without children (System's Runners and Spend): drawn like a folder row, chevron space and its
    *  registry icon (OR-3), never a state slot (OR-22 is for items). A click opens its page. */
   root?: boolean;
@@ -488,6 +490,8 @@ export function CatalogueTree(props: CatalogueTreeProps) {
               </Show>
               {node.root ? (
                 <><span class="cat-tw" aria-hidden="true" /><Icon name={node.icon ?? 'folder-open'} /></>
+              ) : node.lead ? (
+                <span class="cat-ic">{node.lead}</span>
               ) : st ? (
                 <StateBadge family={st.family} state={st.state as never} reason={st.reason} compact />
               ) : node.icon ? (
