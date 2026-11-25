@@ -16,7 +16,7 @@ func TestCapabilityInstruction(t *testing.T) {
 	got := capabilityInstruction(dir, ops, conns, map[string][]string{"pds18-native": {}, "owner-mac": {"pipe-read", "cs-gitlab"}})
 	for _, want := range []string{
 		"You act for agents@example.com with access to projects fleet.",
-		"Fleet operations (4 in your tool list), among them projects: project_create, project_readiness; people: ask.",
+		"Fleet operations in your tool list include projects: project_create, project_readiness; people: ask.",
 		"API connections of this turn: youtrack (issues_search).",
 		"Git connections (deploy keys) on hosts: owner-mac: cs-gitlab, pipe-read; pds18-native: none.",
 		"says nothing about GitLab",

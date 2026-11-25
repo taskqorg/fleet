@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"fleet/contract"
@@ -93,7 +92,7 @@ func capabilityInstruction(dir *Person, ops []agentOperation, conns []connSpec, 
 		}
 	}
 	if len(groups) > 0 {
-		lines = append(lines, "- Fleet operations ("+strconv.Itoa(len(ops))+" in your tool list), among them "+strings.Join(groups, "; ")+".")
+		lines = append(lines, "- Fleet operations in your tool list include "+strings.Join(groups, "; ")+".")
 	}
 	if len(personOnlyOperations) > 0 {
 		lines = append(lines, "- Only a person may call "+strings.Join(personOnlyOperations, ", ")+" (secrets and identity). For a missing API key call connections_key_request; never take a key from chat.")

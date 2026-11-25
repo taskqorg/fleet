@@ -1630,11 +1630,11 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		}
 		if minted.Token != nil {
 			p.RunToken, p.Connections = strPtr(minted.Token), rawList(minted.Connections)
+			runConns = minted.Connections
 		}
 		if len(minted.Refused) > 0 {
 			e.ConnectionsRefused = minted.Refused
 		}
-		runConns = minted.Connections
 	}
 	if opsDirector != nil {
 		gitConns, err := hostGitConnections(q)

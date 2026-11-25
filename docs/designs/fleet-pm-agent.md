@@ -215,7 +215,7 @@ The PM asks people through the `question` table (agent `ask` opens an `agent_que
 An agent whose profile has `fleetOperations` gets one more instruction section at dispatch (`go/coordinator/agent_capabilities.go`), built from the same data that serves its calls, so it acts with the rights it has instead of asking a person for them:
 
 *   its director and standing: full access, or the granted projects;
-*   the key operations its tool list carries, by purpose (projects, work, access and settings, people), and the tool list's size; an operation the list lacks is not named;
+*   the key operations its tool list carries, by purpose (projects, work, access and settings, people); an operation the list lacks is not named;
 *   the person-only operations (`agent: no` in the contracts), with `connections_key_request` as the path to a missing API key;
 *   the API connections of the turn with their tools;
 *   the git connections (deploy keys) each live execution host reports;
