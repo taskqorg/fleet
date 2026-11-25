@@ -1323,7 +1323,7 @@ func artifactView(ctx context.Context, a *App, id, hostID string) (contract.Arti
 	v := contract.ArtifactView{Id: x.ID, LegacyId: x.LegacyID, ProjectId: x.ProjectID, Scope: x.Scope, ExecutionId: x.ExecutionID, TaskId: x.TaskID,
 		Name: x.Name, MediaType: x.MediaType, Size: x.Size, Sha256: x.ContentHash, Required: x.Required, Role: x.Role,
 		DerivedFromArtifactId: x.DerivedFrom, PreviousArtifactId: x.Previous, State: x.State, Error: x.LastError,
-		Copies: make([]contract.ArtifactCopyState, 0, len(cs)), Availability: x.State}
+		Copies: make([]contract.ArtifactCopyState, 0, len(cs)), Availability: x.State, Code: x.Code}
 	for _, c := range cs {
 		v.Copies = append(v.Copies, contract.ArtifactCopyState{StoreId: c.StoreID, State: c.State})
 	}

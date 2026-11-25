@@ -119,6 +119,52 @@
   .av-table th, .av-table td { border: 1px solid var(--line); padding: var(--space-1) var(--space-3); text-align: left; vertical-align: top; }
   .av-table th { font-weight: var(--font-weight-medium); background: var(--surface); }
   .av-text pre { margin: 0; font-family: var(--font-mono); font-size: var(--font-size-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .av { container-type: inline-size; }
+  .av > .bar { display: flex; align-items: center; gap: var(--space-2); }
+  /* Key/value view of JSON and JSON lines (result-viewer.md) */
+  .kv-rec + .kv-rec { margin-top: var(--space-4); }
+  .kv-rec-h { padding-bottom: var(--space-1); }
+  .kv-pairs { margin: 0; }
+  .kvt-row { display: grid; grid-template-columns: var(--size-label) minmax(0, 1fr); gap: var(--space-3); padding: var(--space-1) 0; border-bottom: 1px solid var(--line-soft); }
+  .kvt-row dt, .kv-k { font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--fg-muted); overflow-wrap: anywhere; }
+  .kvt-row dd { margin: 0; min-width: 0; }
+  .kv-v { overflow-wrap: anywhere; white-space: pre-wrap; }
+  .kv-v.number, .kv-v.boolean { font-family: var(--font-mono); font-size: var(--font-size-sm); }
+  .kv-v.null { color: var(--fg-faint); font-style: italic; }
+  .kv-branch { border-bottom: 1px solid var(--line-soft); }
+  .kv-branch > summary { display: flex; align-items: baseline; gap: var(--space-2); padding: var(--space-1) 0; cursor: pointer; }
+  .kv-branch > summary::before { content: '▸'; width: var(--size-icon-sm); color: var(--fg-faint); }
+  .kv-branch[open] > summary::before { content: '▾'; }
+  .kv-branch > .kv-tree { padding-left: var(--space-5); }
+  .kv-branch .kvt-row:last-child, .kv-branch .kv-branch:last-child { border-bottom: 0; }
+  /* Unified diff (result-viewer.md): signs and words, not colour alone */
+  .rd { display: grid; grid-template-columns: var(--size-search) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+  .rd-files { display: flex; flex-direction: column; border-right: 1px solid var(--line); padding-right: var(--space-2); }
+  .rd-file { display: flex; align-items: center; gap: var(--space-2); height: var(--size-row-compact); padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md); background: none; color: var(--fg-muted); font-size: var(--font-size-sm); text-align: left; cursor: pointer; }
+  .rd-file:hover { background: var(--hover); }
+  .rd-file.on { background: var(--selected); color: var(--fg); }
+  .rd-file .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rd-file .add, .rd-file .del { font-family: var(--font-mono); font-size: var(--font-size-xs); }
+  .rd-file .add { color: var(--success-fg); } .rd-file .del { color: var(--danger-fg); }
+  .rd-step { display: none; align-items: center; gap: var(--space-2); }
+  .rd-step .nm { font-weight: var(--font-weight-medium); }
+  .rd-body { min-width: 0; overflow-x: auto; }
+  .rd-path { padding-bottom: var(--space-2); font-family: var(--font-mono); }
+  .rd-lines { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: var(--font-size-sm); }
+  .rd-lines td { padding: 0 var(--space-2); white-space: pre; vertical-align: top; }
+  .rd-lines .ln { width: 1%; color: var(--fg-faint); text-align: right; user-select: none; }
+  .rd-lines .sg { width: 1%; font-weight: var(--font-weight-bold); }
+  .rd-lines tr.hunk td { background: var(--running-bg); color: var(--running-fg); }
+  .rd-lines tr.add { background: var(--success-bg); } .rd-lines tr.add .sg { color: var(--success-fg); }
+  .rd-lines tr.del { background: var(--danger-bg); } .rd-lines tr.del .sg { color: var(--danger-fg); }
+  @container (max-width: 480px) {
+    .rd { grid-template-columns: minmax(0, 1fr); }
+    .rd-files { display: none; }
+    .rd-step { display: flex; }
+    .rd-lines .ln { display: none; }
+    .kvt-row { grid-template-columns: minmax(0, 40%) minmax(0, 1fr); }
+    .kv-branch > .kv-tree { padding-left: var(--space-4); }
+  }
 
   /* Composer, attachments, drop zone */
   .composer { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-2) var(--space-4) var(--space-3); padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }

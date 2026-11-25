@@ -104,12 +104,14 @@ func TestViewerOnlyReads(t *testing.T) {
 }
 
 // Requirement (D17, FLT-39, FLT-40): an original artifact and a bot get an R and a B code that entity_resolve resolves;
-// other artifact roles get none. Risk: a result or bot is still addressed by its UUID only.
+// other artifact roles get none. The card and artifact_get name the result by its code and a file name without the
+// UUID or hash its writer put in it. Risk: a result or bot is still addressed by its UUID only.
 func TestResultAndBotCodes(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	if err := env.ownerStore.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		return exec(q, `INSERT INTO artifact(id, project_id, scope, content_hash, size, media_type, name, role) VALUES
-			('a-orig', 'fleet', 'prod', 'h1', 1, 'text/plain', 'report.md', 'original'),
+			('a-orig', 'fleet', 'prod', 'h1', 1, 'application/x-ndjson',
+			 'mcp-lifecycle-5eb2ce291c7d227dd684ec83f9ddc05776e2fe9a0c4e62927b4592383e66fb28-749bcb9e-f21a-4ef4-9584-f44074e048b2.jsonl', 'original'),
 			('a-thumb', 'fleet', 'prod', 'h2', 1, 'image/png', 'report.png', 'thumbnail');
 			INSERT INTO bot(id, project_id, director, revision) VALUES ('bot-1', 'fleet', 'owner@trial.test', 1)`)
 	}); err != nil {
@@ -143,8 +145,19 @@ func TestResultAndBotCodes(t *testing.T) {
 	}
 	var card contract.EntityCardReply
 	env.opInto(t, "entity_card", map[string]any{"code": "R-FLT-1"}, env.ownerHeaders(), &card)
-	if card.Id != "a-orig" || deref(card.Code) != "R-FLT-1" {
+	if card.Id != "a-orig" || deref(card.Code) != "R-FLT-1" || card.Title != "mcp-lifecycle.jsonl" || deref(card.Path) != "/results/R-FLT-1" {
 		t.Fatalf("entity_card(R-FLT-1) = %+v", card)
+	}
+	var view contract.ArtifactView
+	env.opInto(t, "artifact_get", map[string]any{"artifactId": "a-orig"}, env.ownerHeaders(), &view)
+	if deref(view.Code) != "R-FLT-1" {
+		t.Fatalf("artifact_get code = %v, want R-FLT-1", deref(view.Code))
+	}
+	for name, want := range map[string]string{"report.md": "report.md", "T-FLT-62-resumption-def7bd70.md": "T-FLT-62-resumption-def7bd70.md",
+		"a-0123456789abcd-fedcba9876543210-b.txt": "a-b.txt", "749bcb9e-f21a-4ef4-9584-f44074e048b2.json": ""} {
+		if got := resultLabel(name); got != want {
+			t.Fatalf("resultLabel(%q) = %q, want %q", name, got, want)
+		}
 	}
 }
 

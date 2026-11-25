@@ -41,7 +41,7 @@ test('entity_card: every kind by code or kind and id, within the caller\'s grant
   assert.equal(e.state, 'succeeded'); assert.equal(e.harness, 'claude'); assert.equal(e.title, 'Card the deploy'); assert.equal(e.path, '/tasks/' + task.id);
   assert.ok(e.facts.some((f: any) => f.label === 'Duration' && f.type === 'duration' && Number(f.value) >= 89));
   const a = await card({kind: 'result', id: 'a-card'});
-  assert.equal(a.title, 'report.txt'); assert.equal(a.hash, 'ab'.repeat(32)); assert.equal(a.path, '/results/a-card');
+  assert.equal(a.title, 'report.txt'); assert.equal(a.hash, 'ab'.repeat(32)); assert.equal(a.path, '/results/' + (a.code ?? 'a-card'), 'a result links by its code (UR-69)');
   assert.ok(a.facts.some((f: any) => f.label === 'Size' && f.type === 'bytes' && f.value === '2048'));
   const x = await card({kind: 'experiment', id: 'x-card'});
   assert.equal(x.state, 'draft'); assert.equal(x.title, 'Is the card useful?'); assert.equal(x.path, '/lab/x-card');
