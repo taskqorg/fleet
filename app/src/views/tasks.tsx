@@ -7,7 +7,7 @@ import {
   ListDetail, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
-  type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages,
+  type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages, isFinished, openStates,
   keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, online } from '../api.ts';
@@ -374,7 +374,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   const unconfirmed = createMemo(() => {
     const task = t(), le = latestExecution();
     return !!task && !!le && le.observation === 'unconfirmed'
-      && ['preparing', 'running', 'waiting'].includes(le.state)
+      && (openStates('execution') as string[]).includes(le.state)
       && !(TERMINAL as readonly string[]).includes(task.state) && task.state !== 'paused';
   });
   const conversation = () => latestExecution()?.sessionId;
@@ -476,7 +476,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             <Show
               when={t()!.state === 'paused'}
               fallback={
-                <Show when={!['completed', 'failed', 'cancelled'].includes(t()!.state)}>
+                <Show when={!isFinished('task', t()!.state)}>
                   <SplitButton
                     main={{ label: 'Pause', icon: 'pause', onClick: () => !off() && act('pause') }}
                     alternatives={[{ label: 'Cancel task', icon: 'circle-slash', onClick: () => setConfirming(true) }]}

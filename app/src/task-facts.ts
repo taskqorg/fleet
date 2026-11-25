@@ -4,8 +4,9 @@
 import type { TaskRow as ContractTaskRow } from '../../contracts/generated/ops.ts';
 import vocabulary from '../../contracts/vocabulary.json' with { type: 'json' };
 import type { Harness } from '../../packages/ui/src/registry.ts';
+import { finishedStates } from '../../packages/ui/src/states.ts';
 
-export const TERMINAL_TASK_STATES = ['completed', 'failed', 'cancelled'] as const;
+export const TERMINAL_TASK_STATES = finishedStates.task;
 /** Matches coordinator ruleStuck (30m) for judging whether active execution contact is stale. */
 export const ACTIVE_EXECUTION_STALE_MS = 30 * 60 * 1000;
 /** Threshold (2h) for warning that a credibly active execution is running too long. */

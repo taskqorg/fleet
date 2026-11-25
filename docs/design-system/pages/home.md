@@ -16,11 +16,11 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)). The shel
    * Each blocker is one chip in the danger tone, with its cause and `×N` ([OR-56](../owner-rules.md), [OR-58](../owner-rules.md)); a click opens [Live](live.md) at that host or cause.
    * The line ends with `Live ›`.
 2. **Composer.** Picks who to talk to and sends the first message; see **Composer** below.
-3. **Session groups.** Cards in this order, each group with its count; an empty group is hidden:
+3. **Session groups.** Cards in this order, each group with its count; an empty group is hidden. A session's group is the word of its state (registry `life`, [OR-55](../controls/state-badge.md#dot-and-word)), the same word its view shows:
    1. **Waiting for you:** sessions with an open question to this person, oldest question first.
    2. **Failed:** sessions whose latest run failed.
-   3. **Working:** sessions with a running agent run, most recent activity first.
-   4. **Queued:** sessions waiting for a slot.
+   3. **Working:** sessions preparing or running an agent run, most recent activity first.
+   4. **Queued:** sessions whose state reads Queued; no session state does today (a preparing session is Working).
 4. **Asleep.** Bots with no active run, as one row of dashed tiles: name, what the bot is for, when it was last used, and a Wake button.
 
 A group longer than one row shows its latest cards and `+K` (OR-30); `+K · Conversations ›` opens [Conversations](conversations.md) with the same filter. Waiting for you expands in place instead (`+K more`): a question no session asks is answered only on Home. One row is as many cards as the page width holds. Failed sessions whose newest run failed for the same plain cause (`failure.cause`) are one card with `×N`, the cause in words and their hosts; it opens Conversations with the Failed filter (OR-58). A failed session with a cause of its own, or none known, keeps its own card. A finished session leaves Home and stays in Conversations.
@@ -82,14 +82,14 @@ Behaviour:
 
 | Part | Read or action |
 |---|---|
-| Groups and cards | `sessions_list` grouped by state, in attention order (waiting, failed, running, preparing); rows carry `activityAt` and `now` |
+| Groups and cards | `sessions_list` of the open session states and `failed` (`openStates('session')`), grouped by `life('session', state)` in attention order; rows carry `activityAt` and `now` |
 | Now line | `now` on each `sessions_list` row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
 | Quiet summary | `person_visit {page: "home"}` on each Home open: it records the visit and answers `previousAt`, the visit before; the summary counts from there |
 | Questions on cards | `questions_list` (open, in the focus), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) is a blocker chip instead. Answered in place with `OpenQuestion` ([decision block](../controls/decision-block.md#open-question)); a key request takes the key on the card |
 | Asleep bots | `bot_list` rows with no `activeRunId`; Wake is `bot_run`; a message to a bot's Home is `message_send`, or `bot_run` with the text when it sleeps |
 | Composer | Project PMs from `project_list` and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets`, `session_start`); bots from `bot_list`. The last target picked stays in this browser |
 | Failed cards by cause | `executions_list` `problem` (up to 500, in the focus): the newest failed run of each failed session names its `failure.cause` |
-| Pulse line | Working (`running`) and queued (`preparing`) sessions from the groups' read; done today: `sessions_list` succeeded since midnight; blockers: `executions_list` `needsYou` failures grouped by `failure.cause` and host, plus problem questions grouped by what they are about |
+| Pulse line | Working and queued sessions (by `life`) from the groups' read; done today: `sessions_list` succeeded since midnight; blockers: `executions_list` `needsYou` failures grouped by `failure.cause` and host, plus problem questions grouped by what they are about |
 | Live updates | `changes_since` over sessions, questions, bot runs and executions |
 
 ## Open

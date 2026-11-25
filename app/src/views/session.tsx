@@ -7,7 +7,7 @@ import { currentUrl, useLocation } from '../router.ts';
 import {
   Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer,
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
-  EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, lifeOf,
+  EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, life as lifeIn, statesOf,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
   type Timer, type Member, type PlanStep, type Automation, type RelatedTask,
 } from '../../../packages/ui/src/index.ts';
@@ -30,8 +30,8 @@ const reqId = () => crypto.randomUUID();
 const titleUUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 /** A session's human code (D17): `C-FLT-12`. */
 export const isSessionCode = (s: string) => /^C-[A-Z0-9]+-\d+$/i.test(s);
-const lifeOfSession = (s: string): Life => (lifeOf.session as Record<string, Life>)[s] ?? 'asleep';
-const ACTIVE = ['preparing', 'running', 'waiting'];
+const lifeOfSession = (s: string): Life => lifeIn('session', s);
+const ACTIVE: string[] = statesOf('session', ['working', 'waiting']);
 
 /** Where the view sits: Home opens it full width right of the navigation, Conversations in its work area (session.md, Frames). */
 export type SessionFrame = 'home' | 'conversations';
@@ -235,7 +235,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     state: lifeOfSession(String(m.state)), href: here(m.sessionCode ?? m.sessionId),
   }]));
   const tasks = createMemo<RelatedTask[]>(() => (ctx()?.tasks ?? []).map(t => ({
-    id: t.id, code: t.code, title: t.title, state: (lifeOf.task as Record<string, Life>)[t.state] ?? 'queued', href: `/tasks/${encodeURIComponent(t.id)}`,
+    id: t.id, code: t.code, title: t.title, state: lifeIn('task', t.state), href: `/tasks/${encodeURIComponent(t.id)}`,
   })));
   // Showing or hiding the column changes the transcript's width and so its wrapped rows: keep the row being read where it
   // was (a list at its newest row keeps following). The composer and its draft stay mounted.

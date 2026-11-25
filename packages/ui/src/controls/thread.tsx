@@ -1,7 +1,7 @@
 // Thread transcript viewer, message/tool/question/result/boundary rows, decision block, markdown, and artifact viewer.
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { type IconName, type StateOf, type Harness, actions, harnesses } from '../registry.ts';
+import { type IconName, type StateOf, type Harness, actions, harnesses, openStates } from '../registry.ts';
 import { bytes, exact, duration, agentLabel, actor, fileLabel } from '../format.ts';
 import type { Block as ThreadBlock, ResourceSummary, ThreadDeliveryStage } from '../../../../contracts/generated/ops.ts';
 import { VirtualList, type VirtualListHandle } from '../virtual-list.tsx';
@@ -755,7 +755,7 @@ export function ResultRow(p: { artifacts: ArtifactMeta[]; deliveryStage?: Thread
 export function BoundaryRow(p: {
   session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; resources?: ResourceSummary; onStop?: () => void; stopReason?: string;
 }) {
-  const active = createMemo(() => ['preparing', 'running', 'waiting'].includes(p.state));
+  const active = createMemo(() => (openStates('execution') as string[]).includes(p.state));
   const secs = createMemo(() =>
     active() ? null : p.resources?.durations?.executionWallMs != null ? p.resources.durations.executionWallMs / 1000 : p.startedAt != null && p.endedAt != null ? (p.endedAt - p.startedAt) / 1000 : null,
   );
@@ -969,7 +969,7 @@ export function Thread(p: {
           now={p.now}
           resources={b.resources}
           stopReason={p.stopReason}
-          onStop={p.onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => p.onStop!(b.executionId) : undefined}
+          onStop={p.onStop && (openStates('execution') as string[]).includes(b.state) ? () => p.onStop!(b.executionId) : undefined}
         />
       );
       default: return null;

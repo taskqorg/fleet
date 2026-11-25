@@ -6,8 +6,8 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy,
 import type { JSX } from '@solidjs/web';
 import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, QuietSummary, GroupHeader, Ago,
-  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, lifeOf, stamp, day, dayStart, causeOf,
-  type Blocker, type Target, type Life, type AvatarMark, type IconName, type Tone,
+  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, openStates, states, stamp, day, dayStart, causeOf,
+  type Blocker, type Target, type Life, type AvatarMark,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { useLocation, useSearch } from '../router.ts';
@@ -21,17 +21,13 @@ import { botPicture, reasonLabel } from '../bot-view.ts';
 
 const SessionView = lazy(() => import('./session.tsx'), { export: 'SessionView' });
 
-/** Session states Home shows; idle sessions only feed the composer's targets. */
-const ACTIVE = ['waiting', 'failed', 'running', 'preparing', 'idle'];
+/** Session states Home shows: open ones and failed; idle sessions only feed the composer's targets. */
+const ACTIVE = [...openStates('session'), 'failed'];
 const TARGET_KEY = 'fleet:home-target';
 
+/** The card groups in attention order: a session is in the group of its state's word (registry `life`, OR-55). */
 type Group = 'waiting' | 'failed' | 'working' | 'queued';
-const GROUPS: { id: Group; label: string; icon: IconName; tone: Tone; states: string[] }[] = [
-  { id: 'waiting', label: 'Waiting for you', icon: 'bell', tone: 'attention', states: ['waiting'] },
-  { id: 'failed', label: 'Failed', icon: 'octagon-x', tone: 'danger', states: ['failed'] },
-  { id: 'working', label: 'Working', icon: 'activity', tone: 'running', states: ['running'] },
-  { id: 'queued', label: 'Queued', icon: 'list-ordered', tone: 'neutral', states: ['preparing'] },
-];
+const GROUPS = (['waiting', 'failed', 'working', 'queued'] as const).map(id => ({ id, ...states.life[id], states: statesOf('session', [id]) as string[] }));
 /** Failed sessions that share a plain cause (OR-58): the cause, how many, their hosts. */
 type Cause = { id: string; text: string; n: number; hosts: string[] };
 /**
@@ -81,8 +77,7 @@ function who(s: SessionRow, bot: BotListItem | undefined): { name: string; avata
   if (s.profileId === 'pm') return { name: `PM · ${s.projectId ?? 'Fleet'}`, avatar: { letter: 'P' } };
   return { name: s.title || s.code || 'Session', avatar: s.harness ? { harness: s.harness } : { letter: (s.title || 'S').trim() } };
 }
-// A preparing session waits for a slot: Home shows it as Queued (pages/home.md), where the registry's session map says Working.
-const lifeOfSession = (state: string): Life => (state === 'preparing' ? 'queued' : (lifeOf.session as Record<string, Life>)[state] ?? 'working');
+const lifeOfSession = (state: string): Life => life('session', state);
 /** The address of a session on Home: its human code (OR-38), else its id. */
 const sessionPath = (s: { id: string; code?: string | null }) => `/home/${encodeURIComponent(s.code ?? s.id)}`;
 const newRequestId = () => crypto.randomUUID();
@@ -177,7 +172,8 @@ function HomePage() {
     const failedBy = new Map<string, Card[]>();
     for (const s of rows) {
       const mine = qs.get(s.id) ?? [];
-      const group = mine.length || s.state === 'waiting' ? 'waiting' : GROUPS.find(g => g.states.includes(s.state))?.id;
+      const l = lifeOfSession(s.state);
+      const group = mine.length || l === 'waiting' ? 'waiting' : GROUPS.find(g => g.id === l)?.id;
       if (!group) continue;
       const card: Card = { key: s.id, group, at: group === 'waiting' && mine.length ? ms(mine[0].askedAt) : ms(s.activityAt), s, qs: mine };
       const f = group === 'failed' ? failureOf().get(s.id) : undefined;
@@ -230,7 +226,7 @@ function HomePage() {
   // At most one page (200 rows, newest first): a day with more finished sessions shows 200.
   const doneSince = (t: number) => (finished.data?.sessions ?? []).filter(s => ms(s.activityAt) >= t).length;
   const chips = createMemo(() => blockers(problems.data?.executions ?? [], (questions.data?.questions ?? []).filter(isProblem)));
-  const stateHref = (life: Life) => formatView({ view: 'conversations', state: life === 'working' ? ['running'] : life === 'queued' ? ['preparing'] : ['succeeded'] });
+  const stateHref = (l: Life) => formatView({ view: 'conversations', state: statesOf('session', [l]) });
 
   // Quiet summary: since the last visit, or today on a first one.
   const quietFacts = createMemo(() => {
@@ -393,8 +389,8 @@ function HomePage() {
           <Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} />
         </Show>
         <PulseLine
-          working={rows().filter(s => s.state === 'running').length}
-          queued={rows().filter(s => s.state === 'preparing').length}
+          working={rows().filter(s => lifeOfSession(s.state) === 'working').length}
+          queued={rows().filter(s => lifeOfSession(s.state) === 'queued').length}
           done={doneSince(today())}
           blockers={chips()}
           countHref={stateHref}

@@ -59,7 +59,10 @@ try {
   await page.waitForSelector('[data-ui=session-card]:not(.skeleton)', { timeout: 15000 }).catch(async e => { await page.screenshot({ path: `${shots}/home-fail.png` }); console.log(errors); throw e; });
   assert.equal(new URL(page.url()).pathname, '/home', '/ opens Home');
   const groups = await page.locator('.home-group').evaluateAll(els => els.map(e => e.getAttribute('aria-label')));
-  assert.deepEqual(groups, ['Waiting for you', 'Failed', 'Working', 'Queued', 'Asleep'], 'groups in attention order');
+  // A preparing session is Working (OR-55, registry `life`): no session state reads Queued, so that group stays hidden.
+  assert.deepEqual(groups, ['Waiting for you', 'Failed', 'Working', 'Asleep'], 'groups in attention order');
+  const preparing = await homeCard(page, 'Write release notes');
+  const homeWord = await preparing.locator('[data-ui=state-dot]').first().getAttribute('data-state');
   await homeCard(page, 'Keep the compact card or the wide card with progress?');
   await page.locator('[data-ui=bot-tile]').first().waitFor();
   await page.screenshot({ path: `${shots}/home-1440-normal.png` });
@@ -79,6 +82,16 @@ try {
   await page.getByRole('button', { name: 'Compact' }).click();
   await page.locator('.qcard.answered').waitFor();
   report.push('answered in place');
+
+  // The same preparing session reads the same word in its view as on its Home card.
+  await preparing.click();
+  await page.waitForURL(/\/home\/[^/]+$/);
+  const viewWord = await page.locator('.session-view [data-ui=state-dot]').first().getAttribute('data-state');
+  assert.equal(homeWord, 'working', 'a preparing session is Working on Home');
+  assert.equal(viewWord, homeWord, 'and Working in its view');
+  report.push(`preparing session: ${homeWord} on Home, ${viewWord} in its view`);
+  await page.goto(origin + '/home');
+  await page.waitForSelector('[data-ui=session-card]:not(.skeleton)');
 
   // A card opens the session at /home/<code>.
   await (await homeCard(page, 'Fix receipt factory')).click();

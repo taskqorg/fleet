@@ -11,7 +11,7 @@ import {
   SearchField, CatalogueTree, ContextMenu, ErrorBanner, Skeleton, ROW2, percent, SettingField, StepList, msMeasured,
   type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem,
   type IconName, ShellStatus, ShellActions, actions, Presets, QuestionCard, DetailHead, StateDot, MatrixCell, DiffRow,
-  InheritedRows, AgeChip, cause, type Life, type MatrixCellState, type View,
+  InheritedRows, AgeChip, cause, finishedStates, type Life, type MatrixCellState, type View,
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type OpName, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -35,7 +35,7 @@ const message = (x: unknown) => x instanceof Error ? x.message : String(x);
 const fixed = (x: number | null) => x === null ? '—' : x.toFixed(2);
 const decodeSafe = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
 
-const TERMINAL_STATES = new Set(['done', 'stopped', 'succeeded', 'failed', 'cancelled']);
+const TERMINAL_STATES = new Set<string>([...finishedStates.experiment, ...finishedStates.execution]);
 
 /**
  * A trial or strategy problem in words (formats.md, causes): a stored `code` or `code: detail` reads as its cause's first

@@ -5,7 +5,7 @@ import { SidePanels, ownPanelStore, clampWidth, PanelToggle, ResizeDivider, type
 import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead, RailBots, RailBotsStrip, type RailBotsProps } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
-import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
+import { states, statesOf, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
@@ -36,7 +36,7 @@ export function TaskListView(p: {
 }) {
   const [views, setViews] = createSignal<View[]>([
     { name: 'Needs me', chips: [], states: ['waiting', 'failed'], group: 'project' },
-    { name: 'Running', chips: [], states: ['in_progress', 'queued'], group: 'project' },
+    { name: 'Running', chips: [], states: statesOf('task', ['working', 'queued']), group: 'project' },
     { name: 'cs', chips: [{ field: 'Project', value: 'cs' }], states: [], group: 'state' },
   ]);
   const [view, setView] = createSignal<View>({ name: '', chips: [], states: [], group: 'project' });

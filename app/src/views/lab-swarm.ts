@@ -1,8 +1,9 @@
 import type { ExecutionState, Ops } from '../../../contracts/generated/ops.ts';
+import { openStates } from '../../../packages/ui/src/states.ts';
 
 type LabExperiment = Ops['lab_experiment_get']['reply'];
 
-const activeTrialStates = new Set<ExecutionState>(['preparing', 'running', 'waiting']);
+const activeTrialStates = new Set<string>(openStates('execution'));
 
 export function selectDefaultSwarmTrial(experiment: LabExperiment | null): LabExperiment['trials'][number] | null {
   if (!experiment || experiment.trials.length === 0) return null;
