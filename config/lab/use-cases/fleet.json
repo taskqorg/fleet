@@ -367,8 +367,8 @@
    "repo": "fleet",
    "path": "docs/designs/fleet-host-updates.md",
    "anchor": "2-one-shape-for-every-kind",
-   "commit": "38009133c09aaa0db1d204f304e19f05146487d2",
-   "sha256": "0a445c6fb48a7ff8ca2351bd96b94e526a7e6b75272020bd785dd185493fd7fc"
+   "commit": "e0f777df373a4acac1a41c682158bd4082de36ac",
+   "sha256": "12fca1be19e8d2331e7773e262dfdac9db4670158ccd4381223216bf95746041"
   },
   "source_status": "current",
   "actor": "architect",
