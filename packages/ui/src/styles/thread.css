@@ -14,7 +14,6 @@
 
   /* Transcript */
   .transcript { display: flex; flex-direction: column; }
-  .tr-tool { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
   .tr-body .vl { background: none; }
   .th-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; padding: var(--space-2) var(--space-4); }
   .th-row .th-svc { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--fg-muted); font-size: var(--font-size-sm); }
@@ -62,20 +61,12 @@
   .conversation .related-work { flex: 1; min-height: 0; overflow-y: auto; }
   .spawned-tasks .kv-row { flex-wrap: wrap; }
   .spawned-tasks .row-link { overflow-wrap: anywhere; }
-  .detail-h .conv-title { display: block; flex: 0 1 auto; min-width: 0; font-size: var(--font-size-lg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .detail-h .conv-profile { flex: none; }
-  .conv-search-results { display: inline-flex; align-items: center; gap: var(--space-2); }
   @container (max-width: 760px) {
     .conversation > .detail-h { flex-wrap: wrap; row-gap: var(--space-1); }
-    .detail-h .conv-title { order: -1; flex: 1 0 100%; }
-    .conversation .tr-body .vl-row, .conversation .th-row, .conversation .composer-bar { padding-inline: 0; }
+    .conversation .tr-body .vl-row, .conversation .th-row { padding-inline: 0; }
     .conversation .composer { margin-inline: 0; }
     .conversation > .detail-h > .search { order: 1; flex: 1 0 100%; }
-    .conv-search-results { order: 2; flex: 1 0 100%; justify-content: flex-end; }
-    .conv-search-results[data-active=false] { order: 0; flex: none; }
-    .conv-search-results[data-active=false] .btn, .conv-search-results[data-active=false][data-partial=false] { display: none; }
   }
-  @container (max-width: 500px) { .detail-h .conv-profile { display: none; } }
 
   .agent-mark { display: inline-flex; align-items: center; gap: var(--space-1); font-family: var(--font-mono); }
 
@@ -161,7 +152,6 @@
   .msg-files .att.img .att-thumb { width: 100%; height: 100%; border-radius: 0; }
   .drop-zone { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .drop-over { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; gap: var(--space-2); border: 2px dashed var(--accent); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--float) 88%, transparent); color: var(--accent); font-weight: var(--font-weight-medium); pointer-events: none; }
-  .composer-bar { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-4); min-height: var(--size-control); }
   @media (pointer: coarse) {
     .composer textarea { min-height: var(--size-hit-phone); }
     .att-x, .composer-chip { min-height: var(--size-hit-phone); }

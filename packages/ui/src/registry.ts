@@ -176,35 +176,35 @@ export type LifeFamily = keyof typeof lifeOf;
 
 /** Workspaces and their navigation anchors (OR-3): the one list of screens. `nav: true` marks the seven rail sections in
  * rail order (OR-46, docs/designs/fleet-ia-and-journeys.md §1); `root` is the screen a section opens. Every other entry is
- * a screen owned by one `section`, which stays highlighted while it is open (OR-57). `app: true` marks a screen the operator
- * app has built and routes to (app/src/main.tsx); the manifests are the sections' (app/build.mjs). The address bar shows
- * target routes (app/src/routes.ts); screens keep their earlier paths inside the app until wave 2 moves them. */
+ * a screen inside one `section` (its own page, a facet or a tree root), which stays highlighted while it is open (OR-57)
+ * and which Spotlight lists as a page. The address bar shows target routes (app/src/routes.ts); inside the app a screen's
+ * id is the first segment of the path its view speaks, which the coordinator's view links share (contracts/vocabulary.json
+ * views). The manifests are the sections' (app/build.mjs). */
 export const workspaces = [
-  { id: 'home', label: 'Home', icon: 'house', section: 'home', root: 'overview', app: false, nav: true },
-  { id: 'live', label: 'Live', icon: 'activity', section: 'live', root: 'live', app: true, nav: true },
-  { id: 'conversations', label: 'Conversations', icon: 'messages-square', section: 'conversations', root: 'conversations', app: true, nav: true },
-  { id: 'projects', label: 'Projects', icon: 'folder-open', section: 'projects', root: 'projects', app: true, nav: true },
-  { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', section: 'lab', root: 'lab', app: true, nav: true },
-  { id: 'library', label: 'Library', icon: 'rows-3', section: 'library', root: 'library', app: true, nav: true },
-  { id: 'system', label: 'System', icon: 'settings', section: 'system', root: 'hosts', app: false, nav: true },
-  { id: 'overview', label: 'Home', icon: 'house', section: 'home', app: true, nav: false },
-  { id: 'tasks', label: 'Tasks', icon: 'list', section: 'projects', app: true, nav: false },
-  { id: 'results', label: 'Results', icon: 'file-text', section: 'projects', app: true, nav: false },
-  { id: 'delivery', label: 'Delivery', icon: 'git-merge', section: 'projects', app: true, nav: false },
-  { id: 'personal-lab', label: 'Personal Lab', icon: 'chart-no-axes-column', section: 'lab', app: true, nav: false },
-  { id: 'agents', label: 'Agents', icon: 'bot', section: 'library', app: true, nav: false },
-  { id: 'bots', label: 'Bots', icon: 'bot', section: 'library', app: true, nav: false },
-  { id: 'pipelines', label: 'Pipelines', icon: 'network', section: 'library', app: true, nav: false },
-  { id: 'catalogue', label: 'Methods', icon: 'rows-3', section: 'library', app: true, nav: false },
-  { id: 'changes', label: 'Changes', icon: 'git-pull-request', section: 'library', app: true, nav: false },
-  { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', section: 'system', app: true, nav: false },
-  { id: 'runners', label: 'Runners', icon: 'play', section: 'system', app: true, nav: false },
-  { id: 'keys', label: 'Connections and keys', icon: 'shield', section: 'system', app: true, nav: false },
-  { id: 'spend', label: 'Spend', icon: 'gauge', section: 'system', app: true, nav: false },
-  { id: 'humans', label: 'People', icon: 'shield', section: 'system', app: true, nav: false },
-  { id: 'access', label: 'Access', icon: 'shield', section: 'system', app: false, nav: false },
-] as const satisfies readonly { id: string; label: string; icon: IconName; section: string; root?: string; app: boolean; nav: boolean }[];
-export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];
+  { id: 'home', label: 'Home', icon: 'house', section: 'home', root: 'overview', nav: true },
+  { id: 'live', label: 'Live', icon: 'activity', section: 'live', root: 'live', nav: true },
+  { id: 'conversations', label: 'Conversations', icon: 'messages-square', section: 'conversations', root: 'conversations', nav: true },
+  { id: 'projects', label: 'Projects', icon: 'folder-open', section: 'projects', root: 'projects', nav: true },
+  { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', section: 'lab', root: 'lab', nav: true },
+  { id: 'library', label: 'Library', icon: 'rows-3', section: 'library', root: 'library', nav: true },
+  { id: 'system', label: 'System', icon: 'settings', section: 'system', root: 'hosts', nav: true },
+  { id: 'overview', label: 'Home', icon: 'house', section: 'home', nav: false },
+  { id: 'tasks', label: 'Tasks', icon: 'list', section: 'projects', nav: false },
+  { id: 'results', label: 'Results', icon: 'file-text', section: 'projects', nav: false },
+  { id: 'delivery', label: 'Delivery', icon: 'git-merge', section: 'projects', nav: false },
+  { id: 'personal-lab', label: 'Personal Lab', icon: 'chart-no-axes-column', section: 'lab', nav: false },
+  { id: 'agents', label: 'Agents', icon: 'bot', section: 'library', nav: false },
+  { id: 'bots', label: 'Bots', icon: 'bot', section: 'library', nav: false },
+  { id: 'pipelines', label: 'Pipelines', icon: 'network', section: 'library', nav: false },
+  { id: 'catalogue', label: 'Methods', icon: 'rows-3', section: 'library', nav: false },
+  { id: 'changes', label: 'Changes', icon: 'git-pull-request', section: 'library', nav: false },
+  { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', section: 'system', nav: false },
+  { id: 'runners', label: 'Runners', icon: 'play', section: 'system', nav: false },
+  { id: 'keys', label: 'Connections and keys', icon: 'shield', section: 'system', nav: false },
+  { id: 'spend', label: 'Spend', icon: 'gauge', section: 'system', nav: false },
+  { id: 'humans', label: 'People', icon: 'shield', section: 'system', nav: false },
+] as const satisfies readonly { id: string; label: string; icon: IconName; section: string; root?: string; nav: boolean }[];
+export type AppScreen = Extract<(typeof workspaces)[number], { nav: false }>['id'];
 
 /** What an entity reference names (EntityCode, EntityCard; the coordinator's EntityKind): its word, icon and the state
  *  family of its card's state. A D17 code's letter names T task, Q question, C conversation. */

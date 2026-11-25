@@ -71,7 +71,7 @@ const VIEWS = Object.fromEntries(workspaces.filter(w => w.nav).map(w => [w.id, [
 // earlier routes and unknown paths reach the app's redirect and not-found page (go/coordinator/artifact_routes.go appRoutes).
 writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
 // The paths the service worker caches: the sections and the earlier screens that redirect to them.
-const ROUTED = [...new Set(workspaces.filter(w => w.nav || w.app).map(w => w.id))];
+const ROUTED = [...new Set(workspaces.map(w => w.id))];
 const accent = tokens.color.light.accent;
 for (const [view, [name]] of Object.entries(VIEWS)) {
   writeFileSync(new URL(`manifests/${view}.webmanifest`, out), JSON.stringify({ id: `/${view}`, name, short_name: name.replace('Fleet ', ''), start_url: `/${view}`, scope: '/', display: 'standalone', background_color: tokens.color.light.bg, theme_color: accent, icons: [

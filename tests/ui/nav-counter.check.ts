@@ -42,7 +42,7 @@ export async function checkNavCounter(browser: Browser, origin: string, seed: Re
   };
   try {
     await call('person_settings_set', { focus: [], ignored: [], navCollapsed: false, navCounters: { tasks: '', conversations: '', delivery: '', results: '', hosts: '' } });
-    await p.goto(origin + '/tasks'); await p.locator('.vl-row', { hasText: 'Nav counter Alpha 0' }).waitFor();
+    await p.goto(origin + '/projects/tasks'); await p.locator('.vl-row', { hasText: 'Nav counter Alpha 0' }).waitFor();
     // Without a focus: one number, "N running".
     let s = await server();
     assert.ok(s.inFocus >= 5 && s.outside === 0);

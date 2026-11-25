@@ -13,7 +13,7 @@ const SECTIONS = ['Home', 'Live', 'Conversations', 'Projects', 'Lab', 'Library',
 const ROUTES: [string, string, string][] = [
   ['/', '/home', 'home'], ['/overview', '/home', 'home'],
   ['/tasks', '/projects/tasks', 'projects'], ['/results', '/projects/results', 'projects'], ['/delivery', '/projects/delivery', 'projects'],
-  ['/publishing', '/projects/delivery', 'projects'], ['/projects/FLT/tasks/T-FLT-42', '/projects/tasks/T-FLT-42', 'projects'],
+  ['/publishing', '/projects/delivery', 'projects'], ['/projects/FLT/tasks/T-FLT-42', '/projects/FLT/tasks/T-FLT-42', 'projects'],
   ['/personal-lab', '/lab/mine', 'lab'], ['/bots', '/library/bots', 'library'], ['/agents', '/library/agents', 'library'],
   ['/pipelines', '/library/pipelines', 'library'], ['/catalogue', '/library/methods', 'library'], ['/changes', '/library/changes', 'library'],
   ['/hosts', '/system', 'system'], ['/hosts/limits', '/system/accounts', 'system'], ['/runners', '/system/runners', 'system'],

@@ -30,7 +30,7 @@ export async function checkEntityCard(browser: Browser, origin: string, seed: Re
   const p = await context.newPage();
   const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
   try {
-    await p.goto(origin + '/tasks');
+    await p.goto(origin + '/projects/tasks');
     const code = p.locator('.vl-row', { hasText: 'Entity card check task' }).getByRole('button', { name: `Task ${task.code}: show details` });
     await code.waitFor();
     const card = p.getByRole('dialog', { name: `Task ${task.code}` });

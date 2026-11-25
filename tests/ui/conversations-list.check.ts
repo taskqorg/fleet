@@ -338,7 +338,7 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
     assert.deepEqual(snapshots, ['sessions_list', 'sessions_list', 'sessions_list']);
 
     const task = seed.task({ title: 'Livefeedtask owner check', projectId: 'site-redesign', state: 'queued' });
-    await p.goto(origin + '/tasks?group=state&q=Livefeedtask&state=queued');
+    await p.goto(origin + '/projects/tasks?group=state&q=Livefeedtask&state=queued');
     await row(task).waitFor();
     await counter('Queued: 1').waitFor();
     seed.sql(`UPDATE task SET state='completed' WHERE id='${task}';`);

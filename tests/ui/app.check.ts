@@ -40,39 +40,40 @@ try {
   const ROUTES: [string, string[]][] = [
     // Home (pages/home.md, OR-50): pulse line, composer with its target, session and question cards, answered in place.
     ['/home', ['app-shell', 'nav-rail', 'home', 'pulse-line', 'target-picker', 'session-card', 'question-card']],
-    ['/tasks', ['app-shell', 'nav-rail', 'list-view', 'filter-bar', 'state-counters', 'data-list', 'state-badge']],
-    [`/tasks/${waiting}`, ['list-detail', 'detail', 'outcome-block', 'decision-block', 'number']],
-    [`/tasks/${running}`, ['detail', 'execution-tree']],
+    ['/projects/tasks', ['app-shell', 'nav-rail', 'list-view', 'filter-bar', 'state-counters', 'data-list', 'state-badge']],
+    [`/projects/tasks/${waiting}`, ['list-detail', 'detail', 'outcome-block', 'decision-block', 'number']],
+    [`/projects/tasks/${running}`, ['detail', 'execution-tree']],
     ['/conversations', ['list-view', 'data-list', 'state-counters']],
     ['/conversations/sess-1', ['detail', 'transcript-viewer', 'composer']],
     ['/conversations/new', ['detail', 'project-pick', 'preset-pick', 'composer', 'drop-zone']],
-    ['/hosts', ['list-detail', 'catalogue-tree', 'state-badge']],
-    ['/hosts/mac', ['detail', 'detail-section', 'host-band']],
+    ['/system', ['list-detail', 'catalogue-tree', 'state-badge']],
+    ['/system/hosts/mac', ['detail', 'detail-section', 'host-band']],
     ['/projects', ['list-detail', 'area-chart']],
-    ['/agents', ['list-detail', 'state-badge']],
-    ['/pipelines', ['list-detail', 'state-badge']],
+    ['/library/agents', ['list-detail', 'state-badge']],
+    ['/library/pipelines', ['list-detail', 'state-badge']],
     ['/lab', ['list-detail', 'state-badge']],
-    ['/runners', ['time-strip', 'state-badge', 'harness-counts']],
-    ['/delivery', ['list-detail', 'state-counters', 'delivery-overview']],
+    ['/system/runners', ['time-strip', 'state-badge', 'harness-counts']],
+    ['/projects/delivery', ['list-detail', 'state-counters', 'delivery-overview']],
   ];
   page.on('requestfailed', r => { if (!r.url().includes('/api/stream') && !r.failure()?.errorText.includes('ERR_ABORTED')) errors.push('request failed ' + r.url()); }); // navigation aborts the stream
   page.on('response', r => { if (r.status() >= 400 && !(expectedCatalogueFailure && r.url().includes('/api/ops/catalogue') && r.status() === 503)) errors.push(r.status() + ' ' + r.url()); });
-  if (process.env.APP_DEBUG) { await page.goto(origin + '/overview'); await page.waitForTimeout(1500); console.log(errors); }
+  if (process.env.APP_DEBUG) { await page.goto(origin + '/home'); await page.waitForTimeout(1500); console.log(errors); }
   for (const [n, [route, want]] of ROUTES.entries()) {
     await page.goto(origin + route); await page.waitForTimeout(700);
     const seen = new Set(await page.$$eval('[data-ui]', els => els.map(e => e.getAttribute('data-ui'))));
     const missing = want.filter(w => !seen.has(w));
     const hscroll = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
     out.push(`${route.replace(/[0-9a-f-]{36}/, ':id')}: ${missing.length ? 'MISSING ' + missing.join(', ') : 'ok'}${hscroll ? ', horizontal scroll' : ''}`);
-    await page.screenshot({ path: `${shots}/${n + 1}-${route.split('/')[1]}${route.split('/')[2] ? '-detail' : ''}-1440.png` });
+    const shot = `${shots}/${n + 1}-${route.slice(1).replace(/[0-9a-f-]{36}/, 'id').replace(/\//g, '-')}-1440`;
+    await page.screenshot({ path: shot + '.png' });
     // The owner works in the dark theme: every route is also shot in it.
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.screenshot({ path: `${shots}/${n + 1}-${route.split('/')[1]}${route.split('/')[2] ? '-detail' : ''}-1440-dark.png` });
+    await page.screenshot({ path: shot + '-dark.png' });
     await page.emulateMedia({ colorScheme: 'light' });
     for (const f of await layoutFindings(page)) out.push(`  ${f}`);
   }
   // Owners add and revoke a human without sending a replacement roster.
-  await page.goto(origin + '/humans');
+  await page.goto(origin + '/system/people');
   await page.getByRole('button', { name: 'Invite person', exact: true }).click();
   await page.getByLabel('Sign-in email').fill('human-ui@trial.test');
   await page.getByLabel('Name', { exact: true }).fill('Human UI fixture');
@@ -84,7 +85,7 @@ try {
   assert.ok((await page.locator('[data-ui=detail]').innerText()).includes('All projects'));
   await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm revocation', exact: true }).click();
-  await page.waitForURL(origin + '/humans');
+  await page.waitForURL(origin + '/system/people');
   await page.getByText('Human UI fixture', { exact: true }).waitFor({ state: 'hidden' });
 
   // OR-50, OR-53: Home lists every open question as a card in Waiting for you, with its choices in place.
@@ -93,7 +94,7 @@ try {
   const asked = await page.locator('[data-ui=question-card]').count();
   out.push(`home (OR-53): ${asked} question cards${asked < 5 ? '  MISSING QUESTIONS' : ''}`);
   // OR-39: the task detail shows no total that is unknown (no empty tokens or cost fields).
-  await page.goto(origin + `/tasks/${running}`); await page.waitForSelector('[data-ui=detail] .detail-title');
+  await page.goto(origin + `/projects/tasks/${running}`); await page.waitForSelector('[data-ui=detail] .detail-title');
   const empty = await page.$$eval('[data-ui=detail] .totals .b-unavailable', els => els.length);
   out.push(`task detail (OR-39): ${empty ? empty + ' EMPTY TOTALS' : 'no empty totals'}`);
   // OR-38: an entity code is one line wherever it sits (list rows, detail title); a raw hash or UUID is never a visible name.
@@ -104,7 +105,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   // Narrow width: the rail stays, the opened item takes the place of the catalogue.
   const narrow = await b.newPage({ viewport: { width: 600, height: 900 } });
-  await narrow.goto(origin + `/tasks/${waiting}`); await narrow.waitForTimeout(700);
+  await narrow.goto(origin + `/projects/tasks/${waiting}`); await narrow.waitForTimeout(700);
   const top = await narrow.evaluate(() => document.querySelector('[data-ui=detail]')?.getBoundingClientRect().top ?? null);
   const rail = await narrow.locator('[data-ui=nav-rail]').isVisible();
   out.push(`/tasks/:id @600px: detail top ${top === null ? 'missing' : Math.round(top) + ' px'}${top !== null && top > 780 ? '  OUTSIDE VIEWPORT' : ''}, nav rail ${rail ? 'visible' : 'HIDDEN'}`);
@@ -113,14 +114,14 @@ try {
   // Click-to-detail latency: row click until the detail title shows.
   const times: number[] = [];
   for (let i = 0; i < 5; i++) {
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.goto(origin + '/projects/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     times.push(await page.evaluate(async i => { const l = document.querySelectorAll<HTMLElement>('.pw-facet .vl-row .row-link')[i]; const t0 = performance.now(); l.click(); while (!document.querySelector('[data-ui=detail] .detail-title')) await new Promise(r => requestAnimationFrame(r)); return performance.now() - t0; }, i));
   }
   times.sort((a, z) => a - z);
   out.push(`click-to-detail: median ${times[2].toFixed(0)} ms of 5 (target <= 100 ms)${times[2] > 100 ? '  OVER TARGET' : ''}`);
 
   // Change-to-screen: a committed task change until its row shows the new state, through the live feed.
-  await page.goto(origin + '/tasks?group=none'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+  await page.goto(origin + '/projects/tasks?group=none'); await page.waitForSelector('.pw-facet .vl-row .row-link');
   // The row's key is the task id (its link names the task by code).
   const firstId = await page.$eval('.pw-facet .vl-row[data-key]', r => r.getAttribute('data-key') ?? '');
   const t0 = Date.now(); await fetch(origin + '/api/ops/task_update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: firstId, action: 'pause' }) });
@@ -130,19 +131,19 @@ try {
   await page.goto(origin + '/home'); await page.waitForSelector('[data-ui=nav-rail]');
   for (const n of ['Projects', 'System']) { await page.locator('.rail-g:not(.pinned)').getByRole('button', { name: 'Pin ' + n, exact: true }).click(); await page.waitForTimeout(150); }
   const pinsOf = () => page.$$eval('.rail-g.pinned .nav-i', els => els.map(e => e.getAttribute('data-id')));
-  const twice = await page.locator('.rail-g:not(.pinned) .nav-i.pinned[data-id=tasks]').count();
-  await page.locator('.rail-g.pinned [data-id=hosts] a').focus(); await page.keyboard.press('Alt+ArrowUp'); await page.waitForTimeout(300);
+  const twice = await page.locator('.rail-g:not(.pinned) .nav-i.pinned[data-id=projects]').count();
+  await page.locator('.rail-g.pinned [data-id=system] a').focus(); await page.keyboard.press('Alt+ArrowUp'); await page.waitForTimeout(300);
   const moved = (await pinsOf()).join(',');
   await page.reload(); await page.waitForTimeout(700);
   const kept = (await pinsOf()).join(',');
-  out.push(`pins: in group ${twice ? 'kept' : 'MISSING'}, reorder ${moved === 'hosts,tasks' ? 'ok' : 'WRONG ' + moved}, after reload ${kept === 'hosts,tasks' ? 'kept' : 'LOST ' + kept}`);
+  out.push(`pins: in group ${twice ? 'kept' : 'MISSING'}, reorder ${moved === 'system,projects' ? 'ok' : 'WRONG ' + moved}, after reload ${kept === 'system,projects' ? 'kept' : 'LOST ' + kept}`);
   await page.emulateMedia({ colorScheme: 'dark' });
-  await page.locator('.rail-g.pinned [data-id=tasks]').click({ button: 'right' }); await page.waitForTimeout(200);
+  await page.locator('.rail-g.pinned [data-id=projects]').click({ button: 'right' }); await page.waitForTimeout(200);
   out.push(`pin menu: ${(await page.locator('.rail-menu [role=menuitem]').allInnerTexts()).join(', ') || 'MISSING'}`);
   await page.screenshot({ path: `${shots}/pins-dark.png`, clip: { x: 0, y: 0, width: 520, height: 520 } });
   await page.keyboard.press('Escape'); await page.emulateMedia({ colorScheme: 'light' });
   // Requirement D20: scoped method evidence and a launchable explicit Lab draft; risk: hidden quality basis or unsaved generated record fields.
-  await page.goto(origin + '/catalogue/catalogue');
+  await page.goto(origin + '/library/methods/catalogue');
   await page.getByRole('heading', {name: 'Methods', exact: true}).waitFor();
   await page.getByRole('heading', {name: 'Compare methods in Lab', exact: true}).waitFor();
   await page.getByRole('button', {name: 'Hello World', exact: true}).click();

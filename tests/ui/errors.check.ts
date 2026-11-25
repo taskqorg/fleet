@@ -46,7 +46,7 @@ try {
   const tunnelled: string[] = [];
   page.on('request', r => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/errors') tunnelled.push(new URL(r.url()).origin); });
   // A query value only a foreign link could carry: no URL leaves the browser with its query.
-  await page.goto(server.origin + '/tasks?token=not-for-bugsink');
+  await page.goto(server.origin + '/projects/tasks?token=not-for-bugsink');
   await page.locator('header.page-h, .tr-body, [data-ui]').first().waitFor();
   await page.evaluate(() => { setTimeout(() => { throw new Error('bugsink browser check'); }); });
   const thrown = await event(ev => ev.exception?.values?.some((v: any) => v.value === 'bugsink browser check'), 'thrown error');
@@ -70,7 +70,7 @@ try {
 
   // A render crash: Home receives a reply it cannot render, shows a recoverable error and reports it.
   await page.route('**/api/ops/questions_list', route => route.fulfill({ json: { questions: [null] } }));
-  await page.goto(server.origin + '/overview');
+  await page.goto(server.origin + '/home');
   await page.getByText('This page failed to render.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Reload' }).waitFor();
   await event(ev => ev.tags?.source === 'render', 'render crash');

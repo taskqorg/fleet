@@ -58,7 +58,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
   try {
     const reqs: string[] = [];
     page.on('request', r => { if (r.url().includes('/api/ops/')) reqs.push(r.url().split('/api/ops/')[1]); });
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.goto(origin + '/projects/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     const url = () => page.evaluate(() => location.pathname + location.search);
     // Runs one action and watches every frame until the first rows stay the same for 10 frames.
     const watch = (p: Page, act: string) => p.evaluate(async act => {
@@ -142,10 +142,10 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     const back = await page.evaluate(async () => { history.back(); await new Promise(r => addEventListener('popstate', r, { once: true })); await new Promise(r => requestAnimationFrame(r)); return document.querySelectorAll('.pw-facet .vl-row .row-link').length; });
     rule(N, back > 0, 'Back: no rows in the first frame');
     // Pinned rows stay whatever the filter (OR-12): pin the first task, search for nothing, the pinned task is still listed.
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.goto(origin + '/projects/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     const pinnedTitle = await page.locator('.pw-facet .vl-row .row-link').first().textContent();
     await page.locator('.pw-facet .vl-row .row-link').first().focus(); await page.keyboard.press('p'); await page.waitForSelector('[data-ui=row-pin]');
-    await page.goto(origin + '/tasks?q=no-such-task-anywhere'); await page.waitForSelector('[data-ui=row-pin]', { timeout: 10000 }).catch(() => {});
+    await page.goto(origin + '/projects/tasks?q=no-such-task-anywhere'); await page.waitForSelector('[data-ui=row-pin]', { timeout: 10000 }).catch(() => {});
     rule(N, await page.locator('.pw-facet .vl-row:has([data-ui=row-pin]) .row-link').first().textContent().catch(() => null) === pinnedTitle, 'a pinned task left the list under a search that does not match it');
     // A pinned row outside the filtered page is still part of selection and its actions.
     await page.locator('.pw-facet .vl-row:has([data-ui=row-pin]) .row-link').first().focus(); await page.keyboard.press('x');
@@ -155,7 +155,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.waitForFunction(() => !document.querySelector('[data-ui=row-pin]'));
     await page.getByRole('button', { name: 'Leave selection', exact: true }).click();
     // Search: one request per typing pause, one Back leaves the search.
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.goto(origin + '/projects/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     await page.locator('.pw-facet .fbar button[aria-label^="Search"]').first().click(); // search is an icon until used (OR-31)
     reqs.length = 0; await page.locator('.pw-facet .fbar input').first().pressSequentially('hero', { delay: 60 }); await page.waitForTimeout(800);
     const pages = reqs.filter(r => r === 'task_page').length;
@@ -169,7 +169,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/projects/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);
     // A new search query ends the active preset (OR-33): the states stay, the preset leaves the URL.
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.goto(origin + '/projects/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     await page.locator('[data-ui=saved-views] button', { hasText: 'Running' }).click();
     await page.waitForFunction(() => new URLSearchParams(location.search).get('preset') === 'Running');
     if (!await page.locator('.pw-facet .fbar input').count()) await page.locator('.pw-facet .fbar button[aria-label^="Search"]').first().click();
@@ -186,7 +186,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     if (clearShown) { await clear.click(); await page.waitForFunction(() => !location.search.includes('q='), null, { timeout: 5000 }).catch(() => {}); }
     { const u = new URL(origin + await url()).searchParams; rule(N, !u.has('preset') && !u.has('q') && !u.has('state'), `Clear filters left filters or the preset: ${u}`); }
     // A bulk action that fails for one row: the rows that succeeded leave the selection, the failed row stays selected.
-    await page.goto(origin + '/tasks?group=none&state=queued'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.goto(origin + '/projects/tasks?group=none&state=queued'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     const [okId, badId] = await page.$$eval('.pw-facet .vl-row:not(.grp)', rs => rs.slice(0, 2).map(r => r.getAttribute('data-key')!));
     await page.route('**/api/ops/task_update', route => JSON.parse(route.request().postData() ?? '{}').taskId === badId
       ? route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'forced failure' }) }) : route.continue());
@@ -204,7 +204,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // section and coming back, and a reload, show them so from the first frame the headers are on screen.
     const header = (k: string) => page.locator(`.pw-facet .vl-row[data-key="g:${k}"] .group-h`);
     // The successful bulk pause introduced a Paused group. Limit this scenario to the three groups it verifies.
-    await page.goto(origin + '/tasks?group=state&state=completed,in_progress,queued'); await header('3').waitFor();
+    await page.goto(origin + '/projects/tasks?group=state&state=completed,in_progress,queued'); await header('3').waitFor();
     rule(N, await header('3').getAttribute('aria-expanded') === 'true', 'In progress is not open by default');
     await header('3').click(); await header('4').click(); await header('7').waitFor();
     rule(N, await header('7').getAttribute('aria-expanded') === 'false', 'Completed does not start collapsed under state grouping');
@@ -239,7 +239,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     rule(N, [await header('3').getAttribute('aria-expanded'), await header('4').getAttribute('aria-expanded'), await header('7').getAttribute('aria-expanded')].join(',') === want, 'switching the grouping back lost the collapsed groups');
     // Opening a task: inside the Tasks facet the task replaces the list (docs/design-system/pages/projects.md) under its
     // project's facet route; Back returns to the list as it was.
-    await page.goto(origin + '/tasks?group=none'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.goto(origin + '/projects/tasks?group=none'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     const beforeFocus = await url();
     await page.locator('.pw-facet .vl-row .row-link').first().click();
     await page.waitForSelector('[data-ui=detail] .detail-title');

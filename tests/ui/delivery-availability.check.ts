@@ -20,7 +20,7 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
     for (const fixture of cases) {
       await page.route('**/api/ops/publishing_status', route => route.fulfill({json: {source: 'key', refreshedAt: now, capabilities: [], records: [], ...fixture}}));
       const response = page.waitForResponse(r => r.url() === origin + '/api/ops/publishing_status');
-      await page.goto(origin + '/delivery');
+      await page.goto(origin + '/projects/delivery');
       await (await response).finished();
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       // The stage counters are the totals: unknown ('?', named "unknown") while GitHub data is incomplete, never zero.
@@ -52,7 +52,7 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
         await flip.click(); await page.waitForURL(u => !u.searchParams.has('sort'));
         assert.ok(!page.url().includes('undefined'), page.url());
         // A link saved while the bug was live: the controls show the defaults, and the next change writes a clean link.
-        await page.goto(origin + '/delivery?group=undefined&sort=undefined&range=undefined&at=undefined');
+        await page.goto(origin + '/projects/delivery?group=undefined&sort=undefined&range=undefined&at=undefined');
         await page.locator('[data-ui=sort-control]').waitFor();
         assert.equal((await page.locator('[data-ui=sort-control] .pick-b').textContent())?.trim(), 'In stage since');
         assert.equal(await page.getByText(/id Dat|Invalid Date/).count(), 0, 'a stale at shows as a date chip');
@@ -115,7 +115,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
   await page.route('**/api/ops/delivery_history', r => r.fulfill({json: {repo: 'taskqorg/fleet', backfilledFrom: iso(dayStart(20)), installsFrom: iso(dayStart(2)), prs, runs: [], releases: []}}));
   await page.route('**/api/ops/delivery_regressions', r => r.fulfill({json: {regressions: [{key: 'run', metric: 'p50', baselineMs: 4 * min, currentMs: 7 * min, n: 38, ratio: 1.75, links: []}], settings}}));
   try {
-    await page.goto(origin + '/delivery?sort=-opened');
+    await page.goto(origin + '/projects/delivery?sort=-opened');
     const list = page.getByRole('grid', {name: 'Pull requests', exact: true});
     await list.getByRole('link', {name: 'Checks failed here'}).waitFor();
     // Installed starts collapsed: its header says 2, its rows are not shown.
@@ -158,7 +158,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     // The Installed preset shows its rows: the group collapsed by default opens for a filter to installed rows.
     await page.getByRole('button', {name: 'Installed', exact: true}).click();
     await list.getByRole('link', {name: 'Installed one'}).waitFor();
-    await page.goto(origin + '/delivery');
+    await page.goto(origin + '/projects/delivery');
     // Moving now: a norm bar per pull request in flight, past the norm for the long PR checks.
     const moving = page.getByRole('grid', {name: 'Pull requests in flight'});
     await moving.getByRole('img', {name: /PR checks #703: 50m; norm P50 7m, P90 40m, past the norm/}).waitFor();
@@ -187,7 +187,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     assert.equal(await list.getByRole('link', {name: 'Checks failed here'}).count(), 0, 'the current rows give way to the day');
     // A link to the day opens it once the history is in, and keeps it in the link.
     const at = new URL(page.url()).searchParams.get('at')!;
-    await page.goto(origin + '/delivery?at=' + at);
+    await page.goto(origin + '/projects/delivery?at=' + at);
     await list.getByRole('link', {name: 'Merged yesterday B'}).waitFor();
     assert.equal(new URL(page.url()).searchParams.get('at'), at, 'the picked day stays in the link');
     await page.getByRole('button', {name: /Remove filter Merged/}).click();
