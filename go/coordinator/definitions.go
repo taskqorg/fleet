@@ -189,11 +189,34 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 		if st.RepoSha != nil && *st.RepoSha == blob && st.RetiredAt == nil {
 			continue
 		}
+		// A head nobody changed in Fleet (synced: it is the repository's last content) follows the repository: the new
+		// content becomes its next revision. A head edited in Fleet (a save, a Lab promote) stays, and the definition shows
+		// repository-changed until a person takes one side. Projects move only by their own save.
+		var follow *definitionRow
+		if f.kind != "project" && st.RetiredAt == nil {
+			h, err := headOf(q, f.kind, f.id, false)
+			if err != nil {
+				return err
+			}
+			if h != nil && h.state() == contract.DefinitionStateSynced && string(h.Content) != text && len(problems(f.kind, f.id, text)) == 0 {
+				follow = h
+			}
+		}
 		// The repository moved (or the file came back): record it; the head stays (state repository-changed or synced).
 		// A deleted agent or pipeline whose file came back is the repository's again (shipped wins); a deleted project
 		// stays deleted: its data is gone and its id only reserved.
 		if err := q.db().DefRecordRepo(q.ctx(), db.DefRecordRepoParams{Kind: f.kind, ID: f.id, RepoSha: &blob, RepoContent: &text, RepoContentSha: &csha}); err != nil {
 			return err
+		}
+		if follow != nil {
+			n := follow.Head + 1
+			if err := q.db().DefRevisionInsert(q.ctx(), db.DefRevisionInsertParams{Kind: f.kind, ID: f.id, Revision: int32(n), Parent: ptr(int32(follow.Head)), Content: text,
+				ContentSha: csha, RepoBase: &blob, Source: "repo", ActorKind: "system", Message: "Repository " + release}); err != nil {
+				return err
+			}
+			if err := q.db().DefMoveHead(q.ctx(), db.DefMoveHeadParams{Kind: f.kind, ID: f.id, Head: int32(n)}); err != nil {
+				return err
+			}
 		}
 	}
 	rs, err := q.db().DefShippedHeads(q.ctx())
