@@ -8,7 +8,7 @@ import (
 
 // lastNumberedMigration: schema.sql's numbered sections end here; later migrations are files in migrations/
 // (migrations/README.md).
-const lastNumberedMigration = 121
+const lastNumberedMigration = 122
 
 // Requirement: each migration runs once (migrate). Risk: two branches each add the next number, both pass CI alone, and
 // after both merge one section is skipped on every database that applied the other. Files have no number to share, so
@@ -25,15 +25,8 @@ func TestMigrationIDsUnique(t *testing.T) {
 		}
 		last = n
 	}
-	ms, err := migrations()
-	if err != nil {
+	// migrations() refuses a repeated id, so the coordinator does not start on one.
+	if _, err := migrations(); err != nil {
 		t.Fatal(err)
-	}
-	seen := map[string]bool{}
-	for _, m := range ms {
-		if seen[m.id] {
-			t.Fatalf("migration %s twice", m.id)
-		}
-		seen[m.id] = true
 	}
 }

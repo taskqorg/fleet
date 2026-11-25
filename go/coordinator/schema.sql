@@ -1,4 +1,4 @@
--- Fleet Postgres schema: the numbered migrations 1 to 121. Closed: a new migration is a file in migrations/
+-- Fleet Postgres schema: the numbered migrations 1 to 122. Closed: a new migration is a file in migrations/
 -- (migrations/README.md), which run after these. Each "-- migration N" section runs once, in order, inside one transaction,
 -- as the owner role fleet; fleet_app gets row access through the default privileges in deploy/infrastructure/fleet-postgres.sql.
 -- schema_migration(id, applied_at, version) is created by migrate() (migrations.go) before the first section.

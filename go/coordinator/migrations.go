@@ -17,7 +17,7 @@ import (
 // Migrations (docs/designs/fleet-standard.md, S1 "Migrations"): one file per migration in migrations/, named
 // <UTC time>_<slug>.sql (20261126T0315Z_history.sql). Its id is the name without .sql; schema_migration records each
 // applied id. Two branches that each add a migration add two different files: neither git nor the runner sees a clash,
-// and no number is taken in advance. schema.sql holds the numbered migrations written before (ids "1" to "121"), which
+// and no number is taken in advance. schema.sql holds the numbered migrations written before (ids "1" to "122"), which
 // run first, in number order; the files run after them, in name order.
 //
 // The runner applies every id the database has not recorded yet, so a migration that lands after a later-named one was
@@ -68,6 +68,14 @@ func migrations() ([]migration, error) {
 			return nil, err
 		}
 		out = append(out, migration{id: strings.TrimSuffix(base, ".sql"), body: string(b)})
+	}
+	// A repeated id would run once and skip the other silently: refuse to start instead.
+	seen := map[string]bool{}
+	for _, m := range out {
+		if seen[m.id] {
+			return nil, errors.New("migration " + m.id + " is defined twice: write the later one as a new file in migrations/ (migrations/README.md)")
+		}
+		seen[m.id] = true
 	}
 	return out, nil
 }
