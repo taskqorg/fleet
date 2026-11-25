@@ -278,6 +278,69 @@ const providersJSON = `
    }
   }
  },
+ "openai": {
+  "baseUrl": "https://api.openai.com",
+  "instructions": "OpenAI API with an API key (billed to the key's organization, not a ChatGPT subscription). list_models lists the models the key may use. create_response is the Responses API, nonstreaming; generate_image makes images (gpt-image models) and returns base64 data. Never repeat an uncertain create call.",
+  "tools": {
+   "list_models": {
+    "method": "GET",
+    "path": "/v1/models",
+    "unit": "calls",
+    "idempotent": true,
+    "description": "List the models this key may use.",
+    "inputSchema": {"type": "object", "properties": {}}
+   },
+   "create_response": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "unit": "tokens",
+    "usageField": "usage.total_tokens",
+    "idempotent": false,
+    "description": "Create a model response (Responses API, nonstreaming). Body {model, input, instructions?, max_output_tokens?, tools?, reasoning?, text?}.",
+    "inputSchema": {"type": "object", "required": ["model", "input"], "properties": {"model": {"type": "string"}, "input": {}, "instructions": {"type": "string"}, "max_output_tokens": {"type": "integer", "minimum": 1}, "tools": {"type": "array"}, "reasoning": {"type": "object"}, "text": {"type": "object"}, "stream": {"type": "boolean", "enum": [false]}}}
+   },
+   "generate_image": {
+    "method": "POST",
+    "path": "/v1/images/generations",
+    "unit": "tokens",
+    "usageField": "usage.total_tokens",
+    "idempotent": false,
+    "description": "Generate images. Body {model (gpt-image-1 or newer), prompt, size?, n?, quality?, background?}. Returns data[].b64_json.",
+    "inputSchema": {"type": "object", "required": ["model", "prompt"], "properties": {"model": {"type": "string"}, "prompt": {"type": "string"}, "size": {"type": "string"}, "n": {"type": "integer", "minimum": 1}, "quality": {"type": "string"}, "background": {"type": "string"}}}
+   }
+  }
+ },
+ "tripo": {
+  "baseUrl": "https://api.tripo3d.ai",
+  "instructions": "Tripo 3D: task_create starts a 3D task (text_to_model, image_to_model, multiview_to_model, refine, rig and others; see https://platform.tripo3d.ai/docs) and returns data.task_id; task_get reads its status, progress and output URLs; balance reads the account's credits. Never repeat an uncertain task_create.",
+  "tools": {
+   "balance": {
+    "method": "GET",
+    "path": "/v2/openapi/user/balance",
+    "unit": "calls",
+    "idempotent": true,
+    "description": "The account's credit balance: data.balance and data.frozen.",
+    "inputSchema": {"type": "object", "properties": {}}
+   },
+   "task_create": {
+    "method": "POST",
+    "path": "/v2/openapi/task",
+    "unit": "credits",
+    "idempotent": false,
+    "description": "Start a task. Body {type, prompt?, file?, files?, model_version?, texture?, pbr?}. Returns data.task_id.",
+    "inputSchema": {"type": "object", "required": ["type"], "properties": {"type": {"type": "string"}, "prompt": {"type": "string"}, "file": {"type": "object"}, "files": {"type": "array"}, "model_version": {"type": "string"}, "texture": {"type": "boolean"}, "pbr": {"type": "boolean"}}}
+   },
+   "task_get": {
+    "method": "GET",
+    "path": "/v2/openapi/task/{task_id}",
+    "unit": "credits",
+    "usageField": "data.consumed_credit",
+    "idempotent": true,
+    "description": "Read a task: data.status, data.progress, data.output (model, pbr_model, rendered_image URLs).",
+    "inputSchema": {"type": "object", "required": ["task_id"], "properties": {"task_id": {"type": "string"}}}
+   }
+  }
+ },
  "typesafe": {
   "baseUrl": "https://api.typesafe.ai",
   "instructions": "system_one asks Jev (TypeSafe) typed questions (noul, choice, score, box) about a state and returns one structured answer per question; list_models lists model names such as jev-latest. Docs: https://docs.typesafe.ai/llms.txt",
@@ -329,6 +392,14 @@ const providersJSON = `
   "baseUrl": "https://api.meshy.ai",
   "instructions": "Image and 3D submits return task IDs. Read known IDs through their registered status tools. Never repeat an uncertain submit; recent tasks must exactly identify the original submitted inputs or the outcome remains unknown.",
   "tools": {
+   "balance": {
+    "method": "GET",
+    "path": "/openapi/v1/balance",
+    "unit": "calls",
+    "idempotent": true,
+    "description": "The account's credit balance: {balance}.",
+    "inputSchema": {"type": "object", "properties": {}}
+   },
    "image_to_3d": {
     "method": "POST",
     "path": "/openapi/v1/image-to-3d",

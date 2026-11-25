@@ -93,3 +93,12 @@ UPDATE managed_account SET updated_at = now(), payload = jsonb_set(payload, '{bi
 WHERE id = sqlc.arg(id) AND jsonb_typeof(payload->'bindings') = 'array'
   AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'bindings') b
     WHERE b->>'hostId' = sqlc.arg(host_id)::text AND NOT coalesce(b->'rejectedModels' ? sqlc.arg(model)::text, false));
+
+-- name: AccountDeleteRefs :one
+-- What still names a subscription: its inspections, its checks and the runs that used it (account_delete refuses then).
+SELECT (SELECT count(*) FROM account_inspection i WHERE i.account_id = @id::text)::bigint AS inspections,
+ (SELECT count(*) FROM account_check c WHERE c.account_id = @id::text)::bigint AS checks,
+ (SELECT count(*) FROM execution e WHERE e.account_id = @id::text)::bigint AS runs;
+
+-- name: AccountDelete :execrows
+DELETE FROM managed_account WHERE id = @id::text;

@@ -145,3 +145,19 @@ ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  sha256=excluded.sha256, execution_id=excluded.execution_id, pipeline_run_id=excluded.pipeline_run_id, personal=excluded.personal,
  step=excluded.step, directed_by=excluded.directed_by, created_at=excluded.created_at, revoked_at=excluded.revoked_at,
  director_access_revoked_at=excluded.director_access_revoked_at, project_id=excluded.project_id;
+
+-- name: AccessLastCalls :many
+-- Per connection, its latest call and its latest call that succeeded (access_status). Call ids sort by time (call:<hex ms>),
+-- so each is one backward walk of resource_execution_connection_page.
+SELECT c.name::text AS connection,
+ coalesce(l.id, '')::text AS last_id, coalesce(l.state, '')::text AS last_state, coalesce(l.problem, '')::text AS last_problem,
+ coalesce(l.tool, '')::text AS last_tool, coalesce(l.started_at, 0)::bigint AS last_started_at, coalesce(o.started_at, 0)::bigint AS ok_started_at
+FROM unnest(@names::text[]) AS c(name)
+LEFT JOIN LATERAL (
+ SELECT e.id, e.state::text AS state, e.problem, e.data->>'tool' AS tool, (e.data->>'startedAt')::bigint AS started_at
+ FROM execution e WHERE (e.data->>'connection') = c.name AND e.kind = 'tool_run'
+ ORDER BY (e.data->>'connection'), e.id COLLATE "C" DESC LIMIT 1) l ON true
+LEFT JOIN LATERAL (
+ SELECT (e.data->>'startedAt')::bigint AS started_at
+ FROM execution e WHERE (e.data->>'connection') = c.name AND e.kind = 'tool_run' AND e.state = 'succeeded'
+ ORDER BY (e.data->>'connection'), e.id COLLATE "C" DESC LIMIT 1) o ON true;
