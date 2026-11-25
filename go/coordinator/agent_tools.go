@@ -650,10 +650,8 @@ func focusSet(q *Request, r *contract.FocusSetRequest) (contract.FocusSetReply, 
 		if !list || len(ids) != len(xs) {
 			return none, fail(400, `Expected projectIds: a list of project ids or "*"`)
 		}
-		for _, id := range ids {
-			if projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id)) {
-				return none, fail(404, "Unknown project")
-			}
+		if err := projectSetCheck(q, ids); err != nil {
+			return none, err
 		}
 		v = jsonBytes(ids)
 	}
@@ -662,6 +660,61 @@ func focusSet(q *Request, r *contract.FocusSetRequest) (contract.FocusSetReply, 
 		return none, err
 	}
 	return contract.FocusSetReply{SessionId: sid, Focus: contract.Focus{ProjectIds: v}}, nil
+}
+
+// projectSetCheck: every id names a project of this Fleet in the caller's grants (a conversation's project set).
+func projectSetCheck(q *Request, ids []string) error {
+	for _, id := range ids {
+		if projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id)) {
+			return fail(404, "Unknown project")
+		}
+	}
+	return nil
+}
+
+// sessionProjects: a conversation's project set (fleet-conversations.md#entities): its focus list, else its checkout
+// project; a focus of every project ("*") is the checkout project too. sql_builder.go sessionModelCols reads the same.
+func sessionProjects(s *agentSession) []string {
+	if s.Focus != nil && len(s.Focus.ProjectIDs) > 0 && s.Focus.ProjectIDs[0] == '[' {
+		return orEmpty(jsonStrings(s.Focus.ProjectIDs))
+	}
+	if s.ProjectID != "" {
+		return []string{s.ProjectID}
+	}
+	return []string{}
+}
+
+// sessionUpdate: a conversation's project set (projectIds), by the rights of session_rename: a person who directs it,
+// the owner, or an agent bound to it. The set is the focus focus_set writes; the checkout project stays.
+func sessionUpdate(q *Request, r *contract.SessionUpdateRequest) (contract.SessionUpdateReply, error) {
+	var none contract.SessionUpdateReply
+	sid := deref(r.SessionId)
+	if sid == "" {
+		return none, fail(400, "Expected sessionId")
+	}
+	if !bodyKeys(q)["projectIds"] {
+		return none, fail(400, "Expected projectIds")
+	}
+	s, err := sessionByID(q, sid)
+	if err != nil {
+		return none, err
+	}
+	if err := sessionDirects(q, &s); err != nil {
+		return none, err
+	}
+	ids := orEmpty(r.ProjectIds)
+	if err := projectSetCheck(q, ids); err != nil {
+		return none, err
+	}
+	// An empty set drops the focus: the conversation is back to its checkout project alone.
+	s.Focus = nil
+	if len(ids) > 0 {
+		s.Focus = &agentFocus{ProjectIDs: jsonBytes(ids)}
+	}
+	if err := sessionPut(q, &s); err != nil {
+		return none, err
+	}
+	return contract.SessionUpdateReply{SessionId: sid, ProjectIds: sessionProjects(&s)}, nil
 }
 
 // agentDenied: operations only a person may call (agent: no; take, host secrets, key values); docs/designs/fleet-pm-agent.md

@@ -755,7 +755,8 @@ const spawnedExecsCTEs = `,
 // rowFilter: a list filter as sent. HasProjects: projectId was sent (Projects, and ProjectsNull for null, work
 // outside projects); HasExclude: excludeProjectId was sent ("-" in Exclude is null: no project, as the other
 // operations name it); States: the state filter (an element that is not a string reads ""); Search: the list search
-// syntax (search.go parseSearchQuery); Archived: archived sessions instead of the others.
+// syntax (search.go parseSearchQuery); Archived: archived sessions instead of the others. Sessions only: BotIDs,
+// Subjects, Rooms and Origins (each matches any of its values) and Listed (false: the hidden conversations instead).
 type rowFilter struct {
 	HasProjects  bool
 	Projects     []string
@@ -765,6 +766,11 @@ type rowFilter struct {
 	States       []string
 	Search       *string
 	Archived     bool
+	BotIDs       []string
+	Subjects     []string
+	Rooms        []string
+	Origins      []string
+	Listed       *bool
 }
 
 // rowFilterOf reads a filter as sent (a null projectId item is work outside projects, which a typed list of strings
@@ -800,8 +806,11 @@ func rowFilterOf(raw json.RawMessage, known ...string) (rowFilter, error) {
 			ok = jsonKind(v) == '[' && json.Unmarshal(v, &l) == nil && len(l) > 0
 		case "search":
 			ok = jsonKind(v) == '"'
-		case "archived":
+		case "archived", "listed":
 			ok = jsonKind(v) == 't' || jsonKind(v) == 'f'
+		case "botId", "subject", "room", "origin":
+			var l []string
+			ok = jsonKind(v) == '[' && json.Unmarshal(v, &l) == nil && len(l) > 0
 		}
 		if !ok {
 			return f, fail(400, "Invalid filter field "+k)
@@ -855,17 +864,35 @@ func rowFilterOf(raw json.RawMessage, known ...string) (rowFilter, error) {
 	if v, ok := fields["archived"]; ok {
 		json.Unmarshal(v, &f.Archived)
 	}
+	if v, ok := fields["listed"]; ok {
+		f.Listed = new(bool)
+		json.Unmarshal(v, f.Listed)
+	}
+	for k, to := range map[string]*[]string{"botId": &f.BotIDs, "subject": &f.Subjects, "room": &f.Rooms, "origin": &f.Origins} {
+		if v, ok := fields[k]; ok {
+			json.Unmarshal(v, to)
+		}
+	}
+	for _, o := range f.Origins {
+		if !slices.Contains(sessionOrigins, o) {
+			return f, fail(400, "origin must be one of "+strings.Join(sessionOrigins, ", "))
+		}
+	}
 	return f, nil
 }
 
 // projectConds: the projectId filter and the excludeProjectId exclusion (the person's ignored projects, OR-34; a
-// project in both is left out) as conditions on col.
-func (f rowFilter) projectConds(p *[]any, col string, c []string) []string {
+// project in both is left out) as conditions on col; set (not empty): a text[] expression of more projects a row
+// belongs to, which projectId matches too (a conversation's project set). The exclusion stays on col.
+func (f rowFilter) projectConds(p *[]any, col, set string, c []string) []string {
 	if f.HasProjects {
 		o := []string{}
 		if len(f.Projects) > 0 {
 			*p = append(*p, f.Projects)
 			o = append(o, fmt.Sprintf("%s=ANY($%d)", col, len(*p)))
+			if set != "" {
+				o = append(o, fmt.Sprintf("%s && $%d::text[]", set, len(*p)))
+			}
 		}
 		if f.ProjectsNull {
 			o = append(o, col+" IS NULL")
@@ -1022,7 +1049,7 @@ var taskSearchFields = map[string]string{"agent": "(SELECT last_agent FROM task_
 	"project": "t.project_id", "state": sqlTaskState}
 
 func taskWhere(f rowFilter, p *[]any, withState bool) ([]string, error) {
-	c := f.projectConds(p, "t.project_id", []string{})
+	c := f.projectConds(p, "t.project_id", "", []string{})
 	if withState {
 		var err error
 		if c, err = f.stateConds(p, sqlTaskState, listStates, c); err != nil {
@@ -1142,7 +1169,7 @@ var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeed
 // and events, or the start or end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
 // which is not conversation activity. created_at and archived_at are the session record's (its columns, else its
 // payload, matching sessions.go).
-var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.pipeline_run_id, d.bot_id, d.seq, nullif(d.title,'') AS title,
+var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.pipeline_run_id, d.bot_id, d.seq, nullif(d.title,'') AS title,` + sessionModelCols + `,
  d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness, d.payload->'agentConfig'->>'id' AS profile_id,
  CASE WHEN d.created_at IS NOT NULL THEN (extract(epoch FROM d.created_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'createdAt')='number' THEN (d.payload->>'createdAt')::float8 END AS created_ms,
  CASE WHEN d.archived_at IS NOT NULL THEN (extract(epoch FROM d.archived_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'archivedAt')='number' THEN (d.payload->>'archivedAt')::float8 END AS archived_ms,
@@ -1153,12 +1180,12 @@ var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d
 
 // sqlSessionCountBase: the sessions as sqlSessionBase gives them to sessionWhere without a search (id, code, project,
 // archive, actor and state): a counter repeated on execution changes skips the message and activity scans.
-var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.pipeline_run_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state
+var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.pipeline_run_id, d.bot_id,` + sessionModelCols + `, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state
  FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)`
 
 // sqlSessionDoneBase: sqlSessionCountBase with the latest activity, for Home's counts of sessions done since a time
 // (home_view.go homeDone).
-var sqlSessionDoneBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.pipeline_run_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state,
+var sqlSessionDoneBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.pipeline_run_id, d.bot_id,` + sessionModelCols + `, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state,
  greatest(d.updated_at,ss.activity_at) AS activity_at
  FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)`
 
@@ -1176,7 +1203,7 @@ const sqlSessionNow = `(SELECT (SELECT t.b->>'markdown' FROM jsonb_array_element
 const agentTextPath = `$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @.markdown != "" && (@.role == "agent" || !exists(@.role)))`
 
 // sqlSessionListCols: the columns of sessionListDBRow (sessions.go) over x.
-var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.bot_id,x.created_ms,x.archived_ms," +
+var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.bot_id,x.origin,(x.pipeline_run_id IS NULL) AS listed,x.created_ms,x.archived_ms," +
 	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions," + sqlSessionNow + "," + sqlSessionWork
 
 // sqlSessionWork: a row's work facts (controls/work-facts.md), for the page's rows only like sqlSessionNow: since when
@@ -1187,6 +1214,29 @@ var sqlSessionWork = sqlJSONTime("(SELECT min(q.asked_at) FROM question q WHERE 
 	sqlJSONTime("(SELECT e.started_at FROM execution e WHERE e.session_id=x.id AND e.kind<>'tool_run' ORDER BY e.seq DESC LIMIT 1)") + ` AS last_started_at,
  (SELECT count(*) FROM execution e WHERE e.session_id=x.id AND e.kind<>'tool_run' AND e.state='failed'
   AND e.seq>coalesce((SELECT max(o.seq) FROM execution o WHERE o.session_id=x.id AND o.kind<>'tool_run' AND o.state<>'failed'),-1)) AS failed_starts`
+
+// sessionModelCols: a session's conversation model fields over d (fleet-conversations.md#entities), for sessionWhere
+// in every session base: its subject, its origin and its project set. Only the subject is stored. The origin follows
+// from the columns a start writes (sessionOrigin); the project set is the focus (focus_set, session_update), else the
+// checkout project (sessionProjects in sessions.go reads the same). listed is pipeline_run_id IS NULL.
+const sessionModelCols = ` d.subject, ` + sessionOrigin + ` AS origin,
+ (CASE WHEN jsonb_typeof(d.payload->'focus'->'projectIds')='array' THEN ARRAY(SELECT jsonb_array_elements_text(d.payload->'focus'->'projectIds'))
+  WHEN d.project_id IS NOT NULL THEN ARRAY[d.project_id] ELSE '{}'::text[] END) AS project_ids`
+
+// sessionOrigin: how a conversation began (contract SessionOrigin), first match: an agent step of a Lab trial (its
+// pipeline run has an experiment) or of a pipeline run; a fork (forkOf, session_fork); a bot's conversation, trigger
+// when it has a subject (a firing opens those, bots_runtime.go botConversation), bot without one; a start from a
+// Telegram message (its start request is the update tg:<id>, telegram.go telegramDeliver); a start for a task by task
+// autostart, by an agent (created_by_session_id) or a delegation child; else a person's start.
+const sessionOrigin = `(CASE WHEN d.pipeline_run_id IS NOT NULL THEN CASE WHEN EXISTS (SELECT 1 FROM execution r WHERE r.id=d.pipeline_run_id AND r.experiment_id IS NOT NULL) THEN 'lab' ELSE 'pipeline' END
+ WHEN jsonb_typeof(d.payload->'forkOf')='object' THEN 'fork'
+ WHEN d.bot_id IS NOT NULL THEN CASE WHEN d.subject IS NULL THEN 'bot' ELSE 'trigger' END
+ WHEN d.payload->>'startRequest' LIKE '%:tg:%' THEN 'telegram'
+ WHEN d.task_id IS NOT NULL AND (d.payload->>'startRequest' LIKE '%:autostart:%' OR d.created_by_session_id IS NOT NULL OR d.parent_execution_id IS NOT NULL) THEN 'task'
+ ELSE 'person' END)`
+
+// sessionOrigins: the values of sessionOrigin (contract SessionOrigin), the origin filter's allowlist.
+var sessionOrigins = []string{"person", "trigger", "task", "telegram", "fork", "pipeline", "lab", "bot"}
 
 // sessionAgent: the harness of the last execution, else the configured one (the row's harness mark and the agent group).
 const sessionAgent = "coalesce(x.harness,x.agent_harness)"
@@ -1269,7 +1319,19 @@ func sessionWhere(f rowFilter, p *[]any, withState bool) ([]string, error) {
 	if f.Archived {
 		c[0] = "x.archived_at IS NOT NULL"
 	}
-	c = f.projectConds(p, "x.project_id", c)
+	if f.Listed != nil && !*f.Listed {
+		c[2] = "x.pipeline_run_id IS NOT NULL"
+	}
+	c = f.projectConds(p, "x.project_id", "x.project_ids", c)
+	for _, m := range []struct {
+		expr string
+		vals []string
+	}{{"x.bot_id", f.BotIDs}, {"x.subject", f.Subjects}, {sessionRoom, f.Rooms}, {"x.origin", f.Origins}} {
+		if len(m.vals) > 0 {
+			*p = append(*p, m.vals)
+			c = append(c, fmt.Sprintf("%s=ANY($%d)", m.expr, len(*p)))
+		}
+	}
 	if withState {
 		var err error
 		if c, err = f.stateConds(p, "x.state", sessionStates, c); err != nil {

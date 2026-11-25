@@ -1155,6 +1155,7 @@ func init() {
 	op("worker_done", workerDone)
 	op("execution_status", executionStatus)
 	op("focus_set", focusSet)
+	op("session_update", sessionUpdate)
 	op("reconcile", func(q *Request, _ *contract.ReconcileRequest) (contract.ReconcileReply, error) {
 		return agentReconcile(q)
 	})

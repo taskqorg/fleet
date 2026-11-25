@@ -39,7 +39,7 @@ Why: before this model, a person met about 14 containers. "Thread" had four mean
 - Agent: `bot_id`, or the profile and role (pm, worker, reviewer, discuss).
 - `subject`: kind and id, nullable. At most one non-archived conversation exists per (agent, subject).
 - Projects: a set of zero or more projects, changed while the conversation lives. The first project is the default for new tasks. The PM's `focus.projectIds` becomes this set.
-- `origin`: person, trigger, task, telegram, fork, pipeline or lab.
+- `origin`: person, trigger, task, telegram, fork, pipeline, lab or bot (a bot's conversation without a subject).
 - `listed`: false for pipeline and Lab agent steps. These conversations appear on their run and trial pages, not in the Conversations list.
 - Native session: harness, account, host and resume id. Earlier native sessions stay as handoff events on the timeline.
 - `forkOf` with the fork point, the people with access, and `archived_at`.
@@ -88,13 +88,13 @@ The list shows an activity badge on top of the state: Running, Queued, Waiting o
 ### Agent operations
 
 Agents get the model first, through the existing operations:
-- `session_start` takes an optional `subject`, `projects` and `listed`;
+- `session_start` takes an optional `subject` and `projects`; `listed` follows from the start (a pipeline or Lab step is hidden), so it is no input;
 - `message_send` addresses a conversation by its id, and its free `thread` string is removed;
 - `session_rename` changes the title, and a new `session_update` changes the project set and the people with access;
 - `session_fork` forks at an execution;
 - `sessions_list` filters by bot, subject, project, room, origin and `listed`.
 
-Not built: everything in this section beyond today's `session_start {taskId}`, `session_rename` and `session_fork`. The [PR series](#migration-to-the-conversation-model) builds it.
+Built: `session_start {subject, projects}` (a subject titles the conversation; a second open conversation of the same profile and role about it is a 409 that names the first), `session_update {sessionId, projectIds}` with the rights of `session_rename`, and the `sessions_list` filters `botId`, `subject`, `room`, `origin`, `listed` (false: the hidden conversations instead) and `projectId`, which also matches the project set. Rows carry `origin` and `listed`. Not built: the people with access in `session_update` (no per-conversation access exists yet to reuse).
 
 ### Migration to the conversation model
 
@@ -102,7 +102,10 @@ The data is small (about 1,400 sessions and 10,000 runs), so each step rewrites 
 
 1. **Park by host and account.** Dispatch prefers the last account as well as the last host, and changes the account only when the account cannot serve. HAL0's 45 handoffs were all account rotations.
 2. **Subjects and host jobs.** Trigger changes use subject keys: a host job without a task becomes `host:<id>`, never `execution:<id>`. Every subject kind gets a stored title. A host job no longer creates a hidden session. Migration `20261125T1959Z_legacy_host_command_sessions` deleted the old ones once (owner, 2026-11-26) with their events, commands and messages; their runs, costs and artifacts stay with `session_id` null, and the counts are an `audit_log` row (`legacy:20261125T1959Z_legacy_host_command_sessions`). Since the executor runs a command without `sessionId` under its `executionId` (fleet#1078), a host job (readiness, account inspection, artifact copy and verify, pipeline script, publishing, connection removal) has no session; a readiness check's caller reads it with `execution_status {executionId}`.
-3. **Conversation fields.** Add `subject`, `origin`, `listed` and the project set, and backfill them. Pipeline and Lab agent-step sessions (about 427) become hidden conversations.
+3. **Conversation fields.** Built. Only `subject` is stored (migration 117). The rest is derived from existing columns, so nothing is backfilled (`sql_builder.go` `sessionModelCols`):
+   - `listed` is `pipeline_run_id IS NULL`, so the pipeline and Lab agent-step sessions (about 427) are hidden conversations.
+   - `origin` is the first match of: `lab` (the pipeline run has an experiment), `pipeline`, `fork` (`forkOf`), `trigger` (a bot conversation with a subject), `bot` (one without), `telegram` (started from a Telegram update), `task` (task autostart, or an agent or a delegation started it for a task), else `person`.
+   - The project set is the session's `focus.projectIds`, else its checkout project. `focus_set` and `session_update` write it.
 <a id="work-item-threads"></a>
 4. **Bot conversations.** Before this step a bot worked in one Home session holding work-item threads: the `thread` column of `message` and `execution` (migration 109), one native session per thread in `nativeSessions[<key>#<thread>]`, fork and handoff for the main thread only. Bot wakes now find or create the bot's conversation for each subject (`session.subject`, migration 117), and the per-bot limit becomes the per-conversation turn rule: a trigger's message to a busy conversation waits in its queue. Migration 117 moves each thread of a Home session into its own conversation with its messages, runs, events, questions, artifacts, commands, queued messages and bot runs, and the thread's native session as its own; an `execution:` thread folds into its host's subject. The Home session stays as the bot's conversation without a subject: person messages and direct runs, and the turns from before threads. Migration `20261125T2144Z_drop_work_item_threads` makes each conversation's newest thread-keyed native session its own, then drops the `thread` columns, the thread-keyed native sessions, the thread field of `message_send`, `thread_entries` and `session_view`, and the thread visits. `bot_run` is merged (migration `20261125T2144Z_bot_run_into_execution`): a bot run is the run of a turn in one of the bot's conversations, its wake's `cause` and `quiet` verdict in the run's `botContext`, its sender in its first message, its task links on `bot_task.execution_id`; a paused bot's trigger wake that never ran is a `trigger_log` row. `bot.home_session_id` is gone: the conversation without a subject is the bot's newest one (`conversationId` of `bot_get`/`bot_list`).
 5. **Telegram.** Built: `telegram_work` is the room-conversation binding, and a room's current conversation is its most recent open binding. A private chat is a room with one person (`<user id>:0`); the migration made each person's home conversation (`telegram_person.home_session_id`) the open binding of their private room and dropped the column. `/new` closes the binding.
