@@ -10,16 +10,16 @@
 //
 // PAGE_BUDGET_OPS=1 also lists every read with its time and size.
 import { chromium, type Page, type Request } from 'playwright';
+import { ORIGIN, guardOutput, prodContext, token } from './prod-browser.ts';
 
-const ORIGIN = process.env.FLEET_ORIGIN ?? 'https://fleet.ufobe.com';
+guardOutput();
 const paths = process.argv.slice(2);
 if (!paths.length) { console.error('usage: node scripts/page-budget.ts <path>...'); process.exit(64); }
-if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) { console.error('source ~/.config/ufobe-agents/site-access.env first'); process.exit(64); }
+const cred = token();
+if (!cred) { console.error('source ~/.config/ufobe-agents/site-access.env first'); process.exit(64); }
 
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark',
-  extraHTTPHeaders: { 'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID, 'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET } });
-await ctx.route(u => !u.href.startsWith(ORIGIN), r => r.abort());
+const ctx = await prodContext(browser, cred, { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
 const page = await ctx.newPage();
 
 type Read = { op: string; ms?: number; bytes?: number };

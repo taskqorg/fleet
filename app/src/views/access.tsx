@@ -35,7 +35,7 @@ type Flow =
   | { kind: 'limit'; item: Item };
 
 export function Access(props: { onOpen: (path: string) => void }) {
-  const status = useOp('access_status', {}, { every: 30_000 });
+  const status = useOp('access_status', {});
   const [flow, setFlow] = createSignal<Flow | null>(null);
   const [checking, setChecking] = createSignal<string | null>(null);
   const [err, setErr] = createSignal('');
@@ -140,7 +140,7 @@ function KeyFlow(props: { flow: Flow & { kind: 'key' }; onDone: () => void; onCh
   // check after that is this key's result. late: none came within 30 s; the item shows as it is, with its Check button.
   const [added, setAdded] = createSignal<number | null>(null);
   const [late, setLate] = createSignal(false);
-  const live = useOp('access_status', {}, { every: 30_000 });
+  const live = useOp('access_status', {});
   const item = () => live.data?.items.find(i => i.id === `connection:${guide()?.connection}`) ?? null;
   const result = createMemo(() => {
     const before = added(), it = item();

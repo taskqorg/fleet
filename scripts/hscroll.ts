@@ -14,8 +14,9 @@
 // Prints one line per finding: width, path, kind, element, overflow in px; exits 0 either way.
 import { chromium, type Page } from 'playwright';
 import { hscrollScan as scan, type Finding } from '../tests/ui/hscroll.ts';
+import { ORIGIN, guardOutput, prodContext, redact, token } from './prod-browser.ts';
 
-const ORIGIN = process.env.FLEET_ORIGIN ?? 'https://fleet.ufobe.com';
+guardOutput();
 const ROUTES = ['/home', '/live', '/conversations', '/projects', '/projects/FLT', '/projects/FLT/rules', '/projects/FLT/access', '/projects/tasks', '/projects/results', '/projects/delivery',
   '/lab', '/lab/mine', '/library/methods', '/library/agents', '/library/pipelines', '/library/changes', '/library/bots',
   '/library/skills', '/system', '/system/hosts', '/system/runners', '/system/access', '/system/connections', '/system/spend',
@@ -23,7 +24,8 @@ const ROUTES = ['/home', '/live', '/conversations', '/projects', '/projects/FLT'
 const paths = process.argv.slice(2).length ? process.argv.slice(2) : ROUTES;
 const widths = (process.env.HSCROLL_WIDTHS ?? '1440,1100,768,390').split(',').map(Number);
 const details = process.env.HSCROLL_DETAILS !== '0';
-if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) { console.error('source ~/.config/ufobe-agents/site-access.env first'); process.exit(64); }
+const cred = token();
+if (!cred) { console.error('source ~/.config/ufobe-agents/site-access.env first'); process.exit(64); }
 
 /** Opens a path and lets it settle; false when it did not load. */
 async function open(p: Page, path: string) {
@@ -57,9 +59,7 @@ async function detailLinks(p: Page, path: string): Promise<string[]> {
 }
 
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ colorScheme: 'dark',
-  extraHTTPHeaders: { 'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID, 'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET } });
-await ctx.route(u => !u.href.startsWith(ORIGIN), r => r.abort());
+const ctx = await prodContext(browser, cred, { colorScheme: 'dark' });
 let total = 0;
 const lines: string[] = [];
 const report = (w: number, path: string, fs: Finding[]) => {
@@ -72,11 +72,13 @@ await Promise.all(widths.map(async w => {
   await page.setViewportSize({ width: w, height: 900 });
   for (const path of paths) {
     if (!await open(page, path)) { lines.push(`${String(w).padStart(4)}  ${path.padEnd(40)} not opened`); continue; }
-    report(w, path, await page.evaluate(scan));
-    if (!details) continue;
-    for (const d of await detailLinks(page, path)) {
-      if (await open(page, d)) report(w, d, await page.evaluate(scan));
-    }
+    try {
+      report(w, path, await page.evaluate(scan));
+      if (!details) continue;
+      for (const d of await detailLinks(page, path)) {
+        if (await open(page, d)) report(w, d, await page.evaluate(scan));
+      }
+    } catch (e) { lines.push(`${String(w).padStart(4)}  ${path.padEnd(40)} stopped: ${redact(e)}`); }
   }
   await page.close();
 }));

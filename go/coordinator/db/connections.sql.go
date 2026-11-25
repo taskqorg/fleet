@@ -136,17 +136,20 @@ func (q *Queries) AccessConnectionChecked(ctx context.Context, arg AccessConnect
 
 const accessLastCalls = `-- name: AccessLastCalls :many
 SELECT c.name::text AS connection,
- coalesce(l.id, '')::text AS last_id, coalesce(l.state, '')::text AS last_state, coalesce(l.problem, '')::text AS last_problem,
- coalesce(l.tool, '')::text AS last_tool, coalesce(l.started_at, 0)::bigint AS last_started_at, coalesce(o.started_at, 0)::bigint AS ok_started_at
+ coalesce(e.id, '')::text AS last_id, coalesce(e.state::text, '')::text AS last_state, coalesce(e.problem, '')::text AS last_problem,
+ coalesce(e.data->>'tool', '')::text AS last_tool, coalesce((e.data->>'startedAt')::bigint, 0)::bigint AS last_started_at,
+ coalesce((k.data->>'startedAt')::bigint, 0)::bigint AS ok_started_at
 FROM unnest($1::text[]) AS c(name)
 LEFT JOIN LATERAL (
- SELECT e.id, e.state::text AS state, e.problem, e.data->>'tool' AS tool, (e.data->>'startedAt')::bigint AS started_at
- FROM execution e WHERE (e.data->>'connection') = c.name AND e.kind = 'tool_run'
- ORDER BY (e.data->>'connection'), e.id COLLATE "C" DESC LIMIT 1) l ON true
+ SELECT s.execution_id FROM execution_spend s
+ WHERE s.connection = c.name AND s.kind = 'tool_run'
+ ORDER BY s.started_at DESC, s.execution_id COLLATE "C" DESC LIMIT 1) l ON true
 LEFT JOIN LATERAL (
- SELECT (e.data->>'startedAt')::bigint AS started_at
- FROM execution e WHERE (e.data->>'connection') = c.name AND e.kind = 'tool_run' AND e.state = 'succeeded'
- ORDER BY (e.data->>'connection'), e.id COLLATE "C" DESC LIMIT 1) o ON true
+ SELECT s.execution_id FROM execution_spend s
+ WHERE s.connection = c.name AND s.kind = 'tool_run' AND s.state = 'succeeded'
+ ORDER BY s.started_at DESC, s.execution_id COLLATE "C" DESC LIMIT 1) o ON true
+LEFT JOIN execution e ON e.id = l.execution_id
+LEFT JOIN execution k ON k.id = o.execution_id
 `
 
 type AccessLastCallsRow struct {
@@ -159,8 +162,13 @@ type AccessLastCallsRow struct {
 	OkStartedAt   int64
 }
 
-// Per connection, its latest call and its latest call that succeeded (access_status). Call ids sort by time (call:<hex ms>),
-// so each is one backward walk of resource_execution_connection_page.
+// Per connection, its latest call and its latest call that succeeded (access_status). The calls are chosen in
+// execution_spend by its connection column (index execution_spend_connection_last): under row level security a JSON
+// path is never an index condition (jsonb_object_field_text is not leakproof), so choosing them in execution by
+// data->>'connection' scanned every execution twice per connection (10 s on prod, 2026-11-26). Text and timestamps
+// are leakproof, so each lateral is one backward walk of that connection's rows; the call itself is a primary key read,
+// under the same visibility: execution_spend's policies mirror execution's (directed_spend and directed_execution
+// admit the same projectless runs). A call without a start time has no execution_spend row and is not shown.
 func (q *Queries) AccessLastCalls(ctx context.Context, names []string) ([]AccessLastCallsRow, error) {
 	rows, err := q.db.Query(ctx, accessLastCalls, names)
 	if err != nil {

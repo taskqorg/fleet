@@ -54,4 +54,6 @@ Agents open `https://fleet.ufobe.com` as person `site-agents` (owner-equivalent 
 
 Playwright: set the headers only on a context for this host, e.g. `browser.newContext({ extraHTTPHeaders: { 'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID, 'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET } })`, and open only `https://fleet.ufobe.com` pages in it. Check: `deploy/infrastructure/agent-access-smoke.sh`.
 
+Walk and check scripts never print a response, cookie or header dump: a Playwright error can quote request headers and the `CF_Authorization` cookie. Open the site through `scripts/prod-browser.ts` (`prodContext`, `guardOutput`) and print errors only through its `redact`, which keeps the first line and hides Cookie, Authorization and `CF-Access-*` values.
+
 Orca embedded browser: run `deploy/infrastructure/agent-browser-open.sh`; use its returned `browserPageId` with `--page` on subsequent commands. It opens the production origin directly and checks the `site-agents` identity without printing credentials. Close the tab when finished.

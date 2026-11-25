@@ -104,12 +104,19 @@ WITH published AS (
  WHERE e.id = ANY($1::text[]) AND e.system_actor IS NULL
    AND (e.project_id IS NOT NULL OR e.session_id IS NOT NULL)
  RETURNING id
+), connections AS (
+ INSERT INTO change (kind, id, op, holder)
+ SELECT DISTINCT 'api-connection', c.id, 'U', c.holder
+ FROM execution e JOIN api_connection c ON c.name = e.data->>'connection'
+ WHERE e.id = ANY($1::text[])
+ RETURNING id
 )
-SELECT fleet_enqueue_wake('fleet_change', '') WHERE EXISTS (SELECT 1 FROM published)
+SELECT fleet_enqueue_wake('fleet_change', '') WHERE EXISTS (SELECT 1 FROM published) OR EXISTS (SELECT 1 FROM connections)
 `
 
 // The gateway commits calls independently. Wake spend readers once per project
-// or projectless conversation after the pass, keeping individual tool rows silent.
+// or projectless conversation after the pass, keeping individual tool rows silent;
+// and once per connection the pass saw a call of, so access_status shows its latest call.
 func (q *Queries) ListSpendWakeGateway(ctx context.Context, callIds []string) error {
 	_, err := q.db.Exec(ctx, listSpendWakeGateway, callIds)
 	return err
