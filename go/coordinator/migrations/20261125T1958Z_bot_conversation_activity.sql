@@ -8,4 +8,6 @@ FROM (SELECT d.id, greatest(
   (SELECT max(v.updated_at) FROM event v WHERE v.session_id = d.id AND NOT v.delta)) AS at
  FROM session d WHERE d.subject IS NOT NULL AND d.bot_id IS NOT NULL AND d.title_by = 'bot') x
 WHERE s.id = x.id AND x.at IS NOT NULL;
-SELECT fleet_session_summary_recount(d.id) FROM session d WHERE d.subject IS NOT NULL AND d.bot_id IS NOT NULL AND d.title_by = 'bot';
+-- The summary keeps the greater activity on an update, so it is counted again. A fresh database defines the function after
+-- the migrations (schema/functions.sql) and has no such rows.
+DO $$ BEGIN IF to_regprocedure('fleet_session_summary_recount(text)') IS NOT NULL THEN PERFORM fleet_session_summary_recount(d.id) FROM session d WHERE d.subject IS NOT NULL AND d.bot_id IS NOT NULL AND d.title_by = 'bot'; END IF; END $$;
