@@ -133,4 +133,14 @@ func TestPublishingProviderDetectionAndBoundary(t *testing.T) {
 	if contract.ForgeRepoGranted("gitlab.other.com/gradus/cyprusbz", ref) {
 		t.Fatal("grant on wrong host accepted")
 	}
+	// A group grant covers today's and future projects of the group, on its host only.
+	if !contract.ForgeRepoGranted("gitlab.ufobe.com/gradus/*", ref) {
+		t.Fatal("group grant did not cover a project of the group")
+	}
+	if contract.ForgeRepoGranted("gitlab.other.com/gradus/*", ref) || contract.ForgeRepoGranted("gitlab.ufobe.com/grad/*", ref) {
+		t.Fatal("group grant on wrong host or group accepted")
+	}
+	if _, _, ok := contract.ParseForgeRepoEntry("gitlab.ufobe.com/*"); ok {
+		t.Fatal("host-wide grant accepted")
+	}
 }
