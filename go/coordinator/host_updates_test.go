@@ -101,6 +101,26 @@ func TestComponentHostCell(t *testing.T) {
 	if c := componentHost(harnessrelease.CLIs, "codex", false, "0.169.0", h, pinsRegression{}); c.State != contract.ComponentHostStateOwn {
 		t.Fatalf("pins off: %+v", c)
 	}
+	node := "26.13.1"
+	h.ToolVersions = []contract.ToolVersion{{Tool: "node", Observed: &node}}
+	if c := componentHost(harnessrelease.Tools, "node", false, "", h, pinsRegression{}); c.State != contract.ComponentHostStateOwn || c.Observed == nil || *c.Observed != node {
+		t.Fatalf("tool pins off: own with the host's version: %+v", c)
+	}
+	// h still has a pending update to this release: the tool pin is being installed.
+	if c := componentHost(harnessrelease.Tools, "node", true, node, h, pinsRegression{}); c.State != contract.ComponentHostStateInstalling {
+		t.Fatalf("a PATH tool while the release with the pin installs: %+v", c)
+	}
+	h.Update = nil
+	if c := componentHost(harnessrelease.Tools, "node", true, node, h, pinsRegression{}); c.State != contract.ComponentHostStateOwn {
+		t.Fatalf("a PATH tool (no pin reported) is the host's own, not the pin: %+v", c)
+	}
+	if c := componentHost(harnessrelease.Tools, "node", true, "", h, pinsRegression{}); c.State != contract.ComponentHostStateOwn {
+		t.Fatalf("a PATH tool with nothing pinned for the target is own: %+v", c)
+	}
+	h.ToolVersions[0].Expected = &node
+	if c := componentHost(harnessrelease.Tools, "node", true, node, h, pinsRegression{}); c.State != contract.ComponentHostStatePinned {
+		t.Fatalf("tool on its pin: %+v", c)
+	}
 	flagged := pinsRegression{Harness: "codex", Version: "0.168.0", Host: "mac", Failed: 6, Total: 14}
 	if c := componentHost(harnessrelease.CLIs, "codex", true, "0.168.0", h, flagged); c.State != contract.ComponentHostStateFailing || *c.Failed != 6 {
 		t.Fatalf("failing: %+v", c)

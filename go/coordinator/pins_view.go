@@ -334,14 +334,18 @@ func systemComponents(hosts []contract.HostRow) []contract.SystemChangeKind {
 // componentHost: one host's cell of a component row.
 func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned string, h contract.HostRow, flagged pinsRegression) contract.SystemChangeComponentHost {
 	cell := contract.SystemChangeComponentHost{HostId: h.Id, State: contract.ComponentHostStateUnknown}
-	if !enabled {
-		cell.State = contract.ComponentHostStateOwn
-		return cell
+	// The version the host reports: its CLI report, its host tools report (also while the kind's pins are off). With the
+	// kind's pins on, a tool the host reports without a pin is its own PATH tool (its release has no tool pins yet), not
+	// the managed one: own, unless it is installing or refused the release that brings the pin, or the pin fails there.
+	unmanaged := false
+	if k.Name == harnessrelease.Tools.Name {
+		for _, tv := range h.ToolVersions {
+			if tv.Tool == name && tv.Observed != nil {
+				cell.Observed = tv.Observed
+				unmanaged = tv.Expected == nil
+			}
+		}
 	}
-	if pinned == "" { // nothing pinned for this host's target: no drift to show
-		return cell
-	}
-	cell.Pinned = &pinned
 	if k.Name == harnessrelease.CLIs.Name {
 		for _, hv := range h.HarnessVersions {
 			if hv.Harness == name && hv.Observed != nil {
@@ -353,11 +357,22 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 			}
 		}
 	}
+	if !enabled {
+		cell.State = contract.ComponentHostStateOwn
+		return cell
+	}
+	if pinned == "" { // nothing pinned for this host's target: no drift to show
+		if unmanaged {
+			cell.State = contract.ComponentHostStateOwn
+		}
+		return cell
+	}
+	cell.Pinned = &pinned
 	upd, hasUpd := decodeUpdate(rawAny(h.Update))
 	switch {
-	case flagged.Total > 0 && flagged.Version == pinned:
+	case !unmanaged && flagged.Total > 0 && flagged.Version == pinned:
 		cell.State, cell.Failed, cell.Total = contract.ComponentHostStateFailing, &flagged.Failed, &flagged.Total
-	case cell.Observed != nil && *cell.Observed == pinned:
+	case !unmanaged && cell.Observed != nil && *cell.Observed == pinned:
 		cell.State = contract.ComponentHostStatePinned
 	case hasUpd && upd.State == contract.UpdateStatePending && upd.Version == ownRelease().Version:
 		cell.State = contract.ComponentHostStateInstalling
@@ -366,6 +381,8 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 		if upd.Error != nil {
 			cell.Reason = upd.Error
 		}
+	case unmanaged:
+		cell.State = contract.ComponentHostStateOwn
 	case cell.Observed != nil:
 		cell.State = contract.ComponentHostStateBehind
 	}

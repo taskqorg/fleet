@@ -911,6 +911,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	if b.HarnessVersions != nil {
 		obs.HarnessVersions = &b.HarnessVersions
 	}
+	if b.ToolVersions != nil {
+		obs.ToolVersions = &b.ToolVersions
+	}
 	if b.GitConnections != nil {
 		obs.GitConnections = &b.GitConnections
 	}
@@ -1211,6 +1214,7 @@ type hostPollObservationPayload struct {
 	Platform         string                     `json:"platform,omitempty"`
 	Capabilities     *[]string                  `json:"capabilities,omitempty"`
 	HarnessVersions  *[]contract.HarnessVersion `json:"harnessVersions,omitempty"`
+	ToolVersions     *[]contract.ToolVersion    `json:"toolVersions,omitempty"`
 	GitConnections   *[]string                  `json:"gitConnections,omitempty"`
 	ProjectRoots     *[]string                  `json:"projectRoots,omitempty"`
 	ActiveExecutions *[]string                  `json:"activeExecutions,omitempty"`

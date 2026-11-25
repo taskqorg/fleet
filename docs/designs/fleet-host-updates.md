@@ -140,7 +140,7 @@ Recommendation: A1. It fits "never block other pull requests" and "compatibility
 2. A1: the host qualification command, the Lab trials, and the status on the proposal.
 3. The update history and journal entries for host switches, and the Changes rows per component (built: `host_update` rows written by the poll, `host_update_history`, the `components` of `system_changes`; [Changes](../design-system/pages/changes.md), [Hosts](../design-system/pages/hosts.md)).
 4. The step 9 watch and the revert proposal.
-5. Host tools (B1), the same way.
+5. Host tools (B1), the same way. Built first: every executor reports each tool's version on its poll (`toolVersions`: the pin and the managed executable's version, or, while tool pins are off, the version on its PATH), shown on Changes and a host's detail.
 6. Project environments, once the environment work defines `execution.environment`.
 
 ## 6. Drift

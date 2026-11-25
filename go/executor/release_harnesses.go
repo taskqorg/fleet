@@ -188,7 +188,49 @@ func managedVersions() []contract.HarnessVersion {
 	return versions
 }
 
-func observeCLIVersion(path string) *string {
+// toolSemver: a tool's version in its --version output ("v26.13.1", "gh version 2.105.0 (2026-11-01)").
+var toolSemver = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
+
+// releaseTools: this release's host tool pins (config/tool-pins.json), nil while they are off.
+var releaseTools = sync.OnceValue(func() map[string]harnessrelease.Asset {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return nil
+	}
+	assets, _ := harnessrelease.Tools.Read(filepath.Dir(exe), runtime.GOOS+"-"+runtime.GOARCH)
+	return assets
+})
+
+// toolVersions: each host tool's version (docs/designs/fleet-host-updates.md, Host tools). With tool pins on, the pin and
+// the release-managed executable's version; off, the version of the tool on the executor's PATH, with no expected one.
+// Probed like the CLIs: once per changed file, in the background, as the executor user.
+func toolVersions() []contract.ToolVersion {
+	assets := releaseTools()
+	root := releaseHarnesses().root
+	cliObservationsMu.Lock()
+	defer cliObservationsMu.Unlock()
+	out := []contract.ToolVersion{}
+	for _, name := range harnessrelease.Tools.Names {
+		v := contract.ToolVersion{Tool: name}
+		if a, ok := assets[name]; ok && root != "" {
+			v.Expected = &a.Version
+			v.Observed = observeVersion(filepath.Join(root, a.Executable(name)), toolSemver, os.Getenv("PATH"))
+		} else if path, err := exec.LookPath(name); err == nil {
+			v.Observed = observeVersion(path, toolSemver, os.Getenv("PATH"))
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func observeCLIVersion(path string) *string { return observeVersion(path, cliSemver, "") }
+
+// observeVersion: the cached version of the executable at path, probed again when the file changes. pathEnv is the
+// probe's PATH (a tool such as pnpm may need node beside it); a CLI runs with an empty environment.
+func observeVersion(path string, re *regexp.Regexp, pathEnv string) *string {
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() || unix.Access(path, unix.X_OK) != nil {
 		delete(cliObservations, path)
@@ -201,20 +243,28 @@ func observeCLIVersion(path string) *string {
 	}
 	sample := &cliObservation{info: info, at: time.Now()}
 	cliObservations[path] = sample
-	errtrack.Go("harness.version", func() { probeCLIVersion(path, sample) })
+	errtrack.Go("harness.version", func() { probeVersion(path, sample, re, pathEnv) })
 	return nil
 }
 
-func probeCLIVersion(path string, sample *cliObservation) {
+func probeVersion(path string, sample *cliObservation, re *regexp.Regexp, pathEnv string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
 	cmd.Env = []string{}
+	if pathEnv != "" { // a tool shim (corepack, mise, asdf) finds its cache and config under HOME
+		cmd.Env = []string{"PATH=" + pathEnv}
+		for _, k := range []string{"HOME", "USER"} {
+			if v := os.Getenv(k); v != "" {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+		}
+	}
 	cmd.WaitDelay = time.Second
 	o, err := cmd.Output()
 	var observed *string
 	if err == nil {
-		if v := cliSemver.FindString(string(o)); v != "" {
+		if v := re.FindString(string(o)); v != "" {
 			observed = &v
 		}
 	}
