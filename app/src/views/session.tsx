@@ -85,6 +85,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     if (p !== null && ts.some(t => t.key === p)) return p;
     return [...ts].sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0]?.key ?? '';
   });
+  // The first thread shown stays shown: a turn in another thread marks it new in the list and never switches the transcript.
+  createEffect(() => [hasThreads(), picked(), shownThread()] as const, ([on, p, th]) => { if (on && p === null) setPicked(th); });
   // At phone width the list and the thread take turns: the list first, a pick opens the thread, Threads goes back.
   const [threadsMode, setThreadsMode] = createSignal<'list' | 'thread'>('list');
   const pickThread = (k: string) => { setPicked(k); setThreadsMode('thread'); };
