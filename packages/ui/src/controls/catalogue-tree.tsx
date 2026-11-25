@@ -486,7 +486,7 @@ export function CatalogueTree(props: CatalogueTreeProps) {
                 />
               </Show>
               <Show when={row.isPinned && props.onPin}>
-                <RowPin label={node.label} onUnpin={() => props.onPin!(node)} />
+                <RowPin label={node.label} onToggle={() => props.onPin!(node)} />
               </Show>
               {node.root ? (
                 <><span class="cat-tw" aria-hidden="true" /><Icon name={node.icon ?? 'folder-open'} /></>

@@ -2,7 +2,7 @@
 import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext, type Accessor } from 'solid-js';
 import { Portal, type JSX } from '@solidjs/web';
 import { SidePanels, ownPanelStore, clampWidth, PanelToggle, ResizeDivider, type SidePanelStore } from './controls/side-panel.tsx';
-import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead, RailBots, RailBotsStrip, type RailBotsProps } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead, RailPinned, RailPinnedStrip, type RailPinnedProps } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, statesOf, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -246,7 +246,7 @@ function TaskCells(p: {
         <span class="lead"><RowCheck checked={p.check!} label={'Select ' + p.t.title} onToggle={p.onSelect} /></span>
       </Show>
       <Show when={p.t.pinned}>
-        <span class="lead"><RowPin label={p.t.title} onUnpin={() => (p.selecting ? p.onSelect : p.onPin)()} /></span>
+        <span class="lead"><RowPin label={p.t.title} onToggle={() => (p.selecting ? p.onSelect : p.onPin)()} /></span>
       </Show>
       <span class="lead"><StateBadge family="task" state={p.t.state} reason={p.t.reason} compact /></span>
       <span class="tt">
@@ -323,12 +323,14 @@ export function AppShell(p: {
   widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; panels?: Record<string, boolean>; onPanel?: (key: string, open: boolean) => void;
   /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
   /** Wall mode (Live on a TV, pages/live.md): no navigation and no shell header; the page fills the screen. */ wall?: boolean;
-  /** The bots zone (nav-rail.md, Bots): the person's switch and, while it is on, the zone's bots and actions. */
-  bots?: { on: boolean; set: (on: boolean) => void; zone: RailBotsProps };
+  /** The Pinned zone (nav-rail.md, Pinned): the person's switch and, while it is on, the zone's pins and actions. */
+  pinnedZone?: { on: boolean; set: (on: boolean) => void; zone: RailPinnedProps };
 }) {
   const [own, setOwn] = createSignal<string[]>([]);
   const pinned = createMemo(() => p.pins ?? own());
   const setPinned = (ids: string[]) => (p.onPins ?? setOwn)(ids);
+  // The Pinned zone's switch (user menu, every rail item's menu); read live, so a menu shows the current state.
+  const zoneSwitch = () => (p.pinnedZone ? { get on() { return p.pinnedZone!.on; }, set: p.pinnedZone.set } : undefined);
   // Side panels (side-panel.md): the navigation (`nav`) and every right panel share one store of open state and widths.
   const [panelSlot, setPanelSlot] = createSignal<HTMLElement | null>(null, { ownedWrite: true });
   const ownPanels = ownPanelStore(panelSlot);
@@ -410,12 +412,12 @@ export function AppShell(p: {
               </Show>
             </>
           }
-          foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} bots={p.bots ? { get on() { return p.bots!.on; }, set: p.bots.set } : undefined} />}</Show>}
-          zone={<Show when={p.bots?.on}><RailBots {...p.bots!.zone} /></Show>}
-          bots={p.bots ? { on: p.bots.on, set: p.bots.set } : undefined}
+          foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} pinned={zoneSwitch()} />}</Show>}
+          zone={<Show when={p.pinnedZone?.on}><RailPinned {...p.pinnedZone!.zone} /></Show>}
+          pinnedZone={zoneSwitch()}
         />
         {/* OR-60: below 760 px the bottom bar of five replaces the rail (CSS shows one of them). */}
-        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} extra={p.bots?.on ? done => <RailBotsStrip {...p.bots!.zone} onDone={done} /> : undefined} foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} bots={p.bots ? { get on() { return p.bots!.on; }, set: p.bots.set } : undefined} />}</Show>} />
+        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} extra={p.pinnedZone?.on ? done => <RailPinnedStrip {...p.pinnedZone!.zone} onDone={done} /> : undefined} foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} pinned={zoneSwitch()} />}</Show>} />
         <div class="shell-col">
           <Show when={!mini()}><Divider name="rail" /></Show>
           {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42),
@@ -606,7 +608,7 @@ function UpdateStrip(p: { v: VersionInfo; quiet?: boolean }) {
  * then the avatar and name, then the version. The avatar never changes. Collapsed, the strip keeps its row with only its
  * icon button, and the problem the hidden version mark shows floats above the block, so no row moves (OR-42).
  */
-function UserBlock(p: { name: string; onLogout: () => void; version?: VersionInfo; bots?: { on: boolean; set: (on: boolean) => void } }) {
+function UserBlock(p: { name: string; onLogout: () => void; version?: VersionInfo; pinned?: { on: boolean; set: (on: boolean) => void } }) {
   let ref: HTMLDivElement | undefined;
   const menu = useFloating(() => ref, '.rail-user-b');
   const panel = useFloating(() => ref, '.rail-ver, .rail-prob, .rail-user-b');
@@ -657,10 +659,10 @@ function UserBlock(p: { name: string; onLogout: () => void; version?: VersionInf
               <Icon name="info" />Versions
             </button>
           </Show>
-          <Show when={p.bots}>
+          <Show when={p.pinned}>
             {b => (
               <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); b().set(!b().on); }}>
-                <Icon name={b().on ? 'x' : 'bot'} />{b().on ? 'Hide bots in navigation' : 'Show bots in navigation'}
+                <Icon name={b().on ? 'pin-off' : 'pin'} />{b().on ? 'Hide pinned in navigation' : 'Show pinned in navigation'}
               </button>
             )}
           </Show>

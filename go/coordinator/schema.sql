@@ -5214,3 +5214,10 @@ CREATE TABLE access_work (
  last_error text NULL
 );
 CREATE INDEX access_work_due ON access_work(next_attempt_at);
+
+-- migration 119: the navigation's Pinned zone replaces its bots zone (docs/design-system/controls/nav-rail.md, Pinned):
+-- the person setting railBots {on, recent} becomes railPinned (its on); the recent count goes, the zone shows only pins.
+SELECT set_config('fleet.project_ids', '*', true);
+UPDATE person_setting
+SET payload = (payload - 'railBots') || jsonb_build_object('railPinned', coalesce((payload->'railBots'->>'on')::boolean, false))
+WHERE payload ? 'railBots';

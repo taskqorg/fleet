@@ -20,6 +20,8 @@ const asBotRunState = (s: string | null | undefined): StateOf<'botRun'> =>
 const asTaskState = (s: string): StateOf<'task'> =>
   VALID_TASK_STATES.has(s) ? (s as StateOf<'task'>) : 'queued';
 import { useOp } from '../store.ts';
+import { usePins } from '../prefs.ts';
+import { PIN_LISTS } from '../rail-pinned.ts';
 import { useOpPages } from '../op-pages.ts';
 import { parseMs as ms } from '../task-facts.ts';
 import { BotAutomations } from './bot-automations.tsx';
@@ -63,6 +65,8 @@ export function BotDetail(props: {
   onReload: () => void;
 }) {
   const [, go] = useLocation();
+  // The bot's pin (nav-rail.md, Pinned): its Library pin, also the navigation's Pinned zone.
+  const pins = usePins(PIN_LISTS.bots);
   const search = useSearch();
   const params = createMemo(() => new URLSearchParams(search()));
   const tab = () => BOT_TABS.find(t => t.id === params().get('tab'))?.id ?? 'activity';
@@ -171,6 +175,7 @@ export function BotDetail(props: {
             <Show when={props.bot.activeRunId}>
               <Button label="Stop" icon="circle-slash" kind="danger" busy={actionBusy()} onClick={() => void runAction('stop')} />
             </Show>
+            <Button label={pins.has('bot:' + props.bot.id) ? 'Unpin' : 'Pin to navigation'} icon="pin" iconOnly pressed={pins.has('bot:' + props.bot.id)} onClick={() => pins.toggle('bot:' + props.bot.id)} />
             <Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} />
           </div>
         </header>

@@ -123,19 +123,23 @@
   .ver-table th { display: flex; align-items: center; gap: var(--space-2); color: var(--fg-muted); }
   .ver-state { color: var(--tone-fg); }
   .rail-foot { margin-top: auto; padding-top: var(--space-3); border-top: 1px solid var(--line); }
-  /* The bots zone (nav-rail.md, Bots): at the bottom above the user block, growing up into free space, so no section moves. */
-  .rail-bots { --avatar-ring: var(--rail); margin-top: auto; padding-top: var(--space-3); border-top: 1px solid var(--line); }
-  .rail-bots + .rail-foot { margin-top: 0; }
-  .rail-bots-h a { color: var(--fg-muted); }
-  .rail-bots .nav-i .bot-go, .rail-bots .nav-i .bot-pin { flex: none; color: var(--fg-faint); line-height: 0; }
-  .rail-bots .bot-go .icon, .rail-bots .bot-pin .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
-  .rail-bots .nav-i a .nm:has(.bot-age) { flex: none; }
-  .bot-age { font-size: var(--font-size-sm); color: var(--fg-faint); }
-  .bot-age.t-attention, .bot-age.t-running, .bot-age.t-danger { color: var(--tone-fg); }
-  .bots-strip { --avatar-ring: var(--float); display: flex; flex-direction: column; }
-  .bots-marks { display: flex; gap: var(--space-2); overflow-x: auto; padding: var(--space-1) var(--space-2) var(--space-2); }
-  .bots-marks .bot-tile { flex-direction: column; height: auto; gap: var(--space-1); padding: var(--space-1); min-width: var(--size-hit-phone); }
-  .bots-marks .bot-tile .nm { font-size: var(--font-size-xs); max-width: var(--size-thumb); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The Pinned zone (nav-rail.md, Pinned): at the bottom above the user block, growing up into free space, so no section moves. */
+  .rail-pinned { --avatar-ring: var(--rail); margin-top: auto; padding-top: var(--space-3); border-top: 1px solid var(--line); }
+  .rail-pinned + .rail-foot { margin-top: 0; }
+  .rail-pinned-h .pin-h { flex: 1; display: flex; align-items: center; gap: var(--space-2); min-width: 0; height: var(--size-row-compact); padding: 0 var(--space-3); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); letter-spacing: 0.04em; text-transform: uppercase; }
+  .rail-pinned-h .pin-h .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .rail.mini .rail-pinned-h .pin-h { justify-content: center; padding-inline: 0; }
+  .rail-pinned .rail-pinned-empty .nm { white-space: normal; padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + var(--size-icon) + var(--space-2)); color: var(--fg-muted); font-size: var(--font-size-sm); line-height: 1.35; }
+  .rail-pinned .nav-i a .nm:has(.pin-age) { flex: none; }
+  .pin-age { font-size: var(--font-size-sm); color: var(--fg-faint); }
+  .pin-age.t-attention, .pin-age.t-running { color: var(--tone-fg); }
+  .pinned-strip { --avatar-ring: var(--float); display: flex; flex-direction: column; }
+  .pinned-strip-h { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); letter-spacing: 0.04em; text-transform: uppercase; }
+  .pinned-strip-h .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .pinned-strip-empty { margin: 0; padding: 0 var(--space-3) var(--space-2); color: var(--fg-muted); font-size: var(--font-size-sm); }
+  .pinned-marks { display: flex; gap: var(--space-2); overflow-x: auto; padding: var(--space-1) var(--space-2) var(--space-2); }
+  .pinned-marks .pin-tile { display: flex; flex-direction: column; align-items: center; height: auto; gap: var(--space-1); padding: var(--space-1); min-width: var(--size-hit-phone); }
+  .pinned-marks .pin-tile .nm { font-size: var(--font-size-xs); max-width: var(--size-thumb); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rail-user-b {
     flex: 1;
     display: flex;

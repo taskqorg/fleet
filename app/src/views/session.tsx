@@ -19,6 +19,8 @@ import { useOp, useView } from '../store.ts';
 import type { SessionAgent, SessionGetReply } from '../../../contracts/generated/ops.ts';
 import { nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
+import { usePins } from '../prefs.ts';
+import { PIN_LISTS } from '../rail-pinned.ts';
 import { botAvatarState, botPicture } from '../bot-view.ts';
 import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
 import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
@@ -67,6 +69,8 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
   // One read for the screen (session_view, docs/designs/fleet-conversations.md "Session view"): the head, the composer
   // target, open questions, threads, triggers, the context panel and the newest turns as summaries. quiet: a running
   // session's execution changes many times a second; the view rereads at most once a second.
+  // The conversation's pin (nav-rail.md, Pinned): the Conversations pin, also the navigation's Pinned zone.
+  const pins = usePins(PIN_LISTS.conversations);
   const sDoc = useView('session_view', () => ({ sessionId: props.id }), { quiet: 1000 });
   const [verifiedTarget, setVerifiedTarget] = createSignal<string | null>(null, { ownedWrite: true });
   createEffect(() => [sDoc.data, sDoc.restored, props.id] as const, ([s, restored, id]) => { if (s && !restored) setVerifiedTarget(id); });
@@ -414,12 +418,14 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
                 )}
               </Show>
               <Show when={stop()} keyed>{st => <Button label="Stop" icon="square" iconOnly kind="quiet" disabledReason={off() ? 'offline' : undefined} onClick={st} />}</Show>
+              <Button label={pins.has(props.id) ? 'Unpin' : 'Pin to navigation'} icon="pin" iconOnly kind="quiet" pressed={pins.has(props.id)} onClick={() => pins.toggle(props.id)} />
               <Button label="Fork" icon="git-merge" iconOnly kind="quiet" busy={forking()} disabledReason={off() ? 'offline' : undefined} onClick={() => fork()} />
               <ActionMenu
                 label="Actions"
                 disabledReason={off() ? 'offline' : undefined}
                 items={[
                   { label: 'Details', icon: 'info', onClick: () => setPanel(p => (p === 'details' ? null : 'details')) },
+                  { label: pins.has(props.id) ? 'Unpin' : 'Pin to navigation', icon: pins.has(props.id) ? 'pin-off' : 'pin', onClick: () => pins.toggle(props.id) },
                   { label: 'Copy link', icon: 'link', onClick: copyLink },
                   { label: 'Copy as markdown', icon: 'file-text', onClick: copyThread },
                   { label: 'Rename', icon: 'type', onClick: () => setPanel('rename') },
