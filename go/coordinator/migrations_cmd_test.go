@@ -1,13 +1,19 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// fleet-update decides the pre-deploy dump from this number (fleet-self-update.md, step 8).
-func TestLatestMigration(t *testing.T) {
-	if n := latestMigration("-- migration 3\nSELECT 1;\n-- migration 12\nSELECT 2;\n-- migration 9\n"); n != 12 {
-		t.Fatalf("latestMigration = %d", n)
+// fleet-update decides the pre-deploy dump from these ids (fleet-self-update.md, step 8): every numbered section of
+// schema.sql and every file of migrations/, in apply order.
+func TestMigrationIDs(t *testing.T) {
+	out, err := migrationIDs()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if latestMigration(schemaSQL) < 100 {
-		t.Fatal("schema.sql migrations not found")
+	ids := strings.Split(out, "\n")
+	if len(ids) < 100 || ids[0] != "1" {
+		t.Fatalf("migration ids = %.80q", out)
 	}
 }

@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
-	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -403,30 +401,6 @@ func onEnd(tx pgx.Tx, fn func(committed bool)) {
 	*hooks = append(*hooks, fn)
 }
 
-var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
-
-// latestMigration is the highest "-- migration N" of sqlText (0 when there is none).
-func latestMigration(sqlText string) int {
-	n := 0
-	for _, m := range migrationSplit.FindAllStringSubmatch(sqlText, -1) {
-		if v, _ := strconv.Atoi(m[1]); v > n {
-			n = v
-		}
-	}
-	return n
-}
-
-// migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction that takes
-// the migration lock before it checks schema_migration, so concurrent starts never run a section twice. Then
-// applySchemaFiles brings every function, trigger and policy to its one current definition in schema/*.sql.
-// Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
-func migrate(ctx context.Context, url string) error {
-	if err := migrateSQL(ctx, url, schemaSQL); err != nil {
-		return err
-	}
-	return applySchemaFiles(ctx, url)
-}
-
 // migrateLocked runs fn in one transaction holding the migration lock (GLOBAL), so concurrent starts apply each step once.
 func migrateLocked(ctx context.Context, conn *pgx.Conn, fn func(q *db.Queries, tx pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
@@ -436,43 +410,6 @@ func migrateLocked(ctx context.Context, conn *pgx.Conn, fn func(q *db.Queries, t
 		}
 		return fn(q, tx)
 	})
-}
-
-// migrateSQL applies the numbered sections of sqlText that schema_migration does not list yet.
-func migrateSQL(ctx context.Context, url, sqlText string) error {
-	conn, err := pgx.Connect(ctx, url)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(ctx)
-	if _, err := conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
-		return err
-	}
-	text := []byte(sqlText)
-	idx := migrationSplit.FindAllSubmatchIndex(text, -1)
-	for i, m := range idx {
-		version, _ := strconv.Atoi(string(text[m[2]:m[3]]))
-		end := len(text)
-		if i+1 < len(idx) {
-			end = idx[i+1][0]
-		}
-		body := string(text[m[0]:end])
-		err := migrateLocked(ctx, conn, func(q *db.Queries, tx pgx.Tx) error {
-			// Decided under the lock: another coordinator may have applied this version while this one waited for it.
-			if applied, err := q.MigrationApplied(ctx, int32(version)); err != nil || applied {
-				return err
-			}
-			// Simple protocol: the whole section runs as one multi-statement query inside the transaction.
-			if _, err := tx.Exec(ctx, body, pgx.QueryExecModeSimpleProtocol); err != nil {
-				return err
-			}
-			return q.MigrationRecord(ctx, int32(version))
-		})
-		if err != nil {
-			return errors.New("migration " + strconv.Itoa(version) + ": " + err.Error())
-		}
-	}
-	return nil
 }
 
 // The current definitions of functions, triggers and policies (S1): functions first, which the triggers and policies call.
@@ -658,8 +595,3 @@ func msOf(t any) any {
 	}
 	return nil
 }
-
-// The schema is part of the binary: schema.sql next to this file is the schema source (committed).
-
-//go:embed schema.sql
-var schemaSQL string

@@ -120,10 +120,10 @@ func startTestCluster(bin, dir string, port int) error {
 	return fmt.Errorf("pg_ctl start: %v: %s", startErr, out)
 }
 
-// testSchemaHash: what decides a migrated database's content (schema.sql, schema/*.sql and the roles script).
+// testSchemaHash: what decides a migrated database's content (schema.sql, migrations/, schema/*.sql and the roles script).
 func testSchemaHash() (string, error) {
 	h := sha256.New()
-	h.Write([]byte(schemaSQL))
+	h.Write([]byte(migrationsText()))
 	files, err := fs.Glob(schemaFS, "schema/*.sql")
 	if err != nil {
 		return "", err

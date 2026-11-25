@@ -40,7 +40,7 @@ JSONB only for genuinely open payloads, in a column named `payload`. The `docume
 mirror columns of `execution`/`task`/`question` go away. Delete = `deleted_at` column plus one generated
 `live` policy; `archived_at` and similar are their own columns. Visibility = one SQL function
 `fleet_visible(project_id)` used by every policy; scope changes only through one Store helper that
-restores it. Numbered migrations only change tables; functions, triggers and policies live in idempotent
+restores it. Migrations (`go/coordinator/migrations/`, one file each) only change tables; functions, triggers and policies live in idempotent
 files under `go/coordinator/schema/` re-applied on every start, so each has exactly one current definition.
 
 **S2 Queries.** Only sqlc (pgx/v5) from `go/coordinator/queries/<area>.sql` into package `fleet/coordinator/db`.

@@ -30,7 +30,7 @@
 
 - Downloads release metadata and archives, writes cached metadata and update state, installs release trees and symlinks, restarts services, and prunes obsolete releases ([update.go: `fetch`, `install`, `pruneReleases`](update.go)).
 - Executor mode may write the target-file trigger unit through `runExecutor` and `ensureTrigger` ([main.go](main.go), [trigger.go: `triggerFor`](trigger.go)).
-- On PDS18 it may upload source maps to Bugsink's loopback address, run `pg_dump` before a release that carries a new migration (`stagedMigrates`: the staged `fleet-coordinator migrations` against `schema_migration`), copy the verified updater to its root-owned path, and update UI release files ([main.go: `runPDS18`, `installUpdater`](main.go), [ui.go: `cycleUI`](ui.go)).
+- On PDS18 it may upload source maps to Bugsink's loopback address, run `pg_dump` before a release that carries a new migration (`stagedMigrates`: a migration id the staged `fleet-coordinator migrations` lists and `schema_migration` lacks), copy the verified updater to its root-owned path, and update UI release files ([main.go: `runPDS18`, `installUpdater`](main.go), [ui.go: `cycleUI`](ui.go)).
 
 ## Verification
 

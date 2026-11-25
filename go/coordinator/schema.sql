@@ -1,6 +1,7 @@
--- Fleet Postgres schema. Each "-- migration N" section runs once, in order, inside one transaction,
+-- Fleet Postgres schema: the numbered migrations 1 to 121. Closed: a new migration is a file in migrations/
+-- (migrations/README.md), which run after these. Each "-- migration N" section runs once, in order, inside one transaction,
 -- as the owner role fleet; fleet_app gets row access through the default privileges in deploy/infrastructure/fleet-postgres.sql.
--- schema_migration(version, applied_at) is created by store.migrate() before the first section.
+-- schema_migration(id, applied_at, version) is created by migrate() (migrations.go) before the first section.
 
 -- migration 1: legacy records as documents (design Phase 1, item 10)
 CREATE TABLE document(

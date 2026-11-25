@@ -694,25 +694,38 @@ func (u *updater) getCached(url string, check func([]byte) error) (cached, error
 	}
 }
 
-// stagedMigrates compares the staged coordinator's newest migration with the newest one the database applied.
+// stagedMigrates tells whether the staged coordinator carries a migration id the database has not applied
+// (`fleet-coordinator migrations` prints them one per line). schema_migration is read by id, or by version before the
+// coordinator converted it from numbers to ids.
 func stagedMigrates(staged string) (bool, error) {
 	out, err := exec.Command(filepath.Join(staged, "fleet-coordinator"), "migrations").Output()
 	if err != nil {
 		return true, err
 	}
-	carried, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	applied, err := exec.Command("runuser", "-u", "postgres", "--", "psql", "-d", "fleet", "-Atc",
+		"SELECT coalesce(to_jsonb(m)->>'id', to_jsonb(m)->>'version') FROM schema_migration m").Output()
 	if err != nil {
 		return true, err
 	}
-	out, err = exec.Command("runuser", "-u", "postgres", "--", "psql", "-d", "fleet", "-Atc", "SELECT coalesce(max(version),0) FROM schema_migration").Output()
-	if err != nil {
-		return true, err
+	return missingMigration(string(out), string(applied))
+}
+
+// missingMigration: whether a line of carried (the staged build's migration ids) is not a line of applied.
+func missingMigration(carried, applied string) (bool, error) {
+	have := map[string]bool{}
+	for _, id := range strings.Fields(applied) {
+		have[id] = true
 	}
-	applied, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return true, err
+	ids := strings.Fields(carried)
+	if len(ids) == 0 {
+		return true, errors.New("the staged coordinator lists no migration")
 	}
-	return carried > applied, nil
+	for _, id := range ids {
+		if !have[id] {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // pgDump runs pg_dump as postgres; root writes the file (postgres cannot write /backup/fleet/pre-deploy).

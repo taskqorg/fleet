@@ -1,10 +1,10 @@
--- The migration steps of store.go (migrateSQL, applySchemaFiles), each in one transaction under the migration lock.
+-- The migration steps of migrations.go (applyMigrations) and store.go (applySchemaFiles), each in one transaction under the migration lock.
 
 -- name: MigrationApplied :one
-SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version = @version::int);
+SELECT EXISTS(SELECT 1 FROM schema_migration WHERE id = @id::text);
 
 -- name: MigrationRecord :exec
-INSERT INTO schema_migration(version) VALUES (@version::int);
+INSERT INTO schema_migration(id) VALUES (@id::text);
 
 -- name: SchemaFileHash :one
 SELECT sha256 FROM schema_file WHERE name = @name;

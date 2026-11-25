@@ -674,10 +674,7 @@ func TestDesignScheduling(t *testing.T) {
 // state has a row or is declared terminal, every target is a state, every state is reachable and reaches a terminal one,
 // and buildTransition moves only to declared phases.
 func TestDesignTransitions(t *testing.T) {
-	schema, err := os.ReadFile("schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
+	schema := []byte(migrationsText())
 	m := regexp.MustCompile(`phase text NOT NULL DEFAULT '(\w+)' CHECK\(phase IN \(([^)]*)\)\)`).FindSubmatch(schema)
 	if m == nil {
 		t.Fatal("resource_build.phase check not found in schema.sql")
