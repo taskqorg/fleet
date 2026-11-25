@@ -594,3 +594,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Next adopters:** Tasks (its row facts become `WorkFacts`), Conversations (agent mark and time in state), Results and Runners (time and agent), Home cards (time in state).
 * **Rule:** [OR-63](owner-rules.md).
 * **Board (OR-62):** options A, B and C drawn on `drafts/live-rows`; the owner picked B, now in [screens/live.bl](board/screens/live.bl).
+
+## 2026-11-25: Tasks rows use the work facts
+
+* **Question (owner):** move the Tasks list to the shared work facts too.
+* **Choice:** the Tasks row facts keep open questions, the delivery stage, run evidence that needs a look (stale, stalled, unconfirmed) and spend; attempts, task age, current run age, time in state and the agent become [work facts](controls/work-facts.md) in the approved form B. The fixed two-hour "running too long" alert is removed (no invented limits): a long task stands out against the page's open tasks (`peerFence`). A finished task shows how long ago it reached its state instead of a time in work. The row is the approved `Work facts` block; no new drawing (OR-62).
+

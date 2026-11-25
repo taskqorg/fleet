@@ -198,9 +198,12 @@ export async function checkTaskStory(browser: Browser, origin: string) {
       assert.equal(await row.locator('.chip-age.t-danger').count(), 0, `row ${id} must not show red duration warning`);
       assert.equal(await row.locator('[aria-label*="running too long"]').count(), 0, `row ${id} must not say running too long`);
     }
+    // Work facts (OR-63): no fixed "running too long"; time in work and the latest attempt, judged against the peers.
     const longRow = t33Page.locator('.vl-row[data-key="305"]');
-    assert.equal(await longRow.locator('.chip-age.t-danger[aria-label*="running too long"]').count(), 1, 'genuinely active 2h30m run shows red running too long alert');
-    assert.equal(await longRow.locator('.row-facts [data-tip="Task age since first run"]').count(), 1, 'task age shown separately from current run');
+    assert.equal(await longRow.locator('[aria-label*="running too long"]').count(), 0, 'no fixed-limit duration alert');
+    assert.equal(await longRow.locator('.row-facts [data-tip="In work since the first attempt"]').count(), 1, 'time in work shown');
+    assert.match(await longRow.locator('.row-facts [data-tip="In work since the first attempt"] time').getAttribute('data-tip') ?? '', /latest attempt/, 'latest attempt in the tooltip');
+    assert.equal(await longRow.locator('.row-facts .attempts').textContent(), '×2', 'two attempts');
 
     assert.equal(await t33Page.locator('.vl-row[data-key="306"] .chip-age.t-danger').count(), 0);
     assert.equal(await t33Page.locator('.vl-row[data-key="306"] .chip-age.t-attention[aria-label*="run evidence stale"]').count(), 1);

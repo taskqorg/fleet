@@ -414,7 +414,8 @@ export type WorkFactsProps = {
 /**
  * Work facts in the row's right zone, quiet form (owner pick B, 25 Nov): `×N` attempts, time in work (clock), agent
  * mark. The latest attempt and the time in the current state are in the tooltip of the time in work and in the item's
- * detail; a row with no time in work (a failing slot) shows the latest attempt instead. `×N` from two attempts; a
+ * detail; a row with no time in work shows the latest attempt instead (a failing slot), else the time in its state (a
+ * finished task). `×N` from two attempts; a
  * moment equal to the start of work (within a minute) is left out of the tooltip. Outliers stand out against their
  * peers, never against a fixed number (peerFence).
  */
@@ -434,7 +435,11 @@ export function WorkFacts(p: WorkFactsProps) {
           aria-label={`${n().toLocaleString('en')} attempts`}>×{n().toLocaleString('en')}</span>
       </Show>
       <Show when={fin(p.workAt)} fallback={
-        <Show when={fin(p.lastAt)}>
+        <Show when={fin(p.lastAt)} fallback={
+          <Show when={p.state && fin(p.state.at)}>
+            <Fact tip={`${p.state!.label} for`}><AgeChip t={p.state!.at} clockOffsetMs={p.clockOffsetMs} /></Fact>
+          </Show>
+        }>
           <Fact icon={actions.runs} tip={p.lastLabel ?? 'Latest attempt'}><AgeChip t={p.lastAt!} clockOffsetMs={p.clockOffsetMs} /></Fact>
         </Show>
       }>

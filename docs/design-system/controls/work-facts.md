@@ -12,7 +12,7 @@
 | In work | time since the first attempt started ([OR-2](../owner-rules.md)) | clock | the exact start, then the latest attempt and "`<State>` since", each as an exact time |
 | Agent | the agent's [harness mark](harness-counts.md) | the mark | the agent's name |
 
-The latest attempt and the time in the current state are not on the row: they are in the tooltip of the time in work and in the item's detail. A row with no time in work (a failing worker slot) shows the time since the latest attempt instead (repeat icon). The item's state itself is the row's state icon on the left ([OR-22](../owner-rules.md)).
+The latest attempt and the time in the current state are not on the row: they are in the tooltip of the time in work and in the item's detail. A row with no time in work shows the time since the latest attempt instead (a failing worker slot, repeat icon), else the time in its state (a finished task, `Completed for` in the tooltip). The item's state itself is the row's state icon on the left ([OR-22](../owner-rules.md)).
 
 **When each part shows.** By meaning, never by a fixed number:
 * `×N` from two attempts: one attempt is the usual case and says nothing.
@@ -30,4 +30,4 @@ The latest attempt and the time in the current state are not on the row: they ar
 
 **Do.** Pass the peers of the same list. **Don't.** Add a fixed limit ("more than 10 attempts"), a cost or a model ([OR-54](../owner-rules.md)).
 
-**Used in.** [Live](../pages/live.md): worker slots, In work, Delivery, Just now. Next: the Tasks, Conversations, Results and Runners lists ([decisions](../decisions.md#2026-11-25-one-row-anatomy-for-work)).
+**Used in.** [Live](../pages/live.md): worker slots, In work, Delivery, Just now; [Tasks](../pages/tasks.md) rows (peers: the page's open tasks; a finished task has no time in work). Next: the Conversations, Results and Runners lists ([decisions](../decisions.md#2026-11-25-one-row-anatomy-for-work)).
