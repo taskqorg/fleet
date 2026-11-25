@@ -163,6 +163,14 @@
      text in the DOM and its tooltip), at most a quarter of the row so the title keeps the most space (OR-21); hidden on a
      row narrower than 480 px, where the title keeps 60% (OR-60). */
   .vl-row:has(.row-now) { container-type: inline-size; }
+  /* Runner rows (pages/runners.md): in a narrow pane the facts wrap under the title with the time strip, time last (OR-23, OR-64). */
+  .runner-rows { container-type: inline-size; }
+  @container (width < 40rem) {
+    .runner-rows > .vl-row.static { grid-template-columns: 1.25rem minmax(0, 1fr) auto; row-gap: var(--space-1); height: auto; min-height: var(--size-row); padding-block: var(--space-1); }
+    .runner-rows > .vl-row.static > .tt { grid-column: 2 / -1; }
+    .runner-rows > .vl-row.static > :nth-child(3) { grid-column: 2; }
+    .runner-rows > .vl-row.static > .rz { grid-column: 3; justify-self: end; }
+  }
   .row-facts .row-now { font-family: var(--font-sans); max-inline-size: 25cqi; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @container (inline-size < 480px) { .row-facts .row-now { display: none; } }
   .row-spend { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--space-1); inline-size: 16ch; white-space: nowrap; color: inherit; text-decoration: none; }
