@@ -12,7 +12,7 @@ func TestProviderErrorDetail(t *testing.T) {
 		{`{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}`, "rate_limit_error; Rate limited"},
 		{`{"error":"no-usable-key","message":"every key is disabled"}`, "no-usable-key; every key is disabled"},
 		{`{"message":"Bad credentials"}`, "Bad credentials"},
-		{`{"text":"plain"}`, ""},
+		{`{"text":"Too Many Requests"}`, "Too Many Requests"},
 		{`not json`, ""},
 	} {
 		if got := providerErrorDetail(json.RawMessage(c.body)); got != c.want {

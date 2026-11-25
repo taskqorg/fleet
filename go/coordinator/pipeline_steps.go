@@ -699,7 +699,11 @@ func pipelinePollRecord(q *Request, now time.Time, run *runRecord, i int, line c
 			return pipelineLater(q, runID)
 		}
 		code := deref(line.ErrorCode)
-		return run.failStep(q, i, problemOf(string(line.Outcome), code), "Job poll failed: "+code)
+		msg := "Job poll failed: " + code
+		if d := providerErrorDetail(line.Output); d != "" {
+			msg += ": " + d
+		}
+		return run.failStep(q, i, problemOf(string(line.Outcome), code), msg)
 	}
 	var polls int64
 	if s.Polls != nil {
@@ -739,12 +743,14 @@ const providerErrorDetailMax = 500
 
 // providerErrorDetail: the reason a provider gave in a failed reply, so a step failure says which limit or rule refused
 // it (a Google 429 names its quota: free tier, per model, per project). It reads the common error shapes: {error:
-// {message, status, details: [{violations: [{quotaId}]}]}}, {error: "..."}, {message: "..."}; "" when there is none.
+// {message, status, details: [{violations: [{quotaId}]}]}}, {error: "..."}, {message: "..."} and a text reply
+// ({text: "..."}); "" when there is none.
 // The gateway already replaced an echoed key value; at most providerErrorDetailMax characters.
 func providerErrorDetail(body json.RawMessage) string {
 	var v struct {
 		Error   json.RawMessage `json:"error"`
 		Message string          `json:"message"`
+		Text    string          `json:"text"` // a reply that was not JSON, as the gateway client wraps it
 	}
 	if json.Unmarshal(body, &v) != nil {
 		return ""
@@ -773,7 +779,7 @@ func providerErrorDetail(body json.RawMessage) string {
 		}
 	}
 	if len(parts) == 0 || strings.Join(parts, "") == "" {
-		parts = append(parts, v.Message)
+		parts = append(parts, v.Message, v.Text)
 	}
 	out := []string{}
 	for _, p := range parts {
