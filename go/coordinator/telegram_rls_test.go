@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"fleet/contract"
 	"fleet/coordinator/db"
 )
 
@@ -59,5 +60,40 @@ func TestTelegramRowsFollowScope(t *testing.T) {
 	}
 	if len(all) != 2 {
 		t.Fatalf("the coordinator sees %d rooms, want 2", len(all))
+	}
+}
+
+// Conversations grouped by room: one group per chat and topic, labelled with the group's title (a topic as
+// "<group> › <topic>", one whose name Fleet has not seen as "<group> › topic <n>"), a private chat as such, and the
+// conversations without a room under a null label ("No room"). Risk: two rooms of one group share a label.
+func TestSessionsRoomGroups(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	exec(`INSERT INTO telegram_room (id, chat_id, thread_id, kind, title, chat_title) VALUES
+	 ('-100:0', -100, 0, 'supergroup', 'PilotQ TEST', 'PilotQ TEST'), ('-100:3', -100, 3, 'supergroup', 'Billing', 'PilotQ TEST'),
+	 ('-100:7', -100, 7, 'supergroup', '', ''), ('42:0', 42, 0, 'private', '', '')`)
+	for _, s := range []struct{ id, room string }{{"rg-general", "-100:0"}, {"rg-topic", "-100:3"}, {"rg-unnamed", "-100:7"}, {"rg-dm", "42:0"}, {"rg-none", ""}} {
+		exec(`INSERT INTO session (id, project_id, created_at) VALUES ($1, 'p1', clock_timestamp())`, s.id)
+		if s.room != "" {
+			exec(`INSERT INTO telegram_work (id, room_id, session_id, title, created_by) VALUES ($1, $2, $3, '', 'ann@example.com')`, "w-"+s.id, s.room, s.id)
+		}
+	}
+	var out contract.SessionsListReply
+	e.opInto(t, "sessions_list", map[string]any{"group": "room"}, e.ownerHeaders(), &out)
+	got := map[string]string{}
+	for _, g := range out.Groups {
+		got[g.Key] = deref(g.Label)
+	}
+	want := map[string]string{"r:-100:0": "Telegram · PilotQ TEST", "r:-100:3": "Telegram · PilotQ TEST › Billing",
+		"r:-100:7": "Telegram · PilotQ TEST › topic 7", "r:42:0": "Telegram · private chat", "~": ""}
+	for k, v := range want {
+		if l, ok := got[k]; !ok || l != v {
+			t.Errorf("group %s: label %q, want %q (all: %v)", k, l, v, got)
+		}
 	}
 }

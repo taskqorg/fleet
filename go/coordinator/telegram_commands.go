@@ -81,7 +81,8 @@ func init() {
 		{name: "stop", where: "any", run: telegramStop,
 			words: map[string]tgCommandWords{"en": {"", "stop the runs answering this chat"}, "ru": {"", "остановить запуски, которые отвечают в этот чат"}}},
 		{name: "new", where: "private", run: func(x *tgCommandCall) error {
-			if err := x.q.db().TelegramPersonSetHome(x.q.ctx(), db.TelegramPersonSetHomeParams{Email: x.tp.Email}); err != nil {
+			// The private room's current conversation closes; the next message starts a new one (telegramDeliver).
+			if err := x.q.db().TelegramRoomCloseWork(x.q.ctx(), x.room.ID); err != nil {
 				return err
 			}
 			return x.reply(say(x.lang, "newHome", ""))

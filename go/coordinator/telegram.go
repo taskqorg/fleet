@@ -145,6 +145,28 @@ func telegramRoomID(chat, thread int64) string {
 	return strconv.FormatInt(chat, 10) + ":" + strconv.FormatInt(thread, 10)
 }
 
+// telegramCurrent: a room's current conversation, its most recent open work item (nil: none). A private chat is a
+// room with one person (chat id = their user id), so its ongoing chat is this too (conversation model step 5).
+func telegramCurrent(q *Request, roomID string) (*db.TelegramWork, error) {
+	w, err := q.db().TelegramRoomCurrent(q.ctx(), roomID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// telegramHome: the conversation of the person's private chat (the contracts' homeSessionId), nil without one.
+func telegramHome(q *Request, tp db.TelegramPerson) (*string, error) {
+	w, err := telegramCurrent(q, telegramRoomID(tp.TelegramUserID, 0))
+	if w == nil || err != nil {
+		return nil, err
+	}
+	return &w.SessionID, nil
+}
+
 // --- health of the poll (in memory: one coordinator polls; telegram_status reads it) ---
 
 var telegramHealth struct {
@@ -374,7 +396,7 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 		return telegramDone(q, row.ID, "no-person", "")
 	}
 	room, err := q.db().TelegramRoomUpsert(q.ctx(), db.TelegramRoomUpsertParams{ID: telegramRoomID(m.Chat.ID, m.thread()), ChatID: m.Chat.ID,
-		ThreadID: m.thread(), Kind: m.Chat.Type, Title: roomTitle(m)})
+		ThreadID: m.thread(), Kind: m.Chat.Type, Title: roomTitle(m), ChatTitle: m.Chat.Title})
 	if err != nil {
 		return err
 	}
@@ -440,12 +462,15 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 			}
 			return telegramDone(q, row.ID, "status", "")
 		}
+		// The private room's current conversation, as a group room's work item; none (or archived): the message starts one.
 		t := tgTarget{newHome: true}
-		if tp.HomeSessionID != nil {
-			if s, err := sessionMaybe(q, *tp.HomeSessionID); err != nil {
+		if w, err := telegramCurrent(q, room.ID); err != nil {
+			return err
+		} else if w != nil {
+			if s, err := sessionMaybe(q, w.SessionID); err != nil {
 				return err
 			} else if s != nil && s.ArchivedAt == nil {
-				t = tgTarget{sessionID: s.ID}
+				t = tgTarget{sessionID: s.ID, workID: w.ID}
 			}
 		}
 		return telegramDeliver(q, c, &row, room, m, tp, p, t)
@@ -576,14 +601,16 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 					return err
 				}
 				if t.newHome {
-					if err := pq.db().TelegramPersonSetHome(pq.ctx(), db.TelegramPersonSetHomeParams{Email: tp.Email, SessionID: &sid}); err != nil {
+					// The new conversation becomes the private room's current one; an archived one before it is closed.
+					if err := pq.db().TelegramRoomCloseWork(pq.ctx(), room.ID); err != nil {
 						return err
 					}
-				} else {
-					t.workID = "work:" + rid
-					if err := pq.db().TelegramWorkAdd(pq.ctx(), db.TelegramWorkAddParams{ID: t.workID, RoomID: room.ID, SessionID: sid, Title: t.newWork, CreatedBy: tp.Email}); err != nil {
-						return err
-					}
+				}
+				t.workID = "work:" + rid
+				if err := pq.db().TelegramWorkAdd(pq.ctx(), db.TelegramWorkAddParams{ID: t.workID, RoomID: room.ID, SessionID: sid, Title: t.newWork, CreatedBy: tp.Email}); err != nil {
+					return err
+				}
+				if !t.newHome {
 					// The notice is the work item's status message, edited in place afterwards (telegramWorkStatus). A room
 					// whose only work this is gets none: one conversation needs no announcement (owner-tester, 2026-11-25).
 					others, err := pq.db().TelegramWorkOpen(pq.ctx(), room.ID)
@@ -1581,8 +1608,9 @@ func telegramStatus(q *Request, _ *contract.TelegramStatusRequest) (contract.Tel
 	if err != nil {
 		return out, err
 	}
-	out.Me = contract.TelegramMe{Linked: true, TelegramUserId: &tp.TelegramUserID, Username: &tp.Username, Language: &tp.Language, HomeSessionId: tp.HomeSessionID}
-	return out, nil
+	home, err := telegramHome(q, tp)
+	out.Me = contract.TelegramMe{Linked: true, TelegramUserId: &tp.TelegramUserID, Username: &tp.Username, Language: &tp.Language, HomeSessionId: home}
+	return out, err
 }
 
 var linkAlphabet = base32.NewEncoding("ABCDEFGHJKLMNPQRSTUVWXYZ23456789").WithPadding(base32.NoPadding)
@@ -1688,13 +1716,15 @@ func telegramPersonSet(q *Request, r *contract.TelegramPersonSetRequest) (contra
 	if err != nil {
 		return out, err
 	}
-	out.Person = ptr(telegramPersonOf(tp))
-	return out, nil
+	person, err := telegramPersonOf(q, tp)
+	out.Person = &person
+	return out, err
 }
 
-func telegramPersonOf(tp db.TelegramPerson) contract.TelegramPerson {
+func telegramPersonOf(q *Request, tp db.TelegramPerson) (contract.TelegramPerson, error) {
+	home, err := telegramHome(q, tp)
 	return contract.TelegramPerson{Email: tp.Email, TelegramUserId: tp.TelegramUserID, Username: tp.Username, Language: tp.Language,
-		HomeSessionId: tp.HomeSessionID, LinkedAt: tp.LinkedAt.UnixMilli()}
+		HomeSessionId: home, LinkedAt: tp.LinkedAt.UnixMilli()}, err
 }
 
 func telegramPeople(q *Request, _ *contract.TelegramPeopleRequest) (contract.TelegramPeopleReply, error) {
@@ -1704,7 +1734,11 @@ func telegramPeople(q *Request, _ *contract.TelegramPeopleRequest) (contract.Tel
 		return out, err
 	}
 	for _, p := range ps {
-		out.People = append(out.People, telegramPersonOf(p))
+		person, err := telegramPersonOf(q, p)
+		if err != nil {
+			return out, err
+		}
+		out.People = append(out.People, person)
 	}
 	us, err := q.db().TelegramUnknownSenders(q.ctx())
 	for _, u := range us {

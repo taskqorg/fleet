@@ -55,14 +55,10 @@ INSERT INTO telegram_person(email, telegram_user_id, username, language)
 VALUES (@email, @telegram_user_id, @username, @language)
 ON CONFLICT (email) DO UPDATE SET telegram_user_id = EXCLUDED.telegram_user_id, username = EXCLUDED.username,
   language = CASE WHEN EXCLUDED.language <> '' THEN EXCLUDED.language ELSE telegram_person.language END,
-  home_session_id = CASE WHEN telegram_person.telegram_user_id = EXCLUDED.telegram_user_id THEN telegram_person.home_session_id END,
   linked_at = CASE WHEN telegram_person.telegram_user_id = EXCLUDED.telegram_user_id THEN telegram_person.linked_at ELSE clock_timestamp() END;
 
 -- name: TelegramPersonSetLanguage :execrows
 UPDATE telegram_person SET language = @language WHERE email = @email;
-
--- name: TelegramPersonSetHome :exec
-UPDATE telegram_person SET home_session_id = sqlc.narg(session_id) WHERE email = @email;
 
 -- name: TelegramPersonDelete :execrows
 DELETE FROM telegram_person WHERE email = $1;
@@ -77,10 +73,11 @@ WHERE code = $1 AND used_at IS NULL AND created_at > clock_timestamp() - interva
 RETURNING email;
 
 -- name: TelegramRoomUpsert :one
-INSERT INTO telegram_room(id, chat_id, thread_id, kind, title)
-VALUES (@id, @chat_id, @thread_id, @kind, @title)
+INSERT INTO telegram_room(id, chat_id, thread_id, kind, title, chat_title)
+VALUES (@id, @chat_id, @thread_id, @kind, @title, @chat_title)
 ON CONFLICT (chat_id, thread_id) DO UPDATE SET seen_at = clock_timestamp(), kind = EXCLUDED.kind,
-  title = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE telegram_room.title END
+  title = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE telegram_room.title END,
+  chat_title = CASE WHEN EXCLUDED.chat_title <> '' THEN EXCLUDED.chat_title ELSE telegram_room.chat_title END
 RETURNING *;
 
 -- name: TelegramRoomGet :one
@@ -105,6 +102,14 @@ SELECT * FROM telegram_work WHERE room_id = @room_id AND session_id = @session_i
 -- name: TelegramWorkOpen :many
 -- A room's open work items, most recent first: what the conductor chooses among.
 SELECT * FROM telegram_work WHERE room_id = $1 AND closed_at IS NULL ORDER BY last_at DESC LIMIT 8;
+
+-- name: TelegramRoomCurrent :one
+-- A room's current conversation: its most recent open work item. In a private chat it is the person's ongoing chat
+-- (conversation model step 5); /new closes it.
+SELECT * FROM telegram_work WHERE room_id = $1 AND closed_at IS NULL ORDER BY last_at DESC LIMIT 1;
+
+-- name: TelegramRoomCloseWork :exec
+UPDATE telegram_work SET closed_at = clock_timestamp() WHERE room_id = $1 AND closed_at IS NULL;
 
 -- name: TelegramWorkList :many
 SELECT * FROM telegram_work WHERE closed_at IS NULL ORDER BY last_at DESC LIMIT 500;
@@ -207,18 +212,12 @@ SELECT coalesce((SELECT e.state::text FROM execution e WHERE e.session_id = @ses
 SELECT * FROM telegram_work WHERE closed_at IS NULL AND last_at > clock_timestamp() - interval '7 days' ORDER BY last_at DESC LIMIT 200;
 
 -- name: TelegramQuestionsToPush :many
--- Open questions of a work item's or a home conversation not yet sent to Telegram, with where they go.
-SELECT q.id, q.kind::text AS kind, q.text, q.options, q.session_id::text AS session_id, w.id AS work_id, r.chat_id, r.thread_id,
-  ''::text AS email
+-- Open questions of a work item's conversation (a private chat's current one included) not yet sent to Telegram, with
+-- where they go.
+SELECT q.id, q.kind::text AS kind, q.text, q.options, q.session_id::text AS session_id, w.id AS work_id, r.chat_id, r.thread_id
 FROM question q
 JOIN telegram_work w ON w.session_id = q.session_id AND w.closed_at IS NULL
 JOIN telegram_room r ON r.id = w.room_id
-WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
-  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
-UNION ALL
-SELECT q.id, q.kind::text, q.text, q.options, q.session_id::text, ''::text, p.telegram_user_id, 0::bigint, p.email
-FROM question q
-JOIN telegram_person p ON p.home_session_id = q.session_id
 WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
   AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
 LIMIT 50;
@@ -246,13 +245,12 @@ SELECT id, kind::text AS kind, state::text AS state, text, options, session_id, 
 SELECT id, code, title, state::text AS state, wait_reason, project_id FROM task WHERE id = $1 OR code = upper($1) LIMIT 1;
 
 -- name: TelegramOpenQuestions :many
--- Open questions of a group room's work items, or (private) of the person's home conversation and the work items they
--- opened, oldest first (/needs).
+-- Open questions of a group room's work items, or (private) of the work items the person opened (their private
+-- chat's current conversation included), oldest first (/needs).
 SELECT q.id, q.kind::text AS kind, q.text, q.session_id FROM question q
 WHERE q.state = 'open' AND q.session_id IN (
   SELECT w.session_id FROM telegram_work w WHERE w.closed_at IS NULL
-    AND ((NOT @private::boolean AND w.room_id = @room_id) OR (@private::boolean AND w.created_by = @email))
-  UNION SELECT p.home_session_id FROM telegram_person p WHERE @private::boolean AND p.email = @email AND p.home_session_id IS NOT NULL)
+    AND ((NOT @private::boolean AND w.room_id = @room_id) OR (@private::boolean AND w.created_by = @email)))
 ORDER BY q.asked_at LIMIT 10;
 
 -- name: TelegramOverlaps :many
