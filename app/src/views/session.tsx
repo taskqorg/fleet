@@ -63,7 +63,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const alive = useAlive();
   const sDoc = useOp('session_get', () => ({ sessionId: props.id }));
   const targetDoc = useOp('thread_composer', () => ({ conversationId: props.id }));
-  const ctxDoc = useOp('session_context', () => ({ sessionId: props.id }));
+  // quiet: a running session's execution changes many times a second; the panel rereads at most once a second.
+  const ctxDoc = useOp('session_context', () => ({ sessionId: props.id }), { quiet: 1000 });
   const projects = useOp('project_list', () => (sDoc.data?.projectId ? {} : null));
   const [verifiedTarget, setVerifiedTarget] = createSignal<string | null>(null, { ownedWrite: true });
   createEffect(() => [sDoc.data, sDoc.restored, props.id] as const, ([s, restored, id]) => { if (s && !restored) setVerifiedTarget(id); });
@@ -194,7 +195,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const copyThread = () => copySel(all()!);
 
   // Panels that open in place under the head (OR-14): rename, start fresh, switch or hand off, details, timer edit, swarm board.
-  const [panel, setPanel] = createSignal<'rename' | 'fresh' | 'details' | 'swarm' | { timer: number } | { session: SessionGetReply; handoff: boolean } | null>(null);
+  const [panel, setPanel] = createSignal<'rename' | 'fresh' | 'details' | 'swarm' | { timer: number; paused: boolean } | { session: SessionGetReply; handoff: boolean } | null>(null);
   const switchPanel = createMemo(() => { const p = panel(); return p && typeof p === 'object' && 'session' in p ? p : null; });
   const timerPanel = createMemo(() => { const p = panel(); return p && typeof p === 'object' && 'timer' in p ? p : null; });
   const [nextInstruction, setNextInstruction] = createSignal('');
@@ -276,12 +277,13 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const onTimer = (id: string, action: 'pause' | 'edit' | 'cancel') => {
     const t = ctx()?.timers.find(x => x.id === id);
     if (!t) return;
-    if (action === 'edit') { setSheetOpen(false); setPanel({ timer: t.everyMs }); return; }
+    if (action === 'edit') { setSheetOpen(false); setPanel({ timer: t.everyMs, paused: t.paused }); return; }
     void timerChange(t, action === 'pause' ? (t.paused ? 'resume' : 'pause') : 'cancel');
   };
+  // The base is the timer the panel opened on, so a timer changed meanwhile answers 409 instead of being overwritten.
   const saveTimer = (minutes: number) => {
-    const t = ctx()?.timers[0];
-    if (t) void timerChange(t, 'edit', Math.round(minutes * 60_000));
+    const t = timerPanel();
+    if (t) void timerChange({ everyMs: t.timer, paused: t.paused }, 'edit', Math.round(minutes * 60_000));
   };
   const contextPanel = (onHide?: () => void) => (
     <ContextPanel loading={!ctx() && !ctxDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} tasks={tasks()} onHide={onHide} onTimer={onTimer} onOpen={href => { setSheetOpen(false); go(href); }} />
