@@ -64,7 +64,7 @@ A list that a screen rereads reads stored facts, not a recount:
 | HAL0 thread page | 3.4 s server | ~1 s (rows by index, one publishing read per page) |
 | `executions_runners` | ~4 s server | ~2.5 s; the rest is summing 20000 calls a poll |
 | Home | 15 reads, 106 KB; 10 of them Home's | 9 reads, 22 KB; one, `home_view`, p50 157 ms server |
-| Projects | 12 reads, 49 KB | 9 reads, 19 KB; one, `projects_view` |
+| Projects | 12 reads, 49 KB | 9 reads, 19 KB; one, `projects_view`, p50 165 ms server |
 | Library | 13 reads, 47 KB; `definition_list` p50 1.6 s server | 9 reads, 33 KB; one, `library_view`, still p50 1.4-1.6 s server (cause not found without a database EXPLAIN) |
 | Lab | 10 reads, 52 KB | 9 reads, 50 KB; one, `lab_view`, p50 673 ms server (most of it the 30-day leaderboard) |
 
