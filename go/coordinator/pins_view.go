@@ -335,15 +335,14 @@ func systemComponents(hosts []contract.HostRow) []contract.SystemChangeKind {
 func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned string, h contract.HostRow, flagged pinsRegression) contract.SystemChangeComponentHost {
 	cell := contract.SystemChangeComponentHost{HostId: h.Id, State: contract.ComponentHostStateUnknown}
 	// The version the host reports: its CLI report, its host tools report (also while the kind's pins are off). With the
-	// kind's pins on, a tool the host reports without a pin is its own PATH tool, not the managed one: no drift to show.
+	// kind's pins on, a tool the host reports without a pin is its own PATH tool (its release has no tool pins yet), not
+	// the managed one: own, unless it is installing or refused the release that brings the pin, or the pin fails there.
+	unmanaged := false
 	if k.Name == harnessrelease.Tools.Name {
 		for _, tv := range h.ToolVersions {
 			if tv.Tool == name && tv.Observed != nil {
 				cell.Observed = tv.Observed
-				if enabled && tv.Expected == nil {
-					cell.State = contract.ComponentHostStateOwn
-					return cell
-				}
+				unmanaged = tv.Expected == nil
 			}
 		}
 	}
@@ -370,7 +369,7 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 	switch {
 	case flagged.Total > 0 && flagged.Version == pinned:
 		cell.State, cell.Failed, cell.Total = contract.ComponentHostStateFailing, &flagged.Failed, &flagged.Total
-	case cell.Observed != nil && *cell.Observed == pinned:
+	case !unmanaged && cell.Observed != nil && *cell.Observed == pinned:
 		cell.State = contract.ComponentHostStatePinned
 	case hasUpd && upd.State == contract.UpdateStatePending && upd.Version == ownRelease().Version:
 		cell.State = contract.ComponentHostStateInstalling
@@ -379,6 +378,8 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 		if upd.Error != nil {
 			cell.Reason = upd.Error
 		}
+	case unmanaged:
+		cell.State = contract.ComponentHostStateOwn
 	case cell.Observed != nil:
 		cell.State = contract.ComponentHostStateBehind
 	}

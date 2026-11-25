@@ -106,6 +106,11 @@ func TestComponentHostCell(t *testing.T) {
 	if c := componentHost(harnessrelease.Tools, "node", false, "", h, pinsRegression{}); c.State != contract.ComponentHostStateOwn || c.Observed == nil || *c.Observed != node {
 		t.Fatalf("tool pins off: own with the host's version: %+v", c)
 	}
+	// h still has a pending update to this release: the tool pin is being installed.
+	if c := componentHost(harnessrelease.Tools, "node", true, node, h, pinsRegression{}); c.State != contract.ComponentHostStateInstalling {
+		t.Fatalf("a PATH tool while the release with the pin installs: %+v", c)
+	}
+	h.Update = nil
 	if c := componentHost(harnessrelease.Tools, "node", true, node, h, pinsRegression{}); c.State != contract.ComponentHostStateOwn {
 		t.Fatalf("a PATH tool (no pin reported) is the host's own, not the pin: %+v", c)
 	}
