@@ -1,20 +1,17 @@
 // Projects (docs/design-system/pages/projects.md, Target): the project catalogue in the control column; the work area is
-// the cross-project summary, or an opened project with its facets Sessions · Tasks · Delivery · Results · Rules & methods
-// · Access.
+// the cross-project summary, or an opened project with its facets Overview · Tasks · Pipelines · Results · Delivery ·
+// Rules & methods · Access · History (Overview, Pipelines, a pipeline page and History: project-overview.tsx).
 // Tasks, Results and Delivery are the same list views as before, laid out in one column inside the facet (routes.ts maps
 // `/projects/FLT/tasks/T-FLT-42` to the Tasks view filtered to the project).
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from 'solid-js';
 import { useLocation, useSearch } from '../router.ts';
 import {
-  Avatar, Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Preview, InfiniteList, type Pager, ListDetail, ListFrame,
-  Num, OpenQuestion, RowFacts, Fact, SearchField, SessionCard, ShellActions, Skeleton, StateBadge, StateDot, TabBar, Ago, VirtualList,
-  catalogueRow, matchSearch, msMeasured, life, statesOf,
-  harnesses, type Harness, type IconName, type Life, type StateOf,
+  Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Preview, ListDetail, ListFrame,
+  Num, RowFacts, Fact, SearchField, ShellActions, Skeleton, StateBadge, StateDot, TabBar, VirtualList,
+  catalogueRow, matchSearch, msMeasured, statesOf, type IconName,
 } from '../../../packages/ui/src/index.ts';
-import { op, type Ops } from '../api.ts';
-import { useAnswers } from '../answers.ts';
+import { op } from '../api.ts';
 import { useOp, useView } from '../store.ts';
-import { useOpPages } from '../op-pages.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { prefs, prefsRead, scopeIds } from '../prefs.ts';
 import { projectIdOf, projectSegment, type ListFacet } from '../routes.ts';
@@ -26,21 +23,22 @@ import { Tasks } from './tasks.tsx';
 import { Results } from './results.tsx';
 import { Delivery } from './delivery.tsx';
 import { ProjectAccess } from './access-grants.tsx';
+import { AskCard, PipelinePage, ProjectHistory, ProjectOverview, ProjectPipelines, projectFacetPath, useProjectView } from './project-overview.tsx';
 
-type Facet = 'sessions' | ListFacet | 'rules' | 'access';
+type Facet = 'overview' | ListFacet | 'pipelines' | 'rules' | 'access' | 'history';
 type CrossFacet = 'summary' | ListFacet;
 type Screen = 'projects' | ListFacet;
-type Session = Ops['sessions_list']['reply']['sessions'][number];
-type Question = Ops['questions_list']['reply']['questions'][number];
 
 const FACETS: { id: Facet; label: string }[] = [
-  { id: 'sessions', label: 'Sessions' }, { id: 'tasks', label: 'Tasks' }, { id: 'delivery', label: 'Delivery' },
-  { id: 'results', label: 'Results' }, { id: 'rules', label: 'Rules & methods' }, { id: 'access', label: 'Access' },
+  { id: 'overview', label: 'Overview' }, { id: 'tasks', label: 'Tasks' }, { id: 'pipelines', label: 'Pipelines' },
+  { id: 'results', label: 'Results' }, { id: 'delivery', label: 'Delivery' }, { id: 'rules', label: 'Rules & methods' },
+  { id: 'access', label: 'Access' }, { id: 'history', label: 'History' },
 ];
+/** Facets served by the projects view itself (`?facet=`); an earlier `?facet=sessions` opens Overview. */
+const OWN_FACETS: readonly Facet[] = ['pipelines', 'rules', 'access', 'history'];
 const CROSS: { id: CrossFacet; label: string }[] = [
   { id: 'summary', label: 'Summary' }, { id: 'tasks', label: 'Tasks' }, { id: 'delivery', label: 'Delivery' }, { id: 'results', label: 'Results' },
 ];
-const ACTIVE_SESSION: string[] = statesOf('session', ['working', 'waiting']);
 const WAITING_HREF = formatView({ view: 'conversations', state: statesOf('session', ['waiting']) });
 
 function isRec(v: unknown): v is Record<string, unknown> {
@@ -68,17 +66,12 @@ function ReadinessBadge(props: { p: Record<string, unknown> }) {
   );
 }
 
-/** Counts per project of a list read grouped by project (sessions_list, task_page). */
-
 /** The facet path of a project (the router writes the project's code in the address bar). */
-const facetPath = (projectId: string, facet: Facet): string =>
-  facet === 'sessions' ? '/projects/' + encodeURIComponent(projectId)
-    : facet === 'rules' || facet === 'access' ? '/projects/' + encodeURIComponent(projectId) + '?facet=' + facet
-      : `/${facet}?project=${encodeURIComponent(projectId)}`;
+const facetPath = (projectId: string, facet: Facet): string => projectFacetPath(projectId, facet);
 
 /**
  * The Projects section. `screen` is the internal screen the router opened: `projects` (the catalogue, a project on
- * Sessions or Rules & methods) or a list facet; `id` is that screen's item (a project, or a task, result or pull request).
+ * one of its own facets) or a list facet; `id` is that screen's item (a project, or a task, result or pull request).
  */
 export function Projects(props: { screen: Screen; id?: string }) {
   const [, go] = useLocation();
@@ -95,9 +88,10 @@ export function Projects(props: { screen: Screen; id?: string }) {
   });
   const facet = createMemo<Facet>(() => {
     if (props.screen !== 'projects') return props.screen;
-    const f = params().get('facet');
-    return f === 'rules' || f === 'access' ? f : 'sessions';
+    const f = params().get('facet') as Facet | null;
+    return f && OWN_FACETS.includes(f) ? f : 'overview';
   });
+  const pipeline = createMemo(() => (facet() === 'pipelines' ? params().get('pipeline') ?? undefined : undefined));
   const item = createMemo(() => (props.screen !== 'projects' ? props.id : undefined));
   const open = createMemo(() => all().find(p => p.id === project()));
   // An opened task or result lives in its own project's facet under its code (UR-69): an earlier link by id, or one
@@ -121,7 +115,7 @@ export function Projects(props: { screen: Screen; id?: string }) {
           <ProjectEditor id={undefined} onClose={() => setCreating(false)} onSaved={p => openProject(p)} />
         ) : project() ? (
           <Show when={project()} keyed>
-            {pid => <ProjectWork id={pid} p={open()} facet={facet()} item={item()} onClose={() => go('/projects')} />}
+            {pid => <ProjectWork id={pid} p={open()} facet={facet()} item={item()} pipeline={pipeline()} tab={params().get('tab') ?? undefined} onClose={() => go('/projects')} />}
           </Show>
         ) : props.screen !== 'projects' ? (
           <CrossWork facet={props.screen} item={item()} />
@@ -297,28 +291,17 @@ function WorkLine(props: { working: number; tasks: number }) {
   );
 }
 
-/** An open question as a card (OR-53, OpenQuestion), under the name of the project that asks it. */
-function AskCard(props: { q: Question; label?: string }) {
-  const answers = useAnswers();
-  return (
-    <div class="pw-ask">
-      <Show when={props.label}><span class="muted type-sm">{props.label}{props.q.code ? ' · ' + props.q.code : ''}</span></Show>
-      <OpenQuestion q={props.q} answers={answers} />
-    </div>
-  );
-}
-
 /** An opened project: its head, the facet tab bar and the facet. A tab never rebuilds the control column (OR-47). */
-function ProjectWork(props: { id: string; p?: { name: string; code: string; raw: Record<string, unknown> }; facet: Facet; item?: string; onClose: () => void }) {
+function ProjectWork(props: {
+  id: string; p?: { name: string; code: string; raw: Record<string, unknown> }; facet: Facet; item?: string; pipeline?: string; tab?: string; onClose: () => void;
+}) {
   const [, go] = useLocation();
-  const questions = useOp('questions_list', () => ({ projectIds: [props.id], state: 'open', limit: 200 }));
-  // The project's sessions, newest first, a page at a time as the facet scrolls (OR-65).
-  const paged = useOpPages('sessions_list', () => ({ filter: { projectId: [props.id], archived: false }, sort: '-activity', limit: 60 }), {
-    page: r => ({ rows: r.sessions, next: (r.nextAfter as unknown[] | null) ?? null }), after: after => ({ after }), key: s => s.id,
-  });
-  const sessions = paged.first;
-  const asks = createMemo(() => questions.data?.questions ?? []);
-  const working = createMemo(() => (sessions.data?.sessions ?? []).filter(s => ACTIVE_SESSION.includes(s.state)).length);
+  // The head's counts come from the catalogue's read; Talk to PM finds the PM conversation in the Overview's read.
+  const catalogue = useProjectsView();
+  const counts = createMemo(() => catalogue.data?.catalogue.find(c => c.projectId === props.id));
+  const overview = useProjectView(() => props.id);
+  const asks = () => counts()?.questions ?? 0;
+  const working = () => counts()?.working ?? 0;
   const ready = createMemo(() => (props.p ? readiness(props.p.raw) : null));
   const pmProfile = createMemo(() => {
     const settings = isRec(props.p?.raw.settings) ? props.p!.raw.settings : {};
@@ -330,9 +313,12 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
   // The name as edited in Rules & methods, before Save (the editor's draft), heads the project while it is open.
   const [draftName, setDraftName] = createSignal('', { ownedWrite: true });
   const title = () => (props.facet === 'rules' && draftName() ? draftName() : props.p?.name ?? props.id);
-  // Talk to PM opens the project's PM session (OR-51); with none yet, a new conversation on the project's pm role.
-  const pmSession = createMemo(() => (sessions.data?.sessions ?? []).find(s => s.profileId === pmProfile()));
-  const talk = () => { const pm = pmSession(); go(pm ? sessionPath(pm) : '/conversations/new?in=' + encodeURIComponent(props.id) + '&role=pm'); };
+  // Talk to PM opens the project's PM conversation (OR-51); with none yet, a new conversation on the project's pm role.
+  const pmSession = createMemo(() => (overview.data?.conversations ?? []).find(s => s.profileId === pmProfile()));
+  const talk = () => {
+    const pm = pmSession();
+    go(pm ? '/conversations/' + encodeURIComponent(pm.code ?? pm.id) : '/conversations/new?in=' + encodeURIComponent(props.id) + '&role=pm');
+  };
   return (
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
@@ -342,8 +328,8 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
         actions={<Button label="Talk to PM" icon="messages-square" onClick={talk} />}
         state={
           <>
-            <Show when={asks().length > 0}><StateDot state="waiting" /></Show>
-            <Show when={asks().length > 0}><span>{asks().length} {asks().length === 1 ? 'question' : 'questions'}</span></Show>
+            <Show when={asks() > 0}><StateDot state="waiting" /></Show>
+            <Show when={asks() > 0}><span>{asks()} {asks() === 1 ? 'question' : 'questions'}</span></Show>
             <Show when={working() > 0}><span>{working()} {working() === 1 ? 'session' : 'sessions'} working</span></Show>
             <Show when={ready()?.reason}>{r => <span class="t-attention" data-tip="Fix it in Rules & methods">{r()}</span>}</Show>
           </>
@@ -352,8 +338,17 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
       <TabBar cls="detail-tabs pw-tabs" label="Project facets" tabs={FACETS} value={props.facet} onChange={f => go(facetPath(props.id, f))} />
       <div class="pw-facet" role="tabpanel" aria-label={FACETS.find(f => f.id === props.facet)?.label}>
         <Switch>
-          <Match when={props.facet === 'sessions'}>
-            <SessionsFacet sessions={sessions.data ? paged.pages.rows : undefined} pages={paged.pages} error={sessions.error} reload={sessions.reload} questions={asks()} pm={pmProfile()} name={props.p?.name ?? props.id} onTalk={talk} />
+          <Match when={props.facet === 'overview'}>
+            <ProjectOverview projectId={props.id} />
+          </Match>
+          <Match when={props.facet === 'pipelines' && props.pipeline}>
+            {pid => <PipelinePage projectId={props.id} projectName={props.p?.name ?? props.id} pipelineId={pid()} tab={props.tab} />}
+          </Match>
+          <Match when={props.facet === 'pipelines'}>
+            <ProjectPipelines projectId={props.id} />
+          </Match>
+          <Match when={props.facet === 'history'}>
+            <ProjectHistory projectId={props.id} />
           </Match>
           <Match when={props.facet === 'rules'}>
             <ProjectEditor id={props.id} embedded onName={setDraftName} onClose={undefined} onSaved={p => go('/projects/' + encodeURIComponent(p) + '?facet=rules')}
@@ -362,68 +357,12 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
           <Match when={props.facet === 'access'}>
             <ProjectAccess projectId={props.id} data={dataClass()} />
           </Match>
-          <Match when={props.facet !== 'sessions' && props.facet !== 'rules' && props.facet !== 'access'}>
+          <Match when={props.facet === 'tasks' || props.facet === 'results' || props.facet === 'delivery'}>
             <ListFacetView facet={props.facet as ListFacet} item={props.item} project={props.id} />
           </Match>
         </Switch>
       </div>
     </section>
-  );
-}
-
-const lifeOfSession = (s: string): Life => life('session', s);
-const sessionPath = (s: Session) => '/conversations/' + encodeURIComponent(s.code ?? s.id);
-
-/** Sessions facet: the PM first, then the project's active sessions as cards, then the others (finished or asleep) as rows, newest first (OR-50, OR-51). */
-function SessionsFacet(props: { sessions?: Session[]; pages: Pager; error: string | null; reload: () => void; questions: Question[]; pm: string; name: string; onTalk: () => void }) {
-  const [, go] = useLocation();
-  const pm = createMemo(() => (props.sessions ?? []).find(s => s.profileId === props.pm));
-  const active = createMemo(() => (props.sessions ?? []).filter(s => s !== pm() && ACTIVE_SESSION.includes(s.state)));
-  const finished = createMemo(() => (props.sessions ?? []).filter(s => s !== pm() && !ACTIVE_SESSION.includes(s.state)));
-  const askOf = (s: Session) => props.questions.find(q => q.sessionId === s.id);
-  const card = (s: Session, label?: string) => {
-    const q = askOf(s);
-    return (
-      <SessionCard
-        name={label ? `${label} · ${s.title ?? s.code ?? 'session'}` : s.title ?? s.code ?? 'Untitled session'}
-        avatar={{ letter: (label ?? s.title ?? 'S').slice(0, 1).toUpperCase(), harness: s.harness && s.harness in harnesses ? s.harness as Harness : undefined }}
-        state={q ? 'waiting' : lifeOfSession(s.state)}
-        now={s.now ?? s.title ?? 'No title yet'}
-        meta={[...(s.code ? [<span class="mono">{s.code}</span>] : []), ...(s.activityAt ? [<Ago t={Date.parse(s.activityAt)} />] : [])]}
-        question={q ? <AskCard q={q} /> : undefined}
-        onOpen={() => go(sessionPath(s))}
-      />
-    );
-  };
-  return (
-    <article class="detail" data-ui="detail" tabindex={-1} aria-label="Sessions">
-      <Switch fallback={
-        <>
-          <div class="pw-cards">
-            <Show when={pm()} keyed fallback={
-              <div class="pw-pm-empty"><Avatar letter="P" /><span>No PM session for {props.name} yet.</span><Button label="Talk to PM" icon="messages-square" onClick={props.onTalk} /></div>
-            }>{s => card(s, 'PM')}</Show>
-            <For each={active()}>{s => card(s)}</For>
-          </div>
-          <Show when={finished().length > 0}>
-            <DetailSection title="Earlier">
-              <InfiniteList pages={props.pages} label="Earlier sessions" endLabel="Older sessions">
-                <For each={finished()}>{s => (
-                  <a class="pw-row row-link" href={sessionPath(s)} onClick={e => { e.preventDefault(); go(sessionPath(s)); }}>
-                    <span class="muted mono">{s.activityAt ? <Ago t={Date.parse(s.activityAt)} /> : ''}</span>
-                    <StateDot family="session" state={s.state as StateOf<'session'>} />
-                    <span class="pw-row-t">{s.title ?? s.code ?? 'Untitled session'}</span>
-                  </a>
-                )}</For>
-              </InfiniteList>
-            </DetailSection>
-          </Show>
-        </>
-      }>
-        <Match when={props.error && !props.sessions}><ErrorBanner text={`Sessions did not load: ${props.error}`} onRetry={props.reload} /></Match>
-        <Match when={!props.sessions}><Skeleton rows={4} /></Match>
-      </Switch>
-    </article>
   );
 }
 

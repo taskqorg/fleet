@@ -21,9 +21,19 @@ const TASK_WORDS: Record<string, string> = { in_progress: 'in progress', complet
 /** An actor as a row shows it: a person by the name part of their email, an agent execution as "agent". */
 const shortActor = (a: string) => a.startsWith('execution:') ? 'agent' : a.includes('@') ? a.slice(0, a.indexOf('@')) : a;
 
+/** What a run is called when it has no title (execution kinds, as the entity card names them). */
+const RUN_WORDS: Record<string, string> = { agent_run: 'agent run', pipeline_run: 'pipeline run', pipeline_step: 'pipeline step', child_agent: 'child agent', tool_run: 'tool run', host_job: '' };
+const KIND_WORDS: Record<Entry['kind'], string> = { run: 'run', task: 'task', question: 'question', lab: 'experiment', settings: 'settings', access: 'access grant' };
+
+/** The subject's words when it has no title: its kind, never its id (OR-38). */
+function untitled(e: Entry): string {
+  const k = e.detail?.executionKind;
+  return e.kind === 'run' && typeof k === 'string' && k in RUN_WORDS ? RUN_WORDS[k] : KIND_WORDS[e.kind] ?? '';
+}
+
 /** The row's sentence: the subject's title and what happened to it. */
 export function historyText(e: Entry): string {
-  const what = e.title || e.subject;
+  const what = e.title || untitled(e);
   if (e.kind === 'task' && e.verb !== 'created') return `${what} ${TASK_WORDS[e.verb] ?? e.verb}`;
   if (e.kind === 'question') return `Question ${e.verb}: ${what}`;
   if (e.kind === 'lab') return `${what} ${e.verb === 'decided' ? 'decided' : e.verb}`;
