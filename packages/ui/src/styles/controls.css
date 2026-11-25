@@ -113,7 +113,9 @@
   .seg .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .seg:hover { background: var(--hover); }
   .seg.on { background: var(--selected); color: var(--accent); }
-  .seg-group { display: inline-flex; align-items: center; gap: var(--space-1); }
+  /* A long choice wraps to the next line instead of squeezing its labels into each other (phone 390). */
+  .seg-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); max-inline-size: 100%; }
+  .seg-group > .seg { flex: none; white-space: nowrap; }
   .seg-label { font-family: var(--font-mono); font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--fg-muted); margin-right: var(--space-1); }
 
   /* Virtual list & rows */
