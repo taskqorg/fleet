@@ -674,7 +674,9 @@ func isDeclineText(text string) bool { return declineWords.MatchString(approvalC
 // person's home conversation (a private chat). One card: answered as the author (Fleet checks they may). More: each is
 // listed with its buttons to choose. None: false, the message is routed as usual.
 func telegramApprovalText(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.TelegramRoom, m *tgMessage, tp db.TelegramPerson, p *Person) (bool, error) {
-	if !isApprovalText(messageText(m)) {
+	// Only explicit approval words count here; a bare "ok" or "yes" may be about any work, and approves only as a
+	// Telegram reply to the card itself (telegramAnswer).
+	if !isApprovalText(messageText(m)) || !approvalWords.MatchString(approvalCore(messageText(m))) {
 		return false, nil
 	}
 	sessions := []string{}
