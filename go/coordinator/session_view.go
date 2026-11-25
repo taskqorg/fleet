@@ -203,17 +203,19 @@ func sessionViewThreads(q *Request, sid string) ([]contract.SessionThread, error
 	if err != nil {
 		return nil, err
 	}
-	var tasks, questions []string
+	var tasks, questions, runs []string
 	for _, r := range rows {
 		if id, ok := strings.CutPrefix(r.Thread, "task:"); ok {
 			tasks = append(tasks, id)
 		} else if id, ok := strings.CutPrefix(r.Thread, "question:"); ok {
 			questions = append(questions, id)
+		} else if id, ok := strings.CutPrefix(r.Thread, "execution:"); ok {
+			runs = append(runs, id)
 		}
 	}
 	items := map[string]db.SessionViewThreadItemsRow{}
-	if len(tasks)+len(questions) > 0 {
-		found, err := q.db().SessionViewThreadItems(q.ctx(), db.SessionViewThreadItemsParams{TaskIds: tasks, QuestionIds: questions})
+	if len(tasks)+len(questions)+len(runs) > 0 {
+		found, err := q.db().SessionViewThreadItems(q.ctx(), db.SessionViewThreadItemsParams{TaskIds: tasks, QuestionIds: questions, ExecutionIds: runs})
 		if err != nil {
 			return nil, err
 		}
@@ -316,7 +318,7 @@ func threadTitle(key string) string {
 
 func finishedItem(state string) bool {
 	switch state {
-	case "completed", "failed", "cancelled", "answered", "withdrawn", "expired", "closed", "merged":
+	case "completed", "succeeded", "failed", "cancelled", "answered", "withdrawn", "expired", "closed", "merged":
 		return true
 	}
 	return false
