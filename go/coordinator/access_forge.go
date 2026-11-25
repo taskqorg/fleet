@@ -14,6 +14,9 @@ import (
 // that reads here as "needs a login", never only as a missing capability (DAM Lab, 2026-11-25: owner-mac had no
 // gitlab.ufobe.com login).
 
+// forgeLoginsSince: the first executor release whose poll reports forgeLogins (#1109).
+const forgeLoginsSince = "1.261125.237"
+
 // accessForgeLogins: the forge login rows of the projects the person may read.
 func accessForgeLogins(q *Request) ([]contract.AccessItem, error) {
 	ids, err := projectIDs(q)
@@ -29,12 +32,20 @@ func accessForgeLogins(q *Request) ([]contract.AccessItem, error) {
 	for _, r := range obs {
 		var o struct {
 			ForgeLogins *[]contract.ForgeLogin `json:"forgeLogins"`
+			Version     *string                `json:"version"`
 		}
-		if lenientDecode(r.Payload, &o) != nil || o.ForgeLogins == nil {
+		if lenientDecode(r.Payload, &o) != nil {
+			continue
+		}
+		// An empty report is left out of the poll (omitempty), so a missing one from an executor that reports means none.
+		if o.ForgeLogins == nil && (o.Version == nil || versionLess(*o.Version, forgeLoginsSince)) {
 			continue // an executor older than the report: its logins are unknown, not missing
 		}
-		m := map[string]contract.ForgeLogin{}
-		for _, l := range *o.ForgeLogins {
+		m, logins := map[string]contract.ForgeLogin{}, []contract.ForgeLogin{}
+		if o.ForgeLogins != nil {
+			logins = *o.ForgeLogins
+		}
+		for _, l := range logins {
 			m[l.Provider+"|"+strings.ToLower(l.Host)] = l
 		}
 		reported[r.ID] = m
