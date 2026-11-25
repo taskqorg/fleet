@@ -4,11 +4,11 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from
 import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  ListDetail, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button,
+  ListDetail, LiveRow, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
   type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages, isFinished, openStates,
-  keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
+  type Tone, keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, online } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -23,6 +23,7 @@ import { describeTaskFacts, isUnconfirmedActiveTask, parseMs as ms, TERMINAL_TAS
 import { RowSpend, useRowSpend, ScopedRollupBar, buildExecTree } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 import { TaskQuestionContext, typedAnswer } from './task-question-context.tsx';
+import { CHIP_STAGE } from './delivery-model.tsx';
 
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
@@ -378,6 +379,14 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
       && !(TERMINAL as readonly string[]).includes(task.state) && task.state !== 'paused';
   });
   const conversation = () => latestExecution()?.sessionId;
+  // The task's pull requests: publishing records its executions opened, each in its current delivery stage (J4).
+  const delivery = useOp('publishing_status', () => (t()?.projectId ? { projectId: t()!.projectId! } : null), { every: 300_000 });
+  const prs = createMemo(() => {
+    const ids = new Set((t()?.executions ?? []).map(e => e.id)), d = delivery.data;
+    if (!d) return [];
+    const mine = new Set(d.records.filter(r => r.sourceExecutionId && ids.has(r.sourceExecutionId)).map(r => `${r.repo}#${r.number}`));
+    return d.items.filter(it => mine.has(`${it.repo}#${it.number}`));
+  });
   const reported = createMemo(() =>
     (t()?.executions ?? []).flatMap(e => (e.report ? [e.report] : [])).sort((a, b) => b.at - a.at)[0],
   );
@@ -472,6 +481,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
               {pid => <EntityCode code={pid()} id={pid()} kind="project" />}
             </Show>
             <span class="grow" />
+            <Show when={conversation()}>{sid => <Button label="Open session" icon="messages-square" onClick={() => go(`/conversations/${encodeURIComponent(sid())}`)} />}</Show>
             <Button label={pins.has(props.id) ? 'Unpin' : 'Pin'} icon={pins.has(props.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(props.id)} onClick={() => pins.toggle(props.id)} />
             <Show
               when={t()!.state === 'paused'}
@@ -504,7 +514,17 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             <StateBadge family="task" state={t()!.pauseReason === 'held' ? 'held' : t()!.state} unconfirmed={unconfirmed()} reason={t()!.waitReason ?? undefined} />
             <Show when={t()!.createdBy}><span class="muted">by {actor(t()!.createdBy!)}</span></Show>
             <Show when={ms(t()!.createdAt)}>{at => <AgeChip t={at()} />}</Show>
+            <Show when={prs()[0]}>{pr => <StageChip stage={CHIP_STAGE[pr().stage]} />}</Show>
           </div>
+          <Show when={prs().length > 0}>
+            <ul class="live-list" aria-label="Pull requests">
+              <For each={prs()}>{pr => (
+                <LiveRow kind="delivery" tone={(states_.delivery[pr.stage]?.tone ?? 'neutral') as Tone} code={`#${pr.number}`} title={pr.title}
+                  stage={CHIP_STAGE[pr.stage]} trouble={pr.stage.endsWith('failed')}
+                  onOpen={() => go(`/delivery/${encodeURIComponent(`${pr.repo.replace('/', '~')}~${pr.number}`)}`)} />
+              )}</For>
+            </ul>
+          </Show>
           <Show when={result()} keyed>
             {res => (
               <p class="state-line">

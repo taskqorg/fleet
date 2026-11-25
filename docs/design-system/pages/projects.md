@@ -74,7 +74,7 @@ Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open o
 
 **App routes:** the Target routes above, served by one view (`app/src/views/projects.tsx`) for the four internal screens `projects`, `tasks`, `results` and `delivery` (`app/src/routes.ts` maps `/projects/FLT/tasks/T-FLT-42` to the Tasks view filtered to the project, `/tasks/T-FLT-42?project=<id>`). Checks: `tests/ui/projects.check.ts` (CI) and `tests/ui/projects-facets.check.ts` (local: every state at 1440 and 390 px, the earlier routes, J4).
 
-* **Control column:** one row per project: readiness, name and code, then open questions, sessions working and tasks in flight. Search by name, id or code. Ignored projects are left out (OR-34). New project is the shell action.
+* **Control column:** one row per project, every project including those with no work: readiness, name and code, then open questions, sessions working and tasks in flight, or "nothing in flight". Search by name, id or code. Ignored projects are left out (OR-34). New project is the shell action.
 * **Idle:** the tab bar Summary · Tasks · Delivery · Results over the projects in focus. Summary: open questions as question cards, each project's sessions working and tasks in flight, delivery in flight.
 * **A project open:** detail head (`project · FLT`, name, waiting state, questions, sessions working, readiness reason; Talk to PM opens `/conversations/new?in=<project>&role=pm`), then the facets:
   * **Sessions:** the newest session on the project's pm profile as the PM card (or Talk to PM when none), active sessions as session cards with their open question, finished ones as rows. A card opens `/conversations/<code>`, the session view.

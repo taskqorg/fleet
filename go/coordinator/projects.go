@@ -603,6 +603,7 @@ func init() {
 		}
 		return rec, nil
 	})
+	op("recommendation_changes", recommendationChanges)
 	op("question_ask", func(q *Request, r *contract.QuestionAskRequest) (contract.QuestionAskReply, error) {
 		if _, err := projectContext(q, r.ProjectId); err != nil {
 			return contract.QuestionAskReply{}, err
@@ -976,4 +977,52 @@ func projectPreparedItems(q *Request, r *contract.ProjectResourceItemsRequest) (
 		return nil, err
 	}
 	return resourceReadItems(q, r)
+}
+
+// recommendationChanges: the recommendations projects selected in the last days (default 7, at most 90), newest first,
+// with the method's name and the Lab experiment it came from as the catalogue head names them (Library idle, J3).
+func recommendationChanges(q *Request, r *contract.RecommendationChangesRequest) (contract.RecommendationChangesReply, error) {
+	days := int64(7)
+	if r.Days != nil {
+		days = *r.Days
+	}
+	if days < 1 || days > 90 {
+		return contract.RecommendationChangesReply{}, fail(400, "days must be 1 to 90")
+	}
+	rows, err := q.db().RecommendationChanges(q.ctx(), int32(days))
+	if err != nil {
+		return contract.RecommendationChangesReply{}, err
+	}
+	type method struct {
+		ID               string `json:"id"`
+		Name             string `json:"name"`
+		SourceExperiment string `json:"sourceExperiment"`
+	}
+	methods := map[string]method{}
+	if len(rows) > 0 {
+		c, err := catalogueHead(q)
+		if err != nil {
+			return contract.RecommendationChangesReply{}, err
+		}
+		for _, m := range agentView[struct {
+			Methods []method `json:"methods"`
+		}](c).Methods {
+			methods[m.ID] = m
+		}
+	}
+	out := contract.RecommendationChangesReply{Changes: []contract.RecommendationChange{}}
+	for _, x := range rows {
+		if q.person != nil && !mayAccessProjectID(q.person, x.ProjectID) {
+			continue
+		}
+		c := contract.RecommendationChange{ProjectId: x.ProjectID, MethodId: x.MethodID, SelectedAt: x.SelectedAtMs, Actor: x.Actor}
+		if m, ok := methods[x.MethodID]; ok {
+			c.MethodName = &m.Name
+			if m.SourceExperiment != "" {
+				c.SourceExperiment = &m.SourceExperiment
+			}
+		}
+		out.Changes = append(out.Changes, c)
+	}
+	return out, nil
 }

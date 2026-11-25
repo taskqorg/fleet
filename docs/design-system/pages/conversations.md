@@ -24,7 +24,7 @@ Three columns ([OR-24](../owner-rules.md)): navigation, control column, work are
 
 * **Empty filter:** the list says what the filter hides and offers to clear it.
 * **Archived:** the archive toggle in the list header, as built.
-* **Phone (390 px):** the list fills the screen; a row opens the session full screen; the bottom bar keeps Conversations highlighted ([OR-60](../owner-rules.md)).
+* **Phone (390 px):** with nothing open, the Waiting for you question cards lead, answered in place, and the list follows under them (the work area is hidden at this width, so the cards move to the top of the list; board state 5). A row opens the session full screen; the bottom bar keeps Conversations highlighted ([OR-60](../owner-rules.md)).
 
 ### Owner decision (target)
 

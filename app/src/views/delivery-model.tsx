@@ -1,14 +1,17 @@
 // Delivery domain types, URL extra parsing, pace buckets, and stage/history helpers.
 import {
   day, dayStart, slotStart, hourLabel, dateKey, duration, quantile, DELIVERY_ORDER,
-  type StateOf, type DayCol, type DayMark,
+  type StateOf, type DayCol, type DayMark, type Stage as ChipStage,
   timeOf,
 } from '../../../packages/ui/src/index.ts';
 import type { Ops } from '../api.ts';
+import type { DeliveryStage } from '../../../contracts/generated/ops.ts';
 import { DELIVERY_DONE } from '../system-views.ts';
 import type { View } from '../../../packages/view-url/view-url.ts';
 
 export type Stage = StateOf<'delivery'>;
+/** The stage chip of a delivery stage (live row, task detail). */
+export const CHIP_STAGE: Record<DeliveryStage, ChipStage> = { pr_open: 'pr_open', pr_ci: 'checks', mq_wait: 'merging', mq_ci: 'merging', pr_failed: 'checks_failed', mq_failed: 'checks_failed', releasing: 'deploying', installing: 'deploying', installed: 'merged', merged: 'merged' };
 export type Status = Ops['publishing_status']['reply'];
 export type PublishingCapability = Status['capabilities'][number];
 export type Item = Status['items'][number];

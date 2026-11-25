@@ -1,6 +1,6 @@
 # Library
 
-**Status.** Built, rail section Library ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)): `app/src/views/agents.tsx`. Not built yet: the New menu's agent and pipeline (New makes a bot), Compare in Lab and Recommend in the head, and recommendations that changed this week on the idle page. This spec is the section frame; the content of each root keeps its own spec: [Methods](catalogue.md), [Agents and Skills](agents.md), [Pipelines](pipelines.md), [Changes](changes.md).
+**Status.** Built, rail section Library ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)): `app/src/views/agents.tsx`. Not built yet: the New menu's agent and pipeline (New makes a bot), and Compare in Lab and Recommend in the head. This spec is the section frame; the content of each root keeps its own spec: [Methods](catalogue.md), [Agents and Skills](agents.md), [Pipelines](pipelines.md), [Changes](changes.md).
 
 **Purpose.** What methods, pipelines, agents, bots and skills we have, which are recommended, and what has not reached the store or the hosts ([principles](../owner-rules.md#principles) 3: details on demand).
 
@@ -22,7 +22,7 @@
 Three columns ([OR-24](../owner-rules.md)). Shell header: title, New (`plus`, a short menu: agent, pipeline, bot), focus chip, search.
 
 * **Control column** (`CatalogueTree`, [OR-48](../owner-rules.md)): one tree with the roots **Methods, Pipelines, Agents, Bots, Skills, Changes**, no mode switch ([OR-46](../owner-rules.md)). Above it the list header with search (filter words `category:`, `harness:`, `skill:`, `state:`, [OR-36](../owner-rules.md)) and saved views. A leaf: state icon (recommended, experimental, deprecated, waits for the repository), name and id, and on the right 30-day runs. Lab variants fold under their base agent. Changes shows its drift count as a counter on the root ([OR-29](../owner-rules.md)).
-* **Work area, idle:** what waits first: definitions waiting for a repository version, with Take all as one [problem row](../controls/problem-row.md); recommendations that changed this week (J3); then totals by root (agents active in 30 days, pipelines that ran, bots awake). Never a second copy of the tree.
+* **Work area, idle:** what waits first: definitions waiting for a repository version, with Take all as one [problem row](../controls/problem-row.md); recommendations that changed this week (J3: one row per project whose recommended method was selected in the last 7 days, "<method> promoted from <experiment>" opening the experiment, else "<method> set for <project>" opening the project); then totals by root (agents active in 30 days, pipelines that ran, bots awake). Never a second copy of the tree.
 * **Work area, a definition open** ([definition editor](../patterns/definition-editor.md)):
   1. Head: kind icon, name, id, state, revision, and the actions as icons (Compare in Lab, Recommend, Take repository version).
   2. Only the fields that differ from the base default, then "Inherited defaults (N)" folded ([OR-45](../owner-rules.md), UR-65); no `override` words or badges.
@@ -49,7 +49,7 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New (`plus`, a 
 
 ## Data
 
-As each root's spec says: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_list`, `bot_get`, `definition_take_repository`, `definition_export`. The tree reads one list per root and stays mounted while a definition loads ([OR-47](../owner-rules.md)).
+As each root's spec says, plus `recommendation_changes` for the idle page: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_list`, `bot_get`, `definition_take_repository`, `definition_export`. The tree reads one list per root and stays mounted while a definition loads ([OR-47](../owner-rules.md)).
 
 ## Review of the current build
 

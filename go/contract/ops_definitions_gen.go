@@ -1326,6 +1326,46 @@ func (v *ProfilesListReply) Validate() error {
 
 type ProfilesListRequest = map[string]json.RawMessage
 
+type RecommendationChange struct {
+	Actor            string  `json:"actor"`
+	MethodId         string  `json:"methodId"`
+	MethodName       *string `json:"methodName"`
+	ProjectId        string  `json:"projectId"`
+	SelectedAt       int64   `json:"selectedAt"`
+	SourceExperiment *string `json:"sourceExperiment"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RecommendationChange) Validate() error {
+	return nil
+}
+
+type RecommendationChangesReply struct {
+	Changes []RecommendationChange `json:"changes"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RecommendationChangesReply) Validate() error {
+	if v.Changes == nil {
+		return Missing("changes")
+	}
+	for i := range v.Changes {
+		if err := Check(&v.Changes[i], "changes"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type RecommendationChangesRequest struct {
+	Days *int64 `json:"days,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RecommendationChangesRequest) Validate() error {
+	return nil
+}
+
 // ReconcileReply: What reconcile settled: queue and handoff state, and the executions it could not prove.
 type ReconcileReply = map[string]json.RawMessage
 
@@ -1531,6 +1571,7 @@ func init() {
 		"definition_usage":           {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "Where a definition (kind, id) is used and how it ran in the last days", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"properties\":{\"days\":{\"minimum\":1,\"type\":\"integer\"},\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"}")},
 		"harness_models":             {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "Models a harness offers", InputSchema: json.RawMessage("{\"properties\":{\"harness\":{\"type\":\"string\"}},\"required\":[\"harness\"],\"type\":\"object\"}")},
 		"profiles_list":              {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Agent profiles", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"recommendation_changes":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Recommended methods that projects selected in the last days (days, default 7, at most 90), newest first: project, method id and name, the Lab experiment it was promoted from, when and by whom", Changes: []string{"project-recommendation", "definition"}, InputSchema: json.RawMessage("{\"properties\":{\"days\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"reconcile":                  {Read: false, Long: false, Errors: []int{400, 409}, Auth: "architect", Agent: "bound:session", Description: "Settle coordinator-owned queue/handoff state and report unproven executions", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"setting_changes":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "target: one setting target (host:<id>, connection:<name>, people, ...); before: the nextBefore of the previous page.", InputSchema: json.RawMessage("{\"$comment\":\"target: one setting target (host:\\u003cid\\u003e, connection:\\u003cname\\u003e, people, ...); before: the nextBefore of the previous page.\",\"additionalProperties\":true,\"properties\":{\"before\":{\"type\":[\"integer\",\"null\"]},\"limit\":{\"type\":[\"integer\",\"null\"]},\"target\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"skills_list":                {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Shipped skills in config/skills/ with metadata, instructions, and rollout across agent definitions", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},

@@ -285,3 +285,43 @@ func (q *Queries) ProjectsQuestionHistory(ctx context.Context, projectID string)
 	}
 	return items, nil
 }
+
+const recommendationChanges = `-- name: RecommendationChanges :many
+SELECT project_id, method_id, (extract(epoch FROM selected_at) * 1000)::bigint AS selected_at_ms, actor
+FROM project_recommendation
+WHERE tombstoned_at IS NULL AND selected_at > now() - make_interval(days => $1::integer)
+ORDER BY selected_at DESC, project_id
+`
+
+type RecommendationChangesRow struct {
+	ProjectID    string
+	MethodID     string
+	SelectedAtMs int64
+	Actor        string
+}
+
+// Recommendations projects selected in the last @days days, newest first (recommendation_changes).
+func (q *Queries) RecommendationChanges(ctx context.Context, days int32) ([]RecommendationChangesRow, error) {
+	rows, err := q.db.Query(ctx, recommendationChanges, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecommendationChangesRow
+	for rows.Next() {
+		var i RecommendationChangesRow
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.MethodID,
+			&i.SelectedAtMs,
+			&i.Actor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

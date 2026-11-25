@@ -353,8 +353,11 @@
   .res-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); font-size: var(--font-size-sm); color: var(--fg-muted); }
   @media (pointer: coarse) { .res-bar .btn, .res-bar a { min-height: var(--size-hit-phone); } }
 
+  /* A list's lead (Conversations: the waiting cards) shows only where the work area is hidden. */
+  .narrow-lead { display: none; }
   /* Responsive shell breakpoints */
   @media (max-width: 1100px) {
+    .narrow-lead { display: block; padding: var(--space-3) var(--space-4) 0; }
     .cols, .split-view { grid-template-columns: minmax(0, 1fr); }
     .split-view.has-detail > .split-list, .split-view:not(.has-detail) > .work-idle, .divider-ctl { display: none; }
     .split-view:has([data-ui=lab-picker]) > .split-list { display: flex; }
