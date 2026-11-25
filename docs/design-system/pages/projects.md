@@ -11,12 +11,14 @@
 | Route | Opens |
 |---|---|
 | `/projects` | Idle: cross-project summary |
-| `/projects/FLT` | Project FLT, facet Sessions |
+| `/projects/FLT` | Project FLT, facet Overview (an earlier `?facet=sessions` opens Overview) |
 | `/projects/FLT/tasks`, `/projects/FLT/tasks/T-FLT-42` | Tasks facet; one task |
 | `/projects/FLT/delivery`, `/projects/FLT/delivery/1234` | Delivery facet; one pull request |
 | `/projects/FLT/results`, `/projects/FLT/results/<id>` | Results facet; one result |
+| `/projects/DAM/pipelines`, `/projects/DAM/pipelines/<pipeline id>?tab=<tab>` | Pipelines facet; one pipeline's page on a tab (Overview without `tab`) |
 | `/projects/FLT/rules` | Rules & methods facet |
 | `/projects/FLT/access`, `/projects/FLT/access?grant=<id>` | Access facet; one grant open |
+| `/projects/FLT/history` | History facet |
 | `/tasks/<uuid>`, `/results/<uuid>`, `/delivery/<id>`, `/publishing` | Redirect to the facet route of the item's project |
 | `/tasks`, `/results`, `/delivery` with no item | Redirect to `/projects` with the facet's cross-project view (see **Across projects**) |
 
@@ -28,13 +30,15 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New project (`p
 * **Work area, idle:** the cross-project summary: projects whose PM waits for the person, as question cards ([OR-53](../owner-rules.md)); then per project working, queued, done today and blocked as one counter line; then delivery in flight ([UR-52](../principles.md)).
 * **Work area, a project open:**
   1. Project head: name, code, readiness, and "Talk to PM" (opens the PM session, [OR-51](../owner-rules.md)).
-  2. Facet tab bar ([OR-46](../owner-rules.md), [OR-49](../owner-rules.md)): **Sessions · Tasks · Delivery · Results · Rules & methods · Access**. A tab never rebuilds the control column ([OR-47](../owner-rules.md)).
+  2. Facet tab bar ([OR-46](../owner-rules.md), [OR-49](../owner-rules.md)): **Overview · Tasks · Pipelines · Results · Delivery · Rules & methods · Access · History**. A tab never rebuilds the control column ([OR-47](../owner-rules.md)).
   3. The facet:
-     * **Sessions** (default, [owner decision](#owner-decision-target)): the PM card first, then this project's active session cards as on Home, then the latest finished ones as rows. A card opens the [session view](session.md).
+     * **Overview** (default, [owner decision](#owner-decision-target), board Approved P-A1): each block is the head of a facet, its title and count open the facet ([OR-30](../owner-rules.md)), and an empty block is left out ([OR-29](../owner-rules.md)). Waiting for you: open questions as question cards and each Lab decision as a card whose choices (variant, score, succeeded of trials, median time, cost, failures) open the experiment in [Lab](laboratory.md), where it is adopted. In work: the tasks in flight. Pipelines: one row per job, with the method in use or "not chosen · N candidates". Latest results. Conversations (the title opens Conversations filtered to the project). Delivery: pull requests in flight, else one muted line "Nothing in flight · N merged · last <day>".
+     * **Pipelines** (board Approved P-A11): one group per job: its name, use case, Compare (the Lab comparison) and Run in Lab; "Not chosen yet: <goal> waits for your decision" while no method is in use and a decision is open; then one row per pipeline: state icon, id, in use or its catalogue status, the best score, succeeded of trials, median time, failures and the latest run's age. A row opens the pipeline page: back to Pipelines, the id with "in use for <project>" or "candidate", Run in Lab, the description and In · Out, then the tabs Overview (How it works as a [pipeline outline](../controls/pipeline-outline.md), the ranking on the project's sample as a table with this pipeline marked, the latest three experiments), Experiments, Definition (the outline and a link to the definition in [Library](library.md)) and History (the project's Lab history).
      * **Tasks:** the task list with saved views (Running is every non-terminal state), rows as [Tasks](tasks.md) specifies; an opened task replaces the list inside the facet with the task detail ([OR-39](../owner-rules.md)) and a link to the session that does it; Close returns to the list ([OR-15](../owner-rules.md)).
      * **Delivery:** the stage list and pace of [Delivery](delivery.md), filtered to the project.
      * **Results:** the result list and viewer of [Results](results.md), filtered to the project.
      * **Rules & methods:** purpose, context, repository, roles and environments as differences from the shared defaults, with "Inherited defaults (N)" folded ([OR-45](../owner-rules.md)); then the recommended method per capability with its Lab evidence and a link to [Library](library.md) and [Lab](laboratory.md).
+     * **History** (board Approved P-A4): the project's [history](history.md), newest first, with the kind chips All, Runs, Tasks, Questions, Lab, Settings and Access; older entries load on scroll.
      * **Access** (approved 2026-11-26, board frame "Project › Access: grants and approval card"): the project's data class when its settings name one (`data`), then its [resource grants](../../designs/fleet-project-access.md): resource (kind, the database or tables count or paths count, and server), level, state, the last probe (read works, write refused, or failed, with its age) and the gateway connection that serves it. A row opens its detail under it: scope, reason, the recipe lines, the probe steps, the error, the credential's fingerprint and the approval question, with **Check** (`access_grant_check`; **Provision again** on a failed grant, which the server provisions anew) and, for the owner, **Revoke** (`access_grant_revoke`; Withdraw for an asked grant, Retry revoke after a failed revoke), which confirms inline with its scope and the way back. The approval itself is the Needs-you question card. The list never scrolls sideways ([reflow table](../controls/data-list.md#reflow-table); approved 2026-11-26, board frame "Project › Access · phone 390"): in a narrow work area or on a phone each grant is two lines, the resource with its state, then level · probe · connection with the time (the last probe, or when it was asked) last; a tap opens the detail at full width.
 
 ### Across projects
@@ -43,7 +47,7 @@ Tasks, results and delivery of all projects in focus are one facet away: on `/pr
 
 ### Data
 
-One read for the catalogue and the Summary: `projects_view` (a view operation, [data layer](../../designs/fleet-data-layer.md)) with the focus. The server counts each project's open questions, sessions working (preparing or running) and tasks in flight (the Tasks Running view's states); the catalogue gets every project's counts, the Summary the focus's, its first three open questions with their total, and the pull requests in flight. The project list is the shell's `project_list`; the facets keep their list reads (Tasks: `task_page` and `list_spend`). The change stream rereads `projects_view` on session, execution, task, question and delivery changes, at most once in 5 s.
+One read for the catalogue and the Summary: `projects_view` (a view operation, [data layer](../../designs/fleet-data-layer.md)) with the focus. The server counts each project's open questions, sessions working (preparing or running) and tasks in flight (the Tasks Running view's states); the catalogue gets every project's counts, the Summary the focus's, its first three open questions with their total, and the pull requests in flight. An opened project reads `project_view {projectId}` once for its Overview, its Pipelines facet and the head's Talk to PM; a pipeline page reads `project_pipeline_view {projectId, pipelineId}` (description, In · Out, outline, whether it is in use, the ranking on the project's sample, its experiments); History reads `history_view {projectIds}`. The project list is the shell's `project_list`; the facets keep their list reads (Tasks: `task_page` and `list_spend`). The change stream rereads `projects_view` on session, execution, task, question and delivery changes, at most once in 5 s.
 
 ### States
 
@@ -52,7 +56,7 @@ One read for the catalogue and the Summary: `projects_view` (a view operation, [
 
 ### Owner decision (target)
 
-A project opens on Sessions (owner, 2026-11-25).
+A project opens on Overview (owner, 2026-11-26, board Approved P-A1; it replaces Sessions, decided 2026-11-25). A pipeline's steps read as plain numbered text, not a step diagram, the same at every width (owner, 2026-11-26).
 
 ### Review of the current build
 
@@ -69,12 +73,12 @@ Checked against the [product map](../product-map.md) rows for Projects, Tasks, R
 
 * [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md).
 * [Filter bar](../controls/filter-bar.md#board), [catalogue row and list group](../controls/data-list.md#board), [detail head](../patterns/list-detail.md#board), [tab bar](../controls/tab-bar.md) for the facets (words only, no icons).
-* [Session card](../controls/session-card.md), [question card](../controls/decision-block.md#card), [state dot and word](../controls/state-badge.md#dot-and-word).
-* [Live row](../controls/live-row.md) kind delivery for pull requests; [diff row](../patterns/definition-editor.md#diff-row) for Rules & methods.
+* [Question card](../controls/decision-block.md#card), [state dot and word](../controls/state-badge.md#dot-and-word).
+* [Live row](../controls/live-row.md) for tasks, conversations, pull requests and history; [pipeline outline](../controls/pipeline-outline.md) on a pipeline page; [diff row](../patterns/definition-editor.md#diff-row) for Rules & methods.
 
 ### Design board
 
-Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open on Sessions, a task open in Tasks, Rules & methods, phone.
+Canvas [screens/projects.bl](../board/screens/projects.bl): idle, a task open in Tasks, Rules & methods, phone; approved 2026-11-26: Approved P-A1..P-A11 (Overview, Setup, one result, Pipelines, a pipeline page, History).
 
 ## Current build
 
@@ -82,8 +86,8 @@ Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open o
 
 * **Control column:** one row per project, every project including those with no work: readiness, name and code, then open questions, sessions working and tasks in flight, or "nothing in flight". Search by name, id or code. Ignored projects are left out (OR-34). New project is the shell action.
 * **Idle:** the tab bar Summary · Tasks · Delivery · Results over the projects in focus. Summary: open questions as question cards, each project's sessions working and tasks in flight, delivery in flight.
-* **A project open:** detail head (`project · FLT`, name, waiting state, questions, sessions working, readiness reason; Talk to PM opens `/conversations/new?in=<project>&role=pm`), then the facets:
-  * **Sessions:** the newest session on the project's pm profile as the PM card (or Talk to PM when none), active sessions as session cards with their open question, finished ones as rows. A card opens `/conversations/<code>`, the session view.
+* **A project open:** detail head (`project · FLT`, name, waiting state, questions and sessions working from `projects_view`, readiness reason; Talk to PM opens the project's PM conversation from `project_view`, else `/conversations/new?in=<project>&role=pm`), then the facets:
+  * **Overview, Pipelines, a pipeline page, History:** as the Target describes (`app/src/views/project-overview.tsx`); a Lab decision's choices link to the experiment and write nothing here.
   * **Tasks, Results, Delivery:** the list views of [Tasks](tasks.md), [Results](results.md) and [Delivery](delivery.md), scoped to the project; an opened item replaces the list. A task opens by its code, a result by its code; an earlier link by id, or one outside its project, is replaced by the facet route of the item's project.
   * **Rules & methods:** the project editor (Save, Reload, readiness, context, repositories, environments, roles, initial access, prepared resources) with the settings that differ from the shared defaults (`DiffRow`, `Inherited defaults (N)` folded) and the methods with their Lab evidence.
   * **Access:** `access_grants {projectId}` as the Target describes (`app/src/views/access-grants.tsx`), reread by the change stream (kind `access-grant`): an approval answered in Needs you shows at once.

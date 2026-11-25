@@ -7,7 +7,7 @@
 // Tasks view `/tasks/T-FLT-42?state=x&project=<id>`: the project is the list's own project filter, so every list change
 // the view makes keeps it. Back to the address bar, a facet list filtered to exactly one project is that project's facet;
 // any other filter is the cross-project facet `/projects/tasks`. `/projects/FLT/rules` is `/projects/FLT?facet=rules`, and
-// `/projects/FLT/access` is `/projects/FLT?facet=access`.
+// so are access, pipelines and history; `/projects/FLT/pipelines/<id>` is `/projects/FLT?facet=pipelines&pipeline=<id>`.
 
 /** Earlier path prefix and its target route, most specific first. Each pair maps one way and back. */
 export const ROUTES: readonly (readonly [earlier: string, target: string])[] = [
@@ -93,6 +93,9 @@ export function toTarget(path: string): string {
   return targetUrl(path);
 }
 
+/** The facets of an opened project addressed by a path segment (/projects/FLT/<facet>), served by the projects view. */
+const PATH_FACETS = ['rules', 'access', 'pipelines', 'history'];
+
 /** The path and query a view understands for an address-bar path and query. */
 export function internalUrl(url: string): string {
   const { path, query } = split(url);
@@ -102,7 +105,9 @@ export function internalUrl(url: string): string {
     const id = projectIdOf(dec(seg[2]));
     // A project's list facet: the cross-project view filtered to that project (its own project filter is replaced).
     if (isListFacet(seg[3])) return join({ path: '/' + seg.slice(3).join('/'), query: [without(query, 'project'), 'project=' + enc(id)].filter(Boolean).join('&') });
-    if ((seg[3] === 'rules' || seg[3] === 'access') && seg.length === 4) return join({ path: '/projects/' + enc(id), query: [without(query, 'facet'), 'facet=' + seg[3]].filter(Boolean).join('&') });
+    if (PATH_FACETS.includes(seg[3]) && seg.length === 4) return join({ path: '/projects/' + enc(id), query: [without(query, 'facet'), 'facet=' + seg[3]].filter(Boolean).join('&') });
+    // A pipeline of the project: /projects/DAM/pipelines/<pipeline id>.
+    if (seg[3] === 'pipelines' && seg[4] && seg.length === 5) return join({ path: '/projects/' + enc(id), query: [without(without(query, 'facet'), 'pipeline'), 'facet=pipelines', 'pipeline=' + seg[4]].filter(Boolean).join('&') });
     if (seg.length === 3 || (seg.length === 4 && seg[3] === '')) return join({ path: '/projects/' + enc(id), query });
   }
   const root = ROOTS[path.replace(/\/$/, '')];
@@ -131,7 +136,9 @@ export function targetUrl(url: string): string {
   if (seg[1] === 'projects' && seg[2] && seg.length === 3) {
     const at = '/projects/' + enc(projectSegment(dec(seg[2])));
     const f = valueOf(query, 'facet');
-    return join({ path: f === 'rules' || f === 'access' ? at + '/' + f : at, query: without(query, 'facet') });
+    const pipe = valueOf(query, 'pipeline');
+    if (f === 'pipelines' && pipe) return join({ path: at + '/pipelines/' + enc(pipe), query: without(without(query, 'facet'), 'pipeline') });
+    return join({ path: f && PATH_FACETS.includes(f) ? at + '/' + f : at, query: without(query, 'facet') });
   }
   for (const [earlier, target] of ROUTES) if (under(path, earlier)) return join({ path: swap(path, earlier, target), query });
   return join({ path, query });

@@ -63,8 +63,34 @@
   .pw-pm-empty { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-4); border: 1px dashed var(--line); border-radius: var(--radius-lg); color: var(--fg-muted); font-size: var(--font-size-sm); }
   .pw-ask { display: flex; flex-direction: column; gap: var(--space-1); }
   .pw-ask + .pw-ask { margin-top: var(--space-3); }
-  .pw-row { display: grid; grid-template-columns: var(--size-clock) auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-height: var(--size-row); color: var(--fg); text-decoration: none; }
-  .pw-row:hover { background: var(--hover); }
-  .pw-row-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  @media (pointer: coarse) { .pw-row { min-height: var(--size-row-phone); } }
+  /* Overview, Pipelines and a pipeline page (pages/projects.md, board Approved P-A1..P-A11): rows wrap, never scroll sideways (OR-66). */
+  .pw-list { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+  .pw-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); min-height: var(--size-row); padding: var(--space-1) var(--space-4); border-bottom: 1px solid var(--line-soft); color: var(--fg); text-decoration: none; }
+  .pw-list > .pw-line:last-child { border-bottom: 0; }
+  a.pw-line:hover { background: var(--hover); }
+  .pw-line > .icon { flex: none; }
+  .pw-line-m { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); flex: 1 1 16rem; min-inline-size: 0; overflow-wrap: anywhere; }
+  .pw-line-sub { flex-basis: 100%; color: var(--fg-muted); font-size: var(--font-size-sm); }
+  .pw-line > .row-facts { margin-inline-start: auto; }
+  @media (pointer: coarse) { .pw-line { min-height: var(--size-row-phone); } }
+  .pw-tone { color: var(--tone-fg); }
+  .pw-muted-line { margin: 0; color: var(--fg-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  .pw-choice { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); min-inline-size: 0; padding: var(--space-1) var(--space-3); border: 1px solid var(--attention-line); border-radius: var(--radius-md); color: var(--fg); font-size: var(--font-size-sm); text-decoration: none; overflow-wrap: anywhere; }
+  .pw-choice:hover { background: var(--hover); }
+  .pw-group + .pw-group { margin-top: var(--space-4); }
+  .pw-group-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); margin-bottom: var(--space-2); }
+  .pw-group-h > b { font-weight: var(--font-weight-medium); }
+  .pw-group-h > .grow { flex: 1; }
+  .pw-pipe-h { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+  .pw-pipe-h > h3 { margin: 0; min-inline-size: 0; font-family: var(--font-mono); font-size: var(--font-size-lg); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+  .pw-pipe-h > .grow { flex: 1; }
+  .pw-pipe > p { margin: 0; overflow-wrap: anywhere; }
+  .pw-pipe { display: flex; flex-direction: column; gap: var(--space-3); }
+
+  /* Pipeline outline (controls/pipeline-outline.md): numbered plain lines; a nested step indents, a condition is attention. */
+  .p-outline { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); list-style: none; font-size: var(--font-size-sm); }
+  .po-line { min-inline-size: 0; margin-inline-start: calc(attr(data-depth type(<number>), 0) * var(--space-5)); overflow-wrap: anywhere; }
+  .po-n { color: var(--fg-muted); font-family: var(--font-mono); }
+  .po-step { font-family: var(--font-mono); font-weight: var(--font-weight-medium); }
+  .po-line.cond { color: var(--attention-fg); }
 }
