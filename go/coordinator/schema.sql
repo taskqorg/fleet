@@ -5078,3 +5078,28 @@ ALTER TABLE runner_call_hour FORCE ROW LEVEL SECURITY;
 CREATE POLICY project_scope ON runner_call_hour USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
 CREATE POLICY directed ON runner_call_hour USING (project_id IS NULL AND directed_by = current_setting('fleet.person', true));
 
+-- migration 116: a session's list facts (docs/designs/fleet-data-layer.md; sessions_list, nav counts, Home): its
+-- state (the latest agent run's, else idle), latest activity, run count and open questions, kept by triggers in the
+-- same transaction as the writes that change them (schema/functions.sql fleet_session_summary_*), so a list reads
+-- them instead of recomputing every session on every call (1411 sessions, 368 ms under RLS, 2026-11-26). Separate from
+-- session so a redesign of sessions and threads can carry it over. Visible as its session is (policies.sql).
+CREATE TABLE session_summary (
+ session_id text PRIMARY KEY REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ state text NOT NULL DEFAULT 'idle',
+ state_execution_id text NULL,
+ harness text NULL,
+ activity_at timestamptz NULL,
+ executions bigint NOT NULL DEFAULT 0,
+ open_questions bigint NOT NULL DEFAULT 0
+);
+INSERT INTO session_summary (session_id, state, state_execution_id, harness, activity_at, executions, open_questions)
+SELECT d.id,
+ coalesce(r.state::text, 'idle'), r.id, r.harness,
+ greatest(d.updated_at, ex.last_at, (SELECT max(m.updated_at) FROM message m WHERE m.session_id = d.id),
+  (SELECT max(v.updated_at) FROM event v WHERE v.session_id = d.id AND NOT v.delta)),
+ coalesce(ex.n, 0),
+ (SELECT count(*) FROM question q WHERE q.session_id = d.id AND q.state = 'open')
+FROM session d
+LEFT JOIN LATERAL (SELECT e.id, e.state, e.harness FROM execution e WHERE e.session_id = d.id AND e.kind = 'agent_run' ORDER BY e.seq DESC LIMIT 1) r ON true
+LEFT JOIN LATERAL (SELECT count(*) AS n, max(greatest(e.started_at, e.ended_at)) AS last_at FROM execution e WHERE e.session_id = d.id) ex ON true;
+

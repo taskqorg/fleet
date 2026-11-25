@@ -918,6 +918,115 @@ SELECT
  coalesce((SELECT jsonb_agg(jsonb_build_object('taskId', id, 'code', code, 'title', title, 'state', state, 'projectId', project_id) ORDER BY seq ASC, id ASC) FROM spawned_tasks WHERE NOT $2), '[]')::jsonb AS spawned_tasks
 $function$;
 
+CREATE OR REPLACE FUNCTION public.fleet_session_summary_event()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ INSERT INTO session_summary (session_id, activity_at)
+ SELECT n.session_id, max(n.updated_at) FROM new_rows n
+ WHERE n.session_id IS NOT NULL AND NOT n.delta AND EXISTS (SELECT 1 FROM session s WHERE s.id = n.session_id)
+ GROUP BY n.session_id
+ ON CONFLICT (session_id) DO UPDATE SET activity_at = greatest(session_summary.activity_at, excluded.activity_at);
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.fleet_session_summary_execution()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true); r record; sid text;
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ IF TG_OP = 'DELETE' THEN sid := OLD.session_id; ELSE sid := NEW.session_id; END IF;
+ IF sid IS NOT NULL THEN
+  INSERT INTO session_summary (session_id) SELECT sid WHERE EXISTS (SELECT 1 FROM session WHERE id = sid) ON CONFLICT (session_id) DO NOTHING;
+  IF TG_OP = 'INSERT' THEN
+   UPDATE session_summary SET executions = executions + 1,
+    activity_at = greatest(activity_at, NEW.started_at, NEW.ended_at) WHERE session_id = sid;
+  ELSIF TG_OP = 'UPDATE' THEN
+   UPDATE session_summary SET activity_at = greatest(activity_at, NEW.started_at, NEW.ended_at) WHERE session_id = sid;
+  ELSE
+   UPDATE session_summary SET executions = (SELECT count(*) FROM execution e WHERE e.session_id = sid) WHERE session_id = sid;
+  END IF;
+  IF (TG_OP = 'DELETE' AND OLD.kind = 'agent_run') OR (TG_OP <> 'DELETE' AND NEW.kind = 'agent_run') THEN
+   SELECT e.id, e.state::text AS state, e.harness INTO r FROM execution e WHERE e.session_id = sid AND e.kind = 'agent_run' ORDER BY e.seq DESC LIMIT 1;
+   UPDATE session_summary SET state = coalesce(r.state, 'idle'), state_execution_id = r.id, harness = r.harness WHERE session_id = sid;
+  END IF;
+ END IF;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.fleet_session_summary_message()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ INSERT INTO session_summary (session_id, activity_at)
+ SELECT n.session_id, max(n.updated_at) FROM new_rows n
+ WHERE n.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM session s WHERE s.id = n.session_id)
+ GROUP BY n.session_id
+ ON CONFLICT (session_id) DO UPDATE SET activity_at = greatest(session_summary.activity_at, excluded.activity_at);
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.fleet_session_summary_question()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true); sid text;
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ FOREACH sid IN ARRAY ARRAY[CASE WHEN TG_OP <> 'INSERT' THEN OLD.session_id END, CASE WHEN TG_OP <> 'DELETE' THEN NEW.session_id END] LOOP
+  IF sid IS NOT NULL THEN
+   INSERT INTO session_summary (session_id) SELECT sid WHERE EXISTS (SELECT 1 FROM session WHERE id = sid) ON CONFLICT (session_id) DO NOTHING;
+   UPDATE session_summary SET open_questions = (SELECT count(*) FROM question q WHERE q.session_id = sid AND q.state = 'open') WHERE session_id = sid;
+  END IF;
+ END LOOP;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.fleet_session_summary_session()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+ INSERT INTO session_summary (session_id, activity_at) VALUES (NEW.id, NEW.updated_at)
+ ON CONFLICT (session_id) DO UPDATE SET activity_at = greatest(session_summary.activity_at, excluded.activity_at);
+ RETURN NULL;
+END;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_show_deleted()
  RETURNS boolean
  LANGUAGE sql

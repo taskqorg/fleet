@@ -1140,6 +1140,15 @@ CREATE TABLE session_fork (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE session_summary (
+  "session_id" text NOT NULL,
+  "state" text NOT NULL,
+  "state_execution_id" text,
+  "harness" text,
+  "activity_at" timestamp with time zone,
+  "executions" bigint NOT NULL,
+  "open_questions" bigint NOT NULL
+);
 CREATE TABLE session_transition (
   "id" text NOT NULL,
   "session_id" text NOT NULL,
