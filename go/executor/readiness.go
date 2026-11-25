@@ -128,7 +128,7 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 	if len(forbidden) > 0 {
 		denied = forbidden[0]
 	}
-	if _, err := resolveAttemptContext(project, host, projectRoots(), denied, ""); err != nil {
+	if _, err := resolveAttemptContext(project, host, projectRootsFor(project, host), denied, ""); err != nil {
 		return contract.Readiness{HostId: host, Ok: false, Checks: []contract.ReadinessCheck{check("instruction-sources", host, err.Error())}}
 	}
 	if project.ContextSources != nil {

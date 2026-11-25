@@ -796,7 +796,14 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				}
 			}
 			if haveRoots && checkout != "" {
+				// The project's environments for this host are an allow-list of their own (the executor's
+				// projectRootsFor); FLEET_PROJECT_ROOTS only adds to them.
 				inside := false
+				for _, co := range cos {
+					if co.HostID == id && co.CheckoutPath != "" && (checkout == co.CheckoutPath || strings.HasPrefix(checkout, strings.TrimSuffix(co.CheckoutPath, "/")+"/")) {
+						inside = true
+					}
+				}
 				for _, r := range roots {
 					if checkout == r || strings.HasPrefix(checkout, strings.TrimSuffix(r, "/")+"/") {
 						inside = true

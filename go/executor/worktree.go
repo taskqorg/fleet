@@ -92,6 +92,22 @@ func projectRoots() []string {
 	return v
 }
 
+// projectRootsFor: the checkouts the project's environments declare for this host, then FLEET_PROJECT_ROOTS as an extra
+// allow-list. A project's environment is its own allow-list, so a new project needs no edit of the host's env file
+// (DAM Lab, 2026-11-25: owner-mac lacked /Users/kirs/Projects/dam and every Claude trial waited unplaced). The
+// forbidden directories still apply to both.
+func projectRootsFor(project contract.ProjectContext, host string) []string {
+	v := []string{}
+	for _, e := range project.Environments {
+		if str0(e.HostId) == host && e.CheckoutPath != nil && strings.HasPrefix(*e.CheckoutPath, "/") {
+			if c, err := canon(*e.CheckoutPath); err == nil {
+				v = append(v, c)
+			}
+		}
+	}
+	return append(v, projectRoots()...)
+}
+
 // reportedRoots: the roots as configured and as resolved, for the coordinator's check.
 func reportedRoots() []string {
 	v := append(splitRoots(), projectRoots()...)
