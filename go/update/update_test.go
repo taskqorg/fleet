@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fleet/harnessrelease"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -384,6 +386,7 @@ func TestManagedCLIRuns(t *testing.T) {
 			tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(c.script)) }))
 			t.Cleanup(tls.Close)
 			f.u.client = tls.Client()
+			vendorOrigins(t, tls.URL)
 			sum := sha256.Sum256([]byte(c.script))
 			asset := `{"version":"1.2.3","url":"` + tls.URL + `/cli","sha256":"` + hex.EncodeToString(sum[:]) + `"}`
 			pins := `{"enabled":true,"targets":{"linux-amd64":{"codex":` + asset + `,"claude":` + asset + `,"antigravity":` + asset + `}}}`
@@ -417,6 +420,7 @@ func TestManagedToolInstalls(t *testing.T) {
 		tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(payload) }))
 		t.Cleanup(tls.Close)
 		f.u.client = tls.Client()
+		vendorOrigins(t, tls.URL)
 		sum := sha256.Sum256(payload)
 		asset := `{"version":"` + c.version + `","url":"` + tls.URL + `/t.tar.gz","sha256":"` + hex.EncodeToString(sum[:]) + `","entry":"t/bin/tool"}`
 		tools := `{"enabled":true,"targets":{"linux-amd64":{"node":` + asset + `,"pnpm":` + asset + `,"gh":` + asset + `,"glab":` + asset + `}}}`
@@ -431,5 +435,16 @@ func TestManagedToolInstalls(t *testing.T) {
 				t.Fatalf("link %q %v", target, err)
 			}
 		}
+	}
+}
+
+// vendorOrigins lets every component download from a test server for the test's duration.
+func vendorOrigins(t *testing.T, url string) {
+	for _, k := range harnessrelease.Kinds {
+		saved := maps.Clone(k.Origins)
+		for name := range k.Origins {
+			k.Origins[name] = url + "/"
+		}
+		t.Cleanup(func() { maps.Copy(k.Origins, saved) })
 	}
 }

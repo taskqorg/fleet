@@ -59,8 +59,8 @@ func main() {
 }
 
 func run(args []string) error {
-	const usage = "usage: fleet-update pds18 | executor | selftest | install-local <verified-stage> <releases>"
-	if len(args) != 1 && (len(args) != 3 || args[0] != "install-local") {
+	const usage = "usage: fleet-update pds18 | executor | selftest | install-local <verified-stage> <releases> | stage-candidate <kind> <name> <candidates> <asset json>"
+	if len(args) != 1 && (len(args) != 3 || args[0] != "install-local") && (len(args) != 5 || args[0] != "stage-candidate") {
 		return errors.New(usage)
 	}
 	key, err := publicKey()
@@ -97,6 +97,13 @@ func run(args []string) error {
 			}
 		}
 		return u.install(p, ver, args[1])
+	case "stage-candidate":
+		path, err := u.stageCandidate(args[1], args[2], args[3], []byte(args[4]))
+		if err != nil {
+			return err
+		}
+		fmt.Println(path)
+		return nil
 	case "selftest":
 		fmt.Printf("fleet-update %s: selftest ok\n", version)
 		return nil

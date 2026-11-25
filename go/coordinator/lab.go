@@ -29,7 +29,7 @@ var (
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
-	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host", "arguments"}
+	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host", "arguments", "candidate"}
 	// labVariantKeys: a Lab variant's keys; bands steer its typed evaluator, never a run, so runs take labOverrides only.
 	labVariantKeys = append(append([]string{}, labOverrides...), "bands")
 )
@@ -180,9 +180,9 @@ func labDecode(raw json.RawMessage, exact bool) any {
 	return rawValue(raw)
 }
 
-// labOwnerOverride: overrides naming a host, account or profile, which only the owner sets.
+// labOwnerOverride: overrides naming a host, account, profile or a candidate CLI pin, which only the owner sets.
 func labOwnerOverride(q *Request, o map[string]json.RawMessage) bool {
-	return q.person != nil && !fullAccess(q.person) && (rawSet(o, "host") || rawSet(o, "account") || rawSet(o, "profile"))
+	return q.person != nil && !fullAccess(q.person) && (rawSet(o, "host") || rawSet(o, "account") || rawSet(o, "profile") || rawSet(o, "candidate"))
 }
 
 // labVariantIn: a variant as a create request gives it.

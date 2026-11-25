@@ -169,6 +169,9 @@ type pipelineOverrides struct {
 	Account   string                     `json:"account,omitempty"`
 	Host      json.RawMessage            `json:"host,omitempty"`
 	Arguments map[string]json.RawMessage `json:"arguments,omitempty"`
+	// Candidate: a proposed CLI pin {name, asset} the agent step runs instead of its release's (fleet-host-updates.md
+	// step 4); the executor stages it with the release's own checks.
+	Candidate json.RawMessage `json:"candidate,omitempty"`
 	rest      recordRest
 }
 

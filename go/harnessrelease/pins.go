@@ -27,17 +27,63 @@ type Asset struct {
 
 // Kind is one kind of release-managed component: its pin file, cache directory and component names.
 type Kind struct {
-	Name  string // "cli" or "tool", the prefix of a component name (cli/codex)
-	File  string // under the release's config/
-	Dir   string // under the releases root
-	Names []string
+	Name    string // "cli" or "tool", the prefix of a component name (cli/codex)
+	File    string // under the release's config/
+	Dir     string // under the releases root
+	Names   []string
+	Origins map[string]string // per component, the vendor's official download prefix; every pin's URL starts with it
 }
 
 var (
-	CLIs  = Kind{Name: "cli", File: "harness-pins.json", Dir: "harnesses", Names: []string{"codex", "claude", "antigravity"}}
-	Tools = Kind{Name: "tool", File: "tool-pins.json", Dir: "tools", Names: []string{"node", "pnpm", "gh", "glab"}}
+	CLIs = Kind{Name: "cli", File: "harness-pins.json", Dir: "harnesses", Names: []string{"codex", "claude", "antigravity"},
+		Origins: map[string]string{
+			"codex":       "https://github.com/openai/codex/releases/download/",
+			"claude":      "https://downloads.claude.ai/claude-code-releases/",
+			"antigravity": "https://storage.googleapis.com/antigravity-public/antigravity-cli/",
+		}}
+	Tools = Kind{Name: "tool", File: "tool-pins.json", Dir: "tools", Names: []string{"node", "pnpm", "gh", "glab"},
+		Origins: map[string]string{
+			"node": "https://nodejs.org/dist/",
+			"pnpm": "https://github.com/pnpm/pnpm/releases/download/",
+			"gh":   "https://github.com/cli/cli/releases/download/",
+			"glab": "https://gitlab.com/gitlab-org/cli/-/releases/",
+		}}
 	Kinds = []Kind{CLIs, Tools}
 )
+
+// KindNamed: the kind called name ("cli", "tool").
+func KindNamed(name string) (Kind, bool) {
+	for _, k := range Kinds {
+		if k.Name == name {
+			return k, true
+		}
+	}
+	return Kind{}, false
+}
+
+// Candidate validates one proposed asset of component name (a pin under qualification, fleet-host-updates.md step
+// 4): the same checks as a shipped pin, and its URL must come from the component's vendor.
+func (k Kind) Candidate(name string, a Asset) (Asset, error) {
+	if err := k.checked(name, a); err != nil {
+		return Asset{}, err
+	}
+	a.kind = k.Dir
+	return a, nil
+}
+
+func (k Kind) checked(name string, a Asset) error {
+	origin, ok := k.Origins[name]
+	if !ok {
+		return fmt.Errorf("unknown %s %s", k.Name, name)
+	}
+	if err := a.validate(); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(a.URL, origin) {
+		return fmt.Errorf("%s/%s URL is not from %s", k.Name, name, origin)
+	}
+	return nil
+}
 
 func (a Asset) Digest() string {
 	if a.SHA256 != "" {
@@ -83,7 +129,7 @@ func (k Kind) Read(release, target string) (map[string]Asset, error) {
 	}
 	assets := manifest.Targets[target]
 	for _, name := range k.Names {
-		if err := assets[name].validate(); err != nil {
+		if err := k.checked(name, assets[name]); err != nil {
 			return nil, fmt.Errorf("%s %s: %w", target, name, err)
 		}
 	}

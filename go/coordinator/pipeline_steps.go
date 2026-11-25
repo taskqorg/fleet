@@ -869,6 +869,9 @@ func stepProfile(q *Request, step *pipelineDefStep, overrides *pipelineOverrides
 	if len(overrides.Skills) > 0 {
 		profile["skills"] = openJSON(overrides.Skills)
 	}
+	if len(overrides.Candidate) > 0 {
+		profile["harnessCandidate"] = openJSON(overrides.Candidate)
+	}
 	return pid, profile, nil
 }
 

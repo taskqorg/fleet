@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -103,6 +104,58 @@ func managedToolDirs(root string) ([]string, error) {
 		}
 	}
 	return dirs, nil
+}
+
+// runExecutable: the CLI a run launches. A host qualification run (docs/designs/fleet-host-updates.md, step 4) names a
+// proposed pin in its profile (harnessCandidate: {name, asset}); fleet-update of this release stages it into the
+// candidate cache with the same checks as a shipped pin, vendor origin included, and the run uses it. Every other run
+// uses its release's pin.
+func runExecutable(name, fallback string, p any) (string, bool, error) {
+	model := launchOf(p).Model
+	cand := jAt(p, "harnessCandidate")
+	if cand == nil {
+		cand = jAt(p, "agentConfig", "harnessCandidate")
+	}
+	if cand == nil {
+		return managedExecutable(name, fallback, model)
+	}
+	c := typed[harnessCandidate](cand)
+	if c.Name != name {
+		return "", true, fmt.Errorf("harness candidate is for %s, not %s", c.Name, name)
+	}
+	if err := harnessrelease.ModelError(name, c.Asset.Version, model); err != nil {
+		return "", true, err
+	}
+	release := releaseHarnesses()
+	if release.err != nil {
+		return "", true, release.err
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return "", true, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(filepath.Dir(exe), "fleet-update"), "stage-candidate", "cli", name,
+		filepath.Join(envOr("FLEET_DATA_DIR", defaultDataDir()), "candidates"), enc(c.Asset))
+	out, err := cmd.Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return "", true, fmt.Errorf("harness candidate %s %s: %s", name, c.Asset.Version, strings.TrimSpace(string(exit.Stderr)))
+		}
+		return "", true, err
+	}
+	return strings.TrimSpace(string(out)), true, nil
+}
+
+// harnessCandidate: a proposed CLI pin a qualification run uses.
+type harnessCandidate struct {
+	Name  string               `json:"name"`
+	Asset harnessrelease.Asset `json:"asset"`
 }
 
 var cliSemver = regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?\b`)

@@ -1,0 +1,17 @@
+{
+ "id": "pins-qualify-cli",
+ "use_case_id": "fleet:pins-qualification",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "1. Run this shell command and keep its exact output: printf %s fleet-qualify | rev\n2. Call the Fleet tool execution_status (no arguments) and keep the executionId it answers.\n3. Write output/qualify.json with exactly {\"reversed\": <the shell output>, \"executionId\": <that executionId>}.\nThen reply done.",
+ "inputs": [],
+ "references": [],
+ "checks": [
+  {
+   "id": "shell-and-fleet-tool",
+   "run": "f=$(ls qualify.json output/qualify.json run/qualify.json 2>/dev/null | head -1); test -n \"$f\" && node -e \"const v=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));if(v.reversed!=='yfilauq-steelf')throw Error('shell: '+v.reversed);if(typeof v.executionId!=='string'||v.executionId.length<8)throw Error('fleet tool: '+v.executionId)\" \"$f\""
+  }
+ ],
+ "split": "tune"
+}

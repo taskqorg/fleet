@@ -1,0 +1,14 @@
+{
+  "effort": null,
+  "fleetTools": true,
+  "harness": "claude",
+  "id": "pins-qualify-claude",
+  "instructions": "Fleet host qualification of an agent CLI (docs/designs/fleet-host-updates.md, step 4). Do exactly the task in the prompt and nothing else: no other files, no network, no subagents.",
+  "mcpServers": [],
+  "model": "sonnet",
+  "tools": [
+    "Bash",
+    "Write",
+    "Read"
+  ]
+}

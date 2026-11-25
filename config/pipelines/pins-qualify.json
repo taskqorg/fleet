@@ -1,0 +1,12 @@
+{
+  "id": "pins-qualify",
+  "steps": [
+    {
+      "id": "run",
+      "kind": "agent",
+      "profile": "pins-qualify-codex",
+      "prompt": "${example.prompt}"
+    }
+  ],
+  "version": 2
+}

@@ -65,6 +65,15 @@ func pinsProblems(open []ghPull) []Problem {
 // pinsPass writes the question set when it changed since the last pass.
 func pinsPass(ctx context.Context, a *App, open []ghPull) error {
 	current := pinsProblems(open)
+	for _, pr := range open {
+		if fs := pinsHostPass(ctx, a, []ghPull{pr})[pr.Head.SHA]; len(fs) > 0 && pinsKind(pr.Head.Ref) != "" {
+			if len(fs) > 3 {
+				fs = append(fs[:3], "and more in the Lab experiment")
+			}
+			current = append(current, Problem{Cause: "pins:" + pinsKind(pr.Head.Ref) + ":" + pr.Head.SHA,
+				Text: "Managed " + pinsKind(pr.Head.Ref) + " pin proposal failed host qualification and stays unmerged (" + pr.URL + "): " + strings.Join(fs, "; ") + ".", Options: []any{"ok"}})
+		}
+	}
 	causes := []string{}
 	for _, p := range current {
 		causes = append(causes, p.Cause)
