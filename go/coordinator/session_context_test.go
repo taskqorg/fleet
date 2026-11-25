@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -40,5 +41,21 @@ func TestAgentTextIndexPredicate(t *testing.T) {
 	i := strings.Index(s, "CREATE INDEX event_agent_text")
 	if i < 0 || !strings.Contains(s[i:], "jsonb_path_exists(payload, '"+agentTextPath+"')") {
 		t.Fatal("event_agent_text predicate differs from agentTextPath")
+	}
+}
+
+// Requirement: docs/designs/fleet-conversations.md#entities: pipeline and Lab agent-step conversations are hidden; the
+// Conversations list, its counts and the nav counter leave them out. Risk: Lab trials fill the list (61% of its rows on
+// 2026-11-26) and hide the conversations people work in.
+func TestSessionListHidesStepConversations(t *testing.T) {
+	c, err := sessionWhere(rowFilter{}, &[]any{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(c, "x.pipeline_run_id IS NULL") {
+		t.Fatalf("conditions %v", c)
+	}
+	if !strings.Contains(sqlSessionBase, "d.pipeline_run_id") || !strings.Contains(sqlSessionCountBase, "d.pipeline_run_id") {
+		t.Fatal("both session bases carry pipeline_run_id")
 	}
 }

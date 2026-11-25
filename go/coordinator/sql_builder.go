@@ -1142,7 +1142,7 @@ var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeed
 // and events, or the start or end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
 // which is not conversation activity. created_at and archived_at are the session record's (its columns, else its
 // payload, matching sessions.go).
-var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.seq, nullif(d.title,'') AS title,
+var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.pipeline_run_id, d.seq, nullif(d.title,'') AS title,
  d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness, d.payload->'agentConfig'->>'id' AS profile_id,
  CASE WHEN d.created_at IS NOT NULL THEN (extract(epoch FROM d.created_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'createdAt')='number' THEN (d.payload->>'createdAt')::float8 END AS created_ms,
  CASE WHEN d.archived_at IS NOT NULL THEN (extract(epoch FROM d.archived_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'archivedAt')='number' THEN (d.payload->>'archivedAt')::float8 END AS archived_ms,
@@ -1153,7 +1153,7 @@ var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d
 
 // sqlSessionCountBase: the sessions as sqlSessionBase gives them to sessionWhere without a search (id, code, project,
 // archive, actor and state): a counter repeated on execution changes skips the message and activity scans.
-var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state
+var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.pipeline_run_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state
  FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)`
 
 // sqlSessionNow: the source of a row's now line (sessions.go nowLine): the newest event of the session with an agent
@@ -1234,8 +1234,9 @@ func (o sessionOrder) by() string   { return o.g + "," + o.s + `,x.id COLLATE "C
 
 func sessionWhere(f rowFilter, p *[]any, withState bool) ([]string, error) {
 	// Host command sessions (program-worker: pipeline script steps, readiness checks, host tools) hold one host job and
-	// no conversation; Runners and executions list them, the Conversations list does not.
-	c := []string{"x.archived_at IS NULL", "coalesce(x.actor,'')<>'program-worker'"}
+	// no conversation; Runners and executions list them, the Conversations list does not. Pipeline and Lab agent steps
+	// are hidden conversations (fleet-conversations.md#entities, listed false): their run and trial pages open them.
+	c := []string{"x.archived_at IS NULL", "coalesce(x.actor,'')<>'program-worker'", "x.pipeline_run_id IS NULL"}
 	if f.Archived {
 		c[0] = "x.archived_at IS NOT NULL"
 	}
