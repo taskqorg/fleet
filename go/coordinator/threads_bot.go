@@ -34,15 +34,25 @@ func (s *dispatchSession) threadNative(key string) *string {
 	return nil
 }
 
-// changeThread: the work item a change row belongs to (watch.go classify names the same row): a task, a question, a
-// pull request or an execution keeps its own thread; host and limit signals share one Fleet thread.
+// changeThread: the subject a change row belongs to (watch.go classify names the same row;
+// fleet-conversations.md#rules): a task, a question or a delivery keeps its own; a question or a run of a task belongs
+// to the task. A run is never a subject: a run without a task belongs to its host, so repeated failures of one host
+// are one line of work. Limit signals share one Fleet subject.
 func changeThread(c contract.Change) string {
 	switch k := string(c.Kind); k {
-	case "question", "execution": // a question or a run of a task belongs to the task's thread
+	case "question", "execution":
 		if c.TaskId != nil && *c.TaskId != "" {
 			return "task:" + *c.TaskId
 		}
+		if k == "execution" {
+			if c.HostId != nil && *c.HostId != "" {
+				return "host:" + *c.HostId
+			}
+			return "fleet"
+		}
 		return k + ":" + c.Id
+	case "host":
+		return "host:" + c.Id
 	case "task", "delivery":
 		return k + ":" + c.Id
 	case "":

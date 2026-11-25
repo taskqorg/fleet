@@ -225,7 +225,7 @@ func sessionViewThreads(q *Request, sid string) ([]contract.SessionThread, error
 	}
 	out := make([]contract.SessionThread, 0, len(rows))
 	for _, r := range rows {
-		t := contract.SessionThread{ThreadKey: r.Thread, Turns: r.Turns, Unread: r.Unread, Open: r.Active, Title: threadTitle(r.Thread)}
+		t := contract.SessionThread{ThreadKey: r.Thread, Turns: r.Turns, Unread: r.Unread, Open: r.Active, Title: threadTitle(r.Thread, r.FirstLine)}
 		if r.LastAt.Valid {
 			t.LastActivityAt = ptr(r.LastAt.Time.UnixMilli())
 		}
@@ -303,8 +303,9 @@ func choiceLabels(raw []byte, names ...string) []string {
 	return out
 }
 
-// threadTitle names a thread whose item is not a task or question (or not visible): the main thread, Fleet, a run.
-func threadTitle(key string) string {
+// threadTitle names a thread whose item is not a task or question (or not visible): the main thread, Fleet, a host,
+// a delivery, else the first line a person wrote in it. A raw key is never a title (fleet-conversations.md#entities).
+func threadTitle(key, firstLine string) string {
 	switch {
 	case key == "":
 		return "Main"
@@ -312,8 +313,14 @@ func threadTitle(key string) string {
 		return "Fleet"
 	case strings.HasPrefix(key, "fleet:"):
 		return "Fleet · " + strings.TrimPrefix(key, "fleet:")
+	case strings.HasPrefix(key, "host:"):
+		return "Host " + strings.TrimPrefix(key, "host:")
+	case strings.HasPrefix(key, "delivery:"):
+		return "Delivery " + strings.TrimPrefix(key, "delivery:")
+	case firstLine != "":
+		return firstLine
 	}
-	return key
+	return "Conversation"
 }
 
 func finishedItem(state string) bool {

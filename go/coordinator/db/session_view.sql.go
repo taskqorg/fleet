@@ -225,7 +225,9 @@ WITH runs AS (
   bool_or(e.state IN ('preparing', 'running', 'waiting')) AS running
  FROM execution e WHERE e.session_id = $1 AND e.kind = 'agent_run' GROUP BY e.thread
 ), msgs AS (
- SELECT m.thread, max(m.updated_at) AS last_at FROM message m WHERE m.session_id = $1 GROUP BY m.thread
+ SELECT m.thread, max(m.updated_at) AS last_at,
+  (array_agg(m.text ORDER BY m.seq) FILTER (WHERE coalesce(m.source, '') NOT IN ('trigger', 'watch', 'wake', 'needs_you', 'schedule', 'bot_run')))[1] AS first_text
+ FROM message m WHERE m.session_id = $1 GROUP BY m.thread
 ), queued AS (
  SELECT coalesce(qm.payload->>'thread', '') AS thread, count(*) AS n FROM queued_message qm WHERE qm.session_id = $1 AND qm.execution_id IS NULL GROUP BY 1
 ), keys AS (
@@ -235,7 +237,8 @@ SELECT k.thread::text AS thread, coalesce(r.turns, 0)::bigint AS turns,
  greatest(r.last_at, m.last_at)::timestamptz AS last_at,
  (coalesce(r.running, false) OR coalesce(q.n, 0) > 0)::boolean AS active,
  (SELECT count(*) FROM execution u WHERE u.session_id = $1 AND u.thread = k.thread AND u.kind = 'agent_run'
-   AND u.started_at > coalesce((SELECT v.visited_at FROM person_visit v WHERE v.email = $2 AND v.page = 'thread:' || $1 || ':' || k.thread), '-infinity'))::bigint AS unread
+   AND u.started_at > coalesce((SELECT v.visited_at FROM person_visit v WHERE v.email = $2 AND v.page = 'thread:' || $1 || ':' || k.thread), '-infinity'))::bigint AS unread,
+ coalesce(nullif(left(split_part(btrim(m.first_text), E'\n', 1), 120), ''), '')::text AS first_line
 FROM keys k LEFT JOIN runs r ON r.thread = k.thread LEFT JOIN msgs m ON m.thread = k.thread LEFT JOIN queued q ON q.thread = k.thread
 ORDER BY 3 DESC NULLS LAST
 `
@@ -246,11 +249,12 @@ type SessionViewThreadsParams struct {
 }
 
 type SessionViewThreadsRow struct {
-	Thread string
-	Turns  int64
-	LastAt pgtype.Timestamptz
-	Active bool
-	Unread int64
+	Thread    string
+	Turns     int64
+	LastAt    pgtype.Timestamptz
+	Active    bool
+	Unread    int64
+	FirstLine string
 }
 
 // Each work-item thread of a session with its turns, last activity, whether a turn is queued or running, and the
@@ -270,6 +274,7 @@ func (q *Queries) SessionViewThreads(ctx context.Context, arg SessionViewThreads
 			&i.LastAt,
 			&i.Active,
 			&i.Unread,
+			&i.FirstLine,
 		); err != nil {
 			return nil, err
 		}
