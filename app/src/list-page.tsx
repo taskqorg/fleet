@@ -13,9 +13,16 @@ import { compareKeys, closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
 import { currentUrl } from './router.ts';
+import { targetUrl } from './routes.ts';
 import { usePins, useViews, listGroups, setListGroups, setNavCounter, type SavedView } from './prefs.ts';
 import { navCounted } from './nav-counts.ts';
 import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
+
+/**
+ * Where a list page puts its list, its opened item and its summary: the control column and the work area (ListDetail), or,
+ * inside a project facet, one column where the opened item replaces the list (docs/design-system/pages/projects.md).
+ */
+export type Frame = (p: { list: JSX.Element; detail?: JSX.Element; detailKey?: string | number; idle?: JSX.Element }) => JSX.Element;
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
 export type ListRow = { id: string; code?: string | null; sortKey: (string | number)[] };
@@ -62,6 +69,11 @@ export type ListPageOptions = {
   saveExtra?: (v: View) => Partial<View>;
   /** Further view keys a personal view restores. */
   pickExtra?: (saved: View) => Partial<View>;
+  /** The project a project facet shows (docs/design-system/pages/projects.md): the project filter stays on it through Clear
+   * filters and saved views, and is not counted as a filter of its own. */
+  scope?: () => string | undefined;
+  /** What a row's link opens by (the URL item): its human code where the page resolves codes (OR-38), else its id. */
+  focusOf?: (r: ListRow) => string;
   /** A change of this value is a switch to another list: it ends selection mode and a pending confirmation; a saved view
    * that switches lists also drops the checked rows. */
   listId?: (v: View) => unknown;
@@ -208,23 +220,23 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const stateKey = (st?: string[]) => listKey({ view: o.view, state: st ?? [] });
   const activePreset = createMemo(() => {
     const v = url.view;
-    return views.list.find(x => !x.system && presetKey(savedView(x.view)) === listKey(v))?.name
+    return views.list.find(x => !x.system && presetKey(savedView(x.view)) === listKey(o.scope?.() ? { ...v, project: undefined } : v))?.name
       ?? (v.state?.length ? views.list.find(x => x.system && stateKey(x.view.state) === stateKey(v.state))?.name : undefined) ?? null;
   });
   // A system preset sets the states only; a personal view restores everything it saved.
   const pick = (n: string) => {
     const v = untrack(() => url.view);
-    const p = views.list.find(x => x.name === n)!, sv = savedView(p.view);
-    url.set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, ...o.pickExtra?.(sv), preset: n, ...(o.listId && o.listId(sv) !== o.listId(v) ? { sel: undefined } : {}) });
+    const p = views.list.find(x => x.name === n)!, sv = savedView(p.view), scope = o.scope?.();
+    url.set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: scope ? [scope] : sv.project ?? [], q: sv.q, ...o.pickExtra?.(sv), preset: n, ...(o.listId && o.listId(sv) !== o.listId(v) ? { sel: undefined } : {}) });
   };
   const save = (n: string) => {
     const v = untrack(() => url.view);
-    views.save({ name: n, view: { view: o.view, state: v.state, group: v.group ?? o.saveGroup, sort: v.sort, project: v.project, q: v.q, ...o.saveExtra?.(v) } });
+    views.save({ name: n, view: { view: o.view, state: v.state, group: v.group ?? o.saveGroup, sort: v.sort, project: o.scope?.() ? undefined : v.project, q: v.q, ...o.saveExtra?.(v) } });
   };
   // The empty state's Clear filters: states, search, projects and the active preset.
   // setQuery('') also drops a typed query not yet committed, which the URL sync alone would leave in the box.
-  const filtered = createMemo(() => !!(states().length || url.view.q || url.view.project?.length));
-  const clearFilters = () => { setQuery(''); url.set({ state: [], q: undefined, project: [], preset: undefined }); };
+  const filtered = createMemo(() => !!(states().length || url.view.q || (!o.scope?.() && url.view.project?.length)));
+  const clearFilters = () => { const scope = o.scope?.(); setQuery(''); url.set({ state: [], q: undefined, project: scope ? [scope] : [], preset: undefined }); };
   const shown = createMemo(() => {
     if (localMemo) return localMemo().rows.length;
     const st = states();
@@ -274,6 +286,8 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     get shown() { return shown(); },
     isLocal: !!localMemo,
     entity: o.entity,
+    focusOf: (r: ListRow) => o.focusOf?.(r) ?? r.id,
+    scope: () => o.scope?.(),
   };
 }
 export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;
@@ -338,11 +352,11 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
 }) {
   const g = p.page;
   const rowMenu = (r: R): MenuItems => [
-    { label: 'Open', icon: actions.open, onClick: () => g.set({ focus: r.id }) },
+    { label: 'Open', icon: actions.open, onClick: () => g.set({ focus: g.focusOf(r) }) },
     { label: g.pins.has(r.id) ? 'Unpin' : 'Pin', icon: g.pins.has(r.id) ? 'pin-off' : 'pin', onClick: () => g.pins.toggle(r.id) },
     { label: g.sel.includes(r.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => g.select(r) },
     { label: 'Copy code', icon: actions.copy, onClick: () => copyText(r.code ?? r.id) },
-    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + formatView({ view: g.view.view, focus: r.id })) },
+    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + targetUrl(formatView({ view: g.view.view, focus: g.focusOf(r), project: g.scope() ? [g.scope()!] : undefined, extra: g.view.extra?.project ? { project: g.view.extra.project } : undefined }))) },
     ...p.menu(r),
   ];
   return <section class="panel">
@@ -369,7 +383,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
       {!g.displayed.length && (g.list.shownKey === null || g.list.pending || (!g.isLocal && g.pins.ids.length > 0 && g.pinnedDoc.data === null && !g.pinnedDoc.error)) ? <Skeleton rows={8} />
         : !g.displayed.length ? (g.list.error || g.pinnedDoc.error ? null : p.empty)
         : <VirtualList keepRowFocus items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} follow="top" label={p.listLabel} onEnd={g.list.more} endKey={g.endKey}
-          columns={`${g.selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${g.sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
+          columns={`${g.selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${p.focused !== undefined && (i.r.id === p.focused || g.focusOf(i.r) === p.focused) ? 'sel' : ''}${g.sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
           render={i => i.kind === 'group'
             ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup, i.key)} tone={i.icon ? undefined : p.groupTone?.(g.rowsGroup, i.key)} label={i.label} count={i.count} open={!g.closed.has(i.key)} onToggle={() => g.toggleGroup(i.key)} />
@@ -381,8 +395,8 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
                 g.pins.toggle(i.r.id); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(i.r.id)}"] .row-link`)?.focus({ preventScroll: true }));
               }} /></span></Show>
               <span class="lead">{p.state(i.r)}</span>
-              <span class="tt">{p.before?.(i.r)}<a class="title row-link" href={g.href({ focus: i.r.id })} aria-keyshortcuts="P X"
-                onClick={e => { e.preventDefault(); if (g.selecting || e.shiftKey) g.select(i.r); else g.set({ focus: i.r.id }); }}
+              <span class="tt">{p.before?.(i.r)}<a class="title row-link" href={targetUrl(g.href({ focus: g.focusOf(i.r) }))} aria-keyshortcuts="P X"
+                onClick={e => { e.preventDefault(); if (g.selecting || e.shiftKey) g.select(i.r); else g.set({ focus: g.focusOf(i.r) }); }}
                 onKeyDown={e => {
                   if (e.altKey || e.ctrlKey || e.metaKey) return;
                   if (e.key === 'p') { e.preventDefault(); g.pins.toggle(i.r.id); }

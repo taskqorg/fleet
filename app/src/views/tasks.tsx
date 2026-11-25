@@ -15,7 +15,8 @@ import { useOp } from '../store.ts';
 import type { TaskRow as ContractTaskRow } from '../../../contracts/generated/ops.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { usePins, prefs, setFocus } from '../prefs.ts';
-import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
+import { useListPage, ListPagePanel, type ListPage, type Frame } from '../list-page.tsx';
+import { useItemId } from '../codes.ts';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { describeTaskFacts, isUnconfirmedActiveTask, parseMs as ms, TERMINAL_TASK_STATES as TERMINAL } from '../task-facts.ts';
 import { RowSpend, useRowSpend, ScopedRollupBar, buildExecTree } from './resources.tsx';
@@ -36,10 +37,16 @@ const SYSTEM_PRESET_TIPS = {
 // Saved views from before the project default kept no group: they were grouped by priority.
 const savedView = (v: View): View => (v.group ? v : { ...v, group: 'priority' });
 
-export function Tasks(props: { id?: string }) {
+/**
+ * The task list and an opened task. `id` is the URL item, a task code (T-FLT-42) or an id. In a project's Tasks facet
+ * (`project`, docs/design-system/pages/projects.md) the list stays on that project and `frame` lays it out in one column.
+ */
+export function Tasks(props: { id?: string; project?: string; frame?: Frame }) {
+  const taskId = useItemId(() => props.id);
   // Pinned tasks are read by id with an empty filter and live through task changes.
   const page = useListPage<TaskRow>({
     view: 'tasks', entity: 'task', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS.tasks, groupLabel,
+    scope: () => props.project, focusOf: r => r.code ?? r.id,
     pinRead: () => ({ filter: {} }),
     savedView, saveGroup: DEFAULT_TASK_GROUP,
     // Completed (7) and cancelled (8) start collapsed under state grouping (the state group keys of task_page, attention
@@ -64,7 +71,7 @@ export function Tasks(props: { id?: string }) {
         family="task"
         groups={GROUPS}
         sorts={SORTS}
-        focused={props.id}
+        focused={taskId() ?? props.id}
         systemTips={SYSTEM_PRESET_TIPS}
         actions={() => [
           { label: 'Pause', icon: 'pause', onClick: () => bulk('pause', page.chosen.filter(canPause)), disabledReason: page.off ?? (page.chosen.some(canPause) ? undefined : 'None can pause') },
@@ -118,8 +125,8 @@ export function Tasks(props: { id?: string }) {
                 cost={spend.cost.get(t.id)}
                 stale={!!spend.error}
                 name={t.code ?? t.title}
-                href={page.href({ focus: t.id })}
-                open={extend => (page.selecting || extend ? page.select(t) : set({ focus: t.id }))}
+                href={page.href({ focus: t.code ?? t.id })}
+                open={extend => (page.selecting || extend ? page.select(t) : set({ focus: t.code ?? t.id }))}
               />
             }
           />
@@ -127,10 +134,11 @@ export function Tasks(props: { id?: string }) {
       />
     </>
   );
+  const Layout = props.frame ?? ListDetail;
   return (
-    <ListDetail
+    <Layout
       list={listPane}
-      detail={props.id ? <Show when={props.id} keyed>{id => <TaskDetail id={id} onClose={() => set({ focus: undefined })} />}</Show> : undefined}
+      detail={props.id ? <Show when={taskId()} keyed fallback={<Skeleton rows={6} />}>{id => <TaskDetail id={id} onClose={() => set({ focus: undefined })} />}</Show> : undefined}
       idle={<TasksSummary page={page} filtered={page.filtered} focused={focused()} />}
       detailKey={props.id}
     />

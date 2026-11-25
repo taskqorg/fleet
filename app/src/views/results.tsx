@@ -12,7 +12,8 @@ import { withFocus, prefsRead, listGroups, setListGroups } from '../prefs.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
 import { useOp } from '../store.ts';
 import { useUrlView } from '../url.ts';
-import { useListPage, ListPagePanel, type LocalList, type ListPage, type ListItem } from '../list-page.tsx';
+import { useListPage, ListPagePanel, type LocalList, type ListPage, type ListItem, type Frame } from '../list-page.tsx';
+import { useItemId } from '../codes.ts';
 import type { View } from '../../../packages/view-url/view-url.ts';
 
 const PAGE = 100;
@@ -83,7 +84,12 @@ function buildFilter(view: View, bucket: number) {
   return { statesFilter, typed, extra, filter, fkey };
 }
 
-export function Results(props: { id?: string }) {
+/**
+ * The result list and an opened result. `id` is the URL item, a result code (R-FLT-12) or an id. In a project's Results
+ * facet (`project`, docs/design-system/pages/projects.md) the list stays on that project and `frame` lays it out in one column.
+ */
+export function Results(props: { id?: string; project?: string; frame?: Frame }) {
+  const resultId = useItemId(() => props.id);
   const [bucket, setBucket] = createSignal(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS);
   onSettled(() => {
     const t = setInterval(() => setBucket(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS), BUCKET_MS);
@@ -156,7 +162,7 @@ export function Results(props: { id?: string }) {
     const curRows = allRows();
     const rows: ResultRow[] = curRows.map(r => ({
       ...r,
-      code: null,
+      code: r.code ?? null,
       sortKey: [gkey(r), field === 'name' ? (fileLabel(r.name) || r.name) : (desc ? -(field === 'size' ? r.size : r.createdAt) : (field === 'size' ? r.size : r.createdAt))],
     })).sort((a, b) => {
       if (grp !== 'none' && a.sortKey[0] !== b.sortKey[0]) return String(a.sortKey[0]).localeCompare(String(b.sortKey[0]));
@@ -194,6 +200,7 @@ export function Results(props: { id?: string }) {
     saveExtra: v => ({ ...v.extra }),
     pickExtra: sv => ({ extra: sv.extra }),
     listId: () => built().fkey,
+    scope: () => props.project, focusOf: r => r.code ?? r.id,
   });
 
   createEffect(() => built().fkey, () => { setSel([]); });
@@ -342,6 +349,8 @@ export function Results(props: { id?: string }) {
     save: basePage.save,
     get filtered() { return basePage.filtered; },
     clearFilters: basePage.clearFilters,
+    focusOf: basePage.focusOf,
+    scope: basePage.scope,
     get shown() { return basePage.shown; },
     isLocal: basePage.isLocal,
     entity: basePage.entity,
@@ -361,7 +370,7 @@ export function Results(props: { id?: string }) {
       family="artifact"
       groups={GROUPS}
       sorts={SORTS}
-      focused={props.id}
+      focused={resultId() ?? props.id}
       countsUnknown={!replyCounts()}
       chips={chips()}
       onRemoveChip={c => { const { [c.field]: _, ...rest } = basePage.view.extra ?? {}; set({ extra: rest }); }}
@@ -377,7 +386,7 @@ export function Results(props: { id?: string }) {
         ...(r.executionId ? [{ label: 'Results of this run', icon: actions.runs, onClick: () => set({ extra: { ...basePage.view.extra, execution: r.executionId! } }) }] : []),
       ]}
       empty={<Empty text={page.filtered || chips().length ? 'No results match.' : 'No results yet.'}
-        action={(page.filtered || chips().length) ? <Button label="Clear filters" onClick={() => { basePage.setQuery(''); set({ state: [], q: undefined, project: [], extra: { group: group() !== DEFAULT_GROUP ? group() : undefined, sort: sort() !== DEFAULT_SORT ? sort() : undefined } }); }} /> : undefined} />}
+        action={(page.filtered || chips().length) ? <Button label="Clear filters" onClick={() => { basePage.setQuery(''); set({ state: [], q: undefined, project: props.project ? [props.project] : [], extra: { group: group() !== DEFAULT_GROUP ? group() : undefined, sort: sort() !== DEFAULT_SORT ? sort() : undefined } }); }} /> : undefined} />}
       facts={r => <RowFacts>
         {r.taskId && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}
         {r.executionId && <EntityCode id={r.executionId} kind="execution" />}
@@ -389,11 +398,12 @@ export function Results(props: { id?: string }) {
     />
   </>;
 
-  return <ListDetail
+  const Layout = props.frame ?? ListDetail;
+  return <Layout
     list={list}
     detailKey={props.id}
     idle={<ResultsIdle rows={allRows()} counts={replyCounts()} hasMore={tailNextBefore() != null} busy={page.list.pending && !allRows().length} />}
-    detail={props.id ? <Show when={props.id} keyed>{id => <Result id={id} onClose={() => set({ focus: undefined })} onFilter={(field, value) => set({ extra: { ...basePage.view.extra, [field]: value } })} />}</Show> : undefined}
+    detail={props.id ? <Show when={resultId()} keyed fallback={<article class="detail" data-ui="detail" tabindex={-1}><Skeleton rows={6} /></article>}>{id => <Result id={id} onClose={() => set({ focus: undefined })} onFilter={(field, value) => set({ extra: { ...basePage.view.extra, [field]: value } })} />}</Show> : undefined}
   />;
 }
 

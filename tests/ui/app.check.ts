@@ -113,17 +113,18 @@ try {
   // Click-to-detail latency: row click until the detail title shows.
   const times: number[] = [];
   for (let i = 0; i < 5; i++) {
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
-    times.push(await page.evaluate(async i => { const l = document.querySelectorAll<HTMLElement>('.vl-row .row-link')[i]; const t0 = performance.now(); l.click(); while (!document.querySelector('[data-ui=detail] .detail-title')) await new Promise(r => requestAnimationFrame(r)); return performance.now() - t0; }, i));
+    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    times.push(await page.evaluate(async i => { const l = document.querySelectorAll<HTMLElement>('.pw-facet .vl-row .row-link')[i]; const t0 = performance.now(); l.click(); while (!document.querySelector('[data-ui=detail] .detail-title')) await new Promise(r => requestAnimationFrame(r)); return performance.now() - t0; }, i));
   }
   times.sort((a, z) => a - z);
   out.push(`click-to-detail: median ${times[2].toFixed(0)} ms of 5 (target <= 100 ms)${times[2] > 100 ? '  OVER TARGET' : ''}`);
 
   // Change-to-screen: a committed task change until its row shows the new state, through the live feed.
-  await page.goto(origin + '/tasks?group=none'); await page.waitForSelector('.vl-row .row-link');
-  const firstId = await page.$eval('.vl-row .row-link', a => (a as HTMLAnchorElement).pathname.split('/')[2]);
+  await page.goto(origin + '/tasks?group=none'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+  // The row's key is the task id (its link names the task by code).
+  const firstId = await page.$eval('.pw-facet .vl-row[data-key]', r => r.getAttribute('data-key') ?? '');
   const t0 = Date.now(); await fetch(origin + '/api/ops/task_update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: firstId, action: 'pause' }) });
-  let ms = -1; for (let i = 0; i < 100; i++) { if (await page.$(`.vl-row [aria-label^="Paused"]`)) { ms = Date.now() - t0; break; } await page.waitForTimeout(20); }
+  let ms = -1; for (let i = 0; i < 100; i++) { if (await page.$(`.pw-facet .vl-row [aria-label^="Paused"]`)) { ms = Date.now() - t0; break; } await page.waitForTimeout(20); }
   out.push(`change-to-screen: ${ms < 0 ? 'NOT SEEN within 2 s' : ms + ' ms'} (target <= 1000 ms)${ms > 1000 ? '  OVER TARGET' : ''}`);
   // Pins (nav-rail.md): pin from the item, it stays in its group too; Alt+ArrowUp reorders; the order survives a reload (person settings).
   await page.goto(origin + '/home'); await page.waitForSelector('[data-ui=nav-rail]');

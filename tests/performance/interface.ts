@@ -614,13 +614,13 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
         };
       });
       await page.addInitScript(() => { (window as any).__interfaceLongTasks = []; new PerformanceObserver(list => { for (const entry of list.getEntries()) (window as any).__interfaceLongTasks.push({ start: entry.startTime, duration: entry.duration }); }).observe({ type: 'longtask', buffered: true }); });
-      const start = stamp(); await page.goto(o.origin + '/projects/' + project);
+      const start = stamp(); await page.goto(o.origin + '/projects/' + project + '/rules');
       await page.getByRole('button', { name: 'Save project', exact: true }).waitFor();
       const editableMs = stamp() - start;
       await page.waitForFunction(() => !!document.querySelector('[data-resource-project]')?.getAttribute('data-resource-version'));
       const summaryMs = stamp() - start;
       await notifications.capture({id,page},true);
-      const warmStart = stamp(); await page.goto(o.origin + '/projects/' + project);
+      const warmStart = stamp(); await page.goto(o.origin + '/projects/' + project + '/rules');
       await page.getByRole('button', { name: 'Save project', exact: true }).waitFor();
       const warmEditableMs = stamp() - warmStart;
       await page.waitForFunction(() => !!document.querySelector('[data-resource-project]')?.getAttribute('data-resource-version'));

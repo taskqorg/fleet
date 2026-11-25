@@ -5,7 +5,8 @@ import { createEffect, createMemo, createSignal, Errored, lazy, Loading, Match, 
 import { render, type JSX } from '@solidjs/web';
 import { createAgent, registerTools } from '@ui-sdk/core/agent';
 import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
-import { useLocation, useSearch } from './router.ts';
+import { useLocation, useSearch, syncLocation } from './router.ts';
+import { setProjectCodes } from './routes.ts';
 import type { InfraSection } from './views/hosts.tsx';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
@@ -27,10 +28,7 @@ declare global {
 
 const Projects = lazy(() => import('./views/projects.tsx'), { export: 'Projects' });
 const Home = lazy(() => import('./views/home.tsx'), { export: 'Home' });
-const Tasks = lazy(() => import('./views/tasks.tsx'), { export: 'Tasks' });
 const Conversations = lazy(() => import('./views/conversations.tsx'), { export: 'Conversations' });
-const Results = lazy(() => import('./views/results.tsx'), { export: 'Results' });
-const Delivery = lazy(() => import('./views/delivery.tsx'), { export: 'Delivery' });
 const Infrastructure = lazy(() => import('./views/hosts.tsx'), { export: 'Hosts' });
 const PersonalLab = lazy(() => import('./views/personal-lab.tsx'), { export: 'PersonalLab' });
 const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
@@ -76,12 +74,14 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   live: { focus: false, view: () => <Live wall={isWall(useSearch()())} /> },
   library: { focus: false, view: () => <Library /> },
   bots: { focus: true, view: p => <Library section="bots" id={p.id} /> },
-  projects: { focus: true, view: p => <Projects id={p.id} /> },
+  // Tasks, Results and Delivery are facets of a project (docs/design-system/pages/projects.md): one Projects view serves
+  // all four screens (PrivateRoutes), so moving between facets never rebuilds the project catalogue (OR-47).
+  projects: { focus: true, view: p => <Projects screen="projects" id={p.id} /> },
   overview: { focus: true, view: p => <Home id={p.id} /> },
-  tasks: { focus: true, view: p => <Tasks id={p.id} /> },
+  tasks: { focus: true, view: p => <Projects screen="tasks" id={p.id} /> },
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
-  results: { focus: true, view: p => <Results id={p.id} /> },
-  delivery: { focus: true, view: p => <Delivery id={p.id} /> },
+  results: { focus: true, view: p => <Projects screen="results" id={p.id} /> },
+  delivery: { focus: true, view: p => <Projects screen="delivery" id={p.id} /> },
   hosts: { focus: true, view: p => <Infrastructure section="hosts" id={p.id} /> },
   runners: { focus: false, view: () => <Infrastructure section="runners" /> },
   lab: { focus: true, view: p => <LabWorkspace id={p.id} /> },
@@ -332,6 +332,7 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
     }
     return null;
   });
+  const projectsScreen = createMemo(() => { const id = builtMatch()?.screen.id; return id === 'projects' || id === 'tasks' || id === 'results' || id === 'delivery' ? id : null; });
   const builtScreen = createMemo(() => builtMatch()?.screen ?? null);
   const builtId = createMemo(() => builtMatch()?.id);
   return (
@@ -342,6 +343,9 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
         </Match>
         <Match when={infraSection()}>
           {sec => <Infrastructure section={sec()} id={infraId()} />}
+        </Match>
+        <Match when={projectsScreen() !== null}>
+          <Projects screen={projectsScreen()!} id={builtId()} />
         </Match>
         {BUILT.map(s => (
           <Match when={builtScreen() === s}>
@@ -357,6 +361,10 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
 function Focus(props: { go: (to: string) => void }) {
   const projects = useOp('project_list', {});
   const list = createMemo<{ id: string; name: string }[]>(() => (projects.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) })));
+  // The address bar names a project by its code (routes.ts): once the codes are known, the current address takes them.
+  createEffect(() => projects.data?.projects, ps => {
+    if (ps && setProjectCodes(ps.map(p => ({ id: String(p.id), code: typeof p.code === 'string' ? p.code : null })))) syncLocation();
+  });
   // Not shown where it leads: Home without the focus.
   const [loc] = useLocation(), search = useSearch();
   const here = createMemo(() => loc() === '/overview' && new URLSearchParams(search()).has('all'));

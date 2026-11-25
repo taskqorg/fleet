@@ -23,11 +23,15 @@ export async function checkProjectEditor(browser: Browser, origin: string, host:
   const hostId = id + '-host';
   const settle = () => p.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   let release: (() => void) | undefined;
+  // A held route or a save gate resolves within a bound: a request that never comes fails the check instead of hanging CI.
+  const within = <T,>(what: string, promise: Promise<T>) => Promise.race([promise, new Promise<never>((_, reject) => setTimeout(() => reject(Error('project editor: no ' + what + ' in 30 s')), 30_000).unref())]);
   try {
     const sendHost = await host(hostId);
     await call('project_create', { id, requestId: crypto.randomUUID(), content: { settings: { id, name: id, roles: { pm: 'pm' }, contextFiles: ['rules.md'], repos: [], environments: [{ hostId, checkoutPath: '/tmp/editor-race' }] }, contextFiles: [{ path: 'rules.md', text: '' }] } });
-    await p.goto(origin + '/projects/' + id);
+    await p.goto(origin + '/projects/' + id + '/rules');
     await p.getByRole('heading', { name: id, exact: true }).waitFor();
+    // The project head names the project before the editor reads it: the editor's own first read answers before a route holds one.
+    await p.locator('.kv-row').filter({ hasText: /Saved version1$/ }).waitFor();
     // Hold an actual pre-save configuration response, while the real update and readback finish.
     let held!: () => void;
     const captured = new Promise<void>(resolve => { held = resolve; });
@@ -41,7 +45,7 @@ export async function checkProjectEditor(browser: Browser, origin: string, host:
       held(); await gate; await route.fulfill({ response });
     });
     await p.getByRole('button', { name: 'Reload project', exact: true }).click();
-    await captured;
+    await within('held definition read', captured);
     await p.getByLabel('Name', { exact: true }).click();
     await p.getByLabel('Name', { exact: true }).fill(id + '-saved');
     await p.getByLabel('Name', { exact: true }).press('Enter');
@@ -87,7 +91,7 @@ export async function checkProjectEditor(browser: Browser, origin: string, host:
       written(); await saveGate; await route.fulfill({ response });
     });
     await p.getByLabel('Name', { exact: true }).fill(id + '-submitted');
-    await p.getByRole('button', { name: 'Save project', exact: true }).click(); await writing;
+    await p.getByRole('button', { name: 'Save project', exact: true }).click(); await within('held project_update', writing);
     assert.equal(await p.getByRole('button', { name: 'Save project', exact: true }).getAttribute('aria-disabled'), 'true');
     await p.getByRole('button', { name: 'Reload project', exact: true }).click();
     await p.getByLabel('Name', { exact: true }).fill(id + '-newer');
