@@ -212,6 +212,22 @@ CREATE TABLE bot (
   "avatar_still_artifact_id" text,
   "avatar_glow" text NOT NULL
 );
+CREATE TABLE bot_automation (
+  "id" text NOT NULL,
+  "bot_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "revision" integer NOT NULL,
+  "name" text NOT NULL,
+  "instructions" text NOT NULL,
+  "kind" text NOT NULL,
+  "schedule_time" text NOT NULL,
+  "schedule_zone" text NOT NULL,
+  "event" text NOT NULL,
+  "enabled" boolean NOT NULL,
+  "effective_since" timestamp with time zone NOT NULL,
+  "event_cursor" bigint NOT NULL,
+  "last_schedule_date" text NOT NULL
+);
 CREATE TABLE bot_memory_revision (
   "bot_id" text NOT NULL,
   "revision" integer NOT NULL,
@@ -231,6 +247,33 @@ CREATE TABLE bot_revision (
   "wake_on_needs_you" boolean NOT NULL,
   "created_at" timestamp with time zone NOT NULL
 );
+CREATE TABLE bot_run (
+  "id" text NOT NULL,
+  "bot_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "bot_revision" integer NOT NULL,
+  "memory_revision" integer NOT NULL,
+  "session_id" text,
+  "execution_id" text,
+  "queued_message_id" text,
+  "cause" text NOT NULL,
+  "dedup_key" text,
+  "state" text NOT NULL,
+  "observation" text NOT NULL,
+  "quiet" boolean NOT NULL,
+  "reason" text NOT NULL,
+  "sent_by" text NOT NULL,
+  "source" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "started_at" timestamp with time zone,
+  "ended_at" timestamp with time zone,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "automation_id" text,
+  "trigger_id" text
+);
 CREATE TABLE bot_task (
   "bot_id" text NOT NULL,
   "task_id" text NOT NULL,
@@ -243,6 +286,14 @@ CREATE TABLE bot_task (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone,
   "seq" bigint NOT NULL
+);
+CREATE TABLE bot_wake_cursor (
+  "bot_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "needs_you_change_seq" bigint NOT NULL,
+  "last_schedule_key" text NOT NULL,
+  "last_schedule_at" timestamp with time zone,
+  "updated_at" timestamp with time zone NOT NULL
 );
 CREATE TABLE budget (
   "id" text NOT NULL,
