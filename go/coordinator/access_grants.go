@@ -309,7 +309,6 @@ func accessServerCheck(q *Request, r *contract.AccessServerCheckRequest) (contra
 		res.Error = new(err.Error())
 	} else {
 		v, err := accessRun(c, []string{"version"}, "")
-		defer c.Close()
 		if err != nil {
 			res.Error = new(err.Error())
 		} else {
@@ -325,6 +324,7 @@ func accessServerCheck(q *Request, r *contract.AccessServerCheckRequest) (contra
 				}
 			}
 		}
+		c.Close() // before the write: no root login stays open behind a lock
 	}
 	var out contract.AccessServerView
 	err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
