@@ -1417,9 +1417,20 @@ func taskListRows(q *Request, sql string, p []any, err error) ([]contract.TaskRo
 		return nil, err
 	}
 	rs, err := typedRows[taskListDBRow](q, sql, p)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]contract.TaskRow, 0, len(rs))
+	ids := make([]string, 0, len(rs))
 	for _, r := range rs {
 		out = append(out, r.row())
+		ids = append(ids, out[len(out)-1].Id)
+	}
+	stages, err := taskDeliveryStages(q, ids)
+	for i := range out {
+		if s, ok := stages[out[i].Id]; ok {
+			out[i].Stage = &s
+		}
 	}
 	return out, err
 }

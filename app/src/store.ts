@@ -189,7 +189,8 @@ export async function nextPage(key: string) {
 // Task rows read task and task_derived (both emit task changes). Session projections also read
 // execution, question, message and non-delta event data. The feed's event kind covers messages too.
 function affectedRow(c: Change, kind: Kind): string | null | undefined {
-  if (kind === 'tasks') return c.kind === 'task' ? c.taskId || c.id || null : undefined;
+  // A delivery pass names a project, not the tasks whose pull request moved (task rows carry its stage): reread the list.
+  if (kind === 'tasks') return c.kind === 'task' ? c.taskId || c.id || null : c.kind === 'delivery' ? null : undefined;
   if (c.kind === 'session') return c.sessionId || c.id || null;
   if (c.kind === 'execution' || c.kind === 'question' || c.kind === 'event') return c.sessionId || undefined;
   return undefined;

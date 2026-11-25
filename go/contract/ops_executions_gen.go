@@ -311,8 +311,10 @@ type DeliveryItem struct {
 	Provider         *string       `json:"provider,omitempty"`
 	Release          *string       `json:"release,omitempty"`
 	Repo             string        `json:"repo"`
+	SessionId        *string       `json:"sessionId,omitempty"`
 	Since            string        `json:"since"`
 	Stage            DeliveryStage `json:"stage"`
+	TaskId           *string       `json:"taskId,omitempty"`
 	Title            string        `json:"title"`
 	Url              string        `json:"url"`
 }
@@ -571,35 +573,6 @@ var DeliverySourceValues = []DeliverySource{DeliverySourceKey, DeliverySourcePub
 // Valid: v is one of the schema's values.
 func (v DeliverySource) Valid() bool {
 	for _, x := range DeliverySourceValues {
-		if v == x {
-			return true
-		}
-	}
-	return false
-}
-
-// DeliveryStage: pr_failed: open, no run active, and the last finished pull_request run on its head failed; mq_failed: open, not in the merge queue and not set to enter it, and the latest finished merge_group run of some workflow failed after its head was first checked (it was removed from the queue and no new commit followed); both read only with a GitHub key
-type DeliveryStage string
-
-const (
-	DeliveryStagePrOpen     DeliveryStage = "pr_open"
-	DeliveryStagePrCi       DeliveryStage = "pr_ci"
-	DeliveryStagePrFailed   DeliveryStage = "pr_failed"
-	DeliveryStageMqWait     DeliveryStage = "mq_wait"
-	DeliveryStageMqCi       DeliveryStage = "mq_ci"
-	DeliveryStageMqFailed   DeliveryStage = "mq_failed"
-	DeliveryStageReleasing  DeliveryStage = "releasing"
-	DeliveryStageInstalling DeliveryStage = "installing"
-	DeliveryStageInstalled  DeliveryStage = "installed"
-	DeliveryStageMerged     DeliveryStage = "merged"
-)
-
-// DeliveryStageValues lists every DeliveryStage in schema order.
-var DeliveryStageValues = []DeliveryStage{DeliveryStagePrOpen, DeliveryStagePrCi, DeliveryStagePrFailed, DeliveryStageMqWait, DeliveryStageMqCi, DeliveryStageMqFailed, DeliveryStageReleasing, DeliveryStageInstalling, DeliveryStageInstalled, DeliveryStageMerged}
-
-// Valid: v is one of the schema's values.
-func (v DeliveryStage) Valid() bool {
-	for _, x := range DeliveryStageValues {
 		if v == x {
 			return true
 		}

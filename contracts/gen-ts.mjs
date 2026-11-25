@@ -48,7 +48,7 @@ for (const f of readdirSync(dir).filter((f) => /^ops-.*\.schema\.json$/.test(f))
     for (const c of o.changes ?? []) if (!changeKinds.has(c.split(':')[0])) throw Error(`${f}: operation ${n} changes ${c}: not a ChangeKind`);
 
 // vocabulary.json lists the Delivery list's states; they are delivery_status's DeliveryStage values, in the same order.
-const stages = JSON.parse(readFileSync(new URL('ops-executions.schema.json', dir), 'utf8')).$defs.DeliveryStage.enum;
+const stages = JSON.parse(readFileSync(new URL('ops.schema.json', dir), 'utf8')).$defs.DeliveryStage.enum;
 const vocabStages = JSON.parse(readFileSync(new URL('vocabulary.json', dir), 'utf8')).lists.delivery.states;
 if (stages.join() !== vocabStages.join()) throw Error(`vocabulary.json lists.delivery.states must equal ops-executions DeliveryStage: ${stages.join(', ')}`);
 

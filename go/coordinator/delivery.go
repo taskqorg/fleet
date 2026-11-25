@@ -100,7 +100,8 @@ func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.Del
 	}
 	// The focus works like access: a repository shows when a focused project that is not left out (excludeProjectIds, the
 	// person's ignored projects) lists it; items carry only its first project.
-	return deliveryReply(last, func(p string) bool { return (full || mayAccessProjectID(q.person, p)) && in(p) }), nil
+	out := deliveryReply(last, func(p string) bool { return (full || mayAccessProjectID(q.person, p)) && in(p) })
+	return out, linkDeliveryItems(q, out.Items)
 }
 
 // deliveryReply: the part of the last pass a caller may see. A repository (its items, landing count, error and

@@ -135,3 +135,13 @@ SELECT id, coalesce((extract(epoch FROM last_seen_at) * 1000)::bigint, 0)::float
   (CASE WHEN jsonb_typeof(payload->'version') = 'string' THEN payload->>'version' ELSE '' END)::text AS version,
   (payload->'update')::jsonb AS update
 FROM host_observation ORDER BY seq;
+
+-- name: DeliverySessionTasks :many
+-- The task of each named session that has one: a pull request from a session branch is that task's.
+SELECT id, task_id::text AS task_id FROM session WHERE id = ANY(@ids::text[]) AND task_id IS NOT NULL;
+
+-- name: DeliverySourceTasks :many
+-- The session and task (its own, else its session's) of each named source execution of a publishing record.
+SELECT e.id, coalesce(e.session_id, '')::text AS session_id, coalesce(e.task_id, s.task_id)::text AS task_id
+FROM execution e LEFT JOIN session s ON s.id = e.session_id
+WHERE e.id = ANY(@ids::text[]) AND coalesce(e.task_id, s.task_id) IS NOT NULL;

@@ -26,7 +26,7 @@
     "task_get": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "changes": ["task", "execution", "question", "artifact"], "description": "A task (taskId) with its executions, questions and results"},
     "task_hold": {"read": false, "errors": [], "auth": "person", "agent": "tool", "description": "Hold a task (taskId): no new work starts until task_release"},
     "task_list": {"read": true, "errors": [], "auth": "person", "agent": "tool", "description": "Tasks, optionally of one project or state"},
-    "task_page": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "changes": ["task"], "description": "A page of tasks by filter, group and sort, with group counts, paged with after and limit"},
+    "task_page": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "changes": ["task", "delivery:delivery-state:"], "description": "A page of tasks by filter, group and sort, with group counts, paged with after and limit"},
     "task_release": {"read": false, "errors": [], "auth": "person", "agent": "tool", "description": "Release a held task (taskId)"},
     "task_request_acceptance": {"read": false, "errors": [400,409], "auth": "person", "agent": "tool", "description": "No artifactIds: the task's stored originals."},
     "task_take": {"read": false, "errors": [400,403,409], "auth": "person", "agent": "no", "description": "Take a task (taskId) onto your own subscription"},
