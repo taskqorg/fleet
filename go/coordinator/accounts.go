@@ -1041,12 +1041,12 @@ func accountUpdate(q *Request, r *contract.AccountUpdateRequest) (any, error) {
 		}
 	}
 	if len(changed) > 0 {
-		if err := notifyHolder(q, a.Holder, fmt.Sprintf("The owner changed %s of your subscription %s.", strings.Join(changed, ", "), a.Name)); err != nil {
+		if err := notifyHolder(q, a.Holder, fmt.Sprintf("changed %s of your subscription %s.", strings.Join(changed, ", "), a.Name)); err != nil {
 			return nil, err
 		}
 	}
 	if newHolder != "" && newHolder != a.Holder {
-		if err := notifyHolder(q, newHolder, fmt.Sprintf("The owner made you the holder of subscription %s.", a.Name)); err != nil {
+		if err := notifyHolder(q, newHolder, fmt.Sprintf("made you the holder of subscription %s.", a.Name)); err != nil {
 			return nil, err
 		}
 	}

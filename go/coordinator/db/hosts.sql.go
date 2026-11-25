@@ -119,6 +119,24 @@ func (q *Queries) FailArtifactsOnlyOnHost(ctx context.Context, hostID string) er
 	return err
 }
 
+const holderNoticeOpen = `-- name: HolderNoticeOpen :one
+SELECT EXISTS (SELECT 1 FROM question WHERE addressed_to= $1::text AND text= $2::text AND state='open'
+ AND data->>'notice'='owner-override')
+`
+
+type HolderNoticeOpenParams struct {
+	Holder string
+	Text   string
+}
+
+// An open holder notice with the same text already addressed to the holder: a repeated change asks once.
+func (q *Queries) HolderNoticeOpen(ctx context.Context, arg HolderNoticeOpenParams) (bool, error) {
+	row := q.db.QueryRow(ctx, holderNoticeOpen, arg.Holder, arg.Text)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const hostAutoUpdate = `-- name: HostAutoUpdate :one
 SELECT (payload->>'autoUpdate')::text FROM host WHERE id=$1
 `
