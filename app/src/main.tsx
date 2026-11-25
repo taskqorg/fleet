@@ -12,7 +12,7 @@ import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setPanel, panelsOf, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
 import { useOp, touchedBy, setIdentity, startStore } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
 import { entityCards } from './entity-cards.ts';
@@ -173,18 +173,18 @@ function App() {
     const t = setTimeout(() => setShown(true), 1500);
     return () => clearTimeout(t);
   });
-  let lastGeometry = { widths: prefs.peek().widths, navCollapsed: prefs.peek().navCollapsed };
+  let lastGeometry = { widths: prefs.peek().widths, panels: panelsOf(prefs.peek()) };
   let lastActor: string | undefined;
   const geometry = createMemo(() => {
     const cur = access.value;
     if (cur.state === 'open') {
       const actor = cur.identity?.identityKey;
       if (actor && lastActor && actor !== lastActor && !prefsRead.value) {
-        lastGeometry = { widths: {}, navCollapsed: false };
+        lastGeometry = { widths: {}, panels: {} };
       }
       if (actor) lastActor = actor;
       if (prefsRead.value) {
-        lastGeometry = { widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed };
+        lastGeometry = { widths: prefs.value.widths, panels: panelsOf(prefs.value) };
       }
     }
     return lastGeometry;
@@ -274,7 +274,7 @@ function App() {
   return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() && !viewer() ? search : []} ready={shown()} wall={wall()}
     searchIdle={<FocusPresets icon value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} onChange={setFocus} />}
     focus={isOpen() && !viewer() ? <Focus go={go} /> : undefined}
-    widths={geometry().widths} onWidth={setWidth} collapsed={geometry().navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
+    widths={geometry().widths} onWidth={setWidth} panels={geometry().panels} onPanel={setPanel}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={isOpen() && user() ? { name: user()!, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}

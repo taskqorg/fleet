@@ -18,7 +18,7 @@ From top to bottom, then the context panel on the right:
 1. **Session head** (one line under the [shell header](../patterns/app-shell.md)):
    * the avatar (a bot's mark, or `P` in the project's colour for a PM), the session's name and its project chip;
    * the [state dot and word](../controls/state-badge.md#dot-and-word) (OR-55);
-   * on the right, as icons: Search in the transcript, Stop (only while a run works), Fork, the row menu (Archive, Copy link, Details) and the Context toggle ([OR-1](../owner-rules.md), [OR-15](../owner-rules.md)).
+   * on the right, as icons: Search in the transcript, Stop (only while a run works), Fork, the row menu (Archive, Copy link, Details) and Close in Conversations ([OR-1](../owner-rules.md), [OR-15](../owner-rules.md)). The Context toggle is in the shell header, after search ([side panel](../controls/side-panel.md)).
    * No model badge, tokens, cost or ids ([OR-54](../owner-rules.md)). Details opens them in place, folded under the head ([OR-19](../owner-rules.md)).
 2. **Open question** (only while one is open): the [question card](../controls/decision-block.md#card) pinned above the transcript, its choices as buttons and a free-text answer ([OR-53](../owner-rules.md)). A confirmation card for a risky action names its scope and the way back ([OR-61](../owner-rules.md)). The answer edits the card in place (UR-58); answered cards stay in the transcript at the point they were asked.
 3. **Transcript**, oldest at the top, the newest at the bottom:
@@ -27,10 +27,10 @@ From top to bottom, then the context panel on the right:
    * heartbeats, repeated attachments and internal notices are never shown.
 4. **Composer** at the bottom, always reachable (UR-59). While a run works it says whether Enter queues the message or steers the run; Stop sits beside it.
 
-**Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), right of the transcript, its own scroller ([OR-25](../owner-rules.md)):
+**Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), a [side panel](../controls/side-panel.md) right of the transcript, its own scroller ([OR-25](../owner-rules.md)):
 * Plan with done items checked, Timers (pause or resume, edit, cancel), Automations, Swarm members with their steps done, related Tasks; each section hidden when empty ([OR-29](../owner-rules.md)).
 * A quiet last line: "Model, tokens, cost and ids: Details".
-* Hidden when every section is empty; the Context icon in the session head shows it again. Open or hidden is stored per person ([OR-41](../owner-rules.md)).
+* Open or closed and its width are stored per person (`panels.session-context`, `widths.session-context`), the same for every session ([OR-41](../owner-rules.md)). An open panel with every section empty shows only the Details line, so it never comes and goes with the data.
 
 ## Frames
 
@@ -38,7 +38,7 @@ From top to bottom, then the context panel on the right:
 |---|---|---|
 | Home (a session card, the composer, Wake) | `/home/C-…` | Full width right of the navigation; the shell header title is the session's name; Back returns to Home with its scroll ([OR-27](../owner-rules.md), UR-64). |
 | Conversations, a project's Sessions facet, a link, Spotlight | `/conversations/C-…` | The work area of Conversations, the session list stays in the control column with the row selected ([OR-24](../owner-rules.md), [OR-47](../owner-rules.md)). |
-| A phone (390 px) | either | The view fills the screen above the bottom bar; the context panel is a sheet opened from the Context icon ([OR-60](../owner-rules.md)). |
+| A phone (390 px) | either | The view fills the screen above the bottom bar; the context panel is a sheet opened from the Context toggle in the shell header ([OR-60](../owner-rules.md)). |
 
 ## States
 

@@ -1,6 +1,6 @@
 // Context panel beside a conversation: plan, timers, automations, swarm, tasks (controls/context-panel.md, OR-51, board masters
 // `Context panel`, `Plan item`, `Timer row`, `Swarm member`). Part of the work area, never a floating layer (OR-27).
-import { createEffect, createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
+import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import type { Life } from '../registry.ts';
 import { Icon, Button, Skeleton } from './primitives.tsx';
@@ -136,23 +136,5 @@ export function ContextPanel(p: {
         <p class="ctx-details">Model, tokens, cost and ids: Details</p>
       </Show>
     </aside>
-  );
-}
-
-/**
- * The context panel as a sheet at phone width (OR-51, OR-60): a native modal <dialog> from the bottom edge. Escape, the
- * Back gesture and a tap outside close it; focus returns to the Context icon that opened it.
- */
-export function ContextSheet(p: { open: boolean; onClose: () => void; children: JSX.Element }) {
-  let dialog: HTMLDialogElement | undefined;
-  createEffect(() => p.open, open => {
-    if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    else if (!open && dialog.open) dialog.close();
-  });
-  return (
-    <dialog ref={el => { dialog = el; }} class="ctx-sheet" data-ui="context-sheet" closedby="any" aria-label="Session context" onClose={() => p.onClose()}>
-      {p.children}
-    </dialog>
   );
 }

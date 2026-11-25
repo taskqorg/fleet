@@ -52,6 +52,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [pulse-line](pulse-line.md) | Work in flight and blockers at a glance |
 | [tool-line](tool-line.md) | Tool calls folded into one quiet line |
 | [context-panel](context-panel.md) | A session's plan, timers, automations and swarm |
+| [side-panel](side-panel.md) | Every column that opens and closes beside the page: one toggle place, a resizable width, state stored per person |
 | [status-pill](status-pill.md) | The fleet's state in words |
 | [figure-tile](figure-tile.md) | One headline figure with its trend |
 | [host-band](host-band.md) | One host: health, slots, runs |

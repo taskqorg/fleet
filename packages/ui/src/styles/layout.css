@@ -220,8 +220,11 @@
   .shell-status { display: flex; align-items: center; gap: var(--space-2); min-width: 0; overflow: hidden; white-space: nowrap; }
   .shell-status:empty, .shell-actions:empty { display: none; }
   .shell-actions { flex: none; display: flex; align-items: center; gap: var(--space-1); }
-  .nav-toggle, .shell-search { flex: none; }
-  .nav-toggle .btn { border-color: transparent; background: none; }
+  .panel-toggle, .shell-search { flex: none; }
+  .panel-toggle .btn { border-color: transparent; background: none; }
+  /* Right side-panel toggles after search (side-panel.md): the place is kept on every page, so search never moves. */
+  .shell-panels { flex: none; display: flex; align-items: center; gap: var(--space-1); min-inline-size: var(--size-control); }
+  @media (pointer: coarse) { .shell-panels { min-inline-size: var(--size-hit-phone); } }
   .shell-search:hover { background: var(--hover); color: var(--fg); }
 
   .shell-main { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); background: var(--surface); }
@@ -237,13 +240,24 @@
   .divider-ctl { margin-left: calc(-1 * var(--space-1)); left: min(var(--size-ctl), 50%); }
   .divider-ctl::after { right: auto; left: 0; }
   .divider-rail { left: 0; }
+  /* A right side panel (side-panel.md): a column at the person's width with its divider on the left edge. Where the page
+     is too narrow, a container query sets --side-mode: sheet and the toggle opens the sheet instead. A stored width never
+     takes more than half of the page beside it (50cqi of the nearest container), whatever screen it was set on. */
+  .side-panel { --side-mode: column; position: relative; display: flex; flex-direction: column; inline-size: min(var(--size-side, var(--size-search)), 50cqi); min-block-size: 0; }
+  .side-panel[hidden] { display: none; }
+  .side-body { display: flex; flex-direction: column; flex: 1; min-block-size: 0; overflow-y: auto; scrollbar-width: thin; }
+  .divider-right { margin-left: calc(-1 * var(--space-1)); }
+  .divider-right::after { right: auto; left: 0; }
+  dialog.side-sheet { inset-block: auto 0; inline-size: 100%; max-inline-size: 100%; max-block-size: 80dvh; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: var(--float); color: var(--fg); box-shadow: var(--elevation-popover); overflow-y: auto; }
+  dialog.side-sheet:modal { overscroll-behavior: contain; }
+  dialog.side-sheet::backdrop { background: rgb(0 0 0 / 0.35); overflow: hidden; overscroll-behavior: contain; }
   .divider:hover::after, .divider:active::after { background: var(--accent); opacity: .5; }
   .divider:focus-visible::after { background: var(--accent); }
   @media (pointer: coarse) {
     .divider, .divider-ctl { width: var(--size-hit-phone); margin-left: calc(-1 * var(--size-hit-phone) / 2); }
     .divider::after, .divider-ctl::after { left: calc(50% - var(--space-2) / 2); right: auto; }
     .rail :is(a, button), .split-list :is(a, button, input, label):not(.pill) { position: relative; z-index: 5; }
-    .vl-row, .nav-toggle, .split-list .vl { position: relative; z-index: 5; }
+    .vl-row, .panel-toggle, .split-list .vl { position: relative; z-index: 5; }
   }
 
   /* Panels, columns, and work area */

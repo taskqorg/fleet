@@ -1,6 +1,6 @@
 # Navigation and columns
 
-**Code.** `AppShell`, `ListDetail`, `Spotlight`, `SearchField` (`packages/ui`).
+**Code.** `AppShell`, `SidePanel`, `ListDetail`, `Spotlight`, `SearchField` (`packages/ui`).
 
 **Job.** Define Fleet's single navigation and information architecture across every section ([app shell](app-shell.md), [list and detail](list-detail.md), [owner rules](../owner-rules.md)).
 
@@ -11,6 +11,18 @@ Catalogue sections follow one three-column structure (`OR-24`, `OR-41`, `OR-43`)
 * **Nav Rail** (`NavRail`): top-level section anchors, pinned sections (`OR-12`), and the signed-in user block with the version and the app update (`OR-42`, [board](../board/screens/shell.bl)). Toggled from the shell header without moving rows or icons (`OR-23`).
 * **Control Column** (`size-ctl`): the section's single filterable catalogue (`VirtualList` or compact hand-built list inside `ListDetail`). Opening an item fills the Work Area while keeping the Control Column mounted: active filters, search query, and scroll position remain intact, and the opened row stays highlighted (`.sel`). Never early-return or replace the `ListDetail` Control Column when an item `id` is selected. Sections with no catalogue (`Runners`) omit the Control Column; `Overview` uses the Needs-you inbox as its Control Column. At narrow widths (`<= 1100 px`), CSS toggles visibility between the Control Column and the opened Work Area without unmounting state.
 * **Work Area:** the opened item (`[data-ui="detail"]`) or, when idle, the section's concise summary or reference (`OR-27`).
+
+<a id="side-panels"></a>
+
+**Side panels (`OR-41`).** Every column that opens and closes beside the page is a [side panel](../controls/side-panel.md) (`SidePanel`): the Nav Rail on the left and the session's context panel on the right, and any later one. One implementation gives each the same behaviour:
+
+* its toggle sits in the shell header at a fixed place: the left one first, right ones after search (`OR-42`, `OR-43`);
+* a divider on its inner edge resizes it (drag, Left and Right, double-click resets);
+* open or closed and the width are person settings on the server by panel key (`panels.<key>`, `widths.<key>`; the rail is `navCollapsed` and `widths.nav`), so a panel opens in the same place at the same width after a reload, in another session and on another page;
+* opening or closing never moves the toggle, search or the rows being read (`OR-6`, `OR-23`);
+* at phone width a right panel opens as a sheet from the same toggle and stores nothing.
+
+A panel never gets its own toggle in a page head, its own resize or state kept in the browser or in the page.
 
 ## 2. Search hierarchy
 

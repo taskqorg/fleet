@@ -1,6 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext, type Accessor } from 'solid-js';
 import { Portal, type JSX } from '@solidjs/web';
+import { SidePanels, ownPanelStore, clampWidth, PanelToggle, ResizeDivider, type SidePanelStore } from './controls/side-panel.tsx';
 import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
@@ -315,22 +316,28 @@ export function AppShell(p: {
   /** The section title in the shell header; default: the current section's label. */ title?: string;
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
   /** The signed-in person, shown at the bottom of the navigation with a Logout menu, and the installed version. */ user?: { name: string; onLogout: () => void; version?: VersionInfo };
-  /** Column widths in px by key (`nav`, `control`) and the collapsed navigation: person settings (OR-41, OR-42). onWidth(key, 0) resets.
+  /** Column and side-panel widths in px by key (`nav`, `control`, `session-context`) and which side panels are open by key
+   *  (`nav` is the navigation, open when expanded): person settings (OR-41, OR-42, side-panel.md). onWidth(key, 0) resets.
    *  Without them the shell keeps its own (book and mockups). */
   privateReady?: boolean; privateGeneration?: number;
-  widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; collapsed?: boolean; onCollapsed?: (on: boolean) => void;
+  widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; panels?: Record<string, boolean>; onPanel?: (key: string, open: boolean) => void;
   /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
   /** Wall mode (Live on a TV, pages/live.md): no navigation and no shell header; the page fills the screen. */ wall?: boolean;
 }) {
   const [own, setOwn] = createSignal<string[]>([]);
   const pinned = createMemo(() => p.pins ?? own());
   const setPinned = (ids: string[]) => (p.onPins ?? setOwn)(ids);
-  const [ownMini, setOwnMini] = createSignal(false);
-  const [ownWidths, setOwnWidths] = createSignal<Record<string, number>>({});
-  const mini = createMemo(() => p.collapsed ?? ownMini());
-  const widths = createMemo(() => p.widths ?? ownWidths());
-  const ownSet = (k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; });
-  const setWidth = (k: string, px: number) => (p.onWidth ?? ownSet)(k, px);
+  // Side panels (side-panel.md): the navigation (`nav`) and every right panel share one store of open state and widths.
+  const [panelSlot, setPanelSlot] = createSignal<HTMLElement | null>(null, { ownedWrite: true });
+  const ownPanels = ownPanelStore(panelSlot);
+  const panels: SidePanelStore = {
+    isOpen: (k, d) => (p.panels ? p.panels[k] ?? d : ownPanels.isOpen(k, d)),
+    setOpen: (k, on) => (p.onPanel ? p.onPanel(k, on) : ownPanels.setOpen(k, on)),
+    width: k => (p.widths ? p.widths[k] : ownPanels.width(k)),
+    setWidth: (k, px) => (p.onWidth ? p.onWidth(k, px) : ownPanels.setWidth(k, px)),
+    slot: panelSlot,
+  };
+  const mini = createMemo(() => !panels.isOpen('nav', true));
 
   let spotSeq = 0;
   const [spot, setSpot] = createSignal<{ gen: number; seq: number } | null>(null);
@@ -357,16 +364,11 @@ export function AppShell(p: {
     return () => removeEventListener('keydown', k);
   });
 
-  const toggle = () => (p.onCollapsed ?? setOwnMini)(!mini());
+  const toggle = () => panels.setOpen('nav', mini());
   // Stored widths are clamped on the way in, so a value an agent or another device wrote never breaks the layout.
-  const vars = createMemo(() => {
-    const w = widths();
-    return Object.fromEntries(
-      Object.entries(COLS)
-        .filter(([, c]) => typeof w[c.key] === 'number' && w[c.key] > 0)
-        .map(([n, c]) => [`--size-${n}`, Math.max(c.lo, Math.min(c.hi, w[c.key])) + 'px']),
-    );
-  });
+  const vars = createMemo(() => Object.fromEntries(
+    Object.entries(COLS).flatMap(([n, c]) => { const w = panels.width(c.key); return typeof w === 'number' && w > 0 ? [[`--size-${n}`, clampWidth(w, c.lo, c.hi) + 'px']] : []; }),
+  ));
   // OR-26: a click anywhere on a row follows the row's link. Controls in the row keep their own action; a text selection is not a click.
   const openRow = (e: MouseEvent) => {
     const t = e.target as HTMLElement, link = t.closest?.('.vl-row, .kv li')?.querySelector<HTMLElement>('.row-link');
@@ -384,7 +386,7 @@ export function AppShell(p: {
   const ready = () => p.ready ?? true;
 
   return (
-    <Widths value={setWidth}>
+    <SidePanels value={panels}>
       <div class={['shell', { pending: !ready() }]} data-ui="app-shell" data-wall={p.wall ? '' : undefined} onClick={openRow} style={vars()}>
         <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
         <NavRail
@@ -415,15 +417,7 @@ export function AppShell(p: {
           {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42),
               the section title and the section's actions (ShellActions) on the left; the focus chip and search on the right. */}
           <header class="shell-h" data-ui="shell-header">
-            <span class="nav-toggle">
-              <Button
-                label={mini() ? 'Expand navigation' : 'Collapse navigation'}
-                icon={mini() ? 'panel-left-open' : 'panel-left-close'}
-                iconOnly
-                pressed={mini()}
-                onClick={toggle}
-              />
-            </span>
+            <PanelToggle side="left" class="nav-toggle" open={!mini()} label={mini() ? 'Expand navigation' : 'Collapse navigation'} onToggle={toggle} />
             <h1 class="shell-title">{p.title ?? p.nav.find(n => n.id === p.current)?.label ?? ''}</h1>
             <span class="shell-actions" ref={el => setActs(el)} />
             <span class="shell-status" ref={el => setSlot(el)} />
@@ -440,6 +434,8 @@ export function AppShell(p: {
             >
               <Icon name={actions.search} />
             </button>
+            {/* Right side-panel toggles (side-panel.md): after search, a reserved place, so nothing moves when a page brings one. */}
+            <span class="shell-panels" ref={el => setPanelSlot(el)} />
           </header>
           <main class="shell-main" id="main" tabindex={-1}>
             <ActionsSlot value={acts}>
@@ -462,56 +458,28 @@ export function AppShell(p: {
         <TooltipLayer />
         <EntityCardLayer />
       </div>
-    </Widths>
+    </SidePanels>
   );
 }
 
 /** The resizable columns: CSS variable name, person-setting key and limits in px. */
 const COLS: Record<'rail' | 'ctl', { key: string; lo: number; hi: number }> = { rail: { key: 'nav', lo: 160, hi: 400 }, ctl: { key: 'control', lo: 280, hi: 720 } };
-const Widths = createContext<(key: string, px: number) => void>(() => {});
-/** A column's drag divider (OR-41): drag or arrow keys resize the column on its left, double-click resets it. */
+/** A column's drag divider (OR-41), the shared side-panel divider: drag or arrow keys resize the column on its left, double-click resets it. */
 function Divider(p: { name: 'rail' | 'ctl' }) {
-  const save = useContext(Widths);
   const spec = () => COLS[p.name];
-  const prop = () => `--size-${p.name}`;
   // The upper limit is also what CSS shows (min(width, 25vw) for the rail, half the split for the list), so nothing unseen is saved.
-  const clamp = (el: HTMLElement, w: number) => {
-    const { lo, hi } = spec();
-    return Math.round(Math.max(lo, Math.min(hi, p.name === 'rail' ? innerWidth / 4 : el.parentElement!.getBoundingClientRect().width / 2, w)));
-  };
-  const width = (el: HTMLElement) => (el.previousElementSibling ?? el.parentElement!.previousElementSibling)!.getBoundingClientRect().width;
-  const live = (el: HTMLElement, w: number) => el.closest<HTMLElement>('.shell')?.style.setProperty(prop(), w + 'px');
   return (
-    <div
-      class={['divider', `divider-${p.name}`]}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={p.name === 'rail' ? 'Resize navigation' : 'Resize list'}
-      tabindex={0}
-      onPointerDown={e => {
-        if (e.button !== 0) return;
-        const el = e.currentTarget, x0 = e.clientX, w0 = width(el), start = clamp(el, w0);
-        let w = start;
-        el.setPointerCapture(e.pointerId);
-        e.preventDefault();
-        // The drag moves the column live; only its end is saved.
-        el.onpointermove = m => { w = clamp(el, w0 + m.clientX - x0); live(el, w); };
-        // A press without a move keeps the default width; a cancelled drag keeps where it got to.
-        el.onpointerup = el.onpointercancel = () => { el.onpointermove = el.onpointerup = el.onpointercancel = null; if (w !== start) save(spec().key, w); };
-      }}
-      onDblClick={e => { e.currentTarget.closest<HTMLElement>('.shell')?.style.removeProperty(prop()); save(spec().key, 0); }}
-      // Arrow keys move it live; the release saves, so a held key writes once.
-      onKeyDown={e => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-        e.preventDefault();
-        const el = e.currentTarget;
-        live(el, clamp(el, width(el) + (e.key === 'ArrowLeft' ? -16 : 16)));
-      }}
-      onKeyUp={e => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-        const el = e.currentTarget;
-        save(spec().key, clamp(el, width(el)));
-      }}
+    <ResizeDivider
+      class={`divider-${p.name}`}
+      label={p.name === 'rail' ? 'Resize navigation' : 'Resize list'}
+      setting={spec().key}
+      side="left"
+      lo={spec().lo}
+      hi={spec().hi}
+      prop={`--size-${p.name}`}
+      host={el => el.closest<HTMLElement>('.shell')}
+      panel={el => (p.name === 'rail' ? el.closest('.shell')!.querySelector<HTMLElement>('[data-ui=nav-rail]')! : el.previousElementSibling as HTMLElement)}
+      cap={el => (p.name === 'rail' ? innerWidth / 4 : el.parentElement!.getBoundingClientRect().width / 2)}
     />
   );
 }
