@@ -80,6 +80,45 @@ type member struct {
 	startedAt, endedAt     *time.Time
 	seq                    int64
 	known                  bool
+	// pub: the delivery stage of its linked pull request, when pubRead (prefetchPublishing reads a page's at once).
+	pub     *contract.ThreadDeliveryStage
+	pubRead bool
+}
+
+// prefetchPublishing reads the delivery stage of every ended execution among rows in one query, so a page of
+// many ended runs does not read the publishing observations once per run.
+func prefetchPublishing(q *Request, rows []trow, m map[string]member) error {
+	ids := []string{}
+	for _, r := range rows {
+		if r.src != "event" {
+			continue
+		}
+		v := r.row()
+		if eid := deref(v.ExecutionID); eid != "" && rawText(v.Type) == "execution.ended" && !m[eid].pubRead {
+			ids = append(ids, eid)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rs, err := q.db().ThreadPublishingResults(q.ctx(), db.ThreadPublishingResultsParams{Ids: ids, Changed: []string{}})
+	if err != nil {
+		return err
+	}
+	found := map[string]*contract.ThreadDeliveryStage{}
+	for _, r := range rs {
+		st, err := threadDeliveryStage(r.Value)
+		if err != nil {
+			return err
+		}
+		found[r.ExecutionID] = st
+	}
+	for _, id := range ids {
+		e := m[id]
+		e.pub, e.pubRead = found[id], true
+		m[id] = e
+	}
+	return nil
 }
 
 // memberRow: the execution columns every member query selects.
@@ -411,15 +450,16 @@ func expand(q *Request, r trow, m map[string]member) ([]threadBlock, error) {
 		own = append(own, b)
 	}
 	if rawText(v.Type) == "execution.ended" {
-		publishing, err := q.db().ThreadPublishingResults(q.ctx(), db.ThreadPublishingResultsParams{Ids: []string{eid}, Changed: []string{}})
-		if err != nil {
-			return nil, err
-		}
-		var stage *contract.ThreadDeliveryStage
-		if len(publishing) > 0 {
-			stage, err = threadDeliveryStage(publishing[0].Value)
+		stage := e.pub
+		if !e.pubRead {
+			publishing, err := q.db().ThreadPublishingResults(q.ctx(), db.ThreadPublishingResultsParams{Ids: []string{eid}, Changed: []string{}})
 			if err != nil {
 				return nil, err
+			}
+			if len(publishing) > 0 {
+				if stage, err = threadDeliveryStage(publishing[0].Value); err != nil {
+					return nil, err
+				}
 			}
 		}
 		result, err := threadResult(q, eid, at(len(own)), stage)
@@ -480,6 +520,9 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 	for {
 		batch, err := threadRows(q, ids, dir, cursor, limit+1, nil)
 		if err != nil {
+			return nil, false, err
+		}
+		if err := prefetchPublishing(q, batch, m); err != nil {
 			return nil, false, err
 		}
 		for _, r := range batch {
