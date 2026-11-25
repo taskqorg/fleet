@@ -443,27 +443,57 @@ func textExchange(cmd *exec.Cmd) (string, error) {
 		return "", err
 	}
 	defer func() { p.Kill(); p.Wait() }() // the CLI runs in its own group
-	read, signIn := make(chan string, 1), make(chan struct{}, 1)
+	type stderrEnd struct {
+		signIn bool
+		tail   string
+	}
+	read, stderr := make(chan string, 1), make(chan stderrEnd, 2)
 	errtrack.Go("text.read", func() {
 		b, _ := io.ReadAll(io.LimitReader(out, 1<<20))
 		read <- string(b)
 	})
 	errtrack.Go("text.stderr", func() {
 		sc := bufio.NewScanner(errOut)
+		var tail string
 		for sc.Scan() {
 			if strings.Contains(sc.Text(), "Authentication required") {
-				signIn <- struct{}{}
+				stderr <- stderrEnd{signIn: true}
 				return
 			}
+			if line := strings.TrimSpace(sc.Text()); line != "" {
+				tail = line
+			}
 		}
+		stderr <- stderrEnd{tail: tail}
 	})
-	select {
-	case text := <-read:
-		return text, nil
-	case <-signIn:
-		return "", errSignIn
-	case <-ctx.Done():
-		return "", errors.New("no answer from the CLI")
+	var ended *stderrEnd // stderr's end, once it came first
+	for {
+		select {
+		case text := <-read:
+			// stdout ended: the CLI exited, so its stderr ends too; a sign-in prompt there wins over an empty answer.
+			if ended == nil {
+				select {
+				case e := <-stderr:
+					ended = &e
+				case <-ctx.Done():
+					ended = &stderrEnd{}
+				}
+			}
+			if ended.signIn {
+				return "", errSignIn
+			}
+			if strings.TrimSpace(text) == "" && ended.tail != "" {
+				return "", errors.New("the CLI answered nothing: " + ended.tail)
+			}
+			return text, nil
+		case e := <-stderr:
+			if e.signIn {
+				return "", errSignIn
+			}
+			ended, stderr = &e, nil // the answer still comes on stdout
+		case <-ctx.Done():
+			return "", errors.New("no answer from the CLI")
+		}
 	}
 }
 
