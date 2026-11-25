@@ -1671,6 +1671,16 @@ type TaskView struct {
 	OpenQuestions     []byte
 }
 
+type TelegramHistory struct {
+	ID         string
+	RoomID     string
+	MessageID  int64
+	At         time.Time
+	Author     string
+	Text       string
+	ImportedAt time.Time
+}
+
 type TelegramLink struct {
 	Code      string
 	Email     string

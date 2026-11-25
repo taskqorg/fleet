@@ -1198,6 +1198,15 @@ CREATE TABLE task_view (
   "latest_result" jsonb,
   "open_questions" jsonb
 );
+CREATE TABLE telegram_history (
+  "id" text NOT NULL,
+  "room_id" text NOT NULL,
+  "message_id" bigint NOT NULL,
+  "at" timestamp with time zone NOT NULL,
+  "author" text NOT NULL,
+  "text" text NOT NULL,
+  "imported_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE telegram_link (
   "code" text NOT NULL,
   "email" text NOT NULL,

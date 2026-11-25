@@ -60,6 +60,25 @@
       "auth": "owner",
       "agent": "tool",
       "description": "Close a room's work item: the conductor no longer attaches messages to it; its conversation stays."
+    },
+    "telegram_history": {
+      "read": true,
+      "errors": [
+        400,
+        404
+      ],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "A room's newest messages, oldest first: imported history (telegram_history_import), people's delivered messages and Fleet's replies. A new work item of a group room starts with this history as context."
+    },
+    "telegram_history_import": {
+      "read": false,
+      "errors": [
+        400
+      ],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Import a room's earlier messages, from before Fleet saw it (a Telegram export), so new work items of the room start with them as context. The room is created when Fleet has not seen it yet; a message id imported again replaces its row."
     }
   },
   "$defs": {
@@ -540,6 +559,146 @@
         "updates",
         "strangers",
         "failed"
+      ]
+    },
+    "TelegramHistoryMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "messageId": {
+          "type": "integer",
+          "$comment": "the Telegram message id in its chat"
+        },
+        "at": {
+          "type": "integer",
+          "$comment": "sent at, ms since the epoch"
+        },
+        "author": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "messageId",
+        "at",
+        "author",
+        "text"
+      ]
+    },
+    "TelegramHistoryImportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chatId": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "integer",
+          "$comment": "the forum topic; 0 or absent: the chat itself or General"
+        },
+        "title": {
+          "type": "string",
+          "$comment": "the room's title when the import creates the room"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TelegramHistoryMessage"
+          },
+          "$comment": "at most 2000 per call"
+        }
+      },
+      "required": [
+        "chatId",
+        "messages"
+      ]
+    },
+    "TelegramHistoryImportReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roomId": {
+          "type": "string"
+        },
+        "imported": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "roomId",
+        "imported"
+      ]
+    },
+    "TelegramHistoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "type": "integer"
+        },
+        "author": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/TelegramHistorySource"
+        }
+      },
+      "required": [
+        "at",
+        "author",
+        "text",
+        "source"
+      ]
+    },
+    "TelegramHistoryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roomId": {
+          "type": "string"
+        },
+        "chatId": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "$comment": "default 60, at most 500"
+        }
+      }
+    },
+    "TelegramHistoryReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roomId": {
+          "type": "string"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TelegramHistoryEntry"
+          }
+        }
+      },
+      "required": [
+        "roomId",
+        "messages"
+      ]
+    },
+    "TelegramHistorySource": {
+      "type": "string",
+      "enum": [
+        "import",
+        "person",
+        "fleet"
       ]
     }
   }

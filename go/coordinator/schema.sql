@@ -5018,3 +5018,17 @@ ALTER TABLE message ADD COLUMN thread text NOT NULL DEFAULT '';
 ALTER TABLE execution ADD COLUMN thread text NOT NULL DEFAULT '';
 CREATE INDEX message_thread ON message(session_id, thread, seq);
 CREATE INDEX execution_thread ON execution(session_id, thread, seq);
+
+-- migration 110: a Telegram room's earlier messages from before Fleet saw it (docs/designs/fleet-telegram.md, Room history).
+-- telegram_history_import fills it, e.g. from a Telegram export; with the journal's people and the sent replies it is the
+-- room history a new work item of a group room starts with. One row per room and Telegram message id.
+CREATE TABLE telegram_history (
+ id text PRIMARY KEY,
+ room_id text NOT NULL REFERENCES telegram_room(id) ON DELETE CASCADE,
+ message_id bigint NOT NULL,
+ at timestamptz NOT NULL,
+ author text NOT NULL,
+ text text NOT NULL,
+ imported_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX telegram_history_room ON telegram_history(room_id, at DESC);

@@ -77,6 +77,33 @@ func (q *Queries) TelegramDeliveryHealth(ctx context.Context) (TelegramDeliveryH
 	return i, err
 }
 
+const telegramHistoryPut = `-- name: TelegramHistoryPut :exec
+INSERT INTO telegram_history (id, room_id, message_id, at, author, text) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO UPDATE SET at = EXCLUDED.at, author = EXCLUDED.author, text = EXCLUDED.text
+`
+
+type TelegramHistoryPutParams struct {
+	ID        string
+	RoomID    string
+	MessageID int64
+	At        time.Time
+	Author    string
+	Text      string
+}
+
+// One imported message of a room (telegram_history_import); a repeat of the same message replaces it.
+func (q *Queries) TelegramHistoryPut(ctx context.Context, arg TelegramHistoryPutParams) error {
+	_, err := q.db.Exec(ctx, telegramHistoryPut,
+		arg.ID,
+		arg.RoomID,
+		arg.MessageID,
+		arg.At,
+		arg.Author,
+		arg.Text,
+	)
+	return err
+}
+
 const telegramIntakeHealth = `-- name: TelegramIntakeHealth :one
 SELECT count(*)::bigint AS updates, count(*) FILTER (WHERE outcome = 'unknown-sender')::bigint AS strangers,
   count(*) FILTER (WHERE outcome = 'failed')::bigint AS failed, max(received_at)::timestamptz AS last_at
@@ -821,6 +848,72 @@ func (q *Queries) TelegramRoomGet(ctx context.Context, id string) (TelegramRoom,
 		&i.SeenAt,
 	)
 	return i, err
+}
+
+const telegramRoomHistory = `-- name: TelegramRoomHistory :many
+SELECT h.at AS at, h.author AS author, h.text AS text, 'import'::text AS source FROM telegram_history h WHERE h.room_id = $2
+  -- An export may also hold messages Fleet saw live: those come from the journal and the outbox, once.
+  AND NOT EXISTS (SELECT 1 FROM telegram_update u2 WHERE u2.chat_id = $3 AND u2.message_id = h.message_id)
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o2 WHERE o2.chat_id = $3 AND o2.telegram_message_id = h.message_id)
+UNION ALL
+SELECT u.received_at, coalesce(nullif(trim(coalesce(u.payload->'message'->'from'->>'first_name', '') || ' ' ||
+    coalesce(u.payload->'message'->'from'->>'last_name', '')), ''), 'someone'),
+  coalesce(nullif(u.payload->'message'->>'text', ''), u.payload->'message'->>'caption', ''), 'person'
+FROM telegram_update u
+WHERE u.chat_id = $3 AND u.outcome = 'delivered' AND u.id <> $4
+  AND (CASE WHEN (u.payload->'message'->>'is_topic_message')::boolean THEN (u.payload->'message'->>'message_thread_id')::bigint ELSE 0 END) = $5::bigint
+UNION ALL
+SELECT o.sent_at, 'Fleet', o.text, 'fleet' FROM telegram_outbox o
+WHERE o.chat_id = $3 AND o.thread_id = $5::bigint AND o.state = 'sent' AND o.kind = 'text' AND o.id LIKE 'reply:%' AND o.sent_at IS NOT NULL
+ORDER BY 1 DESC LIMIT $1
+`
+
+type TelegramRoomHistoryParams struct {
+	Lim      int32
+	RoomID   string
+	ChatID   *int64
+	ExceptID string
+	ThreadID int64
+}
+
+type TelegramRoomHistoryRow struct {
+	At     time.Time
+	Author string
+	Text   string
+	Source string
+}
+
+// A room's newest messages, newest first: imported history, people's delivered messages (the journal, except the one
+// being routed) and Fleet's sent replies. The context a new work item of a group room starts with (telegram_history).
+func (q *Queries) TelegramRoomHistory(ctx context.Context, arg TelegramRoomHistoryParams) ([]TelegramRoomHistoryRow, error) {
+	rows, err := q.db.Query(ctx, telegramRoomHistory,
+		arg.Lim,
+		arg.RoomID,
+		arg.ChatID,
+		arg.ExceptID,
+		arg.ThreadID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramRoomHistoryRow
+	for rows.Next() {
+		var i TelegramRoomHistoryRow
+		if err := rows.Scan(
+			&i.At,
+			&i.Author,
+			&i.Text,
+			&i.Source,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const telegramRoomList = `-- name: TelegramRoomList :many

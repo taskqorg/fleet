@@ -34,6 +34,114 @@ func (v *TelegramDeliveryHealth) Validate() error {
 	return nil
 }
 
+type TelegramHistoryEntry struct {
+	At     int64                 `json:"at"`
+	Author string                `json:"author"`
+	Source TelegramHistorySource `json:"source"`
+	Text   string                `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramHistoryEntry) Validate() error {
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type TelegramHistoryImportReply struct {
+	Imported int64  `json:"imported"`
+	RoomId   string `json:"roomId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramHistoryImportReply) Validate() error {
+	return nil
+}
+
+type TelegramHistoryImportRequest struct {
+	ChatId   int64                    `json:"chatId"`
+	Messages []TelegramHistoryMessage `json:"messages"`
+	ThreadId *int64                   `json:"threadId,omitempty"`
+	Title    *string                  `json:"title,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramHistoryImportRequest) Validate() error {
+	if v.Messages == nil {
+		return Missing("messages")
+	}
+	for i := range v.Messages {
+		if err := Check(&v.Messages[i], "messages"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type TelegramHistoryMessage struct {
+	At        int64  `json:"at"`
+	Author    string `json:"author"`
+	MessageId int64  `json:"messageId"`
+	Text      string `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramHistoryMessage) Validate() error {
+	return nil
+}
+
+type TelegramHistoryReply struct {
+	Messages []TelegramHistoryEntry `json:"messages"`
+	RoomId   string                 `json:"roomId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramHistoryReply) Validate() error {
+	if v.Messages == nil {
+		return Missing("messages")
+	}
+	for i := range v.Messages {
+		if err := Check(&v.Messages[i], "messages"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type TelegramHistoryRequest struct {
+	ChatId   *int64  `json:"chatId,omitempty"`
+	Limit    *int64  `json:"limit,omitempty"`
+	RoomId   *string `json:"roomId,omitempty"`
+	ThreadId *int64  `json:"threadId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramHistoryRequest) Validate() error {
+	return nil
+}
+
+type TelegramHistorySource string
+
+const (
+	TelegramHistorySourceImport TelegramHistorySource = "import"
+	TelegramHistorySourcePerson TelegramHistorySource = "person"
+	TelegramHistorySourceFleet  TelegramHistorySource = "fleet"
+)
+
+// TelegramHistorySourceValues lists every TelegramHistorySource in schema order.
+var TelegramHistorySourceValues = []TelegramHistorySource{TelegramHistorySourceImport, TelegramHistorySourcePerson, TelegramHistorySourceFleet}
+
+// Valid: v is one of the schema's values.
+func (v TelegramHistorySource) Valid() bool {
+	for _, x := range TelegramHistorySourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // TelegramIntakeHealth: the intake journal in the last day
 type TelegramIntakeHealth struct {
 	Failed    int64  `json:"failed"`
@@ -312,13 +420,15 @@ func (v *TelegramWorkCloseRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"telegram_link_code":  {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "no", Description: "Make a one-time code (valid one day) that links the caller's Fleet person to the Telegram user who sends /start <code> to the bot; url opens that chat directly when the bot is known. A person's act: agents cannot call it, so no agent can hand out a link to someone's Fleet identity.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
-		"telegram_people":     {Read: true, Long: false, Errors: []int{}, Auth: "owner", Agent: "tool", Description: "Linked people (Telegram user id, username, language, home conversation) and the Telegram users who wrote without a link, newest first, to link with telegram_person_set.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
-		"telegram_person_set": {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a person's Telegram language (en, ru, ...; Fleet's own notices use it), or unlink them. Linking a person to a Telegram user id, or changing another person, needs the owner or a full-access person (or an agent acting for one); the bot confirms each link in the user's private chat. Only Telegram users linked to a Fleet person reach Fleet; what they may do comes from their Fleet roles and grants.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"type\":\"string\"},\"language\":{\"type\":\"string\"},\"telegramUserId\":{\"type\":\"integer\"},\"unlink\":{\"type\":\"boolean\"},\"username\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telegram_room_set":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "owner", Agent: "tool", Description: "Set a room's project hint: new work items of the room start in that project (empty: conversations outside projects). With chatId (and threadId for a forum topic) instead of roomId it creates the room before the bot has seen it, so a room is set up ahead of its first message.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"chatId\":{\"type\":\"integer\"},\"kind\":{\"$comment\":\"private, group or supergroup; default supergroup for a negative chat id, else private\",\"type\":\"string\"},\"projectHint\":{\"type\":\"string\"},\"roomId\":{\"type\":\"string\"},\"threadId\":{\"type\":\"integer\"},\"title\":{\"type\":\"string\"}},\"required\":[\"projectHint\"],\"type\":\"object\"}")},
-		"telegram_rooms":      {Read: true, Long: false, Errors: []int{}, Auth: "owner", Agent: "tool", Description: "Every Telegram chat and forum topic the bot has seen (a room), its project hint and its open work items (each a Fleet conversation).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
-		"telegram_status":     {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "The Telegram channel: whether the bot token works (bot username), the last poll and its error, the work waiting (intake, replies, outbox), and the caller's own Telegram link and language.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
-		"telegram_work_close": {Read: false, Long: false, Errors: []int{404}, Auth: "owner", Agent: "tool", Description: "Close a room's work item: the conductor no longer attaches messages to it; its conversation stays.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"workId\":{\"type\":\"string\"}},\"required\":[\"workId\"],\"type\":\"object\"}")},
+		"telegram_history":        {Read: true, Long: false, Errors: []int{400, 404}, Auth: "owner", Agent: "tool", Description: "A room's newest messages, oldest first: imported history (telegram_history_import), people's delivered messages and Fleet's replies. A new work item of a group room starts with this history as context.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"chatId\":{\"type\":\"integer\"},\"limit\":{\"$comment\":\"default 60, at most 500\",\"type\":\"integer\"},\"roomId\":{\"type\":\"string\"},\"threadId\":{\"type\":\"integer\"}},\"type\":\"object\"}")},
+		"telegram_history_import": {Read: false, Long: false, Errors: []int{400}, Auth: "owner", Agent: "tool", Description: "Import a room's earlier messages, from before Fleet saw it (a Telegram export), so new work items of the room start with them as context. The room is created when Fleet has not seen it yet; a message id imported again replaces its row.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"chatId\":{\"type\":\"integer\"},\"messages\":{\"$comment\":\"at most 2000 per call\",\"items\":{\"additionalProperties\":false,\"properties\":{\"at\":{\"$comment\":\"sent at, ms since the epoch\",\"type\":\"integer\"},\"author\":{\"type\":\"string\"},\"messageId\":{\"$comment\":\"the Telegram message id in its chat\",\"type\":\"integer\"},\"text\":{\"type\":\"string\"}},\"required\":[\"messageId\",\"at\",\"author\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"threadId\":{\"$comment\":\"the forum topic; 0 or absent: the chat itself or General\",\"type\":\"integer\"},\"title\":{\"$comment\":\"the room's title when the import creates the room\",\"type\":\"string\"}},\"required\":[\"chatId\",\"messages\"],\"type\":\"object\"}")},
+		"telegram_link_code":      {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "no", Description: "Make a one-time code (valid one day) that links the caller's Fleet person to the Telegram user who sends /start <code> to the bot; url opens that chat directly when the bot is known. A person's act: agents cannot call it, so no agent can hand out a link to someone's Fleet identity.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
+		"telegram_people":         {Read: true, Long: false, Errors: []int{}, Auth: "owner", Agent: "tool", Description: "Linked people (Telegram user id, username, language, home conversation) and the Telegram users who wrote without a link, newest first, to link with telegram_person_set.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
+		"telegram_person_set":     {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a person's Telegram language (en, ru, ...; Fleet's own notices use it), or unlink them. Linking a person to a Telegram user id, or changing another person, needs the owner or a full-access person (or an agent acting for one); the bot confirms each link in the user's private chat. Only Telegram users linked to a Fleet person reach Fleet; what they may do comes from their Fleet roles and grants.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"type\":\"string\"},\"language\":{\"type\":\"string\"},\"telegramUserId\":{\"type\":\"integer\"},\"unlink\":{\"type\":\"boolean\"},\"username\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telegram_room_set":       {Read: false, Long: false, Errors: []int{400, 404}, Auth: "owner", Agent: "tool", Description: "Set a room's project hint: new work items of the room start in that project (empty: conversations outside projects). With chatId (and threadId for a forum topic) instead of roomId it creates the room before the bot has seen it, so a room is set up ahead of its first message.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"chatId\":{\"type\":\"integer\"},\"kind\":{\"$comment\":\"private, group or supergroup; default supergroup for a negative chat id, else private\",\"type\":\"string\"},\"projectHint\":{\"type\":\"string\"},\"roomId\":{\"type\":\"string\"},\"threadId\":{\"type\":\"integer\"},\"title\":{\"type\":\"string\"}},\"required\":[\"projectHint\"],\"type\":\"object\"}")},
+		"telegram_rooms":          {Read: true, Long: false, Errors: []int{}, Auth: "owner", Agent: "tool", Description: "Every Telegram chat and forum topic the bot has seen (a room), its project hint and its open work items (each a Fleet conversation).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
+		"telegram_status":         {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "The Telegram channel: whether the bot token works (bot username), the last poll and its error, the work waiting (intake, replies, outbox), and the caller's own Telegram link and language.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
+		"telegram_work_close":     {Read: false, Long: false, Errors: []int{404}, Auth: "owner", Agent: "tool", Description: "Close a room's work item: the conductor no longer attaches messages to it; its conversation stays.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"workId\":{\"type\":\"string\"}},\"required\":[\"workId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

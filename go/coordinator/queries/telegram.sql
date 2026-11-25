@@ -306,3 +306,27 @@ ORDER BY u.update_id DESC LIMIT 1;
 -- name: TelegramWorkLastReply :one
 -- The newest answer Fleet sent for a work item, for the conductor's context.
 SELECT text, created_at FROM telegram_outbox WHERE work_id = $1 AND id LIKE 'reply:%' ORDER BY created_at DESC LIMIT 1;
+
+-- name: TelegramHistoryPut :exec
+-- One imported message of a room (telegram_history_import); a repeat of the same message replaces it.
+INSERT INTO telegram_history (id, room_id, message_id, at, author, text) VALUES (@id, @room_id, @message_id, @at, @author, @text)
+ON CONFLICT (id) DO UPDATE SET at = EXCLUDED.at, author = EXCLUDED.author, text = EXCLUDED.text;
+
+-- name: TelegramRoomHistory :many
+-- A room's newest messages, newest first: imported history, people's delivered messages (the journal, except the one
+-- being routed) and Fleet's sent replies. The context a new work item of a group room starts with (telegram_history).
+SELECT h.at AS at, h.author AS author, h.text AS text, 'import'::text AS source FROM telegram_history h WHERE h.room_id = @room_id
+  -- An export may also hold messages Fleet saw live: those come from the journal and the outbox, once.
+  AND NOT EXISTS (SELECT 1 FROM telegram_update u2 WHERE u2.chat_id = @chat_id AND u2.message_id = h.message_id)
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o2 WHERE o2.chat_id = @chat_id AND o2.telegram_message_id = h.message_id)
+UNION ALL
+SELECT u.received_at, coalesce(nullif(trim(coalesce(u.payload->'message'->'from'->>'first_name', '') || ' ' ||
+    coalesce(u.payload->'message'->'from'->>'last_name', '')), ''), 'someone'),
+  coalesce(nullif(u.payload->'message'->>'text', ''), u.payload->'message'->>'caption', ''), 'person'
+FROM telegram_update u
+WHERE u.chat_id = @chat_id AND u.outcome = 'delivered' AND u.id <> @except_id
+  AND (CASE WHEN (u.payload->'message'->>'is_topic_message')::boolean THEN (u.payload->'message'->>'message_thread_id')::bigint ELSE 0 END) = @thread_id::bigint
+UNION ALL
+SELECT o.sent_at, 'Fleet', o.text, 'fleet' FROM telegram_outbox o
+WHERE o.chat_id = @chat_id AND o.thread_id = @thread_id::bigint AND o.state = 'sent' AND o.kind = 'text' AND o.id LIKE 'reply:%' AND o.sent_at IS NOT NULL
+ORDER BY 1 DESC LIMIT @lim;
