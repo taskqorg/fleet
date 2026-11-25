@@ -122,9 +122,9 @@ The earlier screens have no route of their own: each is a facet, a root or a sav
 | Earlier route | Redirects to | Screen now |
 |---|---|---|
 | `/`, `/overview`, `/overview/<id>` | `/home`, `/home/<id>` | Home |
-| `/tasks`, `/tasks/<id>` | `/projects/tasks`, `/projects/<code>/tasks/<id>` | Projects › Tasks facet |
-| `/results`, `/results/<id>` | `/projects/results`, `/projects/<code>/results/<id>` | Projects › Results facet |
-| `/delivery`, `/delivery/<id>`, `/publishing` | `/projects/delivery`, `/projects/<code>/delivery/<id>` | Projects › Delivery facet |
+| `/tasks`, `/tasks/<id>` | `/projects/tasks`, `/projects/tasks/<id>` (`/projects/<code>/tasks/<id>` when the query names one project) | Projects › Tasks facet |
+| `/results`, `/results/<id>` | `/projects/results`, `/projects/results/<id>` (`/projects/<code>/results/<id>` when the query names one project) | Projects › Results facet |
+| `/delivery`, `/delivery/<id>`, `/publishing` | `/projects/delivery`, `/projects/delivery/<id>` (`/projects/<code>/delivery/<id>` when the query names one project) | Projects › Delivery facet |
 | `/personal-lab`, `/personal-lab/<id>` | `/lab/mine`, `/lab/mine/<id>` | Lab › Mine |
 | `/catalogue`, `/catalogue/<id>` | `/library/methods`, `/library/methods/<id>` | Library › Methods |
 | `/agents`, `/agents/<id>`, `/agents/skill:<id>` | `/library/agents`, `/library/agents/<id>`, `/library/skills/<id>` | Library › Agents, Skills |
