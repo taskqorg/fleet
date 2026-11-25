@@ -1,6 +1,6 @@
 // Lab comparison (docs/design-system/pages/laboratory.md#target, owner decision 2026-11-25): the Model × Pipeline matrix of
 // a collection or a use case. Each cell carries score, median wall time and failure rate; tokens and cost are in the
-// cell's Details (OR-54, OR-59). At narrow width the same rows become a ranked table (phone, container query).
+// cell's Details (OR-54, OR-59). When the matrix does not fit its width the same cells become a ranked table (OR-66).
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   Button, DataTable, Empty, ErrorBanner, MatrixCell, Num, ProblemRow, Skeleton, TableName, TableRow, agentLabel, msMeasured,

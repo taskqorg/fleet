@@ -4,21 +4,61 @@ import type { JSX } from '@solidjs/web';
 import { Menu, MenuContent, MenuItem, MenuTrigger, Tabs, TabsList, TabsTab } from '@ui-sdk/solid';
 import { Icon } from './primitives.tsx';
 
-/** Scrollable semantic table region; wide tables scroll sideways inside their own frame (OR-25). */
+/**
+ * Semantic table region that never scrolls sideways (OR-66, modern-web-guidance responsive-table): while its columns fit
+ * the frame it is a table; when they do not, each row becomes a stacked block (`.stacked`): the row header on top, every
+ * other cell as `label value`, the label taken from its column header. The table measures itself on resize and on new
+ * rows, so a fixed breakpoint neither leaves a wide table overflowing nor stacks a narrow one that fits.
+ */
 export function DataTable(p: {
   label: string;
   head: JSX.Element;
   children: JSX.Element;
   cls?: string;
 }) {
+  let frame: HTMLDivElement | undefined;
+  onSettled(() => {
+    if (!frame || typeof ResizeObserver !== 'function') return;
+    const f = frame;
+    let queued = 0;
+    // One measure per frame, however many rows or texts changed.
+    const later = () => { if (!queued) queued = requestAnimationFrame(() => { queued = 0; fit(); }); };
+    const fit = () => {
+      const table = f.querySelector(':scope > table') as HTMLTableElement | null;
+      if (!table) return;
+      labelCells(table);
+      f.classList.remove('stacked');
+      if (table.getBoundingClientRect().width > f.clientWidth + 1) f.classList.add('stacked');
+    };
+    const ro = new ResizeObserver(fit);
+    const mo = new MutationObserver(later);
+    ro.observe(f);
+    mo.observe(f, { childList: true, subtree: true, characterData: true });
+    fit();
+    return () => { ro.disconnect(); mo.disconnect(); cancelAnimationFrame(queued); };
+  });
   return (
-    <div class="table-frame" data-ui="data-table" tabindex={0} role="region" aria-label={p.label}>
+    <div ref={el => { frame = el; }} class="table-frame" data-ui="data-table" tabindex={0} role="region" aria-label={p.label}>
       <table class={['limit-table', p.cls]}>
         <thead>{p.head}</thead>
         <tbody>{p.children}</tbody>
       </table>
     </div>
   );
+}
+
+/** Gives each body cell its column header as `data-label` (colspans counted), for the stacked layout. */
+function labelCells(table: HTMLTableElement) {
+  const heads: string[] = [];
+  for (const th of table.tHead?.rows[0]?.cells ?? []) for (let i = 0; i < th.colSpan; i++) heads.push(th.textContent?.trim() ?? '');
+  for (const body of table.tBodies) for (const row of body.rows) {
+    let col = 0;
+    for (const cell of row.cells) {
+      const label = cell.colSpan === 1 && cell.tagName === 'TD' ? heads[col] ?? '' : '';
+      if ((cell.dataset.label ?? '') !== label) { if (label) cell.dataset.label = label; else delete cell.dataset.label; }
+      col += cell.colSpan;
+    }
+  }
 }
 
 /**

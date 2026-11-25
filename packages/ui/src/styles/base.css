@@ -4,7 +4,13 @@
     box-sizing: border-box;
   }
 
+  /* OR-66: no horizontal scroll. A sideways trackpad swipe that reaches the page is browser Back or Forward; content
+     reflows instead (patterns/no-horizontal-scroll.md), and this stops a stray overscroll from turning into navigation. */
+  html, body { overscroll-behavior-x: none; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
   body {
+    overflow-wrap: break-word;
     margin: 0;
     background: var(--bg);
     color: var(--fg);

@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { checkServer } from './seed.ts';
 import { layoutFindings } from './layout.check.ts';
 import { openWaiting } from './home-card.ts';
+import { hscrollScan } from './hscroll.ts';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });
@@ -70,8 +71,18 @@ try {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.screenshot({ path: shot + '-dark.png' });
     await page.emulateMedia({ colorScheme: 'light' });
+    for (const f of await page.evaluate(hscrollScan)) out.push(`  OR-66 1440px: ${f.kind} ${f.px} px ${f.el}`);
     for (const f of await layoutFindings(page)) out.push(`  ${f}`);
   }
+  // OR-66 no horizontal scroll: every route at the other checked widths; each sideways overflow is one report line.
+  for (const w of [1100, 768, 390]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    for (const [route] of ROUTES) {
+      await page.goto(origin + route); await page.waitForTimeout(500);
+      for (const f of await page.evaluate(hscrollScan)) out.push(`OR-66 ${w}px ${route.replace(/[0-9a-f-]{36}/, ':id')}: ${f.kind} ${f.px} px ${f.el}`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   // Owners add and revoke a human without sending a replacement roster.
   await page.goto(origin + '/system/people');
   await page.getByRole('button', { name: 'Invite person', exact: true }).click();

@@ -1,10 +1,25 @@
 /* Semantic data tables (OR-25, modern-web-guidance responsive-table) and disclosures. */
 @layer controls {
+  /* OR-66: the frame never scrolls sideways. DataTable stacks the rows (.stacked) when the columns do not fit. */
   .table-frame {
-    overflow: auto;
     max-inline-size: 100%;
+    min-inline-size: 0;
     container-type: inline-size;
   }
+
+  /* Stacked rows (patterns/no-horizontal-scroll.md): each row a block, the row header on top, every other cell a
+     label and value pair; the label is the cell's column header (data-label, set by DataTable). */
+  /* Child combinators: a table nested in a cell keeps its own layout. */
+  .table-frame.stacked > table, .table-frame.stacked > table > tbody, .table-frame.stacked > table > tbody > tr,
+  .table-frame.stacked > table > tbody > tr > :is(th, td) { display: block; }
+  .table-frame.stacked > table > thead { display: none; }
+  .table-frame.stacked > table > tbody > tr { padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
+  .table-frame.stacked > table > tbody > tr:first-child { border-top: 0; }
+  .table-frame.stacked > table > tbody > tr > :is(th, td) { padding: var(--space-1) 0; border: 0; text-align: start; white-space: normal; overflow-wrap: anywhere; }
+  .table-frame.stacked { --stack-label: min(var(--size-label), 40cqi); }
+  .table-frame.stacked > table > tbody > tr > td[data-label] { position: relative; padding-inline-start: calc(var(--stack-label) + var(--space-3)); }
+  .table-frame.stacked > table > tbody > tr > td[data-label]::before { content: attr(data-label); position: absolute; inset-inline-start: 0; inline-size: var(--stack-label); color: var(--fg-muted); overflow-wrap: anywhere; }
+  .table-frame.stacked > table > tbody > tr > td:empty { display: none; }
 
   .limit-table {
     border-collapse: separate;

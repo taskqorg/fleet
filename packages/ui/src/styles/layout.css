@@ -142,7 +142,7 @@
   .pinned-strip-h { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); letter-spacing: 0.04em; text-transform: uppercase; }
   .pinned-strip-h .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .pinned-strip-empty { margin: 0; padding: 0 var(--space-3) var(--space-2); color: var(--fg-muted); font-size: var(--font-size-sm); }
-  .pinned-marks { display: flex; gap: var(--space-2); overflow-x: auto; padding: var(--space-1) var(--space-2) var(--space-2); }
+  .pinned-marks { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-1) var(--space-2) var(--space-2); }
   .pinned-marks .pin-tile { display: flex; flex-direction: column; align-items: center; height: auto; gap: var(--space-1); padding: var(--space-1); min-width: var(--size-hit-phone); }
   .pinned-marks .pin-tile .nm { font-size: var(--font-size-xs); max-width: var(--size-thumb); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rail-user-b {
@@ -318,7 +318,9 @@
   .dsec-open:hover { color: var(--fg); }
   .dsec-open .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .dsec-n { color: var(--fg-faint); }
-  .kv-row { display: flex; align-items: center; gap: var(--space-2); min-height: var(--size-row); }
+  .kv-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-height: var(--size-row); }
+  /* OR-66: a long value (a code, a path, a URL) wraps inside the row instead of widening it. */
+  .kv-row > * { min-inline-size: 0; overflow-wrap: anywhere; }
   /* A one-line text that takes the free width of a kv row, cut by CSS only (the full text stays in the DOM and its tooltip). */
   .kv-row .kv-line { flex: 1; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .deps { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }

@@ -1,4 +1,4 @@
-/* Lab comparison and experiment matrix (pages/laboratory.md#target): the Model × Pipeline matrix and, at narrow width, the
+/* Lab comparison and experiment matrix (pages/laboratory.md#target): the Model × Pipeline matrix and, when it does not fit, the
    ranked table (modern-web-guidance size-aware-styling, responsive-table: the section is the container). */
 @layer controls {
   .lab-cmp { container-type: inline-size; }
@@ -13,10 +13,14 @@
   .lab-mx td { min-width: var(--size-label); }
   .lab-mx-corner { color: var(--fg-faint); }
   .lab-mx-none { display: block; padding: var(--space-2) var(--space-3); color: var(--fg-faint); }
+  /* OR-66: the matrix shows while its columns fit (DataTable measures it); when it would stack, the ranked table takes
+     its place. The matrix keeps its width so DataTable can tell when it fits again. */
   .lab-rank { display: none; }
-  @container (width < 600px) {
-    .lab-mx { display: none; }
+  .lab-cmp-body:has(.lab-mx .table-frame.stacked) {
+    .lab-mx { block-size: 0; overflow: clip; visibility: hidden; }
     .lab-rank { display: block; }
+  }
+  @container (width < 600px) {
     .lab-cmp-meta { order: 9; flex-basis: 100%; }
   }
   .lab-trials { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-4); }
