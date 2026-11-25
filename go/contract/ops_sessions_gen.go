@@ -545,6 +545,26 @@ func (v SessionAccess) Valid() bool {
 	return false
 }
 
+// SessionAgent: The session's agent profile as the composer chips show it; the stored configuration stays on the server.
+type SessionAgent struct {
+	Effort     *string  `json:"effort"`
+	GitNetwork *bool    `json:"gitNetwork"`
+	Harness    *string  `json:"harness"`
+	Mode       *string  `json:"mode"`
+	Model      *string  `json:"model"`
+	ProfileId  *string  `json:"profileId"`
+	Sandbox    *bool    `json:"sandbox"`
+	Tools      []string `json:"tools"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionAgent) Validate() error {
+	if v.Tools == nil {
+		return Missing("tools")
+	}
+	return nil
+}
+
 // SessionArchiveReply: {sessionId, archivedAt, teardown: null} when no execution is left to tear down, else the teardown command it queued (id, executionId, hostId, kind teardown, payload, status).
 type SessionArchiveReply = map[string]json.RawMessage
 
@@ -642,13 +662,19 @@ func (v *SessionCommandRequest) Validate() error {
 
 // SessionComposer: The session that receives the next message and the run Stop stops (thread_composer's answer).
 type SessionComposer struct {
-	ActiveExecutionId *string `json:"activeExecutionId"`
-	Reason            *string `json:"reason"`
-	SessionId         *string `json:"sessionId"`
+	ActiveExecutionId *string       `json:"activeExecutionId"`
+	Agent             *SessionAgent `json:"agent,omitempty"`
+	Reason            *string       `json:"reason"`
+	SessionId         *string       `json:"sessionId"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionComposer) Validate() error {
+	if v.Agent != nil {
+		if err := Check(v.Agent, "agent"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -969,16 +995,14 @@ func (v *SessionHandoffsRequest) Validate() error {
 
 type SessionHead struct {
 	ActiveExecutionId *string      `json:"activeExecutionId"`
+	Agent             SessionAgent `json:"agent"`
 	ArchivedAt        *int64       `json:"archivedAt"`
 	BotId             *string      `json:"botId"`
 	Code              *string      `json:"code"`
 	Cost              []CostFigure `json:"cost"`
 	CreatedAt         *int64       `json:"createdAt"`
 	Error             *string      `json:"error,omitempty"`
-	Harness           *string      `json:"harness"`
 	Id                string       `json:"id"`
-	Model             *string      `json:"model"`
-	ProfileId         *string      `json:"profileId"`
 	ProjectCode       *string      `json:"projectCode"`
 	ProjectId         *string      `json:"projectId"`
 	Role              *string      `json:"role,omitempty"`
@@ -988,6 +1012,9 @@ type SessionHead struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionHead) Validate() error {
+	if err := Check(&v.Agent, "agent"); err != nil {
+		return err
+	}
 	if v.Cost == nil {
 		return Missing("cost")
 	}

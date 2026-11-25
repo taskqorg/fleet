@@ -82,6 +82,14 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 		return out, err
 	}
 	out.Composer = contract.SessionComposer{SessionId: target.SessionId}
+	if target.SessionId != nil {
+		if *target.SessionId == sid {
+			out.Composer.Agent = &head.Agent
+		} else if ts, err := sessionByID(q, *target.SessionId); err == nil {
+			a := sessionAgentOf(ts.AgentConfig)
+			out.Composer.Agent = &a
+		}
+	}
 	if target.Active != nil {
 		out.Composer.ActiveExecutionId = &target.Active.Id
 	}
@@ -143,15 +151,7 @@ func sessionViewHead(q *Request, s *agentSession, rows []db.SessionViewExecution
 	if s.CreatedAt != 0 {
 		h.CreatedAt = &s.CreatedAt
 	}
-	var cfg struct {
-		ID      string `json:"id"`
-		Harness string `json:"harness"`
-		Model   string `json:"model"`
-	}
-	if len(s.AgentConfig) > 0 {
-		_ = json.Unmarshal(s.AgentConfig, &cfg)
-	}
-	h.ProfileId, h.Harness, h.Model = optStr(cfg.ID), optStr(cfg.Harness), optStr(cfg.Model)
+	h.Agent = sessionAgentOf(s.AgentConfig)
 	st, err := q.db().SessionCodeAndState(q.ctx(), s.ID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return h, err
@@ -229,6 +229,33 @@ func sessionViewThreads(q *Request, sid string) ([]contract.SessionThread, error
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+// sessionAgentOf: the profile fields the composer chips show, from the session's stored agent configuration.
+func sessionAgentOf(raw json.RawMessage) contract.SessionAgent {
+	var cfg struct {
+		ID         string   `json:"id"`
+		Harness    string   `json:"harness"`
+		Model      string   `json:"model"`
+		Effort     string   `json:"effort"`
+		Tools      []string `json:"tools"`
+		GitNetwork *bool    `json:"gitNetwork"`
+		Settings   struct {
+			Mode    string `json:"mode"`
+			Sandbox *bool  `json:"sandbox"`
+		} `json:"settings"`
+	}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &cfg)
+	}
+	a := contract.SessionAgent{ProfileId: optStr(cfg.ID), Harness: optStr(cfg.Harness), Model: optStr(cfg.Model), Effort: optStr(cfg.Effort),
+		Mode: optStr(cfg.Settings.Mode), Sandbox: cfg.Settings.Sandbox, Tools: []string{}, GitNetwork: cfg.GitNetwork}
+	for _, t := range cfg.Tools {
+		if t != "" {
+			a.Tools = append(a.Tools, t)
+		}
+	}
+	return a
 }
 
 // choiceLabels: the strings of a JSON array whose items are strings or objects; an object gives its first non-empty

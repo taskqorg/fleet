@@ -156,6 +156,26 @@ The query finds the thread's member executions (the membership rule), then reads
 
 Live entries arrive through the existing change feed (`app/src/feed.ts`) from `feedCursor`. The client inserts a fed entry whose key falls inside its loaded window `[first, last]`, or after `last` when `hasAfter = false`; it ignores other fed entries, because a later page read returns them. The "N new" pill counts only entries past `last`.
 
+`key` may be `{session, thread}`: only the entries of that work-item thread of the session (`''` the main thread), read over `execution_thread`. `full: false` keeps every tool block to its summary: `callId` (`<executionId>/<seq>:<index>`), `toolKind` (classified on the server with the rules of `packages/ui/src/controls/tool-fold.ts` `toolKind()`), a short `target` and, for a failed call, `errorLine`. `tool_output {callId}` loads that call's input and output when it is opened. The default (`full` absent or true) keeps input and output in the block for agents that read a transcript.
+
+### Session view: `session_view`
+
+The conversation screen reads one operation, composed on the server from summaries ([data layer](https://github.com/taskqorg/fleet/pull/959): one read per screen, no stored blobs in a view):
+
+```text
+session_view({ sessionId, executionsLimit?, executionsBefore? })
+  -> { head, composer, questions, threads, triggers, botTriggers?, context, lastMessage?, executions }
+```
+
+*   `head`: code, title (set or generated, else the first message's start), state and active run (the newest turns), project and its code, bot, archived, the agent profile as the composer chips show it, the latest run's error line and the session's cost.
+*   `composer`: the session that receives the next message (`thread_composer`'s rule), its running execution and agent, or why none can receive one.
+*   `questions`: open questions of the session and of the composer target.
+*   `threads`: each work-item thread with its item's title, code and state, its turns, last activity, open or parked, and the viewer's unread turns (since the viewer's `person_visit` of page `thread:<session>:<thread>`).
+*   `triggers` and `botTriggers`: `trigger_list` of the session and of its bot. `context`: `session_context`.
+*   `executions`: the newest 20 turns (at most 200) as rows, paged with `executionsBefore`, over `execution_session_turns` (migration 111). A row holds no snapshot, dispatch or configuration; `execution_get` has the whole record.
+
+`session_get` stays for agents and for Details (forks, handoffs, the resource rollup), which the screen reads only while that panel is open. Measured on HAL0's Home session (255 turns): `session_get` was 7.6 MB and took 2-14 s, reread on every change of the session.
+
 ### Search: `thread_search`
 
 ```text

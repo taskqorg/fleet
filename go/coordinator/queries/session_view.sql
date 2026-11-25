@@ -2,14 +2,19 @@
 -- indexes (migration 109). No stored snapshot, dispatch or configuration column is read.
 
 -- name: SessionViewExecutions :many
--- The newest turns of a session below before (NULL: from the newest), newest first.
+-- The newest turns of a session below before (NULL: from the newest), newest first. The page is chosen on
+-- execution_session_turns (migration 111) before data is read, so only the page's rows are detoasted.
+WITH page AS (
+ SELECT x.id FROM execution x
+ WHERE x.session_id = @session_id AND x.kind IN ('agent_run', 'host_job')
+  AND (sqlc.narg(before)::bigint IS NULL OR x.seq < sqlc.narg(before)::bigint)
+ ORDER BY x.seq DESC LIMIT @lim
+)
 SELECT e.id, e.seq, e.kind::text AS kind, e.state::text AS state, e.thread, e.started_at, e.ended_at,
  split_part(coalesce(e.problem, e.data->>'error', e.data->>'errorMessage', ''), E'\n', 1)::text AS error,
  e.harness, e.model, e.host_id, coalesce(e.data->>'source', e.data->>'wakeSource', '')::text AS source
-FROM execution e
-WHERE e.session_id = @session_id AND e.kind IN ('agent_run', 'host_job')
- AND (sqlc.narg(before)::bigint IS NULL OR e.seq < sqlc.narg(before)::bigint)
-ORDER BY e.seq DESC LIMIT @lim;
+FROM page JOIN execution e ON e.id = page.id
+ORDER BY e.seq DESC;
 
 -- name: SessionViewExecutionCount :one
 SELECT count(*) FROM execution WHERE session_id = @session_id AND kind IN ('agent_run', 'host_job');

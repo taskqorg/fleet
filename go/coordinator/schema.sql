@@ -5032,3 +5032,7 @@ CREATE TABLE telegram_history (
  imported_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX telegram_history_room ON telegram_history(room_id, at DESC);
+
+-- migration 111: the session view's turns (session_view, queries/session_view.sql): a session's newest agent runs and
+-- host jobs in seq order, so a page of 20 reads 20 rows instead of every turn of the session.
+CREATE INDEX execution_session_turns ON execution(session_id, seq DESC) WHERE kind IN ('agent_run', 'host_job');

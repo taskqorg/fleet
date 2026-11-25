@@ -25,13 +25,17 @@ func (q *Queries) SessionViewExecutionCount(ctx context.Context, sessionID *stri
 
 const sessionViewExecutions = `-- name: SessionViewExecutions :many
 
+WITH page AS (
+ SELECT x.id FROM execution x
+ WHERE x.session_id = $1 AND x.kind IN ('agent_run', 'host_job')
+  AND ($2::bigint IS NULL OR x.seq < $2::bigint)
+ ORDER BY x.seq DESC LIMIT $3
+)
 SELECT e.id, e.seq, e.kind::text AS kind, e.state::text AS state, e.thread, e.started_at, e.ended_at,
  split_part(coalesce(e.problem, e.data->>'error', e.data->>'errorMessage', ''), E'\n', 1)::text AS error,
  e.harness, e.model, e.host_id, coalesce(e.data->>'source', e.data->>'wakeSource', '')::text AS source
-FROM execution e
-WHERE e.session_id = $1 AND e.kind IN ('agent_run', 'host_job')
- AND ($2::bigint IS NULL OR e.seq < $2::bigint)
-ORDER BY e.seq DESC LIMIT $3
+FROM page JOIN execution e ON e.id = page.id
+ORDER BY e.seq DESC
 `
 
 type SessionViewExecutionsParams struct {
@@ -57,7 +61,8 @@ type SessionViewExecutionsRow struct {
 
 // Session view (session_view): one conversation screen as summaries, over the execution_thread and message_thread
 // indexes (migration 109). No stored snapshot, dispatch or configuration column is read.
-// The newest turns of a session below before (NULL: from the newest), newest first.
+// The newest turns of a session below before (NULL: from the newest), newest first. The page is chosen on
+// execution_session_turns (migration 111) before data is read, so only the page's rows are detoasted.
 func (q *Queries) SessionViewExecutions(ctx context.Context, arg SessionViewExecutionsParams) ([]SessionViewExecutionsRow, error) {
 	rows, err := q.db.Query(ctx, sessionViewExecutions, arg.SessionID, arg.Before, arg.Lim)
 	if err != nil {
