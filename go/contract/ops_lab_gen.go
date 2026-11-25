@@ -2313,11 +2313,13 @@ func (v *LabVariant) Validate() error {
 }
 
 type LabViewReply struct {
-	Experiments []LabExperimentRecord `json:"experiments"`
-	History     []HistoryEntry        `json:"history"`
-	Leaderboard LabLeaderboardReply   `json:"leaderboard"`
-	Ratings     []LabRating           `json:"ratings"`
-	UseCases    []LabUseCaseEntry     `json:"useCases"`
+	Experiments     []LabExperimentRecord `json:"experiments"`
+	History         []HistoryEntry        `json:"history"`
+	Leaderboard     LabLeaderboardReply   `json:"leaderboard"`
+	ProjectNames    map[string]string     `json:"projectNames"`
+	Ratings         []LabRating           `json:"ratings"`
+	UseCaseProjects map[string]string     `json:"useCaseProjects"`
+	UseCases        []LabUseCaseEntry     `json:"useCases"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2341,6 +2343,9 @@ func (v *LabViewReply) Validate() error {
 	if err := Check(&v.Leaderboard, "leaderboard"); err != nil {
 		return err
 	}
+	if v.ProjectNames == nil {
+		return Missing("projectNames")
+	}
 	if v.Ratings == nil {
 		return Missing("ratings")
 	}
@@ -2348,6 +2353,9 @@ func (v *LabViewReply) Validate() error {
 		if err := Check(&v.Ratings[i], "ratings"); err != nil {
 			return err
 		}
+	}
+	if v.UseCaseProjects == nil {
+		return Missing("useCaseProjects")
 	}
 	if v.UseCases == nil {
 		return Missing("useCases")

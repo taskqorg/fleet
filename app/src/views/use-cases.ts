@@ -134,6 +134,8 @@ export function useCaseOptionLabel(u: Pick<LabUseCaseEntry, 'id' | 'goal'>, maxG
 
 export const USE_CASE_COLLECTION_PREFIX = 'col:';
 export const ARCHIVED_COLLECTION_ID = 'col:archived';
+/** A project group of the Use cases root (Lab: global Lab is the same pages, grouped by project). */
+export const USE_CASE_PROJECT_PREFIX = 'proj:';
 
 const COLLECTION_TITLES: Record<UseCaseCollection['key'] | 'archived', string> = {
   benchmarks: 'LLM Code Benchmarks',
@@ -192,6 +194,11 @@ export type UseCaseTreeOptions = {
   separateArchived?: boolean;
   /** Mark `lab_fit === 'none'` entries as disabled (e.g. when picking runnable Lab suites). */
   eligibleOnly?: boolean;
+  /**
+   * The project a use case belongs to (the project of its experiments). Current use cases with one are grouped by
+   * project, first; the rest keep their collections.
+   */
+  projectOf?: (u: RegistryUseCase) => { id: string; name: string } | undefined;
 };
 
 /** Map grouped use cases into 2-level `CatalogueTreeNode[]` (<= 3 levels, `OR-12`, `OR-22`). */
@@ -199,7 +206,13 @@ export function buildUseCaseTree(
   useCases: readonly RegistryUseCase[],
   opts: UseCaseTreeOptions = {},
 ): { nodes: CatalogueTreeNode[]; archivedNodes: CatalogueTreeNode[] } {
-  const { collections, archived } = groupUseCases(useCases);
+  const projectOf = (u: RegistryUseCase) => (isArchivedUseCase(u) ? undefined : opts.projectOf?.(u));
+  const { collections, archived } = groupUseCases(useCases.filter(u => !projectOf(u)));
+  const projects = new Map<string, { name: string; items: RegistryUseCase[] }>();
+  for (const u of useCases) {
+    const p = projectOf(u);
+    if (p) projects.set(p.id, { name: p.name, items: [...(projects.get(p.id)?.items ?? []), u] });
+  }
   const pinnedSet = new Set(opts.pinnedIds ?? []);
 
   const leafOf = (u: RegistryUseCase): CatalogueTreeNode => {
@@ -224,14 +237,21 @@ export function buildUseCaseTree(
     };
   };
 
-  const nodes: CatalogueTreeNode[] = collections.map(c => ({
+  const nodes: CatalogueTreeNode[] = [...projects].sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, p]) => ({
+    id: `${USE_CASE_PROJECT_PREFIX}${id}`,
+    label: p.name,
+    icon: 'folder-open' as const,
+    defaultCollapsed: false,
+    children: p.items.map(leafOf),
+  }));
+  nodes.push(...collections.map(c => ({
     id: `${USE_CASE_COLLECTION_PREFIX}${c.key}`,
     label: c.title,
     icon: COLLECTION_ICONS[c.key],
     defaultCollapsed: false,
     right: opts.collectionRightOf?.(c),
     children: c.items.map(leafOf),
-  }));
+  })));
 
   const archivedFolder: CatalogueTreeNode | null = archived.length
     ? {

@@ -4,8 +4,8 @@ import type { JSX } from '@solidjs/web';
 import { Button } from './primitives.tsx';
 
 export function DetailHead(p: {
-  /** `project · code` in mono, or a definition's path and revision. */
-  crumb: string;
+  /** `project · code` in mono (the project may be a link back to it), or a definition's path and revision. */
+  crumb: JSX.Element;
   title: JSX.Element;
   /** The state line under the title: state, progress, age (OR-39). */
   state?: JSX.Element;

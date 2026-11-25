@@ -22,13 +22,14 @@ import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, prefsRead, scopeIds, setListGroups, usePins, useViews } from '../prefs.ts';
 import { LabCreate } from './lab-create.tsx';
 import { LabComparison } from './lab-matrix.tsx';
+import { EntryFacts, Go, pipelinePath } from './project-overview.tsx';
 import { selectDefaultSwarmTrial } from './lab-swarm.ts';
 import {
-  ARCHIVED_COLLECTION_ID, USE_CASE_COLLECTION_PREFIX, buildUseCaseTree, collectionIconOf, collectionTitleOf,
+  ARCHIVED_COLLECTION_ID, USE_CASE_COLLECTION_PREFIX, USE_CASE_PROJECT_PREFIX, buildUseCaseTree, collectionIconOf, collectionTitleOf,
   groupUseCases, isLabEligibleUseCase, matchingExamplesForUseCase, resolveSuiteKey, type RegistryUseCase, type SuiteKey,
 } from './use-cases.ts';
 import type {
-  LabExampleEntry, LabExperimentRecord, LabRating, LabScoreSummary, LabVariant, ProjectAssessmentRef,
+  LabExampleEntry, LabExperimentRecord, LabLeaderboardEntry, LabRating, LabScoreSummary, LabVariant, ProjectAssessmentRef,
 } from '../../../contracts/generated/ops.ts';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
@@ -92,12 +93,10 @@ function parseLabRoute(id?: string): LabRoute {
 const ROOT_USE_CASES_ID = 'root:use-cases';
 const ROOT_RUNS_ID = 'root:runs';
 
-const RUN_FOLDERS = [
-  { id: 'run:active', label: 'Active', icon: 'activity' as const, match: (e: LabExperimentRecord) => e.state === 'running' || e.state === 'paused', defaultCollapsed: false },
-  { id: 'run:drafts', label: 'Drafts', icon: 'circle-dashed' as const, match: (e: LabExperimentRecord) => e.state === 'draft', defaultCollapsed: false },
-  { id: 'run:completed', label: 'Completed', icon: 'circle-check' as const, match: (e: LabExperimentRecord) => e.state === 'done', defaultCollapsed: false },
-  { id: 'run:stopped', label: 'Stopped', icon: 'circle-slash' as const, match: (e: LabExperimentRecord) => e.state === 'stopped', defaultCollapsed: true },
-] as const;
+// The Runs root groups experiments by project (global Lab is the same pages, grouped by project); inside a project the
+// runs read active, drafts, finished, stopped, each newest first.
+const RUN_PROJECT_PREFIX = 'run:proj:';
+const RUN_STATE_ORDER: Record<string, number> = { running: 0, paused: 0, draft: 1, done: 2, stopped: 3 };
 
 // Saved views of the Lab catalogue (OR-33). "Mine" replaces Personal Lab: the runs the person requested. "Waiting for a
 // decision": finished runs nobody has decided. A person's own views keep the search query.
@@ -200,6 +199,9 @@ export function Lab(props: { id?: string }) {
   const rawRatings = createMemo(() => ratings.data?.ratings ?? []);
   const rawExamples = createMemo(() => approvedExamples.data?.examples ?? []);
   const projectOfExperiment = createMemo(() => new Map(rawExperiments().map(e => [e.id, e.projectId])));
+  const projectNames = createMemo<Record<string, string>>(() => view.data?.projectNames ?? {});
+  const projectNameOf = (id: string) => projectNames()[id] || id;
+  const useCaseProjects = createMemo<Record<string, string>>(() => view.data?.useCaseProjects ?? {});
 
   const useCaseById = createMemo(() => new Map(rawUseCases().map(u => [u.id, u])));
 
@@ -207,6 +209,7 @@ export function Lab(props: { id?: string }) {
     () => buildUseCaseTree(rawUseCases(), {
       pinnedIds: ucPins.ids,
       hrefOf: u => `/lab/use-case:${encodeURIComponent(u.id)}`,
+      projectOf: u => { const p = useCaseProjects()[u.id]; return p ? { id: p, name: projectNameOf(p) } : undefined; },
       rightOf: u => {
         const best = bestScoresByUseCase()[u.id];
         return best !== undefined ? <span class="mono" data-tip="Best observed score">{best.toFixed(2)}</span> : undefined;
@@ -230,31 +233,25 @@ export function Lab(props: { id?: string }) {
   });
 
   const runTreeNodes = createMemo<CatalogueTreeNode[]>(() => {
-    const folders: CatalogueTreeNode[] = [];
-    const selExpId = selectedExperimentId();
-    for (const f of RUN_FOLDERS) {
-      const items = sortedExperiments().filter(f.match);
-      if (!items.length) continue;
-      const containsSelected = !!selExpId && items.some(e => e.id === selExpId);
-      folders.push({
-        id: f.id,
-        label: f.label,
-        icon: f.icon,
-        defaultCollapsed: f.defaultCollapsed && !containsSelected,
-        children: items.map(e => ({
-          id: e.id,
-          label: e.labGroup || e.goal || e.pipelineId,
-          sub: subtitle(e),
-          state: { family: 'experiment', state: e.state, reason: e.stopReason ?? undefined },
-          href: `/lab/${encodeURIComponent(e.id)}`,
-          pinned: runPins.has(e.id),
-          problem: undecided(e),
-          right: <>{undecided(e) && <Icon name="bell" label="Undecided" />}<AgeChip t={ms(e.createdAt)} /></>,
-          searchText: [e.id, e.labGroup, e.goal, e.pipelineId, e.kind, e.state, ...e.variants.map(v => v.label)].filter(Boolean).join(' '),
-        })),
-      });
-    }
-    return folders;
+    const byProject = new Map<string, LabExperimentRecord[]>();
+    for (const e of sortedExperiments()) byProject.set(e.projectId, [...(byProject.get(e.projectId) ?? []), e]);
+    return [...byProject].sort((a, b) => projectNameOf(a[0]).localeCompare(projectNameOf(b[0]))).map(([projectId, items]) => ({
+      id: RUN_PROJECT_PREFIX + projectId,
+      label: projectId ? projectNameOf(projectId) : 'No project',
+      icon: 'folder-open' as const,
+      defaultCollapsed: false,
+      children: items.toSorted((a, b) => (RUN_STATE_ORDER[a.state] ?? 4) - (RUN_STATE_ORDER[b.state] ?? 4)).map(e => ({
+        id: e.id,
+        label: e.labGroup || e.goal || e.pipelineId,
+        sub: subtitle(e),
+        state: { family: 'experiment', state: e.state, reason: e.stopReason ?? undefined },
+        href: `/lab/${encodeURIComponent(e.id)}`,
+        pinned: runPins.has(e.id),
+        problem: undecided(e),
+        right: <>{undecided(e) && <Icon name="bell" label="Undecided" />}<AgeChip t={ms(e.createdAt)} /></>,
+        searchText: [e.id, e.labGroup, e.goal, e.pipelineId, e.projectId, e.kind, e.state, ...e.variants.map(v => v.label)].filter(Boolean).join(' '),
+      })),
+    }));
   });
 
   // A run view (Mine, Waiting for a decision) shows the runs only; All shows both roots.
@@ -277,13 +274,11 @@ export function Lab(props: { id?: string }) {
 
   const defaultClosed = createMemo(() => {
     const out: string[] = [];
-    const r = route(), byId = useCaseById(), selExpId = selectedExperimentId();
+    const r = route(), byId = useCaseById();
     const selectedUseCaseArchived = r.kind === 'use-case'
       ? (byId.get(r.useCaseId)?.status === 'obsolete' || byId.get(r.useCaseId)?.status === 'duplicate')
       : r.kind === 'suite' && r.suiteKey === 'archived';
     if (!selectedUseCaseArchived) out.push(ARCHIVED_COLLECTION_ID);
-    const stoppedOpen = !!selExpId && sortedExperiments().some(e => e.id === selExpId && RUN_FOLDERS[3].match(e));
-    if (!stoppedOpen) out.push('run:stopped');
     return out;
   });
 
@@ -306,7 +301,7 @@ export function Lab(props: { id?: string }) {
   };
 
   const handleTreeSelect = (node: CatalogueTreeNode) => {
-    if (node.id === '__pinned__' || node.id === ROOT_USE_CASES_ID || node.id === ROOT_RUNS_ID || node.id.startsWith('run:')) {
+    if (node.id === '__pinned__' || node.id === ROOT_USE_CASES_ID || node.id === ROOT_RUNS_ID || node.id.startsWith('run:') || node.id.startsWith(USE_CASE_PROJECT_PREFIX)) {
       toggleTreeFolder(node.id);
       return;
     }
@@ -446,7 +441,7 @@ export function Lab(props: { id?: string }) {
   // Idle (J1, under 5 s): what waits for the person first, as question cards (OR-53), then the comparison.
   const idle = (
     <article class="detail" aria-label="Lab overview">
-      <Waiting experiments={waitingExperiments()} approvals={approvals()} openRatings={openRatings()} now={now}
+      <Waiting experiments={waitingExperiments()} entries={view.data?.leaderboard.entries ?? []} approvals={approvals()} openRatings={openRatings()} now={now}
         onOpen={x => go(`/lab/${encodeURIComponent(x)}`)} onAll={() => pickView(VIEW_WAITING)} />
       <HistoryPreview entries={view.data?.history} to="/history?section=lab" />
       {comparison('All use cases')}
@@ -500,7 +495,7 @@ export function Lab(props: { id?: string }) {
           </Match>
           <Match when={route().kind === 'experiment'}>
             <Show when={(route() as { kind: 'experiment'; experimentId: string }).experimentId} keyed>{eid => (
-              <Experiment id={eid} onClose={() => go('/lab')} />
+              <Experiment id={eid} projectName={projectNameOf} onClose={() => go('/lab')} />
             )}</Show>
           </Match>
         </Switch>
@@ -521,6 +516,8 @@ const shorten = (t: string, n = 90) => t.length > n ? t.slice(0, n - 1).trimEnd(
 // recorded as "inconclusive" with the text as its reason. Example approvals and open ratings follow.
 function Waiting(props: {
   experiments: readonly LabExperimentRecord[]; approvals: readonly LabRating[]; openRatings: readonly LabRating[]; now: number;
+  /** The last 30 days' leaderboard: a question's evidence is its experiment's groups (latestExperimentId). */
+  entries: readonly LabLeaderboardEntry[];
   onOpen: (id: string) => void;
   /** Opens the view of every finished run waiting for a decision. */
   onAll: () => void;
@@ -559,6 +556,11 @@ function Waiting(props: {
             answered={answered()[e.id]}
             onAnswer={a => decide(e, a)}
           />
+          <Show when={evidenceOf(e, props.entries)}>{ev => (
+            <ul class="lab-ev-list" aria-label="Variants">
+              <For each={ev()}>{x => <li class="lab-ev"><EntryFacts e={x} label /></li>}</For>
+            </ul>
+          )}</Show>
           <span class="muted"><EntityCode id={e.id} kind="experiment" /> · {subtitle(e)} · <a class="row-link" href={`/lab/${encodeURIComponent(e.id)}`} onClick={ev => { ev.preventDefault(); props.onOpen(e.id); }}>scores and decision gate</a></span>
           <Show when={failed()?.id === e.id}><ProblemRow title="Decision not recorded" facts={failed()!.text} severity="failure" actions={[]} /></Show>
         </>}</For>
@@ -579,6 +581,21 @@ function Waiting(props: {
       </div>
     </section>
   </Show>;
+}
+
+/**
+ * A finished run's evidence per variant (score, succeeded of trials, median time, cost per trial): the leaderboard
+ * groups whose latest experiment it is, the best group per variant, best first; undefined when none.
+ */
+function evidenceOf(e: LabExperimentRecord, entries: readonly LabLeaderboardEntry[]): LabLeaderboardEntry[] | undefined {
+  const best = new Map<string, LabLeaderboardEntry>();
+  for (const x of entries) {
+    if (x.latestExperimentId !== e.id) continue;
+    const cur = best.get(x.variantLabel);
+    if (!cur || (x.scoreMean ?? -1) > (cur.scoreMean ?? -1) || (x.scoreMean ?? -1) === (cur.scoreMean ?? -1) && x.trials > cur.trials) best.set(x.variantLabel, x);
+  }
+  const out = [...best.values()].sort((a, b) => (b.scoreMean ?? -1) - (a.scoreMean ?? -1) || b.trials - a.trials);
+  return out.length ? out : undefined;
 }
 
 /** The decision choices of a finished run: adopt each challenger (the first variant is the baseline), or keep the baseline. */
@@ -830,7 +847,7 @@ function computeVariantParamDiffs(
   return rows;
 }
 
-function Experiment(props: { id: string; onClose: () => void }) {
+function Experiment(props: { id: string; projectName: (projectId: string) => string; onClose: () => void }) {
   const [pollMs, setPollMs] = createSignal<number | undefined>(5000, { ownedWrite: true });
   const exp = useOp('lab_experiment_get', () => ({ experimentId: props.id }), { every: pollMs });
   const rated = useOp('lab_ratings_list', () => ({ experimentId: props.id }), { every: pollMs });
@@ -971,7 +988,11 @@ function Experiment(props: { id: string; onClose: () => void }) {
     }>{e => (
       <article class="detail" data-ui="detail" tabindex={-1} aria-label={title(e())}>
         <DetailHead
-          crumb={`${e().projectId} · ${e().labGroup || e().pipelineId}`}
+          crumb={<>
+            {/* The project's pipeline page: back to the project the run belongs to. */}
+            <Show when={e().projectId}>{p => <><Go to={pipelinePath(p(), e().pipelineId)}>{props.projectName(p())}</Go>{' · '}</>}</Show>
+            {e().labGroup || e().pipelineId}
+          </>}
           title={e().goal || title(e())}
           onClose={() => props.onClose()}
           state={<>

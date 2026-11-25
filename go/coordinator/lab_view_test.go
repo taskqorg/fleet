@@ -22,7 +22,7 @@ func TestLabView(t *testing.T) {
 	if len(got.UseCases) == 0 || len(got.UseCases) != len(reg.UseCases) {
 		t.Fatalf("use cases: %d in the view, %d in lab_registry", len(got.UseCases), len(reg.UseCases))
 	}
-	if got.Experiments == nil || got.Ratings == nil || len(got.Leaderboard.Entries) != len(lb.Entries) || len(got.Leaderboard.Collections) != len(lb.Collections) {
+	if got.Experiments == nil || got.Ratings == nil || got.UseCaseProjects == nil || got.ProjectNames == nil || len(got.Leaderboard.Entries) != len(lb.Entries) || len(got.Leaderboard.Collections) != len(lb.Collections) {
 		t.Fatalf("parts: %+v", got)
 	}
 	// The header focus: experiments of the focus only, ignored projects left out.
@@ -161,5 +161,43 @@ func TestLabLineageCache(t *testing.T) {
 	child("ll-c4", "ll-live")
 	if got := read(); got["ll-done"] != 1 || got["ll-live"] != 2 {
 		t.Fatalf("the settled trial's lineage is kept, the other read again: %v", got)
+	}
+}
+
+// Requirement: the Lab tree groups a use case under the project of its experiments (pages/laboratory.md, global Lab is
+// the same pages grouped by project). Risk: DAM's use case, run twice in dam and twice in fleet, lands under Fleet.
+func TestLabUseCaseProjects(t *testing.T) {
+	x := func(id, project, at string) contract.LabExperimentRecord {
+		return contract.LabExperimentRecord{Id: id, ProjectId: project, CreatedAt: at}
+	}
+	exps := []contract.LabExperimentRecord{
+		x("d1", "dam", "2026-11-25T19:46:00Z"), x("d2", "dam", "2026-11-25T20:18:00Z"),
+		x("f1", "fleet", "2026-11-25T19:59:00Z"), x("f2", "fleet", "2026-11-25T20:30:00Z"),
+		x("f3", "fleet", "2026-11-20T10:00:00Z"), x("a1", "acme", "2026-11-21T10:00:00Z"), x("a2", "acme", "2026-11-22T10:00:00Z"),
+		x("n1", "", "2026-11-22T10:00:00Z"),
+	}
+	ran := map[string][]string{
+		"d1": {"dam:document-recognition"}, "d2": {"dam:document-recognition"},
+		"f1": {"dam:document-recognition"}, "f2": {"dam:document-recognition", "bench:bug-finding"},
+		"f3": {"bench:bug-finding"}, "a1": {"bench:bug-finding", "real:qa"}, "a2": {"real:qa"},
+		"n1": {"bench:orphan"},
+	}
+	got := labUseCaseProjects(exps, ran)
+	want := map[string]string{
+		"dam:document-recognition": "dam",   // named after a project it ran in, though fleet ran it as often and later
+		"bench:bug-finding":        "fleet", // most experiments
+		"real:qa":                  "acme",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v (a use case only a project-less experiment ran has no project)", got, want)
+	}
+	for uc, p := range want {
+		if got[uc] != p {
+			t.Errorf("%s: %q, want %q", uc, got[uc], p)
+		}
+	}
+	tie := labUseCaseProjects(exps[:4], map[string][]string{"d1": {"uc"}, "f1": {"uc"}})
+	if tie["uc"] != "fleet" {
+		t.Errorf("a tie goes to the newest experiment's project: %v", tie)
 	}
 }
