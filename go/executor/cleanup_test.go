@@ -30,8 +30,9 @@ func startMarked(t *testing.T, root, execution string) int {
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.Process.Kill(); c.Wait() })
-	go c.Wait() // reaped as soon as it is killed, so kill(pid, 0) sees it gone
+	done := make(chan struct{})
+	go func() { c.Wait(); close(done) }() // reaped as soon as it is killed, so kill(pid, 0) sees it gone
+	t.Cleanup(func() { c.Process.Kill(); <-done })
 	for i := 0; i < 100; i++ {
 		if v, ok := processEnv(c.Process.Pid, runMarkerKey); ok && v == execution {
 			return c.Process.Pid
