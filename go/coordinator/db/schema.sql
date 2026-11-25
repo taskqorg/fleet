@@ -389,6 +389,13 @@ CREATE TABLE definition_draft (
   "content" text NOT NULL,
   "updated_at" timestamp with time zone NOT NULL
 );
+CREATE TABLE definition_publish (
+  "kind" text NOT NULL,
+  "id" text NOT NULL,
+  "revision" integer NOT NULL,
+  "task_id" text NOT NULL,
+  "at" timestamp with time zone NOT NULL
+);
 CREATE TABLE definition_revision (
   "kind" text NOT NULL,
   "id" text NOT NULL,

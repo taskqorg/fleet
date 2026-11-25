@@ -230,3 +230,16 @@ LEFT JOIN execution_totals t ON t.execution_id=e.id
 WHERE d->>'kind' = ANY(sqlc.arg(kinds)::text[])
  AND coalesce((d->>'draft')::boolean,false)=false AND coalesce(d->>'revision','') ~ '^[0-9]+$'
 GROUP BY d->>'kind', d->>'id';
+
+-- name: DefPublishInsert :exec
+-- A revision sent to the repository by a Fleet task (definition_publish).
+INSERT INTO definition_publish(kind, id, revision, task_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING;
+
+-- name: DefPublishTasks :many
+-- The latest publish of every definition: its revision and task.
+SELECT DISTINCT ON (kind, id) kind, id, revision, task_id FROM definition_publish ORDER BY kind, id, revision DESC;
+
+-- name: DefExperimentsNaming :many
+-- Live experiments naming the id anywhere in their variants (a Lab variant's experiment).
+SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL
+ AND jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',sqlc.arg(id)::text)) ORDER BY id;

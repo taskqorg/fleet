@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -40,6 +41,16 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 		}
 	}
 
+	// A Fleet edit on its way to the repository names its publish task when the head is the revision it sent; a
+	// store-only definition a live experiment names is that experiment's Lab variant.
+	published, err := q.db().DefPublishTasks(q.ctx())
+	if err != nil {
+		return out, err
+	}
+	sent := map[string]db.DefPublishTasksRow{}
+	for _, p := range published {
+		sent[p.Kind+"/"+p.ID] = p
+	}
 	for _, d := range defs {
 		st := d.state()
 		if st == contract.DefinitionStateSynced || d.Kind == "project" {
@@ -61,6 +72,18 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 			Head:    d.Head,
 			RepoSha: d.RepoSha,
 			Runs30d: runs,
+		}
+		if p, ok := sent[d.Kind+"/"+d.ID]; ok && int64(p.Revision) == d.Head && st != contract.DefinitionStateRepositoryChanged {
+			item.PublishTaskId = &p.TaskID
+		}
+		if st == contract.DefinitionStateStoreOnly {
+			exps, err := q.db().DefExperimentsNaming(q.ctx(), d.ID)
+			if err != nil {
+				return out, err
+			}
+			if len(exps) > 0 {
+				item.Experiment = &exps[0]
+			}
 		}
 		switch st {
 		case contract.DefinitionStateRepositoryChanged, contract.DefinitionStateRepositoryDeleted:

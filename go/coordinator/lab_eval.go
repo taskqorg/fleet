@@ -649,6 +649,11 @@ func promoteVariant(q *Request, exp *labExperiment, label, sourceID string) (con
 		if err != nil {
 			return out, err
 		}
+		// The promoted method goes to the repository with the store-only agents and pipelines it names
+		// (fleet-definition-editors.md, One home per kind).
+		if err := publishPromoted(q, jsonBytes(method)); err != nil {
+			return out, err
+		}
 		out.Catalogue = &contract.DefinitionRef{Kind: contract.DefinitionKindCatalogue, Id: "catalogue", Revision: rev.Revision, ContentSha: rev.ContentSha}
 		existing = jsonBytes(method)
 	}

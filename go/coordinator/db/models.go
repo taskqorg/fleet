@@ -796,6 +796,14 @@ type DefinitionDraft struct {
 	UpdatedAt time.Time
 }
 
+type DefinitionPublish struct {
+	Kind     string
+	ID       string
+	Revision int32
+	TaskID   string
+	At       time.Time
+}
+
 type DefinitionRevision struct {
 	Kind        string
 	ID          string
