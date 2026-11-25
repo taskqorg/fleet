@@ -416,6 +416,9 @@ func pipelinePrepared(q *Request, c *kitClaim, run *runRecord, i int, prepared *
 			}
 			for _, name := range []string{def.jobTool("job_status"), def.jobTool("recent_tasks")} {
 				tool, ok := tools[name]
+				if !ok && name == def.jobTool("recent_tasks") && def.RecentTool == "" {
+					continue // a provider with no task listing (Gemini interactions): an unclear submit is never adopted
+				}
 				granted := false
 				for _, t := range conn.Tools {
 					granted = granted || t == name
@@ -530,6 +533,9 @@ func pipelineSubmitted(q *Request, c *kitClaim, run *runRecord, i int, line cont
 	code := deref(line.ErrorCode)
 	if job && line.Outcome != contract.CallOutcomeOk && (line.Outcome == contract.CallOutcomeUnknown || http5xx.MatchString(code)) {
 		tool := def.jobTool("recent_tasks")
+		if !def.hasRecentTool(q, connection) {
+			return run.failStep(q, i, "unknown:submit-unconfirmed", fmt.Sprintf("Job submit %s; the provider lists no tasks to confirm it; not sent again", code))
+		}
 		token, idempotent, refused := pipelineClaimCall(q, run, row, connection, tool)
 		revision := run.revision()
 		c.Call = func(ctx context.Context) any {
@@ -621,6 +627,9 @@ func pipelineJobStarted(q *Request, run *runRecord, i int, line contract.CallLin
 		jobID, ok = jsonString(out["result"])
 	}
 	if !ok {
+		jobID, ok = jsonString(out["id"]) // a Gemini interaction
+	}
+	if !ok {
 		return run.failStep(q, i, "step:no-job-id", "Job submit returned no jobId")
 	}
 	var polls int64
@@ -654,6 +663,46 @@ type meshyTask struct {
 	TaskError       struct {
 		Message json.RawMessage `json:"message"`
 	} `json:"task_error"`
+}
+
+// geminiInteraction: a Gemini Interactions API resource (status in_progress | requires_action | completed | failed |
+// cancelled | incomplete); the step keeps the whole reply as its output.
+type geminiInteraction struct {
+	Object string          `json:"object"`
+	Status string          `json:"status"`
+	Error  json.RawMessage `json:"error"`
+	Usage  struct {
+		TotalTokens *float64 `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+// geminiInteractionPoll maps a Gemini interaction to a job poll's answer (the whole reply is the output); nil when the
+// reply is not an interaction.
+func geminiInteractionPoll(raw json.RawMessage) *pipelinePoll {
+	var g geminiInteraction
+	lenientDecode(raw, &g)
+	if jsonKind(raw) != '{' || g.Object != "interaction" || g.Status == "" {
+		return nil
+	}
+	state := "running"
+	switch g.Status {
+	case "completed":
+		state = "succeeded"
+	case "failed", "cancelled", "incomplete":
+		state = "failed"
+	}
+	var problem json.RawMessage
+	if state == "failed" {
+		problem = jsonBytes("interaction-" + g.Status)
+		if !isNull(g.Error) {
+			problem = g.Error
+		}
+	}
+	var usage json.RawMessage
+	if state == "succeeded" && g.Usage.TotalTokens != nil {
+		usage = jsonBytes(pipelineUnits{Unit: "tokens", Amount: *g.Usage.TotalTokens})
+	}
+	return &pipelinePoll{State: state, Output: raw, Usage: usage, Error: problem}
 }
 
 // meshyOutput: a Meshy job's output as the step keeps it.
@@ -702,6 +751,9 @@ func pipelinePolled(ctx context.Context, a *App, run *runRecord, i int, line con
 		}
 		out = &pipelinePoll{State: state, Output: jsonBytes(meshyOutput{JobID: s.JobID, Request: orNull(s.Arguments), Result: orNull(m.Result), ModelURLs: urls,
 			ThumbnailURL: orNull(m.ThumbnailURL), ImageURLs: orNull(m.ImageURLs), Receipt: raw}), Usage: usage, Error: m.TaskError.Message}
+	}
+	if g := geminiInteractionPoll(raw); g != nil {
+		out = g
 	}
 	if out.State != "succeeded" {
 		return out, "", nil
@@ -879,6 +931,19 @@ func (def *pipelineDefStep) jobTool(name string) string {
 		return "multi_" + name
 	}
 	return name
+}
+
+// hasRecentTool: whether the job step's connection provider has the task listing that confirms an unclear submit.
+func (def *pipelineDefStep) hasRecentTool(q *Request, connection string) bool {
+	if def.RecentTool != "" {
+		return true
+	}
+	conn, err := connNamed(q, connection)
+	if err != nil {
+		return true // the listing call then fails and the submit stays unknown, as before
+	}
+	_, ok := gatewayProviders[conn.Provider].Tools[def.jobTool("recent_tasks")]
+	return ok
 }
 
 // withArguments: a variant's arguments override for this api step, merged over the step's arguments before references

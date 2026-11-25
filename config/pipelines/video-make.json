@@ -1,0 +1,40 @@
+{
+  "id": "video-make",
+  "resultStep": "result",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/video.py request --example ${example}",
+      "host": "owner-mac",
+      "id": "request",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "background": true,
+        "input": "${steps.request.output.body.input}",
+        "model": "${steps.request.output.body.model}",
+        "response_format": "${steps.request.output.body.response_format}",
+        "store": true
+      },
+      "connection": "google-ai",
+      "id": "video",
+      "kind": "api",
+      "mode": "job",
+      "status_tool": "interaction_get",
+      "tool": "interaction_create"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/video.py save",
+      "host": "owner-mac",
+      "id": "save",
+      "kind": "script"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/video.py result",
+      "host": "owner-mac",
+      "id": "result",
+      "kind": "script"
+    }
+  ],
+  "version": 3
+}

@@ -444,6 +444,12 @@ type pipelineCost struct {
 	Connection string  `json:"connection"`
 }
 
+// pipelineUnits: a finished job's usage in a provider unit other than credits.
+type pipelineUnits struct {
+	Unit   string  `json:"unit"`
+	Amount float64 `json:"amount"`
+}
+
 // recordJob: a finished job's usage as one tool_run child of the step.
 func (run *runRecord) recordJob(q *Request, stepID, tool, jobID, connection string, usage json.RawMessage) error {
 	id := stepID + ":job:0"
@@ -471,8 +477,12 @@ func (run *runRecord) recordJob(q *Request, stepID, tool, jobID, connection stri
 	var u struct {
 		Credits *float64 `json:"credits"`
 	}
+	var units pipelineUnits
 	if lenientDecode(usage, &u) == nil && u.Credits != nil {
 		cost = pipelineCost{Unit: "credits", Credits: *u.Credits, Connection: connection}
+	} else if lenientDecode(usage, &units) == nil && units.Unit != "" {
+		// A job measured in another unit (Gemini interaction tokens), in the shape connAccount writes.
+		cost = map[string]json.RawMessage{"unit": jsonBytes(units.Unit), units.Unit: jsonBytes(units.Amount), "amount": jsonBytes(units.Amount), "connection": jsonBytes(connection)}
 	}
 	return writeConnectionCost(q, id, cost)
 }
