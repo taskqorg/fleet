@@ -90,7 +90,7 @@ export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
     for (const c of cs) if (follow.task && c.kind === 'execution' && c.taskId === follow.task && c.sessionId) follow.sessions.add(c.sessionId);
     const rows = cs.filter(c => touches(c, follow.sessions, follow.task)).map(c => ({ kind: c.kind, id: c.id }));
     if (!rows.length) return;
-    const r = await op('thread_blocks', { key: currentWin?.key ?? currentKey, rows });
+    const r = await op('thread_blocks', { key: currentWin?.key ?? currentKey, rows, full: false });
     if (g === gen) apply(w => fed(w, r.entries, r.removed));
   };
   // Changes committed after the page's snapshot: read from its feed cursor, so no row is skipped.
