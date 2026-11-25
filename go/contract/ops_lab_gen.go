@@ -2312,6 +2312,7 @@ func (v *LabVariant) Validate() error {
 
 type LabViewReply struct {
 	Experiments []LabExperimentRecord `json:"experiments"`
+	History     []HistoryEntry        `json:"history"`
 	Leaderboard LabLeaderboardReply   `json:"leaderboard"`
 	Ratings     []LabRating           `json:"ratings"`
 	UseCases    []LabUseCaseEntry     `json:"useCases"`
@@ -2324,6 +2325,14 @@ func (v *LabViewReply) Validate() error {
 	}
 	for i := range v.Experiments {
 		if err := Check(&v.Experiments[i], "experiments"); err != nil {
+			return err
+		}
+	}
+	if v.History == nil {
+		return Missing("history")
+	}
+	for i := range v.History {
+		if err := Check(&v.History[i], "history"); err != nil {
 			return err
 		}
 	}
@@ -2416,7 +2425,7 @@ func init() {
 		"lab_ratings_list":      {Read: true, Long: false, Errors: []int{404}, Auth: "architect", Agent: "tool", Description: "Lab rating questions, optionally of one experiment or state", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_registry":          {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "The Lab use-case registry", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"lab_score_correct":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Correct a Lab score (scoreId, value, rationale)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"rationale\":{\"type\":\"string\"},\"scoreId\":{\"type\":\"string\"},\"value\":{}},\"required\":[\"scoreId\",\"value\"],\"type\":\"object\"}")},
-		"lab_view":              {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "The Lab screen in one read: the experiments (lab_experiments_list), the use-case registry, the open rating questions and the last 30 days' leaderboard across use cases. A use case's or a suite's leaderboard is lab_leaderboard.", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
+		"lab_view":              {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "The Lab screen in one read: the experiments (lab_experiments_list), the use-case registry, the open rating questions and the last 30 days' leaderboard across use cases. A use case's or a suite's leaderboard is lab_leaderboard.", Changes: []string{"experiment", "score", "question", "execution", "activity"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

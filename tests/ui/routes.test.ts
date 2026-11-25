@@ -1,4 +1,4 @@
-// Requirement: every earlier route lands on its target route of the seven-section rail, keeping the item
+// Requirement: every earlier route lands on its target route of the eight-section rail, keeping the item
 // (docs/designs/fleet-ia-and-journeys.md §1, route consolidation map; UR-69), and each target route opens the view that
 // still speaks the earlier path (Library speaks its target routes). Unknown paths stay as they are, so the app's not-found page shows them.
 import test from 'node:test';

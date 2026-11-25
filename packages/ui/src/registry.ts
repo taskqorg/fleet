@@ -19,6 +19,7 @@ import { states, type Tone, type Family, type StateOf, type StateDef } from './s
 export const workspaces = [
   { id: 'home', label: 'Home', icon: 'house', section: 'home', root: 'overview', nav: true },
   { id: 'live', label: 'Live', icon: 'activity', section: 'live', root: 'live', nav: true },
+  { id: 'history', label: 'History', icon: 'history', section: 'history', root: 'history', nav: true },
   { id: 'conversations', label: 'Conversations', icon: 'messages-square', section: 'conversations', root: 'conversations', nav: true },
   { id: 'projects', label: 'Projects', icon: 'folder-open', section: 'projects', root: 'projects', nav: true },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', section: 'lab', root: 'lab', nav: true },

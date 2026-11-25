@@ -5,10 +5,10 @@
 **Job.** Gives every page the same three columns (OR-24) under one shell header (OR-43), so the person always knows where they are, what they watch and where the attention is.
 
 **Composition, left to right.**
-* *Navigation:* the [navigation rail](../controls/nav-rail.md) of seven sections (OR-46). Its head holds the product name and the "N need you" chip, which links to Home. Pinned sections come first; the current user block ends it. At phone width the bottom bar replaces it (below).
+* *Navigation:* the [navigation rail](../controls/nav-rail.md) of eight sections (OR-46). Its head holds the product name and the "N need you" chip, which links to Home. Pinned sections come first; the current user block ends it. At phone width the bottom bar replaces it (below).
 * *Shell header* (OR-43): one row over everything right of the navigation, described below.
 * *Control column,* `size-ctl` wide: the catalogue of the current section. See [list and detail](list-detail.md).
-* *Work area:* the opened item, or the whole page for a section with no catalogue (Home, Live).
+* *Work area:* the opened item, or the whole page for a section with no catalogue (Home, Live, History).
 * *[TooltipLayer](../owner-rules.md):* mounted once.
 
 No bar spans the whole window (OR-24).
@@ -26,7 +26,7 @@ At phone width (760 px and below) the toggle hides, the section actions, the foc
 
 **Wall mode.** `AppShell.wall` (`data-wall`) hides the navigation, the bottom bar and the shell header, so the page fills the screen: [Live](../pages/live.md) on a TV at `/live?wall`. A viewer (Wall viewer in [people access](../../designs/fleet-people-access.md#wall-viewer)) gets a navigation of Live alone, no focus chip and no search.
 
-**Bottom bar (OR-60).** At phone width a bottom bar of five replaces the rail under the work area (`BottomBar`, `data-ui="bottom-bar"`): Home, Live, Conversations and Projects as tabs (icon over name, the in-focus counter as a badge), then More. More opens a short menu above it (OR-14) with the Pinned zone when the person turned it on ([nav rail](../controls/nav-rail.md), **Pinned**), Lab, Library and System and, under a line, the user block (Logout, versions). The tab of the current section, or More when the current one is in its menu, is marked. The rail's head is not shown there: the need-you count is Home's.
+**Bottom bar (OR-60).** At phone width a bottom bar of five replaces the rail under the work area (`BottomBar`, `data-ui="bottom-bar"`): Home, Live, History and Conversations as tabs (icon over name, the in-focus counter as a badge), then More. More opens a short menu above it (OR-14) with the Pinned zone when the person turned it on ([nav rail](../controls/nav-rail.md), **Pinned**), Projects, Lab, Library and System and, under a line, the user block (Logout, versions). The tab of the current section, or More when the current one is in its menu, is marked. The rail's head is not shown there: the need-you count is Home's.
 
 **Outside focus.** The indicator counts the [Needs you](needs-you.md) items (open questions and Needs-you problems) whose project is outside the focus and not ignored (ignore is full silence); with All projects it shows nothing. A click opens `/home?all`, Home without the focus (ignored projects stay hidden); its head says so, and the indicator hides there. It is never kept as the Overview's last view: the navigation, Back or its head's focus icon return to the focused Overview.
 
