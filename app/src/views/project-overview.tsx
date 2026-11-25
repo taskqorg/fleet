@@ -80,6 +80,9 @@ function DecisionCard(props: { d: Decision }) {
   );
 }
 
+/** A variant's cost per trial: the leaderboard sums its trials' cost. */
+const perRun = (e: Entry): number | null => (e.costUsd == null || e.trials === 0 ? null : e.costUsd / e.trials);
+
 /** A variant's evidence in one line: score, succeeded of trials, median time, cost; failures in the danger tone. */
 function EntryFacts(props: { e: Entry; label?: boolean }) {
   return (
@@ -88,7 +91,7 @@ function EntryFacts(props: { e: Entry; label?: boolean }) {
       <Show when={props.e.scoreMean != null}><span class="mono" data-tip="Mean score">{score(props.e.scoreMean!).text}</span></Show>
       <span class="mono" data-tip="Succeeded of trials">{props.e.succeededTrials}/{props.e.trials}</span>
       <Show when={props.e.wallMsMedian != null}><span class="mono" data-tip="Median time">{median(props.e.wallMsMedian)}</span></Show>
-      <Show when={props.e.costUsd != null}><span class="mono" data-tip="Cost per run">${props.e.costUsd!.toFixed(2)}</span></Show>
+      <Show when={perRun(props.e) != null}><span class="mono" data-tip="Cost per trial">${perRun(props.e)!.toFixed(2)}</span></Show>
       <Show when={props.e.failedTrials > 0}><span class="t-danger pw-tone">{props.e.failedTrials} failed</span></Show>
     </>
   );
@@ -371,7 +374,7 @@ function Ranking(props: { entries: Entry[]; pipelineId: string }) {
             {e.succeededTrials}/{e.trials}<Show when={e.failedTrials > 0}> · {e.failedTrials} failed</Show>
           </td>
           <td class="num mono">{median(e.wallMsMedian) || '—'}</td>
-          <td class="num mono">{e.costUsd == null ? '—' : '$' + e.costUsd.toFixed(2)}</td>
+          <td class="num mono">{perRun(e) == null ? '—' : '$' + perRun(e)!.toFixed(2)}</td>
         </TableRow>
       )}</For>
     </DataTable>

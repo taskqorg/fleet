@@ -33,7 +33,8 @@ func projectView(q *Request, r *contract.ProjectViewRequest) (contract.ProjectVi
 	if id == "" || id == "-" {
 		return out, fail(400, "projectId: a project")
 	}
-	if _, err := projectContext(q, id); err != nil {
+	pc, err := projectContext(q, id)
+	if err != nil {
 		return out, err
 	}
 
@@ -103,6 +104,24 @@ func projectView(q *Request, r *contract.ProjectViewRequest) (contract.ProjectVi
 		return out, err
 	}
 	out.Conversations, out.ConversationsTotal = append(out.Conversations, sessions.Sessions...), sessions.Total
+	// Talk to PM opens the project's PM conversation: the newest session on its pm role, among its latest 200.
+	pm := agentView[struct {
+		Settings struct {
+			Roles map[string]string `json:"roles"`
+		} `json:"settings"`
+	}](pc).Settings.Roles["pm"]
+	if pm == "" {
+		pm = "pm"
+	}
+	pr := &contract.SessionsListRequest{Filter: &contract.ListFilter{ProjectId: []string{id}}, Group: &none, Limit: ptr(int64(200))}
+	if all, err := sessionsPageOf(q, pr, jsonBytes(pr.Filter)); err == nil {
+		for i, x := range all.Sessions {
+			if deref(x.ProfileId) == pm {
+				out.Pm = &all.Sessions[i]
+				break
+			}
+		}
+	}
 
 	allowed := map[string]bool{id: true}
 	_, items, _, err := publishingItems(q, &contract.PublishingStatusRequest{}, allowed, nil)

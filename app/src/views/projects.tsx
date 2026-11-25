@@ -314,7 +314,7 @@ function ProjectWork(props: {
   const [draftName, setDraftName] = createSignal('', { ownedWrite: true });
   const title = () => (props.facet === 'rules' && draftName() ? draftName() : props.p?.name ?? props.id);
   // Talk to PM opens the project's PM conversation (OR-51); with none yet, a new conversation on the project's pm role.
-  const pmSession = createMemo(() => (overview.data?.conversations ?? []).find(s => s.profileId === pmProfile()));
+  const pmSession = createMemo(() => overview.data?.pm ?? (overview.data?.conversations ?? []).find(s => s.profileId === pmProfile()));
   const talk = () => {
     const pm = pmSession();
     go(pm ? '/conversations/' + encodeURIComponent(pm.code ?? pm.id) : '/conversations/new?in=' + encodeURIComponent(props.id) + '&role=pm');

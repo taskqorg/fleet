@@ -756,6 +756,7 @@ type ProjectViewReply struct {
 	LastMergedAt       *string                `json:"lastMergedAt"`
 	Merged             int64                  `json:"merged"`
 	Pipelines          []ProjectPipelineGroup `json:"pipelines"`
+	Pm                 *SessionRow            `json:"pm,omitempty"`
 	Results            []ArtifactRow          `json:"results"`
 	ResultsTotal       int64                  `json:"resultsTotal"`
 	Waiting            []QuestionRow          `json:"waiting"`
@@ -801,6 +802,11 @@ func (v *ProjectViewReply) Validate() error {
 	}
 	for i := range v.Pipelines {
 		if err := Check(&v.Pipelines[i], "pipelines"); err != nil {
+			return err
+		}
+	}
+	if v.Pm != nil {
+		if err := Check(v.Pm, "pm"); err != nil {
 			return err
 		}
 	}
