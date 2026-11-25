@@ -249,7 +249,7 @@ jobs:
       BACKEND: ${{ needs.gate.outputs.previous }}
       UI_RUN: ${{ needs.gate.outputs.ui_run }}
     steps:
-      # deploy/ of this workflow's commit: the supersede check.
+      # deploy/ of this workflow's commit: publish-release.sh and the supersede check.
       - uses: actions/checkout@v4
         with:
           path: .release
@@ -269,14 +269,15 @@ jobs:
           file="fleet-ui-$VERSION.tgz"
           tar --owner=0 --group=0 -czf "$file" -C "$RUNNER_TEMP/ui" .
           sha256sum "$file" > SHA256SUMS
-      # A re-run after a later release published must not reuse its version or move latest backwards.
+      # A re-run after a later release published must not reuse its version or move latest backwards. A tag or published
+      # release of this version for this commit is publish-release.sh's to judge (a re-run after a lost response); drafts
+      # are its business too.
       - name: Version still free and newest
         run: |
           tag="v$VERSION"
           [ "$UI" != true ] || tag="ui-$BACKEND-v$VERSION"
           git ls-remote --tags "https://github.com/$GH_REPO.git" > "$RUNNER_TEMP/release-tags"
-          ! awk -v version="$VERSION" '{ tag=$2; sub(/^refs\/tags\//,"",tag); sub(/^.*v/,"",tag); if (tag==version) found=1 } END { exit !found }' "$RUNNER_TEMP/release-tags" || { echo "::error::version already allocated"; exit 1; }
-          ! gh release view "$tag" >/dev/null 2>&1 || { echo "::error::v$VERSION already exists"; exit 1; }
+          ! awk -v version="$VERSION" -v want="$tag" -v sha="$SHA" '{ tag=$2; sub(/^refs\/tags\//,"",tag); name=tag; sub(/^.*v/,"",tag); if (tag==version && !(name==want && $1==sha)) found=1 } END { exit !found }' "$RUNNER_TEMP/release-tags" || { echo "::error::version already allocated"; exit 1; }
           latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
           [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$VERSION" ] \
             || { echo "::error::$VERSION is not newer than $latest; start a new run"; exit 1; }
@@ -300,18 +301,11 @@ jobs:
       - run: |
           cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
           if [ "$UI" = true ]; then
-            set -- "ui-$BACKEND-v$VERSION" --latest=false --title "Fleet UI $VERSION" --notes "UI $VERSION for backend $BACKEND; source $SHA" \
+            set -- "ui-$BACKEND-v$VERSION" false "Fleet UI $VERSION" "UI $VERSION for backend $BACKEND; source $SHA" \
               fleet-ui-*.tgz SHA256SUMS SHA256SUMS.sig provenance.sigstore.jsonl
           else
-            set -- "v$VERSION" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
+            set -- "v$VERSION" true "v$VERSION" "Fleet $VERSION" \
               fleet-*.tgz SHA256SUMS SHA256SUMS.sig latest.json provenance.sigstore.jsonl
           fi
-          # Only that 403, on a push run, and only when main did move on with workflow changes after the check above:
-          # superseded the same way. Any other failure fails the job.
-          gh release create "$1" --target "$SHA" "${@:2}" 2> "$RUNNER_TEMP/create.err" && exit 0
-          code=$?; cat "$RUNNER_TEMP/create.err" >&2
-          grep -q 'HTTP 403: Resource not accessible by integration' "$RUNNER_TEMP/create.err" && [ "$GITHUB_EVENT_NAME" = push ] \
-            && n=$(.release/deploy/workflows-moved.sh "$SHA") && [ -n "$n" ] && [ "$n" != 0 ] || exit "$code"
-          # gh uploads the assets to a draft and publishes it last; the refused publish leaves that draft, without a tag.
-          gh release delete "$1" --yes
-          echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Idempotent and retried on GitHub API errors; it handles the superseded 403 like the supersede job.
+          .release/deploy/publish-release.sh "$@"
