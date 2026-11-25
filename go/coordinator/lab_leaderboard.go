@@ -457,6 +457,19 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		p := strings.TrimSpace(*r.ProjectId)
 		projectID = &p
 	}
+	// The header focus (lab_view): a project list and the ignored projects; '-' (outside projects) names no Lab trial.
+	named := func(ids []string) []string {
+		out := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" || strings.TrimSpace(x) == "" })
+		if len(out) == 0 {
+			return nil // nil is no filter in SQL; an empty array would match nothing
+		}
+		slices.Sort(out)
+		return out
+	}
+	projectIDs, excludeIDs := named(r.ProjectIds), named(r.ExcludeProjectIds)
+	if len(r.ProjectIds) > 0 && len(projectIDs) == 0 {
+		return out, nil // only work outside projects: no Lab trial is
+	}
 	useCaseFilter := ""
 	if r.UseCaseId != nil && strings.TrimSpace(*r.UseCaseId) != "" {
 		useCaseFilter = strings.TrimSpace(*r.UseCaseId)
@@ -477,7 +490,7 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 	cacheKey := labLeaderboardCacheKey{
 		app:        appPtr,
 		scope:      labLeaderboardScopeKey(q),
-		projectID:  projKey,
+		projectID:  projKey + "|" + strings.Join(projectIDs, ",") + "|-" + strings.Join(excludeIDs, ","),
 		useCaseID:  useCaseFilter,
 		collection: collectionFilter,
 		days:       days,
@@ -509,8 +522,10 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 	out.Collections = orderedCollections(presentCollections)
 
 	trials, err := q.db().LabLeaderboardTrials(q.ctx(), db.LabLeaderboardTrialsParams{
-		ProjectID: projectID,
-		Days:      days,
+		ProjectID:         projectID,
+		ProjectIds:        projectIDs,
+		ExcludeProjectIds: excludeIDs,
+		Days:              days,
 	})
 	if err != nil {
 		return out, err

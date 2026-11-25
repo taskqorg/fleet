@@ -57,11 +57,7 @@ func labView(q *Request, r *contract.LabViewRequest) (contract.LabViewReply, err
 			out.Ratings = append(out.Ratings, x)
 		}
 	}
-	// One project in focus: its leaderboard; otherwise every project's (the board has no project list filter).
-	board := &contract.LabLeaderboardRequest{Days: ptr(int64(30))}
-	if len(r.ProjectIds) == 1 && r.ProjectIds[0] != "-" {
-		board.ProjectId = &r.ProjectIds[0]
-	}
+	board := &contract.LabLeaderboardRequest{Days: ptr(int64(30)), ProjectIds: r.ProjectIds, ExcludeProjectIds: r.ExcludeProjectIds}
 	if out.Leaderboard, err = labLeaderboard(q, board); err != nil {
 		return out, err
 	}

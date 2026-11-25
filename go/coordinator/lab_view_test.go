@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // Requirement: lab_view (pages/laboratory.md) answers the Lab screen as its four reads would: the experiments, the
@@ -38,6 +39,30 @@ func TestLabView(t *testing.T) {
 	var dam, notDam contract.LabViewReply
 	e.opInto(t, "lab_view", map[string]any{"projectIds": []string{"dam"}}, e.ownerHeaders(), &dam)
 	e.opInto(t, "lab_view", map[string]any{"excludeProjectIds": []string{"dam"}}, e.ownerHeaders(), &notDam)
+	// The leaderboard takes the focus too: a trial of dam counts under dam and not without it.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO execution (id, kind, state, project_id, experiment_id, variant, started_at, ended_at, data, observation, config_ref)
+	 VALUES ('lv-r', 'pipeline_run', 'succeeded', 'dam', 'lv-b', 'v1', now(), now(), '{}', 'confirmed', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	trials := func(only, without []string) int {
+		var rows []db.LabLeaderboardTrialsRow
+		if err := e.app.store.Read(e.ctx, nil, func(q *Request) (err error) {
+			rows, err = q.db().LabLeaderboardTrials(q.ctx(), db.LabLeaderboardTrialsParams{ProjectIds: only, ExcludeProjectIds: without, Days: 30})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, r := range rows {
+			if r.ID == "lv-r" {
+				n++
+			}
+		}
+		return n
+	}
+	if trials(nil, nil) != 1 || trials([]string{"dam", "fleet"}, nil) != 1 || trials([]string{"fleet"}, nil) != 0 || trials(nil, []string{"dam"}) != 0 {
+		t.Fatal("leaderboard trials do not follow projectIds and excludeProjectIds")
+	}
 	if ids(dam) != "lv-b" || strings.Contains(ids(notDam), "lv-b") || !strings.Contains(ids(notDam), "lv-a") {
 		t.Fatalf("focus: dam %q, without dam %q", ids(dam), ids(notDam))
 	}

@@ -1153,10 +1153,12 @@ func (v *LabLeaderboardReply) Validate() error {
 }
 
 type LabLeaderboardRequest struct {
-	Collection *string `json:"collection,omitempty"`
-	Days       *int64  `json:"days,omitempty"`
-	ProjectId  *string `json:"projectId,omitempty"`
-	UseCaseId  *string `json:"useCaseId,omitempty"`
+	Collection        *string  `json:"collection,omitempty"`
+	Days              *int64   `json:"days,omitempty"`
+	ExcludeProjectIds []string `json:"excludeProjectIds,omitempty"`
+	ProjectId         *string  `json:"projectId,omitempty"`
+	ProjectIds        []string `json:"projectIds,omitempty"`
+	UseCaseId         *string  `json:"useCaseId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2421,7 +2423,7 @@ func init() {
 		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
 		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab experiments", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
-		"lab_leaderboard":       {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Aggregate Lab benchmark and real-work results across experiments by use case, pipeline, variant, model, profile and evaluator", Changes: []string{"experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"collection\":{\"type\":\"string\"},\"days\":{\"minimum\":1,\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"useCaseId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"lab_leaderboard":       {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Aggregate Lab benchmark and real-work results across experiments by use case, pipeline, variant, model, profile and evaluator", Changes: []string{"experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"collection\":{\"type\":\"string\"},\"days\":{\"minimum\":1,\"type\":\"integer\"},\"excludeProjectIds\":{\"$comment\":\"Leave trials of these projects out (the focus's ignored projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"$comment\":\"Only trials of these projects (the header focus); with projectId both apply.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"useCaseId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_personal_list":     {Read: true, Long: false, Errors: []int{403}, Auth: "person", Agent: "tool", Description: "List your private Lab drafts and submitted drafts in your review scope", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")},
 		"lab_personal_promote":  {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Confirm a reviewed personal Lab variant and promote it to the shared catalogue", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"confirm\":{\"type\":\"boolean\"},\"id\":{\"type\":\"string\"},\"pipelineRevision\":{\"type\":\"integer\"}},\"required\":[\"id\",\"pipelineRevision\",\"confirm\"],\"type\":\"object\"}")},
 		"lab_personal_save":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Save a private draft, or freeze its shared pipeline revision and submit for architect review", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"pipeline\":{\"type\":\"string\"},\"project\":{\"type\":\"string\"},\"submit\":{\"type\":\"boolean\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"id\",\"project\",\"pipeline\",\"variant\"],\"type\":\"object\"}")},

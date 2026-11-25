@@ -352,6 +352,8 @@ WHERE e.kind = 'pipeline_run'
   AND e.state IN ('succeeded', 'failed')
   AND e.observation = 'confirmed'
   AND (sqlc.narg(project_id)::text IS NULL OR e.project_id = sqlc.narg(project_id)::text)
+  AND (sqlc.narg(project_ids)::text[] IS NULL OR e.project_id = ANY(sqlc.narg(project_ids)::text[]))
+  AND (sqlc.narg(exclude_project_ids)::text[] IS NULL OR NOT (e.project_id = ANY(sqlc.narg(exclude_project_ids)::text[])))
   AND coalesce(e.ended_at, e.started_at, e.updated_at) >= now() - make_interval(days => sqlc.arg(days)::int)
 ORDER BY coalesce(e.ended_at, e.started_at, e.updated_at) DESC, e.seq DESC;
 
