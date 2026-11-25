@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -955,17 +956,19 @@ func scoreCorrect(q *Request, r *contract.LabScoreCorrectRequest) (labScore, err
 	return scoreView(s), nil
 }
 
-// expComparison: each non-baseline variant against the baseline (the first variant) on the primary evaluator, through
-// the one statistics function, over held_out examples when the suite has any (bands are tuned on tune), else over all.
-// Only the latest attempt of a cell counts, with its latest primary score, and only one evaluator version (the newest):
-// rows of different versions are never averaged. An unscored typed trial is left out.
+// expComparison: each other variant against the baseline on the primary evaluator, through the one statistics function,
+// over held_out examples when the suite has any (bands are tuned on tune), else over all. The baseline is the first
+// variant with a scored trial: a variant whose trials all failed or were cancelled gives nothing to compare against
+// (DAM Lab, 2026-11-25: the Claude baseline never ran and every row read too few). Only the latest attempt of a cell
+// counts, with its latest primary score, and per example only one evaluator version (its newest): a script evaluator's
+// version is the hash of the example's own checks, so versions differ across examples by design, and scores of
+// different versions of one example are never averaged. An unscored typed trial is left out.
 func expComparison(e *labExperiment, trials []*labRun, cur []labScore) []labComparisonRow {
 	primary, vs := e.primary(), e.Variants
 	out := []labComparisonRow{}
 	if primary == "" || len(vs) < 2 {
 		return out
 	}
-	baseline := vs[0].Label
 	scope := "all"
 	if hasHeldOut(e) {
 		scope = "held_out"
@@ -974,20 +977,18 @@ func expComparison(e *labExperiment, trials []*labRun, cur []labScore) []labComp
 	if strings.HasSuffix(primary, ":pick_best") {
 		reason = "pick_best ranks trials together; it gives no per-trial value to pair"
 	}
-	version := ""
-	for _, sc := range cur {
-		if sc.Evaluator == primary && len(sc.TrialIDs) == 1 {
-			version = sc.EvaluatorVersion
-		}
-	}
-	values, versions := map[string]map[string][]float64{}, map[string]bool{}
+	scored := []scoredTrial{}
 	for _, st := range scoredLatest(e, trials, cur, func(sc labScore) bool { return sc.Evaluator == primary }) {
-		sc := st.score
-		if scope == "held_out" && st.split != "held_out" || sc.typed().Answer == "unscored" {
+		if scope == "held_out" && st.split != "held_out" || st.score.typed().Answer == "unscored" {
 			continue
 		}
-		versions[sc.EvaluatorVersion] = true
-		if sc.EvaluatorVersion != version {
+		scored = append(scored, st)
+	}
+	newest := newestVersions(scored)
+	values, older := map[string]map[string][]float64{}, false
+	for _, st := range scored {
+		if st.score.EvaluatorVersion != newest[st.example] {
+			older = true
 			continue
 		}
 		if values[st.variant] == nil {
@@ -995,15 +996,49 @@ func expComparison(e *labExperiment, trials []*labRun, cur []labScore) []labComp
 		}
 		values[st.variant][st.example] = append(values[st.variant][st.example], scoreNumber(st.score))
 	}
-	if len(versions) > 1 && reason == "" {
+	if older && reason == "" {
 		reason = "scores of older evaluator versions are left out"
 	}
-	if len(values[baseline]) == 0 && reason == "" {
-		reason = "the baseline has no scored trial"
+	baseline := vs[0].Label
+	for _, v := range vs {
+		if len(values[v.Label]) > 0 {
+			baseline = v.Label
+			break
+		}
 	}
-	for _, v := range vs[1:] {
+	if len(values[baseline]) == 0 && reason == "" {
+		reason = "no variant has a scored trial"
+	}
+	version := versionLabel(newest)
+	for _, v := range vs {
+		if v.Label == baseline {
+			continue
+		}
 		out = append(out, labComparisonRow{Variant: v.Label, Baseline: baseline, Evaluator: primary, EvaluatorVersion: version, Split: scope, Reason: strPtr(reason),
 			Result: compare(values[baseline], values[v.Label])})
+	}
+	return out
+}
+
+// versionLabel: the one evaluator version of newest, or "per example" when examples differ.
+func versionLabel(newest map[string]string) string {
+	version := ""
+	for _, v := range newest {
+		if version != "" && v != version {
+			return "per example"
+		}
+		version = v
+	}
+	return version
+}
+
+// newestVersions: per example, the evaluator version of its newest score among scored.
+func newestVersions(scored []scoredTrial) map[string]string {
+	out, at := map[string]string{}, map[string]time.Time{}
+	for _, st := range scored {
+		if t, ok := at[st.example]; !ok || st.score.CreatedAt.After(t) {
+			out[st.example], at[st.example] = st.score.EvaluatorVersion, st.score.CreatedAt
+		}
 	}
 	return out
 }
