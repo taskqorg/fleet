@@ -297,8 +297,12 @@ func init() {
 	})
 }
 
+// runnerCallFull: when the pass last summed the whole last day (calls ingested or priced late, e.g. after an outage).
+var runnerCallFull time.Time
+
 // runnerCallHours sums the tool calls of each closed hour of the last day that is not summed yet, and the last two
 // closed hours again (their calls' costs may be priced after the hour closed), into runner_call_hour (migration 115).
+// Every 10 minutes it sums the whole last day again, so calls ingested or priced late are counted within 10 minutes.
 func runnerCallHours(ctx context.Context, a *App) error {
 	return a.store.Write(ctx, nil, nil, func(q *Request) error {
 		due, err := q.db().RunnerCallHoursDue(q.ctx())
@@ -309,6 +313,9 @@ func runnerCallHours(ctx context.Context, a *App) error {
 		from := now.Add(-2 * time.Hour)
 		if due.Valid && due.Time.Before(from) {
 			from = due.Time.UTC()
+		}
+		if time.Since(runnerCallFull) >= 10*time.Minute {
+			from, runnerCallFull = now.Add(-25*time.Hour), time.Now()
 		}
 		if !from.Before(now) {
 			return nil
