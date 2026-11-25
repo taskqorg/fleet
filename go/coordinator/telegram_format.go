@@ -115,6 +115,8 @@ func tgPlain(md string) string {
 //     <details> and <summary> (a folded block) stay tags.
 //   - A single line break is a soft break, shown as a space: a line followed by more paragraph text ends in a hard break.
 //   - "#89 stays open" at a line start would be a heading: a '#' not followed by a space is escaped.
+//   - Rich Markdown reads $...$ as a formula: '$' outside code is escaped, since money ($2,52) is far more common in
+//     answers than math (owner-tester F23).
 //   - Telegram links bare names like fleet.md as domains: file names and paths go into code spans.
 //   - "13:47 UTC" and ISO times become date-time entities, so every reader sees their own local time.
 
@@ -210,7 +212,7 @@ func richLine(line string, now time.Time) string {
 
 // richText: text outside code: escaped HTML, local times, file names in code spans.
 func richText(s string, now time.Time) string {
-	s = richTags.Replace(strings.NewReplacer("&", "&amp;", "<", "&lt;").Replace(s))
+	s = richTags.Replace(strings.NewReplacer("&", "&amp;", "<", "&lt;", `\$`, `\$`, "$", `\$`).Replace(s)) // an escaped \$ stays one
 	words := strings.Split(s, " ")
 	for i, w := range words {
 		words[i] = richWord(w)
