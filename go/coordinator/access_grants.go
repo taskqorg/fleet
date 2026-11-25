@@ -341,6 +341,13 @@ func accessServerCheck(q *Request, r *contract.AccessServerCheckRequest) (contra
 	return out, err
 }
 
+// accessNeedsEnroll: the server has never been enrolled, its last check failed (fleet-provision may be missing or too
+// old to answer), or it found another fleet-provision version.
+func accessNeedsEnroll(s contract.AccessServerView) bool {
+	c := s.Checked
+	return s.EnrolledAt == nil || (c != nil && (!c.Ok || (c.Version != nil && *c.Version != fleetProvisionVersion())))
+}
+
 func accessGrants(q *Request, r *contract.AccessGrantsRequest) (contract.AccessGrantsReply, error) {
 	out := contract.AccessGrantsReply{Servers: []contract.AccessServerView{}, Grants: []contract.AccessGrantView{}}
 	project := deref(r.ProjectId)
@@ -354,10 +361,26 @@ func accessGrants(q *Request, r *contract.AccessGrantsRequest) (contract.AccessG
 		return out, err
 	}
 	via := map[string]string{}
+	enroll := ""
 	for _, s := range servers {
 		v := accessServer{AccessServerGetRow: db.AccessServerGetRow(s)}
 		_ = json.Unmarshal(s.Payload, &v.accessServerPayload)
-		out.Servers = append(out.Servers, v.view())
+		sv := v.view()
+		// A server to enroll (never enrolled, or running another fleet-provision) carries the enroll command for a
+		// full-access person, the same text access_server_add answers; nobody else sees it.
+		// The read only loads the provisioner key (access_server_add makes it); without it the read answers without the command.
+		if accessNeedsEnroll(sv) && q.agent == "" && fullAccess(q.person) {
+			if enroll == "" {
+				if signer, err := accessKeyLoad("provisioner"); err == nil {
+					body, _ := accessPublic(signer)
+					enroll = accessEnrollCommand(body)
+				}
+			}
+			if enroll != "" {
+				sv.Enroll = new(enroll)
+			}
+		}
+		out.Servers = append(out.Servers, sv)
 		via[s.ID] = deref(s.Via)
 	}
 	rows, err := q.db().AccessGrantList(q.ctx(), project)

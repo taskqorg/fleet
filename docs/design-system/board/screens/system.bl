@@ -2409,4 +2409,18 @@ d189bf79d57eec8a al(v,g(12),pad(32)) p(5010,0) s(900,hug:331) f[(137111a55f38d4b
           297976364cd79c0d t("Copy command",Inter,13,r,align(l),lh(auto,1.23)) p(12,4) s(fill,hug:16) ext(96.9,) f[(ac22e3408d01e1fe,#0B0B0C)] "Text 459"
         f8665a0606570e9e al(v,pad(4,12)) p(128.9,0) s(hug:63.33,fill) ext(,24) f[] st[(6a73edee6c117160,#2A2A2D,w(1))] "Frame 260"
           83aad22e8c78603a t("Check",Inter,13,r,align(l),lh(auto,1.23)) p(12,4) s(fill,hug:16) ext(39.33,) f[(5901261ff22c7818,#ECECEC)] "Text 460"
+374ce6e7b4ff2eeb al(v,g(10),pad(32)) p(5010,620) s(900,hug:262) f[(9f7aa8d91834ae41,#0B0B0C)] abs "System › Access · server not enrolled: enroll command (draft 2026-11-26)"
+  3e65f72563bc0623 t("Server detail · not enrolled",Inter,18,sb,align(l),lh(auto,1.22)) p(32,32) s(fill,hug:22) ext(836,) f[(ea8de5d6bab38eaf,#ECECEC)] "Text 461"
+  cafd348580979ac0 al(v,g(8),pad(12)) p(32,64) s(fill,hug:166) ext(836,) f[(e4d654658e77361b,#1A1A1C)] st[(9bd85c8cd0542cad,#2A2A2D,w(1))] "Frame 261"
+    50033715deb2921e t("pds9 · 192.168.60.9 via jump · not enrolled",Inter,13,r,align(l),lh(auto,1.23)) p(12,12) s(fill,hug:16) ext(812,) f[(04b4c1c07b588ec7,#ECECEC)] "Text 462"
+      spans[(31,43,#F2B44C)]
+    ab36780a1482b769 t("Run once as root on 192.168.60.9 (reach it through jump: ssh -J root@23.138.140.26 root@192.168.60.9), then Check. It installs fleet-provision 2 and lets Fleet's provisioner key run only its recipes.",Inter,12,r,align(l),lh(auto,1.25)) p(12,36) s(fill,hug:30) ext(812,) f[(6090eb8da40bd549,#9A9A9F)] "Text 463"
+    cc2678f160cede42 al(v,pad(8)) p(12,74) s(fill,hug:48) ext(812,) f[(6aa39acbbe9f4de7,#0B0B0C)] st[(928857324cd6710b,#2A2A2D,w(1))] clip "Frame 262"
+      a74703b8ed08d97f t("sudo sh -c 'set -e; umask 022; echo IyEvYmluL2Jhc2gKIyBmbGVldC1wcm92aXNpb246IHRoZSBvbmx5… | base64 -d > /usr/local/sbin/fleet-provision; … install AAAAC3Nz…'",JetBrains Mono,12,r,align(l),lh(auto,1.33)) p(8,8) s(fill,hug:32) ext(796,) f[(7f057a8a2bab2ec9,#9A9A9F)] "Text 464"
+    51a5468162a79965 al(h,y(c),g(8)) p(12,130) s(fill,hug:24) ext(812,) f[] "Frame 263"
+      b35a86a7813ca218 al(v,pad(4,12)) p(0,0) s(hug:120.9,hug:24) f[(71760e02dc6236fe,#F2F2F2)] "Frame 264"
+        8058810671ef2156 t("Copy command",Inter,13,r,align(l),lh(auto,1.23)) p(12,4) s(fill,hug:16) ext(96.9,) f[(b0b9bcdb1e6b6053,#0B0B0C)] "Text 465"
+      b8c92d79b9259d23 al(v,pad(4,12)) p(128.9,0) s(hug:63.33,hug:24) f[] st[(5f4d987ca954e690,#2A2A2D,w(1))] "Frame 265"
+        5a996e26a6ab97cb t("Check",Inter,13,r,align(l),lh(auto,1.23)) p(12,4) s(fill,hug:16) ext(39.33,) f[(14aeacc710857db3,#ECECEC)] "Text 466"
+      922594e49b446b95 t("18 KB, one line",Inter,12,r,align(l),lh(auto,1.25)) p(200.23,4.5) s(hug:82.99,hug:15) f[(6d3800099400f56d,#77777C)] "Text 467"
 bp:end

@@ -133,6 +133,8 @@ CREATE POLICY project_scope ON budget FOR ALL TO public USING (((current_setting
 
 -- change
 ALTER TABLE change ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS access_server_change ON change;
+CREATE POLICY access_server_change ON change FOR SELECT TO public USING ((kind = 'access-server'::text));
 DROP POLICY IF EXISTS directed_change ON change;
 CREATE POLICY directed_change ON change FOR ALL TO public USING (((project_id IS NULL) AND fleet_own_projectless_session(session_id)));
 DROP POLICY IF EXISTS project_scope ON change;

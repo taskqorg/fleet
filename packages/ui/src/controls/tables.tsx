@@ -214,3 +214,44 @@ export function Disclosure(p: {
     </details>
   );
 }
+
+/** Where a ReflowRow cell goes in a narrow frame: beside the name (state), on the second line (meta), or last on it (time). */
+export type ReflowPart = 'state' | 'meta' | 'time';
+
+/**
+ * A table that never scrolls sideways (owner rule; controls/data-list.md#reflow-table): columns while its frame is wide;
+ * in a narrow frame (a phone, a narrow work area) each row becomes two lines, the name with its state, then the meta
+ * facts joined by `·` with the time last. `cols` is the wide grid-template-columns, one track per header
+ * (modern-web-guidance responsive-table: a container query on the table's own width; the headers stay column headers).
+ */
+export function ReflowTable(p: { label: string; head: string[]; cols: string; children: JSX.Element }) {
+  return (
+    <div class="reflow-frame" data-ui="reflow-table">
+      <div class="reflow" role="table" aria-label={p.label} style={{ '--reflow-cols': p.cols }}>
+        <div class="reflow-head" role="row"><For each={p.head}>{h => <span role="columnheader">{h}</span>}</For></div>
+        {p.children}
+      </div>
+    </div>
+  );
+}
+
+/** One row of a ReflowTable: the whole row opens it (OR-26) and its name is the row's button; while `selected`, `detail` shows under it at full width. */
+export function ReflowRow(p: {
+  name: string; lead?: JSX.Element; selected?: boolean; onOpen?: () => void;
+  cells: { part: ReflowPart; el: JSX.Element }[]; detail?: JSX.Element;
+}) {
+  return (
+    <>
+      <div class={['reflow-row', { sel: !!p.selected, opens: !!p.onOpen }]} role="row" onClick={() => p.onOpen?.()}>
+        <span class="reflow-name" role="rowheader">
+          {p.lead}
+          <Show when={p.onOpen} keyed fallback={<span class="t-label">{p.name}</span>}>
+            {open => <button type="button" class="t-label" aria-expanded={p.selected ? 'true' : 'false'} onClick={e => { e.stopPropagation(); open(); }}>{p.name}</button>}
+          </Show>
+        </span>
+        <For each={p.cells}>{c => <span class={[`reflow-${c.part}`, { 'reflow-empty': c.el == null || c.el === '' }]} role="cell">{c.el}</span>}</For>
+      </div>
+      <Show when={p.selected}><div class="reflow-detail" role="row"><div role="cell">{p.detail}</div></div></Show>
+    </>
+  );
+}
