@@ -4,6 +4,7 @@
 import { cell } from './signal.ts';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
+import { persist, restore } from './persist.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
 import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 
@@ -18,29 +19,38 @@ export const prefs = cell<Settings>(empty);
 export const prefsRead = cell(false);
 
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
-onClear.add(() => { seq++; epoch++; readSeq++; refreshAfterSave = false; pending = 0; prefs.value = empty; prefsRead.value = false; loadPrefs(); });
+onClear.add(() => { seq++; epoch++; readSeq++; refreshAfterSave = false; pending = 0; prefs.value = empty; prefsRead.value = false; restorePrefs(); loadPrefs(); });
+/** The mirror's copy of the preferences opens focus-dependent loads at once; the read replaces it when it answers. */
+function restorePrefs() {
+  const e = epoch;
+  void restore('prefs').then(v => { if (v && e === epoch && !prefsRead.peek()) { prefs.value = v.data as Settings; prefsRead.value = true; } });
+}
 
 // ponytail: last write wins; seq drops a stale reply. Each save sends only what changed: one item (viewPut, viewDelete,
 // rowPin, focusPresetPut, focusPresetDelete), one width, or a value the person set whole (focus, section pins in their
 // order). The server applies it to the stored copy under the person lock, so saves from other devices and agents survive.
 // Saves from this tab still run in order. A failed save shows the server copy again (or the state before it, when unreachable).
 // epoch: a store clear drops saves still queued for the previous person; pending: a read never overwrites a save in flight.
-let readSeq = 0, refreshAfterSave = false;
+let readSeq = 0, refreshAfterSave = false, inflight: { epoch: number; seq: number; done: Promise<void> } | null = null;
 let seq = 0, epoch = 0, pending = 0, chain: Promise<unknown> = Promise.resolve();
 // Any answer of the current person's read opens the gate (one held back by a save keeps the shown copy, the server's plus
 // that save); an answer for a person cleared meanwhile (epoch) does not.
 export function loadPrefs(): Promise<void> {
   // A setting-change during a local save must be read after the last queued patch settles.
   if (pending) { refreshAfterSave = true; prefsRead.value = true; return Promise.resolve(); }
+  // A read already on its way for this person, with no save since it started, answers this call too.
+  if (inflight && inflight.epoch === epoch && inflight.seq === seq) return inflight.done;
   const n = seq, e = epoch, read = ++readSeq;
   const done = () => { if (e === epoch) prefsRead.value = true; };
-  return op('person_settings_get', {}).then(s => {
+  const answered = op('person_settings_get', {}).then(s => {
     if (e !== epoch || read !== readSeq) return;
-    if (seq === n && !pending) prefs.value = s;
+    if (seq === n && !pending) { prefs.value = s; persist('prefs', s); }
     else if (pending) refreshAfterSave = true;
     else void loadPrefs(); // a save finished while this older read was in flight
     done();
-  }, done);
+  }, done).finally(() => { if (inflight?.done === answered) inflight = null; });
+  inflight = { epoch: e, seq: n, done: answered };
+  return answered;
 }
 function refreshAfterWrites() {
   if (!pending && refreshAfterSave) { refreshAfterSave = false; void loadPrefs(); }
@@ -217,3 +227,5 @@ export function saveOnLeave(section: string | null, keepalive = true) {
   const ps = [section ? viewPatch(section) : null, groupsPatch()].filter((p): p is Pending => !!p);
   if (ps.length) savePrefs(s => Object.assign({}, ...ps.map(p => p.change(s))), Object.assign({}, ...ps.map(p => p.patch)), keepalive);
 }
+
+restorePrefs();

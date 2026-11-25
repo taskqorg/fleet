@@ -251,7 +251,8 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
   * It never caches `/api/*`.
   * A new build shows an "Update available" notice that reloads the page.
 * **IndexedDB mirror.**
-  * It stores rows and lists of the open views with their `seq`, debounced to 1 s.
+  * It stores the last answer of every read (`useOp` docs, `useList` lists) and the person's settings, under the person and grants version that read them, debounced to 1 s (`app/src/persist.ts`).
+  * A reload renders from it before the person is validated: the browser hint names the last validated person, and the validator purges the mirror and clears what was shown when the person or grants differ.
   * A reopened view renders from the mirror with the [offline marker](../design-system/controls/offline-marker.md). The marker has three states:
     * "offline · 18h" when there is no network;
     * "updating · 18h" when online but not yet caught up;

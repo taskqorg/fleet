@@ -557,6 +557,11 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Causes:** the rail avatar took the Home avatar style (transparent with a dark letter on dark, an amber disc when toned); the user block was re-created on every versions read, closing its overview; Update cleared its busy state before the reload landed; warnings came from one momentary read (the tab "unknown" for 3 s on every load, a gateway probe older than a minute, one failed read).
 * **Options (board):** A, an icon button after the version, as built; B, an update strip above the person naming the new version, with Reload.
 * **Choice (owner):** B and the rules: the avatar never changes; the version is toned only by a confirmed problem that is true now; an offline host does not tone it. Recorded in [nav rail](controls/nav-rail.md) (Version, Update) and drawn on [screens/shell](board/screens/shell.bl).
+## 2026-11-25: A tab the person is away from waits for them before it updates
+
+* **Question (owner):** with many releases a day, a hidden tab reloaded itself in the background, so every return after Alt-Tab found a cold page that loaded in pieces.
+* **Choice (owner, "A ok", relayed by the orchestrator):** a hidden tab, or one whose window has no focus, never reloads; when the person comes back it updates at once if their last action was 30 s or more ago, otherwise after the rest of 30 s without activity. The read mirror (operator app D3) makes the reloaded page show its data at once. Supersedes "a hidden tab updates in the background" below. Recorded in [nav rail](controls/nav-rail.md) (Update).
+
 ## 2026-11-25: The app update installs itself when idle
 
 * **Question (owner):** Fleet ships many releases a day, so the "New app ready" strip needs a click many times a day; an update should install itself when the person is not using the app, with a visible countdown that resets on activity, and never lose work.
