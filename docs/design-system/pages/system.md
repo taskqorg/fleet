@@ -39,6 +39,7 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, the section's a
 * **Unconfirmed host:** "running · unconfirmed, last seen 4m", never failed (UR-32).
 * **Risky action** (remove a host, rotate a key, change money): starts only from a confirmation card naming its scope and the way back ([OR-61](../owner-rules.md)).
 * **Phone (390 px):** the tree; an opened item fills the screen.
+* **Person, Telegram** ([canvas](../board/screens/people.bl)): the person card has a Telegram section (`TelegramLink`, `app/src/views/humans.tsx`). Not linked: the Telegram users who wrote to the bot without a link (`telegram_people.unknown`), each with Link, then a typed user id, the language (English, Русский) and Link; the bot confirms the link in that chat. Linked: the state, the @username and id, the language as a choice that saves at once, when it was linked (time last, [OR-64](../owner-rules.md)) and Unlink. The People list adds the @username after the email. Machine identities have no Telegram.
 
 ## Inventory
 
@@ -53,7 +54,7 @@ Checked against the [product map](../product-map.md) rows for System.
 
 ## Data
 
-`hosts_list`, `telemetry_summary`, `telemetry_findings`, `account_list` (bindings carry `models`, `modelsObservedAt`, `rejectedModels`), `profiles_list` (architects), `route_decisions` (`subscriptionId`), `subscription_limits`, `connections_list`, `executions_runners`, `executions_ci`, `spend_summary` (also `by: day`), `people_list`; writes `hosts_register`, `connections_create`. The idle summary is one read over the same operations, so agents see the same readiness (fleet.md R2).
+`hosts_list`, `telemetry_summary`, `telemetry_findings`, `account_list` (bindings carry `models`, `modelsObservedAt`, `rejectedModels`), `profiles_list` (architects), `route_decisions` (`subscriptionId`), `subscription_limits`, `connections_list`, `executions_runners`, `executions_ci`, `spend_summary` (also `by: day`), `people_list`, `telegram_people`; writes `hosts_register`, `connections_create`, `telegram_person_set`. The idle summary is one read over the same operations, so agents see the same readiness (fleet.md R2).
 
 ## Blocks
 
@@ -64,4 +65,4 @@ Checked against the [product map](../product-map.md) rows for System.
 
 ## Design board
 
-Canvas [screens/system.bl](../board/screens/system.bl): idle readiness, a host open, Spend, phone.
+Canvas [screens/system.bl](../board/screens/system.bl): idle readiness, a host open, Spend, phone. Canvas [screens/people.bl](../board/screens/people.bl): a person's Telegram, not linked and linked, at 1440 and 390.
