@@ -5,6 +5,7 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   Button, DataTable, Empty, ErrorBanner, MatrixCell, Num, ProblemRow, Skeleton, TableName, TableRow, agentLabel, msMeasured,
   type MatrixCellState,
+  money,
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type Ops } from '../api.ts';
 import type { LabLeaderboardEntry } from '../../../contracts/generated/ops.ts';
@@ -79,11 +80,10 @@ const failRate = (c: ComparisonCell) => c.trials ? c.failed / c.trials : 0;
 // Partial: some trials failed often enough to doubt the score (amber); fail: nothing succeeded (red, OR-56).
 const cellState = (c: ComparisonCell): MatrixCellState => c.succeeded === 0 ? 'fail' : failRate(c) >= 0.1 ? 'partial' : 'pass';
 const pct = (r: number) => r <= 0 ? '0%' : r < 0.01 ? '<1%' : `${Math.round(r * 100)}%`;
-const money = (v: number) => v > 0 && v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`;
 
 /** Details of a cell, in its tooltip (OR-59): tokens, cost with basis, how many groups and use cases it joins. */
 function cellDetails(c: ComparisonCell, form: string | null): string {
-  const cost = c.costUsd == null ? 'cost unavailable' : `cost ${money(c.costUsd)}${c.costBases.length && !c.costBases.includes('measured') ? ` (${c.costBases.join(', ')})` : ''}`;
+  const cost = c.costUsd == null ? 'cost unavailable' : `cost ${money(c.costUsd).text}${c.costBases.length && !c.costBases.includes('measured') ? ` (${c.costBases.join(', ')})` : ''}`;
   return [
     `${c.succeeded} succeeded, ${c.failed} failed of ${c.trials} trials`,
     `tokens ${c.tokens.toLocaleString('en')}`, cost,

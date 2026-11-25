@@ -9,6 +9,7 @@ import {
   Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, bytes, causeOf, clock, count, duration, money, states, useTick,
   type DataTone, type GaugeProps, type HostBandProps, type Measured, type Stage, type Tone, type WorkerSlotProps,
   statesOf, openStates,
+  timeOf, usdOf,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
 import { prefs, scopeIds, noProject } from '../prefs.ts';
@@ -31,11 +32,11 @@ const ACTIVE = new Set<string>(statesOf('execution', ['working', 'waiting']));
 const OPEN_TASK = openStates('task');
 
 const m = (value: number | null | undefined, extra: Partial<Measured> = {}): Measured => ({ value: value ?? null, basis: value == null ? 'unavailable' : 'measured', ...extra });
-const usd = (cost: readonly CostFigure[] | undefined) => (cost ?? []).filter(c => (c.currency ?? 'USD') === 'USD' && c.value != null).reduce((n, c) => n + c.value!, 0);
 const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
 const median = (xs: number[]) => { if (!xs.length) return null; const s = xs.toSorted((a, b) => a - b), i = s.length >> 1; return s.length % 2 ? s[i] : (s[i - 1] + s[i]) / 2; };
 const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
-const ms = (s: string | null | undefined) => (s ? Date.parse(s) : NaN);
+/** Times for sorting and comparing: a missing time is the oldest. */
+const ms = (s: string | null | undefined) => timeOf(s, 0);
 /** Bars of a trend: `n` buckets of `size` ms ending now, each the sum of `value` over the items whose time falls in it. */
 function buckets<T>(items: readonly T[], at: (x: T) => number | null, now: number, n = 12, size = 2 * HOUR, value: (x: T) => number = () => 1): number[] {
   const out = new Array<number>(n).fill(0), from = now - n * size;
@@ -186,10 +187,10 @@ export function Live(props: { wall: boolean }) {
   const figures = createMemo(() => {
     const t = now(), b = bands();
     const busy = sum(b.map(x => x.busy)), slots = sum(b.map(x => x.slots));
-    const lead = median(done().map(x => ms(x.stateAt) - ms(x.createdAt)).filter(Number.isFinite));
+    const lead = median(done().flatMap(x => { const a = timeOf(x.createdAt), b = timeOf(x.stateAt); return a != null && b != null ? [b - a] : []; }));
     const hostJobs = kindRuns('host_job'), toolCalls = kindRuns('tool_run');
     const tokToday = tokensOf(today()), tokMonth = tokensOf(month());
-    const usdToday = usd(today().flatMap(s => s.cost)), usdMonth = usd(month().flatMap(s => s.cost));
+    const usdToday = usdOf(today().flatMap(s => s.cost)), usdMonth = usdOf(month().flatMap(s => s.cost));
     const fs = failedStarts(), cause = problems()[0];
     // Concurrency per bucket: runs active at the bucket's end.
     const working = Array.from({ length: 12 }, (_, i) => { const at = t - (11 - i) * 2 * HOUR; return agentRuns().filter(r => r.startedAt != null && r.startedAt <= at && (ACTIVE.has(r.state) || (r.endedAt ?? 0) >= at)).length; });
@@ -198,7 +199,7 @@ export function Live(props: { wall: boolean }) {
       { key: 'runs', label: 'Agent runs today', value: m(kindRuns('agent_run') + kindRuns('child_agent')), sub: [hostJobs ? `+${hostJobs} host jobs` : '', toolCalls ? `${toolCalls} tool calls` : ''].filter(Boolean).join(' · ') || undefined, trend: buckets(agentRuns(), r => r.startedAt, t), trendLabel: 'agent runs started, last 24 hours' },
       { key: 'done', label: 'Tasks done today', value: m(done().length), sub: lead != null ? `lead time P50 ${duration(lead / 1000).text}` : undefined, trend: buckets(doneTasks.data?.tasks ?? [], x => ms(x.stateAt), t), trendLabel: 'tasks done, last 24 hours' },
       { key: 'tokens', label: 'Tokens today', value: m(tokToday), sub: tokMonth != null ? `month ${count(tokMonth).text}` : undefined, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => r.tokens ?? 0), trendLabel: 'tokens, last 24 hours' },
-      { key: 'spend', label: 'Spend today', value: m(usdToday, { currency: 'USD' }), kind: 'money' as const, sub: `month ${money(usdMonth).text}`, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => usd(r.cost)), trendLabel: 'spend at list price, last 24 hours' },
+      { key: 'spend', label: 'Spend today', value: m(usdToday, { currency: 'USD' }), kind: 'money' as const, sub: `month ${money(usdMonth).text}`, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => usdOf(r.cost)), trendLabel: 'spend at list price, last 24 hours' },
       { key: 'failed', label: 'Failed starts 6h', value: m(fs.length), alert: fs.length > 0, sub: cause?.text, trend: buckets(fs, r => r.startedAt ?? r.endedAt, t, 12, 30 * MIN), trendLabel: 'failed starts, last 6 hours' },
     ];
   });

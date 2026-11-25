@@ -2,6 +2,7 @@
 import {
   day, dayStart, slotStart, hourLabel, dateKey, duration, quantile, DELIVERY_ORDER,
   type StateOf, type DayCol, type DayMark,
+  timeOf,
 } from '../../../packages/ui/src/index.ts';
 import type { Ops } from '../api.ts';
 import { DELIVERY_DONE } from '../system-views.ts';
@@ -41,7 +42,8 @@ export const uiOnly = (tag?: string | null) => !!tag && UI_TAG.test(tag);
 /** A release as people name it: v1.2.3 is 1.2.3; ui-1.2.2-v1.2.3 is "UI 1.2.3" (its UI version; the backend stays 1.2.2). */
 export const releaseLabel = (tag: string) => { const m = UI_TAG.exec(tag); return m ? `UI ${m[1]}` : tag.replace(/^v/, ''); };
 export const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { id: '30d', label: '30 days' }];
-export const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
+/** Delivery times: a missing one is NaN, so it is never past a norm and never inside a window. */
+export const ms = (s?: string | null) => timeOf(s, NaN);
 export const fmt = (v: number) => duration(v / 1000).text;
 /** The focus segment of a pull/merge request: repo path (~-joined) plus number (stable, readable, no slash). */
 export const idOf = (it: { repo: string; number: number }) => `${it.repo.replaceAll('/', '~')}~${it.number}`;

@@ -19,7 +19,10 @@ One way to show each kind of value, everywhere ([OR-28](owner-rules.md)). The fo
 | Duration | `120ms` (under a second), `40s`, `14m`, `1h 02m`, `3d 4h`; elapsed span (`elapsedMs`) and active execution wall time (`executionWallMs`) use the same formatter and carry distinct labels | words | `duration` |
 | Count | `412`, `1,204`, `182k`; a lower bound as `≥ 182k` | exact | `count`, `Num` |
 | Ratio | `6/8` (in use of total); never a sentence | `6 of 8 workers busy` | — |
-| Money | `$0.02`, `$10.90`; estimated `≈ $0.38`; subscription list-price `≈ $0.38` + subscription mark; unpriced subscription `—` ("included in subscription"); unavailable `—` with reason; multi-currency `(currency, basis)` figures never summed | basis, currency and source | `money`, `Num`, `CostFigures` |
+| Money | `$0.02`, `$10.90`; estimated `≈ $0.38`; subscription list-price `≈ $0.38` + subscription mark; unpriced subscription `—` ("included in subscription"); unavailable `—` with reason; multi-currency `(currency, basis)` figures never summed; a total in dollars (`usdOf`) sums measured, estimated and subscription USD figures and never an unavailable one or one without a currency; a stored `tokens` basis (tokens at list price) is estimated, and a basis Fleet does not know reads unavailable, never estimated (`basisOf`) | basis, currency and source | `money`, `Num`, `CostFigures`, `usdOf`, `basisOf` |
+| Time value | A stored time (ISO text or epoch ms) is read once: missing or unreadable is the fallback the caller names (null by default; `0` where it sorts as the oldest), never a silent `0` or `NaN` | — | `timeOf` |
+| Counted word | `1 session`, `3 sessions`, `1,240 tasks` | — | `plural` |
+| Live clock | A page that redraws ages or time buckets reads one shared tick; it never starts its own timer | — | `useTick` |
 | Score | `0.82`; spread as `0.82 (0.74–0.90)` | evaluator and count | `score`, `Num kind="score"` |
 | Share | `40%` | `40 percent` | `percent` |
 | Size | `4.2 GB` | bytes | `bytes` |

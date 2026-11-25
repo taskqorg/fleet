@@ -44,8 +44,8 @@ type ShareBasis = typeof SHARE_BASES[number]['id'];
 
 type SortCol = 'label' | 'runs' | 'failed' | 'tokens' | 'usd' | 'unpriced';
 
-export const usdOf = (cost: readonly CostFigureLike[]) =>
-  cost.reduce((sum, c) => (c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number' ? sum + c.value : sum), 0);
+export { usdOf } from '../../../packages/ui/src/format.ts';
+import { usdOf } from '../../../packages/ui/src/format.ts';
 
 function matchesShareBasis(figure: CostFigureLike, basis: ShareBasis): boolean {
   return figure.currency === 'USD' && (basis === 'subscription'

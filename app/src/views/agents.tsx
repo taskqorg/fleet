@@ -9,6 +9,7 @@ import {
   KvRow, ListDetail, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, copyText, harnesses, matchSearch,
   type CatalogueTreeNode, type Harness, type IconName, type StateOf,
+  plural,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
@@ -124,7 +125,6 @@ const leafState = (d: DefinitionListItem, own: StateOf<'definition'>): StateOf<'
 
 const runsRight = (runs: number) => runs > 0 ? <span class="mono muted" data-tip="Runs in 30 days">{runs}</span> : undefined;
 
-const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
 export function Library(props: { section?: LibrarySection; id?: string }) {
   const section = () => props.section ?? 'idle';

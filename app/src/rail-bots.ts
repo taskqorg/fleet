@@ -2,6 +2,7 @@
 // person setting railBots; the pins are the Library pins (rowPins.library, bot:<id>); the bots come from bot_list.
 import { createMemo } from 'solid-js';
 import type { RailBot, RailBotsProps } from '../../packages/ui/src/index.ts';
+import { timeOf } from '../../packages/ui/src/format.ts';
 import type { BotListItem } from '../../contracts/generated/ops-bots.ts';
 import { prefs, savePrefs, scopeIds, prefsRead } from './prefs.ts';
 import { useOp } from './store.ts';
@@ -9,7 +10,7 @@ import { botAvatarState, botPicture } from './bot-view.ts';
 
 const LIBRARY_PINS = 'library';
 const libraryPath = (b: BotListItem) => '/library/bots/' + encodeURIComponent(b.code || b.id);
-const ms = (t?: string | null) => (t ? Date.parse(t) : undefined);
+const ms = (t?: string | null) => timeOf(t, undefined);
 
 /** The shell's bots prop: read only while the zone is on and access is open. */
 export function useRailBots(open: () => boolean, go: (to: string) => void) {

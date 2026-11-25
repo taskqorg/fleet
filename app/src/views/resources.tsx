@@ -7,6 +7,7 @@ import {
   cause, formatRowSpend, msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
   isFinished,
+  timeOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, OpError } from '../api.ts';
 import { useOp, usePreparedOp, preparedKey } from '../store.ts';
@@ -14,7 +15,7 @@ import { accessGeneration } from '../access.ts';
 import type { ResourceItem, ResourceSortKey, ResourceItemsPage, ProjectResourceItemsRequest, ResourceCategory, ResourceGroup, PreparedHeaderV1, ResourceProgress } from '../../../contracts/generated/ops.ts';
 import type { CostFigure, ExecutionRow, ListSpendRequest, ResourceSummary, ScopedResourceRollup } from '../../../contracts/generated/ops.ts';
 
-const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
+const ms = (v: string | number | null | undefined) => timeOf(v);
 
 /** A single scoped read for the loaded rows, independent of list membership refresh. */
 export function useRowSpend(kind: ListSpendRequest['kind'], rowsInput: MaybeAccessor<readonly { id: string }[]>) {

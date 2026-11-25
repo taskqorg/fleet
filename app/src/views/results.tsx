@@ -6,6 +6,7 @@ import {
   AgeChip, ShellStatus, OfflineMarker, RowFacts, Fact, DetailSection, Totals, Icon, KvRow, Num,
   bytes, fileLabel, formatLabel, splitTerms, viewOf, states, actions, ARTIFACT_STATES,
   type StateOf, type Chip, type IconName, type SortField, type TotalItem,
+  useTick,
 } from '../../../packages/ui/src/index.ts';
 import type { ArtifactRow } from '../../../contracts/generated/ops.ts';
 import { withFocus, prefsRead, listGroups, setListGroups } from '../prefs.ts';
@@ -90,11 +91,8 @@ function buildFilter(view: View, bucket: number) {
  */
 export function Results(props: { id?: string; project?: string; frame?: Frame }) {
   const resultId = useItemId(() => props.id);
-  const [bucket, setBucket] = createSignal(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS);
-  onSettled(() => {
-    const t = setInterval(() => setBucket(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS), BUCKET_MS);
-    return () => clearInterval(t);
-  });
+  const tick = useTick(BUCKET_MS);
+  const bucket = createMemo(() => Math.floor(tick() / BUCKET_MS) * BUCKET_MS);
 
   const [cursorState, setCursorState] = createSignal<{ key: string; before: number | null }>({ key: '', before: null });
   const [appended, setAppended] = createSignal<{ key: string; rows: ArtifactRow[]; nextBefore: number | null; seen: number[] }>({ key: '', rows: [], nextBefore: null, seen: [] }, { ownedWrite: true });

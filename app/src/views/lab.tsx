@@ -12,6 +12,7 @@ import {
   type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem,
   type IconName, ShellStatus, ShellActions, actions, Presets, QuestionCard, DetailHead, StateDot, MatrixCell, DiffRow,
   InheritedRows, AgeChip, cause, finishedStates, type Life, type MatrixCellState, type View,
+  timeOf, basisOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type OpName, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -30,7 +31,8 @@ import type {
 } from '../../../contracts/generated/ops.ts';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
-const ms = (t: string | number | null | undefined) => typeof t === 'number' ? t : Date.parse(t ?? '');
+/** Times for sorting and ages: a missing time is the oldest. */
+const ms = (t: string | number | null | undefined) => timeOf(t, 0);
 const message = (x: unknown) => x instanceof Error ? x.message : String(x);
 const fixed = (x: number | null) => x === null ? '—' : x.toFixed(2);
 const decodeSafe = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
@@ -65,8 +67,7 @@ const typedValue = (v: unknown): { answer?: unknown; label?: unknown } => v && t
 // typedIcon: a typed score at a glance: right, wrong, escalated (middle band) or not scorable.
 const typedIcon = (value: unknown) => { const v = typedValue(value); return v.answer === 'unscored' ? 'circle-alert' : v.answer === 'abstain' ? 'circle-pause' : v.answer === v.label ? 'circle-check' : 'circle-x'; };
 
-const costBasisOf = (b: string | null | undefined): Basis =>
-  b === 'measured' || b === 'estimated' || b === 'subscription' || b === 'unavailable' ? b : 'unavailable';
+const costBasisOf = basisOf;
 
 type LabRoute =
   | { kind: 'idle' }

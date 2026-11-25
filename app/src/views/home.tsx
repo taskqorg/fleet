@@ -8,6 +8,7 @@ import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, QuietSummary, GroupHeader, Ago,
   OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, openStates, states, stamp, day, dayStart, causeOf,
   type Blocker, type Target, type Life, type AvatarMark,
+  timeOf, plural,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { useLocation, useSearch } from '../router.ts';
@@ -36,7 +37,8 @@ type Cause = { id: string; text: string; n: number; hosts: string[] };
  */
 type Card = { key: string; group: Group; at: number; s: SessionRow | null; qs: QuestionRow[]; cause?: Cause };
 
-const ms = (t: string | number | null | undefined) => (typeof t === 'number' ? t : t ? Date.parse(t) || 0 : 0);
+/** Times for sorting and comparing: a missing time is the oldest. */
+const ms = (t: string | number | null | undefined) => timeOf(t, 0);
 const isProblem = (q: QuestionRow) => typeof q.cause === 'string' && q.cause.startsWith('problem:');
 /** A question's first sentence without links, for a card's "now" line and a blocker chip. */
 function headline(text: string): string {
@@ -108,7 +110,6 @@ function spanOf(since: number | null, now: Date): string {
   if (since >= midnight.getTime()) return `Since ${stamp(since, now.getTime()).slice(-5)}`;
   return `Since ${day(since, now.getTime())}`;
 }
-const plural = (n: number, one: string, many = one + 's') => `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
 
 function HomePage() {
   const [, go] = useLocation();
