@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -63,8 +64,11 @@ func pinsViewPass(ctx context.Context, a *App, open, closed []ghPull) {
 	for _, k := range harnessrelease.Kinds {
 		v, err := pinsViewOf(ctx, a, k, open, closed)
 		if err != nil {
+			// A failed read keeps what the last pass saw, so a passing GitHub error does not hide the proposal.
 			log.Printf("pins view %s: %v", k.Name, err)
-			continue
+			pinsViewMu.Lock()
+			v = pinsViewKinds[k.Name]
+			pinsViewMu.Unlock()
 		}
 		kinds[k.Name] = v
 	}
@@ -112,11 +116,12 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 	if err != nil {
 		return pinsViewKind{}, err
 	}
-	_, current, err := k.Pinned(releaseDir())
+	// What the proposal changes is read against its base, so a landed proposal still names its versions once this
+	// release pins them.
+	pinned, err := pinsProposedVersions(ctx, a, k, pr.Base.SHA)
 	if err != nil {
 		return pinsViewKind{}, err
 	}
-	pinned := pinsTargetVersions(current)
 	changed := map[string]string{}
 	for name, v := range proposed {
 		if pinned[name] != v {
@@ -164,7 +169,7 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 	bad := func(s string) bool { return s == "failure" || s == "error" }
 	reverting := false
 	for name, v := range changed {
-		if pinned[name] != "" && olderVersion(v, pinned[name]) {
+		if pinned[name] != "" && componentOlder(v, pinned[name]) {
 			reverting = true
 		}
 	}
@@ -181,6 +186,22 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 		p.Stage = contract.PinsStageOffline
 	}
 	return out, nil
+}
+
+// componentOlder: whether component version a (0.168.0) is below b (0.169.0); false when either has no x.y.z.
+func componentOlder(a, b string) bool {
+	pa, pb := strings.Split(pinsSemver.FindString(a), "."), strings.Split(pinsSemver.FindString(b), ".")
+	if len(pa) != 3 || len(pb) != 3 {
+		return false
+	}
+	for i := range pa {
+		x, _ := strconv.Atoi(pa[i])
+		y, _ := strconv.Atoi(pb[i])
+		if x != y {
+			return x < y
+		}
+	}
+	return false
 }
 
 // pinsFailureNames: whether a failure line names a component (a trial label is "<host> <cli> <model>: ...").
@@ -300,6 +321,10 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 		cell.State = contract.ComponentHostStateOwn
 		return cell
 	}
+	if pinned == "" { // nothing pinned for this host's target: no drift to show
+		return cell
+	}
+	cell.Pinned = &pinned
 	if k.Name == harnessrelease.CLIs.Name {
 		for _, hv := range h.HarnessVersions {
 			if hv.Harness == name && hv.Observed != nil {

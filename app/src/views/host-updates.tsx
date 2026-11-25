@@ -1,4 +1,4 @@
-// System › Hosts › host: Updates (docs/design-system/pages/hosts.md, frame 2A of board/drafts/host-updates.bl). Every change
+// System › Hosts › host: Updates (docs/design-system/pages/hosts.md, frame 2A of board/screens/host-updates.bl). Every change
 // of the update result the host reported, newest first (host_update_history), loaded a page per scroll (OR-65). Each row
 // says the state, the release, the components it brought and the reason, time on the right; consecutive switches that
 // changed no component fold into one ×N row (OR-58), and an install that ended is shown by its end only.
@@ -21,7 +21,8 @@ export function updateRows(entries: readonly HostUpdateEntry[]): Row[] {
     const newer = entries[i - 1];
     if ((e.state === 'pending' || e.state === 'held') && newer && newer.version === e.version) return;
     const last = out.at(-1);
-    const quiet = (x: HostUpdateEntry) => x.state === 'ok' && x.brought.length === 0;
+    // Only a switch whose components are known and unchanged is quiet; unknown components say nothing.
+    const quiet = (x: HostUpdateEntry) => x.state === 'ok' && x.components.length > 0 && x.brought.length === 0;
     if (last && quiet(e) && quiet(last.e)) {
       last.n++;
       last.oldest = e;

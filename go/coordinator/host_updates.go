@@ -83,7 +83,8 @@ func componentsBrought(components, base map[string]string) map[string]string {
 }
 
 // hostUpdateRecord writes the reported update result as a row when it differs from the host's newest one (version, state
-// and reason; a repeated pending or held result only moves its time), and journals a switch to a new release.
+// and reason; a repeated result writes nothing, so a row keeps the time it was first reported), and journals a switch to
+// a new release.
 func hostUpdateRecord(q *Request, host, holder, platform string, running *string, harnesses []contract.HarnessVersion, r contract.UpdateResult) error {
 	if host == "" || r.Version == "" {
 		return nil
@@ -96,13 +97,19 @@ func hostUpdateRecord(q *Request, host, holder, platform string, running *string
 		return err
 	}
 	var prev *string
-	var base map[string]string
 	if sw, err := q.db().HostUpdateLastSwitch(q.ctx(), host); err == nil {
+		prev = &sw
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	// The base is the newest switch whose components are known: a switch with unknown components says nothing changed.
+	var base map[string]string
+	if b, err := q.db().HostUpdateLastPins(q.ctx(), host); err == nil {
 		var p hostUpdatePayload
-		if err := lenientDecode(sw.Payload, &p); err != nil {
+		if err := lenientDecode(b, &p); err != nil {
 			return err
 		}
-		prev, base = &sw.Version, p.Components
+		base = p.Components
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}

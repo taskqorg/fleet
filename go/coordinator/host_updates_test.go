@@ -93,6 +93,12 @@ func TestComponentHostCell(t *testing.T) {
 	if c := componentHost(harnessrelease.CLIs, "codex", true, "0.168.0", h, flagged); c.State != contract.ComponentHostStateFailing || *c.Failed != 6 {
 		t.Fatalf("failing: %+v", c)
 	}
+	if c := componentHost(harnessrelease.CLIs, "codex", true, "", h, pinsRegression{}); c.State != contract.ComponentHostStateUnknown {
+		t.Fatalf("nothing pinned for the target is no drift: %+v", c)
+	}
+	if !componentOlder("0.168.0", "0.169.0") || componentOlder("2.1.331", "2.1.326") || !componentOlder("1.5.10", "1.5.11") {
+		t.Fatal("component versions compare as x.y.z (a revert proposes an older one)")
+	}
 	if !pinsFailureNames("windows claude claude-opus-5-5: run failed", "claude") || pinsFailureNames("windows claude m: x", "codex") {
 		t.Fatal("a trial failure names its CLI")
 	}

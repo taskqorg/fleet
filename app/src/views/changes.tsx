@@ -214,7 +214,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
   );
 }
 
-// Release-managed components (docs/designs/fleet-host-updates.md, frame 1A of board/drafts/host-updates.bl): one group per
+// Release-managed components (docs/designs/fleet-host-updates.md, frame 1A of board/screens/host-updates.bl): one group per
 // kind, its open pin proposal above, a row per component with the pin, the proposal and a cell per host.
 const hostPath = (id: string) => `/hosts/${encodeURIComponent(id)}`;
 const KIND_TITLE: Record<ComponentKind, string> = { cli: 'Agent CLIs', tool: 'Host tools' };
@@ -255,20 +255,20 @@ const CELL: Record<SystemChangeComponentHost['state'], { icon?: IconName; tone: 
 };
 
 /** One host's cell: on the pin, behind <version>, installing <pin>, refused <reason>, N of M runs failed, own. */
-function HostCell(p: { cell: SystemChangeComponentHost; pinned: string | null; href: string; onOpen: () => void }) {
+function HostCell(p: { cell: SystemChangeComponentHost; href: string; onOpen: () => void }) {
   const text = () => {
     const c = p.cell;
     switch (c.state) {
       case 'pinned': return '';
       case 'behind': return `behind ${c.observed ?? ''}`;
-      case 'installing': return `installing ${p.pinned ?? ''}`;
+      case 'installing': return `installing ${p.cell.pinned ?? ''}`;
       case 'refused': return `refused ${(c.reason ?? '').split(':')[0]}`;
       case 'failing': return `${c.failed} of ${c.total} runs failed`;
       case 'own': return 'own';
       case 'unknown': return '—';
     }
   };
-  const label = () => text() || `on ${p.pinned ?? 'the pin'}`;
+  const label = () => text() || `on ${p.cell.pinned ?? 'the pin'}`;
   return <a class={['pins-cell', CELL[p.cell.state].tone]} href={p.href} aria-label={`${p.cell.hostId}: ${label()}, open its updates`}
     data-tip={p.cell.reason} onClick={e => { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); p.onOpen(); } }}>
     <Show when={CELL[p.cell.state].icon}>{i => <Icon name={i()} />}</Show>
@@ -305,7 +305,7 @@ function ComponentGroup(p: { group: SystemChangeKind; onHost: (path: string) => 
           <th scope="row">{c.name}</th>
           <td class="mono">{c.pinned ?? '—'}</td>
           <td><ProposalCell c={c} proposal={p.group.proposal} /></td>
-          <For each={c.hosts}>{cell => <td><HostCell cell={cell} pinned={c.pinned} href={hostPath(cell.hostId)} onOpen={() => p.onHost(hostPath(cell.hostId))} /></td>}</For>
+          <For each={c.hosts}>{cell => <td><HostCell cell={cell} href={hostPath(cell.hostId)} onOpen={() => p.onHost(hostPath(cell.hostId))} /></td>}</For>
         </tr>
       )}</For>
     </DataTable>

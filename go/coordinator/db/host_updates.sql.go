@@ -59,21 +59,28 @@ func (q *Queries) HostUpdateLast(ctx context.Context, hostID string) (HostUpdate
 	return i, err
 }
 
-const hostUpdateLastSwitch = `-- name: HostUpdateLastSwitch :one
-SELECT version, payload FROM host_update WHERE host_id=$1 AND update_state='ok' ORDER BY seq DESC LIMIT 1
+const hostUpdateLastPins = `-- name: HostUpdateLastPins :one
+SELECT payload FROM host_update WHERE host_id=$1 AND update_state='ok' AND payload ? 'components' ORDER BY seq DESC LIMIT 1
 `
 
-type HostUpdateLastSwitchRow struct {
-	Version string
-	Payload []byte
+// The payload of the newest switch whose component versions are known: what a new release's components compare with.
+func (q *Queries) HostUpdateLastPins(ctx context.Context, hostID string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, hostUpdateLastPins, hostID)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
 }
 
-// The release the host last switched to (state ok) and the component versions it pinned.
-func (q *Queries) HostUpdateLastSwitch(ctx context.Context, hostID string) (HostUpdateLastSwitchRow, error) {
+const hostUpdateLastSwitch = `-- name: HostUpdateLastSwitch :one
+SELECT version FROM host_update WHERE host_id=$1 AND update_state='ok' ORDER BY seq DESC LIMIT 1
+`
+
+// The release the host last switched to (state ok).
+func (q *Queries) HostUpdateLastSwitch(ctx context.Context, hostID string) (string, error) {
 	row := q.db.QueryRow(ctx, hostUpdateLastSwitch, hostID)
-	var i HostUpdateLastSwitchRow
-	err := row.Scan(&i.Version, &i.Payload)
-	return i, err
+	var version string
+	err := row.Scan(&version)
+	return version, err
 }
 
 const hostUpdatePage = `-- name: HostUpdatePage :many

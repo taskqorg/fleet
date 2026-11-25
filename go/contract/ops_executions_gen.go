@@ -3073,6 +3073,7 @@ type SystemChangeComponentHost struct {
 	Failed   *int64             `json:"failed,omitempty"`
 	HostId   string             `json:"hostId"`
 	Observed *string            `json:"observed"`
+	Pinned   *string            `json:"pinned,omitempty"`
 	Reason   *string            `json:"reason,omitempty"`
 	State    ComponentHostState `json:"state"`
 	Total    *int64             `json:"total,omitempty"`
