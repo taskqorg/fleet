@@ -210,13 +210,12 @@ test('SL12 session_view reads the conversation screen as summaries; thread_entri
   assert.equal(v.head.id, sessionId);
   assert.equal(v.executions.rows[0].id, executionId, 'the newest turn first');
   assert.equal(v.executions.total, 1);
-  assert.ok(v.threads.some((t: any) => t.threadKey === '' && t.turns === 1), 'the main thread with its turn');
   assert.equal(v.composer.sessionId, sessionId);
   const wire = JSON.stringify(v);
   for (const heavy of ['projectSnapshot', 'dispatch', 'workspaceSnapshot', 'agentConfig', big.slice(0, 100)]) assert.ok(!wire.includes(heavy), 'session_view carries no ' + heavy.slice(0, 20));
-  const entries = ok(await browser('POST', '/api/ops/thread_entries', {key: {session: sessionId, thread: ''}, full: false, limit: 50})).entries;
+  const entries = ok(await browser('POST', '/api/ops/thread_entries', {key: {session: sessionId}, full: false, limit: 50})).entries;
   const call = entries.find((b: any) => b.kind === 'tool');
-  assert.ok(call, 'the tool call is in the main thread');
+  assert.ok(call, 'the tool call is in the transcript');
   assert.equal(call.toolKind, 'shell');
   assert.equal(call.target, 'go test ./...');
   assert.equal(call.errorLine, 'FAIL fleet/coordinator');
@@ -224,11 +223,6 @@ test('SL12 session_view reads the conversation screen as summaries; thread_entri
   const full = ok(await browser('POST', '/api/ops/tool_output', {callId: call.callId}));
   assert.equal(full.output, tool.output);
   assert.deepEqual(full.input, tool.input);
-  assert.equal(ok(await browser('POST', '/api/ops/thread_entries', {key: {session: sessionId, thread: 'task:none'}, full: false, limit: 50})).entries.filter((b: any) => b.kind === 'tool').length, 0, 'another thread has none of its calls');
-  ok(await browser('POST', '/api/ops/person_visit', {page: 'thread', thread: {sessionId, thread: ''}}));
-  const seen = ok(await browser('POST', '/api/ops/session_view', {sessionId})).threads.find((t: any) => t.threadKey === '');
-  assert.equal(seen.unread, 0, 'a visited thread has no unread turns');
-  assert.equal((await browser('POST', '/api/ops/person_visit', {page: 'thread', thread: {sessionId, thread: ''}}, OUTSIDER)).status, 404, 'no visit of a session one cannot see');
   assert.equal((await browser('POST', '/api/ops/session_view', {sessionId}, OUTSIDER)).status, 404, 'an outsider sees no session');
   assert.equal((await browser('POST', '/api/ops/tool_output', {callId: call.callId}, OUTSIDER)).status, 404, 'nor its calls');
 });

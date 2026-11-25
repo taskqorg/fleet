@@ -612,8 +612,7 @@ func executionPutRaw(q *Request, e rawObject) error {
 			ProjectID: strPtr(project), TaskID: strPtr(task), BotID: strPtr(botID), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: strPtr(parent),
 			SessionID: strPtr(e.val("sessionId")), AccountID: strPtr(account), HostID: strPtr(e.val("hostId")), Harness: strPtr(harness), Model: strPtr(e.val("model")),
 			ConfigRef: cfg, StartedAt: nullTime(e.val("startedAt")), EndedAt: nullTime(e.val("finishedAt")), Data: jsonBytes(data), DirectedBy: strPtr(directed),
-			ProfileID: strPtr(profileID), ProfileRevision: nullInt(profileRev), PipelineID: strPtr(pipelineID), PipelineRevision: nullInt(pipelineRev), StepID: strPtr(stepID),
-			Thread: strPtr(e.text("thread"))})
+			ProfileID: strPtr(profileID), ProfileRevision: nullInt(profileRev), PipelineID: strPtr(pipelineID), PipelineRevision: nullInt(pipelineRev), StepID: strPtr(stepID)})
 		if err != nil {
 			return err
 		}

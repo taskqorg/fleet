@@ -4,12 +4,12 @@
 -- name: ExecutionInsert :one
 -- A new execution in its first state; nothing when its id or request_id exists.
 INSERT INTO execution(id,kind,state,observation,project_id,task_id,bot_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
- harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions,thread)
+ harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions)
 VALUES(sqlc.arg(id),sqlc.arg(kind),sqlc.arg(state),coalesce(sqlc.narg(observation)::observation,'confirmed'),sqlc.narg(project_id),sqlc.narg(task_id),sqlc.narg(bot_id),
  sqlc.narg(experiment_id),sqlc.narg(variant),sqlc.narg(parent_execution_id),sqlc.narg(session_id),sqlc.narg(account_id),sqlc.narg(host_id),
  sqlc.narg(harness),sqlc.narg(model),sqlc.narg(config_ref),sqlc.narg(started_at),sqlc.narg(ended_at),coalesce(sqlc.narg(data)::jsonb,'{}'),
  sqlc.narg(directed_by),sqlc.narg(profile_id),sqlc.narg(profile_revision),sqlc.narg(pipeline_id),sqlc.narg(pipeline_revision),sqlc.narg(step_id),
- sqlc.narg(request_id),sqlc.narg(system_actor),coalesce(sqlc.narg(definitions)::jsonb,'[]'),coalesce(sqlc.narg(thread)::text,''))
+ sqlc.narg(request_id),sqlc.narg(system_actor),coalesce(sqlc.narg(definitions)::jsonb,'[]'))
 ON CONFLICT DO NOTHING RETURNING id;
 
 -- name: ExecutionLockState :one
@@ -180,17 +180,17 @@ FROM parsed p
 WHERE t.execution_id= @id::text;
 
 -- name: ExecutionEnded :exec
--- The end of an agent run in its thread, one event with a fixed id.
+-- The end of an agent run, one event with a fixed id.
 INSERT INTO event(id,execution_id,session_id,project_id,type,at,payload) SELECT 'ended:'||e.id,e.id,e.session_id,e.project_id,'execution.ended',
  coalesce(e.ended_at,now()),jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('blocks','[]'::jsonb)))
  FROM execution e WHERE e.id=$1 AND e.kind='agent_run' ON CONFLICT(id) DO NOTHING;
 
 -- name: StoppedRequestBefore :one
--- The text of the request whose run came just before this one in its session and thread, when a stop cancelled that
+-- The text of the request whose run came just before this one in its session, when a stop cancelled that
 -- run; nothing otherwise. Its native session still holds that request unanswered (F21).
 SELECT coalesce(m.text,'')::text AS text
 FROM (SELECT p.id, p.state, p.data FROM execution p JOIN execution c ON c.id = @execution_id::text
-      WHERE p.kind = 'agent_run' AND p.session_id = c.session_id AND p.thread = c.thread AND p.seq < c.seq
+      WHERE p.kind = 'agent_run' AND p.session_id = c.session_id AND p.seq < c.seq
       ORDER BY p.seq DESC LIMIT 1) prev
 JOIN message m ON m.execution_id = prev.id
 WHERE prev.state = 'cancelled' AND prev.data->>'stopRequested' = 'true'

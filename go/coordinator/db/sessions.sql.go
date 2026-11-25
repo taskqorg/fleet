@@ -96,9 +96,9 @@ func (q *Queries) ExecutionDelegations(ctx context.Context, executionID string) 
 }
 
 const messagePut = `-- name: MessagePut :exec
-INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload, thread)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(), thread=excluded.thread,
+INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  session_id=excluded.session_id, execution_id=excluded.execution_id, project_id=excluded.project_id,
  request_id=excluded.request_id, text=excluded.text, sent_by=excluded.sent_by, source=excluded.source
 `
@@ -113,7 +113,6 @@ type MessagePutParams struct {
 	SentBy      *string
 	Source      *string
 	Payload     []byte
-	Thread      string
 }
 
 func (q *Queries) MessagePut(ctx context.Context, arg MessagePutParams) error {
@@ -127,13 +126,12 @@ func (q *Queries) MessagePut(ctx context.Context, arg MessagePutParams) error {
 		arg.SentBy,
 		arg.Source,
 		arg.Payload,
-		arg.Thread,
 	)
 	return err
 }
 
 const messages = `-- name: Messages :many
-SELECT id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload, seq, updated_at, tombstoned_at, thread FROM message
+SELECT id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload, seq, updated_at, tombstoned_at FROM message
 WHERE session_id = $1
  AND ($2::text IS NULL OR request_id = $2)
 ORDER BY seq
@@ -166,7 +164,6 @@ func (q *Queries) Messages(ctx context.Context, arg MessagesParams) ([]Message, 
 			&i.Seq,
 			&i.UpdatedAt,
 			&i.TombstonedAt,
-			&i.Thread,
 		); err != nil {
 			return nil, err
 		}

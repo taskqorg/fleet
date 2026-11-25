@@ -569,8 +569,7 @@ CREATE TABLE execution (
   "step_id" text,
   "tombstoned_at" timestamp with time zone,
   "system_actor" text,
-  "bot_id" text,
-  "thread" text NOT NULL
+  "bot_id" text
 );
 CREATE TABLE execution_spend (
   "execution_id" text NOT NULL,
@@ -788,8 +787,7 @@ CREATE TABLE message (
   "payload" jsonb NOT NULL,
   "seq" bigint NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
-  "tombstoned_at" timestamp with time zone,
-  "thread" text NOT NULL
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE person (
   "email" text NOT NULL,

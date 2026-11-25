@@ -26,22 +26,6 @@ func personVisit(q *Request, r *contract.PersonVisitRequest) (contract.PersonVis
 		return out, fail(403, "An agent without a director has no visits")
 	}
 	email, page := q.person.Email, string(r.Page)
-	if r.Page == "thread" {
-		// A thread's visit is kept per session and thread (session_view's unread); the session must be visible.
-		if r.Thread == nil {
-			return out, fail(400, "Expected thread with page thread")
-		}
-		sid, err := sessionArg(r.Thread.SessionId)
-		if err != nil {
-			return out, err
-		}
-		if _, err := sessionByID(q, sid); err != nil {
-			return out, err
-		}
-		page = "thread:" + sid + ":" + r.Thread.Thread
-	} else if r.Thread != nil {
-		return out, fail(400, "Expected thread only with page thread")
-	}
 	if q.agent != "" || (r.Record != nil && !*r.Record) {
 		at, err := q.db().PersonVisitGet(q.ctx(), db.PersonVisitGetParams{Email: email, Page: page})
 		if errors.Is(err, pgx.ErrNoRows) {

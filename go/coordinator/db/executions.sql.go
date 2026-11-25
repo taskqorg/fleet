@@ -23,7 +23,7 @@ func (q *Queries) ExecutionBotID(ctx context.Context, id string) (string, error)
 
 const executionByID = `-- name: ExecutionByID :one
 
-SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id, thread FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
 `
 
 // Execution record reads, updates and leaf totals (executions.go).
@@ -68,7 +68,6 @@ func (q *Queries) ExecutionByID(ctx context.Context, id string) (Execution, erro
 		&i.TombstonedAt,
 		&i.SystemActor,
 		&i.BotID,
-		&i.Thread,
 	)
 	return i, err
 }
@@ -119,7 +118,7 @@ INSERT INTO event(id,execution_id,session_id,project_id,type,at,payload) SELECT 
  FROM execution e WHERE e.id=$1 AND e.kind='agent_run' ON CONFLICT(id) DO NOTHING
 `
 
-// The end of an agent run in its thread, one event with a fixed id.
+// The end of an agent run, one event with a fixed id.
 func (q *Queries) ExecutionEnded(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, executionEnded, id)
 	return err
@@ -128,12 +127,12 @@ func (q *Queries) ExecutionEnded(ctx context.Context, id string) error {
 const executionInsert = `-- name: ExecutionInsert :one
 
 INSERT INTO execution(id,kind,state,observation,project_id,task_id,bot_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
- harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions,thread)
+ harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions)
 VALUES($1,$2,$3,coalesce($4::observation,'confirmed'),$5,$6,$7,
  $8,$9,$10,$11,$12,$13,
  $14,$15,$16,$17,$18,coalesce($19::jsonb,'{}'),
  $20,$21,$22,$23,$24,$25,
- $26,$27,coalesce($28::jsonb,'[]'),coalesce($29::text,''))
+ $26,$27,coalesce($28::jsonb,'[]'))
 ON CONFLICT DO NOTHING RETURNING id
 `
 
@@ -166,7 +165,6 @@ type ExecutionInsertParams struct {
 	RequestID         *string
 	SystemActor       *string
 	Definitions       []byte
-	Thread            *string
 }
 
 // The execution state machine (execution_states.go, docs/designs/fleet-standard.md S5): the one insert and the one
@@ -202,7 +200,6 @@ func (q *Queries) ExecutionInsert(ctx context.Context, arg ExecutionInsertParams
 		arg.RequestID,
 		arg.SystemActor,
 		arg.Definitions,
-		arg.Thread,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -402,7 +399,7 @@ func (q *Queries) ExecutionUpdate(ctx context.Context, arg ExecutionUpdateParams
 }
 
 const executions = `-- name: Executions :many
-SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id, thread FROM execution
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id FROM execution
 WHERE kind IN ('agent_run','host_job')
  AND ($1::text IS NULL OR session_id=$1::text)
 ORDER BY seq
@@ -455,7 +452,6 @@ func (q *Queries) Executions(ctx context.Context, sessionID *string) ([]Executio
 			&i.TombstonedAt,
 			&i.SystemActor,
 			&i.BotID,
-			&i.Thread,
 		); err != nil {
 			return nil, err
 		}
@@ -492,14 +488,14 @@ func (q *Queries) SessionLatestExecutionBotID(ctx context.Context, sessionID *st
 const stoppedRequestBefore = `-- name: StoppedRequestBefore :one
 SELECT coalesce(m.text,'')::text AS text
 FROM (SELECT p.id, p.state, p.data FROM execution p JOIN execution c ON c.id = $1::text
-      WHERE p.kind = 'agent_run' AND p.session_id = c.session_id AND p.thread = c.thread AND p.seq < c.seq
+      WHERE p.kind = 'agent_run' AND p.session_id = c.session_id AND p.seq < c.seq
       ORDER BY p.seq DESC LIMIT 1) prev
 JOIN message m ON m.execution_id = prev.id
 WHERE prev.state = 'cancelled' AND prev.data->>'stopRequested' = 'true'
 ORDER BY m.seq LIMIT 1
 `
 
-// The text of the request whose run came just before this one in its session and thread, when a stop cancelled that
+// The text of the request whose run came just before this one in its session, when a stop cancelled that
 // run; nothing otherwise. Its native session still holds that request unanswered (F21).
 func (q *Queries) StoppedRequestBefore(ctx context.Context, executionID string) (string, error) {
 	row := q.db.QueryRow(ctx, stoppedRequestBefore, executionID)

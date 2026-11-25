@@ -8,8 +8,6 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const sessionViewExecutionCount = `-- name: SessionViewExecutionCount :one
@@ -31,7 +29,7 @@ WITH page AS (
   AND ($2::bigint IS NULL OR x.seq < $2::bigint)
  ORDER BY x.seq DESC LIMIT $3
 )
-SELECT e.id, e.seq, e.kind::text AS kind, e.state::text AS state, e.thread, e.started_at, e.ended_at,
+SELECT e.id, e.seq, e.kind::text AS kind, e.state::text AS state, e.started_at, e.ended_at,
  split_part(coalesce(e.problem, e.data->>'error', e.data->>'errorMessage', ''), E'\n', 1)::text AS error,
  e.harness, e.model, e.host_id, coalesce(e.data->>'source', e.data->>'wakeSource', '')::text AS source
 FROM page JOIN execution e ON e.id = page.id
@@ -49,7 +47,6 @@ type SessionViewExecutionsRow struct {
 	Seq       int64
 	Kind      string
 	State     string
-	Thread    string
 	StartedAt *time.Time
 	EndedAt   *time.Time
 	Error     string
@@ -59,8 +56,7 @@ type SessionViewExecutionsRow struct {
 	Source    string
 }
 
-// Session view (session_view): one conversation screen as summaries, over the execution_thread and message_thread
-// indexes (migration 109). No stored snapshot, dispatch or configuration column is read.
+// Session view (session_view): one conversation screen as summaries. No stored snapshot, dispatch or configuration column is read.
 // The newest turns of a session below before (NULL: from the newest), newest first. The page is chosen on
 // execution_session_turns (migration 111) before data is read, so only the page's rows are detoasted.
 func (q *Queries) SessionViewExecutions(ctx context.Context, arg SessionViewExecutionsParams) ([]SessionViewExecutionsRow, error) {
@@ -77,7 +73,6 @@ func (q *Queries) SessionViewExecutions(ctx context.Context, arg SessionViewExec
 			&i.Seq,
 			&i.Kind,
 			&i.State,
-			&i.Thread,
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Error,
@@ -208,73 +203,6 @@ func (q *Queries) SessionViewThreadItems(ctx context.Context, arg SessionViewThr
 			&i.Title,
 			&i.State,
 			&i.Code,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const sessionViewThreads = `-- name: SessionViewThreads :many
-WITH runs AS (
- SELECT e.thread, count(*) AS turns, max(coalesce(e.ended_at, e.started_at)) AS last_at,
-  bool_or(e.state IN ('preparing', 'running', 'waiting')) AS running
- FROM execution e WHERE e.session_id = $1 AND e.kind = 'agent_run' GROUP BY e.thread
-), msgs AS (
- SELECT m.thread, max(m.updated_at) AS last_at,
-  (array_agg(m.text ORDER BY m.seq) FILTER (WHERE coalesce(m.source, '') NOT IN ('trigger', 'watch', 'wake', 'needs_you', 'schedule', 'bot_run')))[1] AS first_text
- FROM message m WHERE m.session_id = $1 GROUP BY m.thread
-), queued AS (
- SELECT coalesce(qm.payload->>'thread', '') AS thread, count(*) AS n FROM queued_message qm WHERE qm.session_id = $1 AND qm.execution_id IS NULL GROUP BY 1
-), keys AS (
- SELECT thread FROM runs UNION SELECT thread FROM msgs UNION SELECT thread FROM queued
-)
-SELECT k.thread::text AS thread, coalesce(r.turns, 0)::bigint AS turns,
- greatest(r.last_at, m.last_at)::timestamptz AS last_at,
- (coalesce(r.running, false) OR coalesce(q.n, 0) > 0)::boolean AS active,
- (SELECT count(*) FROM execution u WHERE u.session_id = $1 AND u.thread = k.thread AND u.kind = 'agent_run'
-   AND u.started_at > coalesce((SELECT v.visited_at FROM person_visit v WHERE v.email = $2 AND v.page = 'thread:' || $1 || ':' || k.thread), '-infinity'))::bigint AS unread,
- coalesce(nullif(left(split_part(btrim(m.first_text), E'\n', 1), 120), ''), '')::text AS first_line
-FROM keys k LEFT JOIN runs r ON r.thread = k.thread LEFT JOIN msgs m ON m.thread = k.thread LEFT JOIN queued q ON q.thread = k.thread
-ORDER BY 3 DESC NULLS LAST
-`
-
-type SessionViewThreadsParams struct {
-	SessionID *string
-	Email     string
-}
-
-type SessionViewThreadsRow struct {
-	Thread    string
-	Turns     int64
-	LastAt    pgtype.Timestamptz
-	Active    bool
-	Unread    int64
-	FirstLine string
-}
-
-// Each work-item thread of a session with its turns, last activity, whether a turn is queued or running, and the
-// turns since the viewer last opened it (person_visit page thread:<session>:<thread>).
-func (q *Queries) SessionViewThreads(ctx context.Context, arg SessionViewThreadsParams) ([]SessionViewThreadsRow, error) {
-	rows, err := q.db.Query(ctx, sessionViewThreads, arg.SessionID, arg.Email)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SessionViewThreadsRow
-	for rows.Next() {
-		var i SessionViewThreadsRow
-		if err := rows.Scan(
-			&i.Thread,
-			&i.Turns,
-			&i.LastAt,
-			&i.Active,
-			&i.Unread,
-			&i.FirstLine,
 		); err != nil {
 			return nil, err
 		}

@@ -13,16 +13,16 @@ import (
 func TestNextTurnSeesStoppedRequest(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	sid := "stop-note-session"
-	put := func(q *Request, id, state string, stopped bool, thread, text string) {
+	put := func(q *Request, id, state string, stopped bool, text string) {
 		t.Helper()
-		x := agentExecution{ID: id, ExecutionID: id, SessionID: sid, State: state, CreatedAt: nowMs(), Thread: thread}
+		x := agentExecution{ID: id, ExecutionID: id, SessionID: sid, State: state, CreatedAt: nowMs()}
 		if stopped {
 			x.StopRequested = ptr(true)
 		}
 		if err := executionPut(q, &x); err != nil {
 			t.Fatal(err)
 		}
-		m := agentMessage{ID: "m-" + id, SessionID: sid, ExecutionID: id, RequestID: "r-" + id, Text: text, Thread: thread}
+		m := agentMessage{ID: "m-" + id, SessionID: sid, ExecutionID: id, RequestID: "r-" + id, Text: text}
 		if err := messagePut(q, &m); err != nil {
 			t.Fatal(err)
 		}
@@ -40,27 +40,18 @@ func TestNextTurnSeesStoppedRequest(t *testing.T) {
 		if err := sessionPut(q, &s); err != nil {
 			return err
 		}
-		put(q, "e1", "succeeded", false, "", "Привет")
-		put(q, "e2", "cancelled", true, "", "Перечисли все завершённые задачи за ноябрь")
-		put(q, "e3", "preparing", false, "", "Что в Needs you?")
+		put(q, "e1", "succeeded", false, "Привет")
+		put(q, "e2", "cancelled", true, "Перечисли все завершённые задачи за ноябрь")
+		put(q, "e3", "preparing", false, "Что в Needs you?")
 		got := note(q, "e3")
 		if !strings.HasPrefix(got, "[Fleet: the previous request was stopped") || !strings.Contains(got, "Перечисли все завершённые задачи за ноябрь") ||
 			!strings.HasSuffix(got, "\n\nЧто в Needs you?") {
 			t.Fatalf("the turn after a stop names the stopped request first, got %q", got)
 		}
-		put(q, "e4", "succeeded", false, "", "ok")
-		put(q, "e5", "preparing", false, "", "дальше")
+		put(q, "e4", "succeeded", false, "ok")
+		put(q, "e5", "preparing", false, "дальше")
 		if got := note(q, "e5"); got != "Что в Needs you?" {
 			t.Fatalf("only the turn right after the stop carries the note, got %q", got)
-		}
-		put(q, "e6", "cancelled", true, "task:t1", "работа t1")
-		put(q, "e7", "preparing", false, "", "главный тред")
-		if got := note(q, "e7"); got != "Что в Needs you?" {
-			t.Fatalf("a stop on another thread does not reach this one, got %q", got)
-		}
-		put(q, "e8", "preparing", false, "task:t1", "снова t1")
-		if got := note(q, "e8"); !strings.Contains(got, "работа t1") {
-			t.Fatalf("the thread's own next turn sees its stop, got %q", got)
 		}
 		return nil
 	}); err != nil {
@@ -126,8 +117,8 @@ func TestStopCancelsQueuedBehind(t *testing.T) {
 		if err := executionPut(q, &x); err != nil {
 			return err
 		}
-		queue := func(id, thread string) {
-			m := agentQueued{ID: id, SessionID: s.ID, RequestID: "r-" + id, Text: id, State: "queued", Thread: thread, CreatedAt: nowMs()}
+		queue := func(id string) {
+			m := agentQueued{ID: id, SessionID: s.ID, RequestID: "r-" + id, Text: id, State: "queued", CreatedAt: nowMs()}
 			if err := queuedMessagePut(q, &m); err != nil {
 				t.Fatal(err)
 			}
@@ -139,18 +130,14 @@ func TestStopCancelsQueuedBehind(t *testing.T) {
 			}
 			return ms[0].State
 		}
-		queue("follow-up", "")
-		queue("other-thread", "task:t1")
+		queue("follow-up")
 		if _, err := requestExecutionStop(q, x.ID, false); err != nil {
 			return err
 		}
 		if got := state("follow-up"); got != "cancelled" {
 			t.Fatalf("a message queued behind the stopped run is cancelled with it, got %s", got)
 		}
-		if got := state("other-thread"); got != "queued" {
-			t.Fatalf("another thread's message keeps its place, got %s", got)
-		}
-		queue("after-stop", "")
+		queue("after-stop")
 		if _, err := requestExecutionStop(q, x.ID, false); err != nil {
 			return err
 		}

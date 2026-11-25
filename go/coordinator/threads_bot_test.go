@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"slices"
 	"testing"
 
@@ -35,18 +34,5 @@ func TestThreadGroupsOneTurnPerItem(t *testing.T) {
 	}
 	if threadTitle("host:pds18", "") != "Host pds18" || threadTitle("topic:9f2c", "Release P90 grew") != "Release P90 grew" || threadTitle("topic:9f2c", "") != "Conversation" {
 		t.Fatal("a raw key is never a title")
-	}
-}
-
-func TestThreadNativeSession(t *testing.T) {
-	if threadContinuation("codex::fleet::", "") != "codex::fleet::" || threadContinuation("codex::fleet::", "task:t1") != "codex::fleet::#task:t1" {
-		t.Fatal("a thread's continuation identity extends the session's; the main thread keeps it")
-	}
-	s := dispatchSession{rest: recordRest{"nativeSessions": json.RawMessage(`{"codex::fleet::":{"nativeSessionId":"main"},"codex::fleet::#task:t1":{"nativeSessionId":"n1"}}`)}}
-	if n := s.threadNative("codex::fleet::#task:t1"); n == nil || *n != "n1" {
-		t.Fatalf("an idle thread resumes its own native session, got %v", n)
-	}
-	if n := s.threadNative("codex::fleet::#task:t2"); n != nil {
-		t.Fatalf("a new thread starts fresh, got %v", *n)
 	}
 }

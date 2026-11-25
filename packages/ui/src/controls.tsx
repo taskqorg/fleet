@@ -23,7 +23,6 @@ export * from './controls/quiet-summary.tsx';
 export * from './controls/tool-line.tsx';
 export * from './controls/tool-fold.ts';
 export * from './controls/context-panel.tsx';
-export * from './controls/thread-list.tsx';
 export * from './controls/side-panel.tsx';
 export * from './controls/status-pill.tsx';
 export * from './controls/figure-tile.tsx';

@@ -54,11 +54,18 @@ func agentKnownNative(q *Request, e *agentExecution) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	key := firstString(e.ContinuationKey, s.continuationKey())
+	key := baseContinuation(firstString(e.ContinuationKey, s.continuationKey()))
 	if key == s.continuationKey() {
 		return s.NativeSessionID, nil
 	}
 	return s.NativeSessions[key].NativeSessionID, nil
+}
+
+// baseContinuation: a continuation key without the work-item thread suffix ("<key>#<thread>") a turn started before
+// threads were removed still carries; the base key itself never holds '#'.
+func baseContinuation(key string) string {
+	base, _, _ := strings.Cut(key, "#")
+	return base
 }
 
 // agentCaptureNative: keep the native id per continuation identity as the executor reports it.
@@ -77,7 +84,7 @@ func agentCaptureNative(q *Request, e *agentExecution, id string) error {
 			seen = i + 1
 		}
 	}
-	key := firstString(e.ContinuationKey, s.continuationKey())
+	key := baseContinuation(firstString(e.ContinuationKey, s.continuationKey()))
 	if s.NativeSessions == nil {
 		s.NativeSessions = map[string]agentNative{}
 	}

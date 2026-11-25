@@ -778,7 +778,7 @@ func triggerSendOne(q *Request, t db.Trigger, target triggerTarget, slot string,
 		if text == "" {
 			text = "Fleet: trigger " + t.Name
 		}
-		_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &target.sessionID, RequestId: &rid, Text: &text}, "trigger", t.ID, thread)
+		_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &target.sessionID, RequestId: &rid, Text: &text}, "trigger", t.ID)
 		return err == nil, err
 	}
 	b := target.bot

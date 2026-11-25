@@ -368,7 +368,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   before?: (r: R) => JSX.Element;
   facts: (r: R) => JSX.Element;
   focused?: string;
-  /** Rows under a row, spanning its width (Conversations: a bot's work-item threads); the list then measures its rows. */
+  /** Rows under a row, spanning its width ; the list then measures its rows. */
   after?: (r: R) => JSX.Element;
   /** A class on the panel, for a page's own row layout (Conversations: the phone row). */
   cls?: string;

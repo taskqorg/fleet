@@ -350,7 +350,6 @@ type agentExecution struct {
 	Traceparent           string                 `json:"traceparent,omitempty"`
 	TraceActor            string                 `json:"traceActor,omitempty"`
 	ContinuationKey       string                 `json:"continuationKey,omitempty"`
-	Thread                string                 `json:"thread,omitempty"`
 	ForkOfNativeSessionID string                 `json:"forkOfNativeSessionId,omitempty"`
 	HandoffID             string                 `json:"handoffId,omitempty"`
 	Report                *contract.WorkerReport `json:"report,omitempty"`
@@ -414,7 +413,6 @@ type agentMessage struct {
 	SentBy            string          `json:"sentBy,omitempty"`
 	Source            string          `json:"source,omitempty"`
 	TriggerID         string          `json:"triggerId,omitempty"`
-	Thread            string          `json:"thread,omitempty"`
 	Attachments       json.RawMessage `json:"attachments,omitempty"`
 	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
 	rest              recordRest
@@ -447,7 +445,6 @@ type agentQueued struct {
 	Traceparent       string          `json:"traceparent,omitempty"`
 	TraceActor        string          `json:"traceActor,omitempty"`
 	TriggerID         string          `json:"triggerId,omitempty"`
-	Thread            string          `json:"thread,omitempty"`
 	Attachments       json.RawMessage `json:"attachments,omitempty"`
 	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
 	Error             string          `json:"error,omitempty"`
@@ -601,7 +598,6 @@ type queuedMessagePayload struct {
 	Traceparent       string          `json:"traceparent,omitempty"`
 	TraceActor        string          `json:"traceActor,omitempty"`
 	TriggerID         string          `json:"triggerId,omitempty"`
-	Thread            string          `json:"thread,omitempty"`
 	Attachments       json.RawMessage `json:"attachments,omitempty"`
 	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
 	Error             string          `json:"error,omitempty"`
@@ -656,7 +652,6 @@ func queuedMessagePut(q *Request, m *agentQueued) error {
 		Traceparent:       m.Traceparent,
 		TraceActor:        m.TraceActor,
 		TriggerID:         m.TriggerID,
-		Thread:            m.Thread,
 		Attachments:       m.Attachments,
 		AttachmentRequest: m.AttachmentRequest,
 		Error:             m.Error,
