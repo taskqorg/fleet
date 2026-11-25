@@ -529,18 +529,21 @@ type BoardMessage struct {
 }
 
 type Bot struct {
-	ID             string
-	ProjectID      string
-	Director       string
-	Revision       int32
-	MemoryRevision int32
-	TombstonedAt   *time.Time
-	HomeSessionID  *string
-	Paused         bool
-	PausedAt       *time.Time
-	PausedBy       *string
-	ResumedAt      *time.Time
-	Code           *string
+	ID                    string
+	ProjectID             string
+	Director              string
+	Revision              int32
+	MemoryRevision        int32
+	TombstonedAt          *time.Time
+	HomeSessionID         *string
+	Paused                bool
+	PausedAt              *time.Time
+	PausedBy              *string
+	ResumedAt             *time.Time
+	Code                  *string
+	AvatarArtifactID      *string
+	AvatarStillArtifactID *string
+	AvatarGlow            string
 }
 
 type BotAutomation struct {

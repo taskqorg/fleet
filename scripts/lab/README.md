@@ -9,6 +9,7 @@ Programs shipped with releases for retained pipeline steps. They consume `FLEET_
 - [character-views.py](character-views.py): `read_inside`, `png_dimensions`, `encode_views`; CLI binds inspected views to source hashes and constructs a provider request in `output.json` using `--request-kind`, `--expected` and `--max-request-bytes`.
 - [encode.sh](encode.sh): encodes the first existing PNG/JPEG input under `example/` as `output.json.data_uri`; large inputs use macOS `sips` to resize.
 - [image-check.sh](image-check.sh): decodes the first inline image in `gen/output.json`; writes image bytes and decoded `image.json` metadata using `sips`.
+- [avatar.py](avatar.py): the `avatar-make` pipeline's steps: `request` (the Gemini image request from the example's description and optional reference), `check` (a 512 px square still `avatar-still.png`, `sips`), `animate` (an animated SVG `avatar.svg`: the still plus a CSS-breathing light at its brightest region) and `result` (the result lineage and `projectResult` {avatar, still, glow} that `bot_avatar_set` takes).
 - [harness-capability.py](harness-capability.py): reads `example/binding.json`, invokes the release executor's `qualify-mcp` in a temporary fixture, and retains its capability receipt without invoking a model.
 - [loop-strategy.py](loop-strategy.py): expands the configured `list` or `grid` snapshot to `strategy.json` and `output.json`.
 - [blender/](blender/README.md): source retention, model measurement, rebuild and rendering.

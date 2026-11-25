@@ -1,0 +1,59 @@
+{
+  "id": "avatar-make",
+  "resultStep": "result",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/avatar.py request --example ${example}",
+      "host": "owner-mac",
+      "id": "request",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "contents": "${steps.request.output.contents}",
+        "generationConfig": {
+          "imageConfig": {
+            "aspectRatio": "1:1"
+          },
+          "responseModalities": [
+            "IMAGE"
+          ]
+        },
+        "model": "gemini-3.1-flash-image-preview"
+      },
+      "connection": "google-ai",
+      "id": "image",
+      "kind": "api",
+      "tool": "generate_content"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/avatar.py check",
+      "host": "owner-mac",
+      "id": "check",
+      "kind": "script"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/avatar.py animate",
+      "host": "owner-mac",
+      "id": "animate",
+      "kind": "script",
+      "when": {
+        "equals": true,
+        "kind": "boolean",
+        "source": {
+          "path": [
+            "animate"
+          ],
+          "step": "check"
+        }
+      }
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/avatar.py result",
+      "host": "owner-mac",
+      "id": "result",
+      "kind": "script"
+    }
+  ],
+  "version": 3
+}

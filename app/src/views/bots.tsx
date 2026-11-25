@@ -3,13 +3,13 @@
 import { For, Match, Show, Switch, createMemo, createSignal, untrack } from 'solid-js';
 import { useLocation, useSearch } from '../router.ts';
 import {
-  Ago, Button, Choice, DataTable, DetailSection, Empty, EntityCode, EntityPicker, ErrorBanner,
+  Ago, Avatar, Button, Choice, DataTable, DetailSection, Empty, EntityCode, EntityPicker, ErrorBanner,
   KvRow, ProblemRow, Skeleton, StateBadge, TabBar, TextField, states as uiStates, causeOf,
   type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { writeOnce, useAlive, type Ops } from '../api.ts';
 import {
-  BOT_TABS, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, formatBotTriggers, reasonLabel, sourceLabel, wakeLabel,
+  BOT_TABS, botAvatarState, botPicture, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, formatBotTriggers, reasonLabel, sourceLabel, wakeLabel,
   type BotRunFilter, type BotTab, type BotTaskBucket,
 } from '../bot-view.ts';
 
@@ -22,6 +22,7 @@ const asTaskState = (s: string): StateOf<'task'> =>
 import { useOp } from '../store.ts';
 import { parseMs as ms } from '../task-facts.ts';
 import { BotAutomations } from './bot-automations.tsx';
+import { BotAvatarField } from './bot-avatar.tsx';
 
 type Bot = Ops['bot_get']['reply']['bot'];
 type Settings = Bot['settings'];
@@ -29,6 +30,9 @@ type BotRun = Ops['bot_runs']['reply']['runs'][number];
 /** A failed or cancelled run's cause in words (formats.md); a finished run that carries a problem did not fail. */
 const runCause = (r: BotRun) => r.state === 'failed' || r.state === 'cancelled' ? causeOf(r.failure, r.problem) : undefined;
 type BotTask = Ops['bot_tasks']['reply']['tasks'][number];
+
+/** The Overview hero's state line, in the words of the avatar's light (controls/avatar.md). */
+const botAvatarWords = { asleep: 'Asleep', working: 'Working now', waiting: 'Waiting for you', failed: 'Last run failed', paused: 'Paused' } as const;
 
 const blank: Settings = { name: '', purpose: '', profileId: '', instructions: '', soul: '', scheduleTime: '', scheduleZone: '', wakeOnNeedsYou: false };
 /** A bot's Library route: its D17 code (B-FLT-1), else its id. */
@@ -133,6 +137,7 @@ export function BotDetail(props: {
       </div>
       <article class="detail" data-ui="detail" tabindex={-1} aria-label={`${props.bot.settings.name} ${tab()}`}>
         <header class="detail-h">
+          <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={botPicture(props.bot)} state={botAvatarState(props.bot)} />
           <div class="stack" style={{ gap: 'var(--space-1)', 'min-width': 0, flex: '1 1 auto' }}>
             <div class="row" style={{ gap: 'var(--space-2)', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
               <h2 class="detail-title">{props.bot.settings.name}</h2>
@@ -230,6 +235,13 @@ function BotOverviewTab(props: {
 
   return (
     <div class="stack">
+      <div class="bot-hero">
+        <Avatar letter={props.bot.settings.name} tone="success" size="xl" picture={botPicture(props.bot)} state={botAvatarState(props.bot)} />
+        <div class="stack" style={{ gap: 'var(--space-1)', 'min-width': 0 }}>
+          <span class="muted type-sm">{botAvatarWords[botAvatarState(props.bot)]}</span>
+          <p style={{ margin: 0 }}>{props.bot.settings.purpose || 'No purpose set'}</p>
+        </div>
+      </div>
       <DetailSection title="Status">
         <KvRow icon="bot" label="Purpose" value={<span>{props.bot.settings.purpose || 'No purpose set'}</span>} />
         <Show when={props.bot.settings.scheduleTime || props.bot.settings.wakeOnNeedsYou}>
@@ -524,6 +536,7 @@ function BotSettingsForm(props: {
         </Show>
         <Button label={props.bot ? 'Save settings' : 'Create bot'} kind="primary" busy={busy()} disabledReason={projectId() ? undefined : 'Select a project first'} onClick={() => void save('settings')} />
       </DetailSection>
+      <Show when={props.bot}>{bot => <BotAvatarField bot={bot()} onSaved={props.onSaved} />}</Show>
       <Show when={props.bot}>
         <DetailSection title="Project memory">
           <TextField label="Memory" multiline value={memory()} onChange={setMemory} />

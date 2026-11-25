@@ -4797,3 +4797,10 @@ ALTER TABLE artifact ADD COLUMN use_case_id text NULL;
 -- migration 104: route decisions by time, for a subscription's skips over the last day (route_decisions subscriptionId,
 -- J5 in docs/designs/fleet-ia-and-journeys.md section 3): a window scan instead of the whole table.
 CREATE INDEX route_decision_at ON route_decision(at);
+
+-- migration 105: a bot's avatar (bot_avatar_set): the shown file, an optional still frame that lists show in place of an
+-- animated file, and an optional glow colour the activity light uses. NULL avatar: the bot shows its letter.
+ALTER TABLE bot
+ ADD COLUMN avatar_artifact_id text NULL REFERENCES artifact(id),
+ ADD COLUMN avatar_still_artifact_id text NULL REFERENCES artifact(id),
+ ADD COLUMN avatar_glow text NOT NULL DEFAULT '';

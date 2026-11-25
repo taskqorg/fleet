@@ -1,5 +1,6 @@
 import type { BotListItem, BotRunRecord, BotRunState, BotSettings, BotTaskRecord } from '../../contracts/generated/ops-bots.ts';
 import type { StateOf } from '../../packages/ui/src/registry.ts';
+import type { AvatarPicture, AvatarState } from '../../packages/ui/src/controls/avatar.tsx';
 
 export type BotTab = 'activity' | 'automations' | 'tasks' | 'runs' | 'settings';
 export type BotTaskBucket = 'all' | 'active' | 'waiting' | 'history';
@@ -76,3 +77,23 @@ export const reasonLabel = (r: string | null | undefined) => r ? SKIP[r] ?? r : 
 /** Where a wake came from (BotRunRecord.source): the stored operation names in words; any other source is already words. */
 const SOURCE: Record<string, string> = { bot_run: 'Run now', schedule: 'Schedule', needs_you: 'Needs you', message: 'Message' };
 export const sourceLabel = (s: string | null | undefined) => s ? SOURCE[s] ?? s : undefined;
+
+/** A bot's activity as its avatar shows it (controls/avatar.md): paused, waiting for a person, working, failed or asleep. */
+export function botAvatarState(b: Pick<BotListItem, 'paused' | 'activeRunId' | 'lastRunState' | 'needsYou'>): AvatarState {
+  if (b.paused) return 'paused';
+  if (b.needsYou) return 'waiting';
+  if (b.activeRunId) return 'working';
+  return b.lastRunState === 'failed' ? 'failed' : 'asleep';
+}
+
+/** A bot's picture for `Avatar`, read through /api/results; undefined while it shows its letter. */
+export function botPicture(b: Pick<BotListItem, 'avatar'>): AvatarPicture | undefined {
+  const a = b.avatar;
+  if (!a) return undefined;
+  return {
+    src: `/api/results/${encodeURIComponent(a.artifactId)}`,
+    still: a.stillArtifactId ? `/api/results/${encodeURIComponent(a.stillArtifactId)}` : undefined,
+    video: a.mediaType.startsWith('video/'),
+    glow: a.glow || undefined,
+  };
+}

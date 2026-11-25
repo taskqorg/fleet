@@ -27,7 +27,7 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New (`plus`, a 
   1. Head: kind icon, name, id, state, revision, and the actions as icons (Compare in Lab, Recommend, Take repository version).
   2. Only the fields that differ from the base default, then "Inherited defaults (N)" folded ([OR-45](../owner-rules.md), UR-65); no `override` words or badges.
   3. A tab bar for the facets of that one definition ([OR-46](../owner-rules.md)): Configuration · Effective · Diff · Usage · History; a pipeline adds Runs, a bot adds Automations and Runs.
-* **Bots.** An active bot is a session on [Home](home.md); its definition lives here. "Talk to it" in the bot's head opens its session ([OR-51](../owner-rules.md)).
+* **Bots.** An active bot is a session on [Home](home.md); its definition lives here. "Talk to it" in the bot's head opens its session ([OR-51](../owner-rules.md)). A bot leaf shows its [avatar](../controls/avatar.md) (`sm`, its activity light) in place of the state dot; the bot head shows it at `lg` and Overview opens with it at `xl` beside the state and purpose; Settings & Memory starts with the avatar picker (Letter, Upload file, Make with pipeline: three `avatar-make` results, pick one). Board: [library.bl](../board/screens/library.bl), section 4.
 
 ## States
 

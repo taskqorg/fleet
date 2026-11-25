@@ -30,6 +30,25 @@ function AtomsDemo() {
   </div>;
 }
 
+
+// A HAL-like eye as an animated SVG (its glow breathes) and its still frame, for the bot avatar demo.
+const EYE = (animated: boolean) => 'data:image/svg+xml,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96"><defs><radialGradient id="g"><stop offset="0" stop-color="#fff6c0"/><stop offset=".12" stop-color="#ff3a1a"/><stop offset=".5" stop-color="#5a0804"/><stop offset="1" stop-color="#0b0b0c"/></radialGradient></defs>` +
+  (animated ? '<style>#l{animation:b 4s ease-in-out infinite}@keyframes b{50%{opacity:.45}}</style>' : '') +
+  `<circle cx="48" cy="48" r="47" fill="#202022" stroke="#6a6a6e" stroke-width="2"/><circle cx="48" cy="48" r="40" fill="#050505"/><circle id="l" cx="48" cy="48" r="34" fill="url(#g)"/></svg>`);
+const HAL = { src: EYE(true), still: EYE(false), glow: '#ff3a1a' };
+const STATES = ['asleep', 'working', 'waiting', 'failed', 'paused'] as const;
+
+function BotAvatarDemo() {
+  return <div class="col">
+    <div class="brow">
+      <Avatar letter="R" tone="success" size="sm" /><Avatar letter="R" tone="success" /><Avatar letter="R" tone="success" size="lg" /><Avatar letter="R" tone="success" size="xl" />
+      <Avatar letter="H" picture={HAL} size="sm" /><Avatar letter="H" picture={HAL} /><Avatar letter="H" picture={HAL} size="lg" /><Avatar letter="H" picture={HAL} size="xl" />
+    </div>
+    <div class="brow"><For each={STATES}>{s => <span class="life-pair"><span class="muted type-sm">{s}</span><Avatar letter="R" tone="success" size="lg" state={s} /><Avatar letter="H" picture={HAL} size="lg" state={s} /><Avatar letter="H" picture={HAL} size="sm" state={s} /></span>}</For></div>
+  </div>;
+}
+
 const CHOICES = [{ label: 'Compact', primary: true }, { label: 'Wide' }];
 function QuestionDemo() {
   const [answered, setAnswered] = createSignal<{ answer: string; at: number } | undefined>();
@@ -103,6 +122,7 @@ function QuietDemo() {
 export const HOME_BLOCKS: BookSection[] = [
   ['state-dot', 'State dot and word', 'state-badge', () => <StateDotDemo />, () => <>OR-55: one word, tone and dot per state. Working pulses, Stopped is hollow, Asleep is a dashed ring. Below: today's task, execution, bot-run and session states mapped to it (registry <span class="mono">lifeOf</span>).</>],
   ['avatar', 'Avatar, project chip, button kinds', 'session-card', () => <AtomsDemo />, () => <>A letter in a tone (P for a project PM) or the bot's harness mark; md and sm. The attention kind is a question's other choice.</>],
+  ['bot-avatar', 'Bot avatar', 'avatar', () => <BotAvatarDemo />, () => <>The letter is the default; a picture (still, animated image or SVG, or a muted loop) replaces it. sm 16, md 24, lg 40, xl 96: lg and xl play, sm and md show the still frame until hover or while the bot works. Activity: asleep dim, working breathes its glow, waiting an amber dot, failed dim with a red dot, paused dimmest. Reduced motion: no breathing, still frames.</>],
   ['question-card', 'Question card', 'decision-block', () => <QuestionDemo />, () => <>OR-53: open (click a choice or type and press Enter), answering, answered, and the failed recovery question.</>],
   ['session-card', 'Session card', 'session-card', () => <SessionCardDemo />, () => <>OR-50: working with progress, waiting for you with its question, queued, failed with the recovery question, done (leaves Home), stale and loading. The whole card opens the session; the question acts in place.</>],
   ['bot-tile', 'Bot tile', 'bot-tile', () => <BotTileDemo />, () => <>Asleep, waking and wake failed. Wake on the first tile runs the sequence.</>],

@@ -7,12 +7,13 @@
         404
       ],
       "auth": "person",
-      "agent": "no",
+      "agent": "tool",
       "description": "List bot settings and runtime status visible in granted projects, optionally for one project.",
       "changes": [
         "bot",
         "bot-run",
-        "setting-change"
+        "setting-change",
+        "question"
       ]
     },
     "bot_get": {
@@ -21,12 +22,13 @@
         404
       ],
       "auth": "person",
-      "agent": "no",
+      "agent": "tool",
       "description": "Read the saved settings, scoped memory, Home conversation and runtime status of a bot by id.",
       "changes": [
         "bot",
         "bot-run",
-        "setting-change"
+        "setting-change",
+        "question"
       ]
     },
     "bot_settings_save": {
@@ -50,6 +52,27 @@
       "auth": "person",
       "agent": "no",
       "description": "Save a new project-scoped bot memory revision."
+    },
+    "bot_avatar_set": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404
+      ],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Set a bot's avatar to a stored image or video artifact of the bot's project: any still or animated picture (PNG, JPEG, WebP, AVIF, GIF, APNG, SVG) or a muted loop (WebM, MP4). stillArtifactId is an optional still frame that lists show in place of an animated file; glow (#RRGGBB) colours the activity light. Make one with the avatar-make pipeline or upload it (artifact_upload_begin)."
+    },
+    "bot_avatar_clear": {
+      "read": false,
+      "errors": [
+        403,
+        404
+      ],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Clear a bot's avatar: the bot shows its letter again."
     },
     "bot_run": {
       "read": false,
@@ -210,7 +233,8 @@
         "activeRunId",
         "activeExecutionId",
         "lastRunAt",
-        "lastRunState"
+        "lastRunState",
+        "needsYou"
       ],
       "properties": {
         "id": {
@@ -279,6 +303,14 @@
             "null"
           ],
           "$comment": "the bot's D17 code (B-FLT-1); open the bot by it (entity_resolve)"
+        },
+        "avatar": {
+          "$ref": "#/$defs/BotAvatar",
+          "$comment": "absent: the bot shows its letter"
+        },
+        "needsYou": {
+          "type": "boolean",
+          "$comment": "the active run waits, or an open question waits in its Home conversation or active run"
         }
       }
     },
@@ -317,7 +349,8 @@
         "homeSessionId",
         "activeRunId",
         "lastRunState",
-        "lastRunAt"
+        "lastRunAt",
+        "needsYou"
       ],
       "properties": {
         "id": {
@@ -368,6 +401,14 @@
             "null"
           ],
           "$comment": "the bot's D17 code (B-FLT-1); open the bot by it (entity_resolve)"
+        },
+        "avatar": {
+          "$ref": "#/$defs/BotAvatar",
+          "$comment": "absent: the bot shows its letter"
+        },
+        "needsYou": {
+          "type": "boolean",
+          "$comment": "the active run waits, or an open question waits in its Home conversation or active run"
         }
       }
     },
@@ -467,6 +508,93 @@
       }
     },
     "BotMemorySaveReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
+        }
+      }
+    },
+    "BotAvatar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "mediaType",
+        "stillArtifactId",
+        "glow"
+      ],
+      "$comment": "A bot's avatar; the browser reads each file at /api/results/{artifactId}. null avatar: the bot shows its letter.",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "stillArtifactId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "glow": {
+          "type": "string",
+          "$comment": "#RRGGBB or empty: the bot tone"
+        }
+      }
+    },
+    "BotAvatarSetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "artifactId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "stillArtifactId": {
+          "type": "string"
+        },
+        "glow": {
+          "type": "string"
+        }
+      }
+    },
+    "BotAvatarSetReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
+        }
+      }
+    },
+    "BotAvatarClearRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        }
+      }
+    },
+    "BotAvatarClearReply": {
       "type": "object",
       "additionalProperties": false,
       "required": [

@@ -557,3 +557,8 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Causes:** the rail avatar took the Home avatar style (transparent with a dark letter on dark, an amber disc when toned); the user block was re-created on every versions read, closing its overview; Update cleared its busy state before the reload landed; warnings came from one momentary read (the tab "unknown" for 3 s on every load, a gateway probe older than a minute, one failed read).
 * **Options (board):** A, an icon button after the version, as built; B, an update strip above the person naming the new version, with Reload.
 * **Choice (owner):** B and the rules: the avatar never changes; the version is toned only by a confirmed problem that is true now; an offline host does not tone it. Recorded in [nav rail](controls/nav-rail.md) (Version, Update) and drawn on [screens/shell](board/screens/shell.bl).
+## 2026-11-25: Bot avatars
+
+* **Question:** bots showed only a letter; the owner wanted a configurable avatar, animated ones included, made through Fleet's own pipelines, and the minimal way to show a bot's activity.
+* **Options:** activity as light (the avatar dims, glows while working, one dot for waiting or failed) or as a 2 px state ring; Lottie/TGS players or native formats only.
+* **Choice (owner, "Yes, all as drawn"):** light (A); native formats (still and animated images, animated SVG, muted WebM/MP4 loops; Lottie and TGS not shown); sizes sm 16, md 24, lg 40, xl 96; a still frame in lists, animation at lg/xl, on hover and while working; the picker in Settings & Memory; the `avatar-make` pipeline (image, check, optional animated SVG). Spec: [avatar](controls/avatar.md); board: `blocks.bl` (Blocks · Bot avatar) and `screens/library.bl` section 4.

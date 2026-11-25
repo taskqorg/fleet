@@ -152,7 +152,10 @@ CREATE TABLE bot (
   "paused_at" timestamp with time zone,
   "paused_by" text,
   "resumed_at" timestamp with time zone,
-  "code" text
+  "code" text,
+  "avatar_artifact_id" text,
+  "avatar_still_artifact_id" text,
+  "avatar_glow" text NOT NULL
 );
 CREATE TABLE bot_automation (
   "id" text NOT NULL,

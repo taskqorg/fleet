@@ -5,7 +5,7 @@ import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  Ago, Button, CatalogueTree, Choice, ContextMenu, DetailSection, Empty, EntityCode, ErrorBanner, FigureTile, HarnessMark,
+  Ago, Avatar, Button, CatalogueTree, Choice, ContextMenu, DetailSection, Empty, EntityCode, ErrorBanner, FigureTile, HarnessMark,
   KvRow, ListDetail, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, copyText, harnesses, matchSearch,
   type CatalogueTreeNode, type Harness, type IconName, type StateOf,
@@ -17,6 +17,7 @@ import { useOp } from '../store.ts';
 import { parseMs as ms } from '../task-facts.ts';
 import { Changes } from './changes.tsx';
 import { BotCreateForm, BotDetail, botPath } from './bots.tsx';
+import { botAvatarState, botPicture } from '../bot-view.ts';
 import { DefinitionDetail, baseAgentDefaults } from './definitions.tsx';
 import type { DefinitionKey, DefinitionListItem, SkillSummary } from '../../../contracts/generated/ops.ts';
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
@@ -264,6 +265,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
           label: b.name,
           sub: b.code ?? undefined,
           state: { family: 'life', state: botLife(b) },
+          lead: <Avatar letter={b.name} tone="success" size="sm" picture={botPicture(b)} state={botAvatarState(b)} />,
           right: at ? <Ago t={at} /> : undefined,
           pinned: pins.has(nodeId),
           href: botPath(b),
