@@ -2,7 +2,7 @@
 
 Usability rules that every Fleet screen follows. Controls and pages link here instead of restating a rule. A page that breaks a rule is a defect. A rule that does not fit a real need is changed here first, with a [decisions](decisions.md) entry.
 
-The [owner rules](owner-rules.md) come first and win on conflict. This file does not restate them: it says how a screen meets them and how a reviewer or a browser check proves it. The three owner principles set the order of work: glance, work through conversation, details on demand ([owner principles](owner-rules.md#principles)). Sections 12 to 14 carry them; sections 1 to 11 and 15 to 19 apply to every screen.
+The [owner rules](owner-rules.md) come first and win on conflict. This file does not restate them: it says how a screen meets them and how a reviewer or a browser check proves it. The three owner principles set the order of work: glance, work through conversation, details on demand ([owner principles](owner-rules.md#principles-card)). Sections 12 to 14 carry them; sections 1 to 11 and 15 to 19 apply to every screen.
 
 People work by talking to sessions: bots and project PMs. They come back many times a day, often from a phone, to see what happens and to answer what waits for them. Architects also compare Lab runs and keep hosts healthy. Screens must be quick to read, calm and predictable.
 

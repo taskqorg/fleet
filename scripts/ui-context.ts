@@ -1,6 +1,6 @@
 // UI context (docs/design-system/README.md, "Context for a UI task"): the minimal reading an agent needs before it
 // designs or builds one page. Reads the page spec, its blocks (the links in its `## Blocks` section), the controls and patterns it and they link, its board canvas,
-// and the text of every rule they cite by ID (OR-<n> in owner-rules.md, UR-<n> in principles.md). Prints Markdown;
+// and the text of every rule they cite by ID, after the owner's principles card (OR-<n> in owner-rules.md, UR-<n> in principles.md). Prints Markdown;
 // never fails a build. Node standard library only.
 // Usage: node scripts/ui-context.ts <page>   (a page spec name such as home; without one it lists the pages)
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -21,10 +21,12 @@ export function rules(owner: string, usability: string): Map<string, string> {
   return m;
 }
 
-// The three principles, the first sentence of each, from the Principles section of owner-rules.md.
-export function principles(owner: string): string[] {
-  const sec = owner.split(/^## /m).find(s => s.startsWith('Principles')) ?? '';
-  return [...sec.matchAll(/^\d+\. \*\*([^*]+)\*\* ([^\n]+)$/gm)].map(([, n, t]) => `${n} ${t.split('. ')[0].replace(/\.$/, '')}.`);
+// The principles card: the `## Principles card` section of owner-rules.md (the three principles and the standing
+// principles), without the board and Target notes that follow it. Printed first for every page.
+export function card(owner: string): string {
+  const sec = section(owner, 'Principles card');
+  if (sec === owner) return '';
+  return sec.split(/\n\nThe principles, the rail/)[0].replace(/^## Principles card/, '## Principles card (owner-rules.md, mandatory)').trim();
 }
 
 // Rule IDs in a text; a range such as `OR-24 to OR-27` counts every ID in it.
@@ -93,7 +95,7 @@ export function context(page: string): string {
     add(g, p);
     if (g !== 'Canvas') cite(read(p), relative(ds, p));
   }
-  const L = [`# UI context: ${page}`, '', `Read first: ${spec}`, ''];
+  const L = [`# UI context: ${page}`, '', card(owner), '', `Read next: ${spec}`, ''];
   for (const g of GROUPS) {
     const ps = parts.get(g);
     if (!ps) continue;
@@ -106,7 +108,6 @@ export function context(page: string): string {
     '- Read the screen through one view operation with useView (contract `view: true`, composed on the server from summaries); add fields to the view, not new reads.',
     '- No `every` timers and no reads on focus or visibility: the change stream rereads what it touches; a hidden tab reads nothing.',
     '- Prove it: `node scripts/page-budget.ts <path>` on the deployed site (open, reload, Alt-Tab, Back) and quote the numbers in the pull request.', '');
-  L.push('Principles (owner-rules.md):', ...principles(owner).map((p, i) => `${i + 1}. ${p}`), '');
   const ids = [...why.keys()].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
   L.push(`Rules cited (${ids.length}):`);
   for (const id of ids) L.push(`- **${id}** ${byId.get(id) ?? '(no rule with this ID)'} _(${[...why.get(id)!].join(', ')})_`);
@@ -117,5 +118,5 @@ export function context(page: string): string {
 if (process.argv[1] === import.meta.filename) {
   const page = process.argv[2];
   const pages = readdirSync(join(root, ds, 'pages')).filter(f => f.endsWith('.md') && f !== 'README.md').map(f => f.slice(0, -3));
-  console.log(page && pages.includes(page) ? context(page) : `Usage: node scripts/ui-context.ts <page>\nPages: ${pages.join(', ')}`);
+  console.log(page && pages.includes(page) ? context(page) : `${card(read(`${ds}/owner-rules.md`))}\n\nUsage: node scripts/ui-context.ts <page>\nPages: ${pages.join(', ')}`);
 }

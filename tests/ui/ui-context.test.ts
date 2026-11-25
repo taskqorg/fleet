@@ -31,3 +31,9 @@ test('UC3 the home context names its canvas and the rules its spec cites', () =>
   assert.match(c, /\*\*OR-50\*\* Home is sessions/);
   assert.doesNotMatch(c, /no rule with this ID/);
 });
+
+test('UC6 every page context starts with the owner principles card', () => {
+  const c = context('home');
+  assert.ok(c.indexOf('## Principles card') < c.indexOf('Read next:'));
+  assert.match(c, /Useful empty pane/);
+});

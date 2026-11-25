@@ -9,7 +9,7 @@
 
 Both URLs render the same view; only the frame around it differs (see **Frames**). The frame is an [owner decision](#owner-decisions).
 
-**Purpose.** The one place where a person works with a bot, a project PM or a task run ([principles](../owner-rules.md#principles) 2). It answers "what is this session doing, what does it need from me, and what has it done?" in that order.
+**Purpose.** The one place where a person works with a bot, a project PM or a task run ([principles](../owner-rules.md#principles-card) 2). It answers "what is this session doing, what does it need from me, and what has it done?" in that order.
 
 ## Layout
 

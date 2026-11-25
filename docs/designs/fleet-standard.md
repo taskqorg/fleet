@@ -109,6 +109,26 @@ and transition tables are checked by `TestDesignStateWrites` and `TestDesignTran
 (`resource_build`, `resource_project_summary`, `resource_metadata_repair`, `command`, `execution`, `pipeline step`,
 `task`, `question`, `experiment`, `host`, `connection_key`, `artifact_copy`, `store`, `question.cause` and `audit_log`).
 
+## Engineering principles
+
+The owner's standing engineering principles. They bind every attempt, beside the standards above; briefs do not
+restate them. UI principles: [the principles card](../design-system/owner-rules.md#principles-card).
+
+1. **Agentic first.** Agents get every capability through operations and MCP first (S4, S8); the web UI comes second.
+2. **Help, not block.** No new CI gate for its own sake and no invented limits. A limit is a setting with a
+   permissive owner default; agents get precise information, instructions and tools instead.
+3. **Fix as a class.** Fix the cause for every case of its kind, never field by field. Requirements come first, then
+   entities and storage, with the fewest that serve (Occam's razor). Ops mechanics (updates, host preparation,
+   access) follow one written procedure, designed and approved before code.
+4. **Verify at the right level.** Query cost is measured with `EXPLAIN (ANALYZE)` as the app role under RLS (S2a),
+   and the change is checked live on production; no large inherited test matrices.
+5. **Fleet onboards accounts.** Keys and subscriptions are connected through Fleet onboarding and its status view,
+   never through a manual checklist for the owner.
+6. **No low-stakes questions.** Decide numbers and mechanical options yourself and report the choice in one line;
+   ask the owner only for real product decisions.
+7. **Legacy data may go.** Data the system no longer supports may be deleted in a migration: count the rows and
+   check the backup first; no compatibility layer for it.
+
 ## How the work runs
 
 - One stage = one pull request to `main`, merged within the stage. A stage that cannot finish is reverted,
