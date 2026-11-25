@@ -985,7 +985,7 @@ const providersJSON = `
  },
  "github-pins": {
   "baseUrl": "https://api.github.com",
-  "instructions": "Coordinator-only writes on taskqorg/fleet component pin proposals (docs/designs/fleet-host-updates.md): commit statuses and auto-merge. The key is a fine-grained token for taskqorg/fleet with Commit statuses and Pull requests read and write and nothing else; the coordinator refuses every branch but automation/<kind>-pins.",
+  "instructions": "Coordinator-only writes on taskqorg/fleet component pin proposals (docs/designs/fleet-host-updates.md): commit statuses. The key is a fine-grained token for taskqorg/fleet with Commit statuses and Pull requests read and write and nothing else; the coordinator refuses every branch but automation/<kind>-pins.",
   "tools": {
    "commit_status": {
     "method": "GET",
@@ -1006,16 +1006,6 @@ const providersJSON = `
     "description": "Post a commit status on a pin proposal's head.",
     "inputSchema": {"type": "object", "required": ["owner", "repo", "sha", "state", "context"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "sha": {"type": "string"}, "state": {"type": "string", "enum": ["success", "failure", "pending"]}, "context": {"type": "string", "enum": ["qualify-hosts", "code-review", "pins-watch"]}, "description": {"type": "string"}, "target_url": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "sha": "^[0-9a-f]{40}$"}
-   },
-   "auto_merge_enable": {
-    "method": "POST",
-    "path": "/graphql",
-    "unit": "requests",
-    "idempotent": true,
-    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
-    "inject": {"query": "mutation($id: ID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE}) { clientMutationId } }"},
-    "description": "Turn on auto-merge of one pull request (by its node id); the mutation is fixed.",
-    "inputSchema": {"type": "object", "required": ["variables"], "properties": {"variables": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}}}}
    }
   }
  },

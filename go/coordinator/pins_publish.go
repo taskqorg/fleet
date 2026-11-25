@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -76,15 +75,7 @@ func pinsPublish(ctx context.Context, a *App, pr ghPull, passed bool, descriptio
 		return err
 	}
 	// Reached only after pinsReview found nothing in the diff and every host trial passed (pins_qualify.go).
-	return errors.Join(status("code-review", "success", "pins diff review (one pin file, vendor origins, digests) and host trials, 0 findings"),
-		call("auto_merge_enable", pinsAutoMerge{Variables: pinsNode{ID: pr.NodeID}}))
-}
-
-// pinsAutoMerge: auto_merge_enable's arguments; the gateway injects the fixed mutation.
-type pinsAutoMerge struct {
-	Variables pinsNode `json:"variables"`
-}
-
-type pinsNode struct {
-	ID string `json:"id"`
+	// The merge itself is pins-merge.yml's, on the status event this write raises: enabling auto-merge needs contents
+	// write, which this key must not hold (a repository admin's token with it could push to main past the ruleset).
+	return status("code-review", "success", "pins diff review (one pin file, vendor origins, digests) and host trials, 0 findings")
 }
