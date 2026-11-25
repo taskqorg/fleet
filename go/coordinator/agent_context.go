@@ -804,6 +804,9 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 	return contract.SessionTaskAttachReply{SessionId: sid, TaskId: tid}, sessionPut(q, &s)
 }
 
+// subjectKey: a conversation subject a start may name (fleet-conversations.md#words); a run is never one.
+var subjectKey = regexp.MustCompile(`^(task|question|pr|host|delivery|trigger):\S+$`)
+
 func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.SessionStartReply, error) {
 	var none contract.SessionStartReply
 	given := bodyKeys(q)
@@ -958,8 +961,35 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 			return none, fail(409, "Task is Held: release it first")
 		}
 	}
+	// A subject: one open conversation per agent (profile and role) and subject (fleet-conversations.md#entities).
+	subject := deref(r.Subject)
+	if given["subject"] {
+		if !subjectKey.MatchString(subject) {
+			return none, fail(400, "subject is task:, question:, pr:, host:, delivery: or trigger: and an id")
+		}
+		pp := strPtr(agentView[agentProfile](profile).ID)
+		if err := acquireTxLock(q, "session-subject:"+deref(pp)+":"+role+":"+subject); err != nil {
+			return none, err
+		}
+		id, err := q.db().SessionOpenBySubject(q.ctx(), db.SessionOpenBySubjectParams{Subject: subject, ProfileID: pp, Role: role})
+		if err == nil {
+			return none, fail(409, "Conversation "+id+" is open about "+subject+": message it, or archive it first")
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return none, err
+		}
+	}
+	var focus *agentFocus // the project set; absent or empty: the checkout project alone
+	if given["projects"] {
+		if err := projectSetCheck(q, r.Projects); err != nil {
+			return none, err
+		}
+		if len(r.Projects) > 0 {
+			focus = &agentFocus{ProjectIDs: jsonBytes(r.Projects)}
+		}
+	}
 	s := agentSession{ID: newID(), CreatedAt: nowMs(), AgentConfig: jsonBytes(profile), StartRequest: key, Access: access, Branch: &branch, ProjectID: pid, TaskID: taskID,
-		DirectedBy: directedBy, Role: role, Account: account, Setup: setup, HostID: deref(r.HostId), CreatedBySessionID: deref(r.CallerSessionId), CreatedByExecutionID: deref(r.CallerExecutionId)}
+		DirectedBy: directedBy, Role: role, Account: account, Setup: setup, HostID: deref(r.HostId), CreatedBySessionID: deref(r.CallerSessionId), CreatedByExecutionID: deref(r.CallerExecutionId),
+		Focus: focus}
 	presetID := ""
 	if pre != nil {
 		presetID, s.Preset = pre.ID, pre.ID
@@ -969,6 +999,18 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 	}
 	if err := sessionPut(q, &s); err != nil {
 		return none, err
+	}
+	if subject != "" { // titled from its subject at creation, like a bot's (bots_runtime.go botConversation)
+		if err := q.db().SessionSetSubject(q.ctx(), db.SessionSetSubjectParams{ID: s.ID, Subject: &subject}); err != nil {
+			return none, err
+		}
+		title, err := subjectTitle(q, subject)
+		if err != nil {
+			return none, err
+		}
+		if _, err := q.db().TitleRename(q.ctx(), db.TitleRenameParams{ID: s.ID, Title: title, TitleBy: "subject"}); err != nil {
+			return none, err
+		}
 	}
 	if taskID != "" && s.CreatedBySessionID != "" {
 		if callerSess, err := sessionMaybe(q, s.CreatedBySessionID); err != nil {

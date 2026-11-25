@@ -353,6 +353,30 @@ func (q *Queries) SessionDelegations(ctx context.Context, sessionID string) ([][
 	return items, nil
 }
 
+const sessionOpenBySubject = `-- name: SessionOpenBySubject :one
+SELECT id FROM session
+WHERE subject = $1::text AND bot_id IS NULL AND archived_at IS NULL AND tombstoned_at IS NULL
+ AND payload->'agentConfig'->>'id' IS NOT DISTINCT FROM $2::text
+ AND coalesce(payload->>'role','') = $3::text
+ORDER BY seq DESC
+LIMIT 1
+`
+
+type SessionOpenBySubjectParams struct {
+	Subject   string
+	ProfileID *string
+	Role      string
+}
+
+// The open conversation of one agent (a profile and role, not a bot) about a subject: at most one exists
+// (fleet-conversations.md#entities; a bot's is BotConversationBySubject).
+func (q *Queries) SessionOpenBySubject(ctx context.Context, arg SessionOpenBySubjectParams) (string, error) {
+	row := q.db.QueryRow(ctx, sessionOpenBySubject, arg.Subject, arg.ProfileID, arg.Role)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const sessionPut = `-- name: SessionPut :exec
 INSERT INTO session(id, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at,
  parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id,

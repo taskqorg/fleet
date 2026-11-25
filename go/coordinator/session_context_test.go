@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 // Requirement: pages/home.md "Session card": the now line is the first sentence of the latest agent message as plain
@@ -53,5 +57,109 @@ func TestSessionListHidesStepConversations(t *testing.T) {
 	}
 	if !strings.Contains(sqlSessionBase, "d.pipeline_run_id") || !strings.Contains(sqlSessionCountBase, "d.pipeline_run_id") {
 		t.Fatal("both session bases carry pipeline_run_id")
+	}
+}
+
+// Requirement: fleet-conversations.md#entities: a conversation's origin and listed follow from its columns, and
+// sessions_list filters by origin, listed, room, subject and the project set. Risk: a hidden step conversation shows
+// in the list, or a conversation of a project set is missing from that project's list.
+func TestSessionListConversationFields(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id, state, variants) VALUES ('cf-x', 'desiign', 'single', 'search-basic', 'draft', '[]')`)
+	exec(`INSERT INTO execution (id, kind, state, project_id, started_at, data, observation, config_ref) VALUES ('cf-run', 'pipeline_run', 'running', 'desiign', now(), '{}', 'confirmed', '{}')`)
+	exec(`INSERT INTO execution (id, kind, state, project_id, experiment_id, started_at, data, observation, config_ref) VALUES ('cf-trial', 'pipeline_run', 'running', 'desiign', 'cf-x', now(), '{}', 'confirmed', '{}')`)
+	exec(`INSERT INTO telegram_room (id, chat_id, thread_id, kind, title, chat_title) VALUES ('42:0', 42, 0, 'private', '', '')`)
+	for _, s := range []struct{ id, task, run, subject, payload string }{
+		{"cf-person", "", "", "", `{}`},
+		{"cf-task", "T-1", "", "", `{"startRequest": "desiign:autostart:T-1"}`},
+		{"cf-tg", "", "", "", `{"startRequest": "desiign:tg:5"}`},
+		{"cf-fork", "", "", "", `{"forkOf": {"sessionId": "cf-person"}}`},
+		{"cf-set", "", "", "pr:fleet#1", `{"focus": {"projectIds": ["hello-world"]}}`},
+		{"cf-step", "", "cf-run", "", `{}`},
+		{"cf-lab", "", "cf-trial", "", `{}`},
+	} {
+		exec(`INSERT INTO session (id, project_id, task_id, pipeline_run_id, subject, payload, created_at) VALUES ($1, 'desiign', nullif($2,''), nullif($3,''), nullif($4,''), $5, clock_timestamp())`,
+			s.id, s.task, s.run, s.subject, s.payload)
+	}
+	exec(`INSERT INTO telegram_work (id, room_id, session_id, title, created_by) VALUES ('w-cf', '42:0', 'cf-tg', '', 'ann@example.com')`)
+	list := func(filter doc) map[string]string {
+		t.Helper()
+		var out contract.SessionsListReply
+		e.opInto(t, "sessions_list", doc{"filter": filter, "group": "none"}, e.ownerHeaders(), &out)
+		got := map[string]string{}
+		for _, r := range out.Sessions {
+			if strings.HasPrefix(r.Id, "cf-") {
+				got[r.Id] = fmt.Sprintf("%s/%v", *r.Origin, *r.Listed)
+			}
+		}
+		return got
+	}
+	for _, c := range []struct {
+		filter doc
+		want   map[string]string
+	}{
+		{doc{}, map[string]string{"cf-person": "person/true", "cf-task": "task/true", "cf-tg": "telegram/true", "cf-fork": "fork/true", "cf-set": "person/true"}},
+		{doc{"listed": false}, map[string]string{"cf-step": "pipeline/false", "cf-lab": "lab/false"}},
+		{doc{"origin": []string{"telegram", "fork"}}, map[string]string{"cf-tg": "telegram/true", "cf-fork": "fork/true"}},
+		{doc{"room": []string{"42:0"}}, map[string]string{"cf-tg": "telegram/true"}},
+		{doc{"subject": []string{"pr:fleet#1"}}, map[string]string{"cf-set": "person/true"}},
+		{doc{"projectId": []string{"hello-world"}}, map[string]string{"cf-set": "person/true"}},
+	} {
+		if got := list(c.filter); !maps.Equal(got, c.want) {
+			t.Errorf("filter %v: %v, want %v", c.filter, got, c.want)
+		}
+	}
+	if code, _ := e.callJSON(t, "POST", "/api/ops/sessions_list", doc{"filter": doc{"origin": []string{"nope"}}}, e.ownerHeaders()); code != 400 {
+		t.Errorf("an unknown origin answers %d, want 400", code)
+	}
+	if code, _ := e.callJSON(t, "POST", "/api/ops/task_page", doc{"filter": doc{"botId": []string{"b"}}}, e.ownerHeaders()); code != 400 {
+		t.Errorf("tasks take a session filter field: %d, want 400", code)
+	}
+}
+
+// Requirement: session_update changes a conversation's project set by the rights of session_rename: its director or
+// the owner, within the caller's grants; an empty set is the checkout project alone. Risk: a person changes another
+// person's conversation, or puts it in a project they cannot see.
+func TestSessionUpdateProjectSet(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	for _, s := range [][2]string{{"su-member", "member@trial.test"}, {"su-other", "agents@trial.test"}} {
+		if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO session (id, project_id, directed_by, created_at) VALUES ($1, 'desiign', $2, now())`, s[0], s[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	member := map[string]string{"Authorization": "Bearer " + e.browserSecret, "X-Fleet-Person": "member@trial.test"}
+	update := func(h map[string]string, body doc) (int, []string) {
+		t.Helper()
+		code, out := e.callJSON(t, "POST", "/api/ops/session_update", body, h)
+		var ids []string
+		xs, _ := out["projectIds"].([]any)
+		for _, x := range xs {
+			ids = append(ids, fmt.Sprint(x))
+		}
+		return code, ids
+	}
+	for _, c := range []struct {
+		name    string
+		h       map[string]string
+		body    doc
+		code    int
+		project []string
+	}{
+		{"no field", member, doc{"sessionId": "su-member"}, 400, nil},
+		{"another's conversation", member, doc{"sessionId": "su-other", "projectIds": []string{"desiign"}}, 403, nil},
+		{"outside the grants", member, doc{"sessionId": "su-member", "projectIds": []string{"hello-world"}}, 404, nil},
+		{"own", member, doc{"sessionId": "su-member", "projectIds": []string{"desiign"}}, 200, []string{"desiign"}},
+		{"owner", e.ownerHeaders(), doc{"sessionId": "su-other", "projectIds": []string{"hello-world", "desiign"}}, 200, []string{"hello-world", "desiign"}},
+		{"empty", e.ownerHeaders(), doc{"sessionId": "su-other", "projectIds": []string{}}, 200, []string{"desiign"}},
+	} {
+		if code, ids := update(c.h, c.body); code != c.code || (c.project != nil && !slices.Equal(ids, c.project)) {
+			t.Errorf("%s: %d %v, want %d %v", c.name, code, ids, c.code, c.project)
+		}
 	}
 }

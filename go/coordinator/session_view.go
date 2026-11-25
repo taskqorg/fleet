@@ -266,6 +266,8 @@ func threadTitle(key, firstLine string) string {
 		return "Host " + strings.TrimPrefix(key, "host:")
 	case strings.HasPrefix(key, "delivery:"):
 		return "Delivery " + strings.TrimPrefix(key, "delivery:")
+	case strings.HasPrefix(key, "pr:"):
+		return "PR " + strings.TrimPrefix(key, "pr:")
 	case firstLine != "":
 		return firstLine
 	}

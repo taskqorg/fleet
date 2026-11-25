@@ -88,3 +88,13 @@ VALUES (@id, @session_id, sqlc.narg(execution_id), sqlc.narg(project_id), sqlc.n
 ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  session_id=excluded.session_id, execution_id=excluded.execution_id, project_id=excluded.project_id,
  request_id=excluded.request_id, text=excluded.text, sent_by=excluded.sent_by, source=excluded.source;
+
+-- name: SessionOpenBySubject :one
+-- The open conversation of one agent (a profile and role, not a bot) about a subject: at most one exists
+-- (fleet-conversations.md#entities; a bot's is BotConversationBySubject).
+SELECT id FROM session
+WHERE subject = @subject::text AND bot_id IS NULL AND archived_at IS NULL AND tombstoned_at IS NULL
+ AND payload->'agentConfig'->>'id' IS NOT DISTINCT FROM sqlc.narg(profile_id)::text
+ AND coalesce(payload->>'role','') = @role::text
+ORDER BY seq DESC
+LIMIT 1;

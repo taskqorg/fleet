@@ -29,6 +29,8 @@ type sessionListDBRow struct {
 	ProfileID     *string  `db:"profile_id"`
 	ProjectID     *string  `db:"project_id"`
 	BotID         *string  `db:"bot_id"`
+	Origin        string   `db:"origin"`
+	Listed        bool     `db:"listed"`
 	CreatedAt     *float64 `db:"created_ms"`
 	ArchivedAt    *float64 `db:"archived_ms"`
 	ActivityAt    *string  `db:"activity_at"`
@@ -55,6 +57,7 @@ func (x sessionListDBRow) row() contract.SessionRow {
 		harness = x.AgentHarness
 	}
 	return contract.SessionRow{Id: x.ID, Code: x.Code, Title: title, State: x.State, Harness: harness, ProfileId: x.ProfileID, ProjectId: x.ProjectID, BotId: x.BotID,
+		Origin: ptr(contract.SessionOrigin(x.Origin)), Listed: &x.Listed,
 		CreatedAt: x.CreatedAt, ActivityAt: x.ActivityAt, Now: nowLine(deref(x.NowText), deref(x.TaskTitle)), Executions: x.Executions, OpenQuestions: x.OpenQuestions, ArchivedAt: x.ArchivedAt,
 		WaitingSince: x.WaitingSince, RunStartedAt: x.RunStartedAt, LastStartedAt: x.LastStartedAt, FailedStarts: &x.FailedStarts,
 		SortKey: sortKey(x.G, x.Sk, x.ID)}
@@ -130,7 +133,7 @@ func sortKey(g string, sk float64, id string) []contract.SortKeyPart {
 
 // sessionFilter: a sessions list's filter as sent (rowFilterOf).
 func sessionFilter(raw json.RawMessage) (rowFilter, error) {
-	return rowFilterOf(raw, "projectId", "excludeProjectId", "state", "search", "archived")
+	return rowFilterOf(raw, "projectId", "excludeProjectId", "state", "search", "archived", "botId", "subject", "room", "origin", "listed")
 }
 
 // sessionListRows: the session rows of an assembled list statement.

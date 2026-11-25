@@ -442,17 +442,27 @@ func (v *Failure) Validate() error {
 	return nil
 }
 
-// ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.
+// ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived, botId, subject, room, origin and listed apply to sessions only, where projectId matches a conversation's project or its project set. A field a list does not implement is a 400.
 type ListFilter struct {
-	Archived         *bool    `json:"archived,omitempty"`
-	ExcludeProjectId []string `json:"excludeProjectId,omitempty"`
-	ProjectId        []string `json:"projectId,omitempty"`
-	Search           *string  `json:"search,omitempty"`
-	State            []string `json:"state,omitempty"`
+	Archived         *bool           `json:"archived,omitempty"`
+	BotId            []string        `json:"botId,omitempty"`
+	ExcludeProjectId []string        `json:"excludeProjectId,omitempty"`
+	Listed           *bool           `json:"listed,omitempty"`
+	Origin           []SessionOrigin `json:"origin,omitempty"`
+	ProjectId        []string        `json:"projectId,omitempty"`
+	Room             []string        `json:"room,omitempty"`
+	Search           *string         `json:"search,omitempty"`
+	State            []string        `json:"state,omitempty"`
+	Subject          []string        `json:"subject,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ListFilter) Validate() error {
+	for i := range v.Origin {
+		if err := Check(&v.Origin[i], "origin"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -663,31 +673,65 @@ func (v *ScopedResourceRollup) Validate() error {
 	return nil
 }
 
+// SessionOrigin: How a conversation began, derived from its columns (sql_builder.go sessionOrigin; fleet-conversations.md#entities): lab and pipeline for agent steps of a trial or a pipeline run, fork for session_fork, trigger for a bot's subject conversation (a firing opens it), bot for a bot's conversation without a subject, telegram for a start from a Telegram message, task for a start by task autostart or by an agent for a task, person otherwise.
+type SessionOrigin string
+
+const (
+	SessionOriginPerson   SessionOrigin = "person"
+	SessionOriginTrigger  SessionOrigin = "trigger"
+	SessionOriginTask     SessionOrigin = "task"
+	SessionOriginTelegram SessionOrigin = "telegram"
+	SessionOriginFork     SessionOrigin = "fork"
+	SessionOriginPipeline SessionOrigin = "pipeline"
+	SessionOriginLab      SessionOrigin = "lab"
+	SessionOriginBot      SessionOrigin = "bot"
+)
+
+// SessionOriginValues lists every SessionOrigin in schema order.
+var SessionOriginValues = []SessionOrigin{SessionOriginPerson, SessionOriginTrigger, SessionOriginTask, SessionOriginTelegram, SessionOriginFork, SessionOriginPipeline, SessionOriginLab, SessionOriginBot}
+
+// Valid: v is one of the schema's values.
+func (v SessionOrigin) Valid() bool {
+	for _, x := range SessionOriginValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionRow: A row of sessions_list and list_membership (sessions.go sessionRow); title: the stored or generated title, else the first message; createdAt and archivedAt in ms.
 type SessionRow struct {
-	ActivityAt    *string       `json:"activityAt"`
-	ArchivedAt    *float64      `json:"archivedAt"`
-	BotId         *string       `json:"botId,omitempty"`
-	Code          *string       `json:"code"`
-	CreatedAt     *float64      `json:"createdAt"`
-	Executions    int64         `json:"executions"`
-	FailedStarts  *int64        `json:"failedStarts,omitempty"`
-	Harness       *string       `json:"harness"`
-	Id            string        `json:"id"`
-	LastStartedAt *string       `json:"lastStartedAt,omitempty"`
-	Now           *string       `json:"now,omitempty"`
-	OpenQuestions int64         `json:"openQuestions"`
-	ProfileId     *string       `json:"profileId"`
-	ProjectId     *string       `json:"projectId"`
-	RunStartedAt  *string       `json:"runStartedAt,omitempty"`
-	SortKey       []SortKeyPart `json:"sortKey"`
-	State         string        `json:"state"`
-	Title         *string       `json:"title"`
-	WaitingSince  *string       `json:"waitingSince,omitempty"`
+	ActivityAt    *string        `json:"activityAt"`
+	ArchivedAt    *float64       `json:"archivedAt"`
+	BotId         *string        `json:"botId,omitempty"`
+	Code          *string        `json:"code"`
+	CreatedAt     *float64       `json:"createdAt"`
+	Executions    int64          `json:"executions"`
+	FailedStarts  *int64         `json:"failedStarts,omitempty"`
+	Harness       *string        `json:"harness"`
+	Id            string         `json:"id"`
+	LastStartedAt *string        `json:"lastStartedAt,omitempty"`
+	Listed        *bool          `json:"listed,omitempty"`
+	Now           *string        `json:"now,omitempty"`
+	OpenQuestions int64          `json:"openQuestions"`
+	Origin        *SessionOrigin `json:"origin,omitempty"`
+	ProfileId     *string        `json:"profileId"`
+	ProjectId     *string        `json:"projectId"`
+	RunStartedAt  *string        `json:"runStartedAt,omitempty"`
+	SortKey       []SortKeyPart  `json:"sortKey"`
+	State         string         `json:"state"`
+	Title         *string        `json:"title"`
+	WaitingSince  *string        `json:"waitingSince,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionRow) Validate() error {
+	if v.Origin != nil {
+		if err := Check(v.Origin, "origin"); err != nil {
+			return err
+		}
+	}
 	if v.SortKey == nil {
 		return Missing("sortKey")
 	}
