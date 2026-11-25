@@ -1019,6 +1019,9 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 	for i := len(texts) - 1; i >= 0 && final == ""; i-- {
 		final = strings.TrimSpace(texts[i])
 	}
+	if e.State != "succeeded" && stoppedOnRequest(e) {
+		final = "" // a stopped run's last text is a preamble, not an answer (owner-tester, 2026-11-25)
+	}
 	if final == "" {
 		key := "noReply"
 		if e.State != "succeeded" {
