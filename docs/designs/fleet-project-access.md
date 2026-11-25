@@ -19,7 +19,7 @@ API connections ([connections](fleet-connections.md)) reach HTTP providers with 
 - `access_grant`: `id`, `project_id`, `server_id`, `kind` (`mysql` or `files`), `level` (`read` or `write`), `scope` (`{database, tables}` for `mysql`, `{paths}` for `files`), `reason`, `request_id`, `asked_by`, `question_id`, `state`, `expires_at` (an owner field; empty means no expiry, no invented number), `probe` (the last probe), `credential` (the fingerprint of the key or password; never a value), audit through `audit()`.
 - `access_work`: one row per grant with pending provisioner work (`provision`, `probe`, `revoke`), on the work kit with `attempts`, `next_attempt_at`, `last_error`.
 
-### Grant states (`access_states.go`)
+### Grant states
 
 | From | To |
 |---|---|
@@ -41,7 +41,7 @@ API connections ([connections](fleet-connections.md)) reach HTTP providers with 
 
 The agent reads the grant's state from `access_grants` with its `requestId`, like `approval_ask`.
 
-## Recipes (`fleet-provision`)
+## Recipes
 
 The provisioner key is installed as `restrict,command="/usr/local/sbin/fleet-provision"` in root's `authorized_keys` (the install never changes `PermitRootLogin`; it warns when root logins are off); the command reads `SSH_ORIGINAL_COMMAND`, checks every argument against a strict pattern and refuses anything else. Secrets (a database password) come on standard input, never in arguments.
 
