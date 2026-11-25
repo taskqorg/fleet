@@ -1,0 +1,52 @@
+{
+  "id": "doc-recognize-two-step",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider google",
+      "host": "owner-mac",
+      "id": "classify-request",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "contents": "${steps.classify-request.output.body.contents}",
+        "generationConfig": "${steps.classify-request.output.body.generationConfig}",
+        "model": "gemini-3.8-flash"
+      },
+      "connection": "google-ai",
+      "id": "classify",
+      "kind": "api",
+      "tool": "generate_content"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from classify",
+      "host": "owner-mac",
+      "id": "first",
+      "kind": "script"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider anthropic --only first",
+      "host": "owner-mac",
+      "id": "extract-request",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "max_tokens": "${steps.extract-request.output.body.max_tokens}",
+        "messages": "${steps.extract-request.output.body.messages}",
+        "model": "claude-sonnet-5-5"
+      },
+      "connection": "anthropic-cyprus",
+      "id": "extract",
+      "kind": "api",
+      "tool": "create_message"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from extract --merge classify",
+      "host": "owner-mac",
+      "id": "result",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}

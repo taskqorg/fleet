@@ -1,0 +1,31 @@
+[
+ {
+  "id": "dam:document-recognition",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/dam-use-cases.md",
+   "anchor": "document-recognition",
+   "commit": "cbc33328bf1f28c67188f0f265a17e291284ea33",
+   "sha256": "34f5ff0e5cb76c96451a7c45c13349d032a5fab32a2ba8c49716613c2a4dedf6"
+  },
+  "source_status": "current",
+  "actor": "agent",
+  "goal": "Classify one model's documents and extract alias, legal name, date of birth, site and signature presence; flag duplicates, name spelling variants and unreadable files",
+  "expected_outcome": "A normalized JSON result per model that matches the labelled answer field by field, produced only through Fleet's own model accounts.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "metric"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "dam",
+   "vision",
+   "documents",
+   "personal-data"
+  ],
+  "maturity": "synthetic ready"
+ }
+]

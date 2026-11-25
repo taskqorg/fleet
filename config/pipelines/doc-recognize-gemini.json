@@ -1,0 +1,29 @@
+{
+  "id": "doc-recognize-gemini",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider google",
+      "host": "owner-mac",
+      "id": "request",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "contents": "${steps.request.output.body.contents}",
+        "generationConfig": "${steps.request.output.body.generationConfig}",
+        "model": "gemini-3.8-flash"
+      },
+      "connection": "google-ai",
+      "id": "call",
+      "kind": "api",
+      "tool": "generate_content"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from call",
+      "host": "owner-mac",
+      "id": "result",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}
