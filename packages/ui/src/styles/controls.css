@@ -594,6 +594,9 @@
     .vl-row .btn.icon-only, .row-pin, .nav-i a, .rail-user-b, .nav-pin, .counter, .seg, .preset button, .tabs button, .tab-more, .menu button, .spot-list [role=option] .btn.icon-only, .spot-terms button { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
     .spot-list [role=option] { height: auto; min-height: var(--size-hit-phone); }
     .row-link { display: inline-flex; align-items: center; min-height: var(--size-hit-phone); }
+    /* In a list row the whole row is the target (OR-26, AppShell openRow), so its title link needs no height of its own:
+       a 44 px title would reserve an empty line under a one-line title in a two-line phone row. */
+    .vl-row .row-link { min-height: 0; }
     .row-spend { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
     .vl-row.static, .vl-head { height: auto; min-height: var(--size-row-phone); }
     .stat > a, .waiting, .nav-count.waiting { display: inline-flex; align-items: center; min-height: var(--size-hit-phone); }
