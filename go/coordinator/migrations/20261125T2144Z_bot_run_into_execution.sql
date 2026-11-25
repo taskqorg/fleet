@@ -4,10 +4,10 @@
 -- (bot_task.execution_id), and a skipped trigger wake becomes a trigger_log row. Its other rows that never ran (a
 -- skipped manual run, a message cancelled in the queue) are deleted; the audit row legacy:<this file> counts them.
 -- A bot has no Home either: its conversations are found by (bot_id, subject), so bot.home_session_id goes, and the
--- unused bot_automation and bot_wake_cursor tables (replaced by trigger, migration 106) go too.
+-- unused bot_automation and bot_wake_cursor tables (replaced by trigger, migration 106) go too, in a later migration.
 SELECT set_config('fleet.project_ids', '*', true);
 SELECT set_config('fleet.deleted', 'on', true);
--- A rerun finds the old tables and columns dropped: empty stand-ins let the statements below run on nothing.
+-- A rerun finds the old columns dropped (and bot_run empty): empty stand-ins let the statements below run on nothing.
 CREATE TABLE IF NOT EXISTS bot_run (id text PRIMARY KEY, bot_id text, project_id text, bot_revision integer, memory_revision integer,
  execution_id text, cause text, dedup_key text, state text, quiet boolean, reason text, created_at timestamptz, trigger_id text);
 ALTER TABLE bot_task ADD COLUMN IF NOT EXISTS bot_run_id text;
@@ -51,6 +51,7 @@ ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE bot_task DROP COLUMN bot_run_id;
 ALTER TABLE bot DROP COLUMN home_session_id;
-DROP TABLE bot_run;
-DROP TABLE IF EXISTS bot_automation;
-DROP TABLE IF EXISTS bot_wake_cursor;
+-- The tables themselves stay, empty or unused, until no release in the rollback window (deploy/migrate-check.sh, the
+-- last 5) creates their policies and triggers at start; a later migration drops bot_run, bot_automation and
+-- bot_wake_cursor.
+DELETE FROM bot_run;
