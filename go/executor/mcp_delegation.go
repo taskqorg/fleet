@@ -127,8 +127,9 @@ var toolSchemas = func() map[string]toolSchema {
 	return out
 }()
 
-// argumentsFit checks a project tool call against the tool's own inputSchema: only its declared properties,
-// type and bounds, with required strings present and not blank.
+// argumentsFit checks a project tool call against the tool's own inputSchema: only its declared properties, their
+// type and bounds, with required strings present and not blank and other required values present. An object or array
+// argument (access_grant_ask's scope) is checked only for its kind here; the coordinator's operation decodes it strictly.
 func argumentsFit(name string, args M) error {
 	schema := toolSchemas[name]
 	for k, v := range args {
@@ -144,6 +145,23 @@ func argumentsFit(name string, args M) error {
 			}
 			continue
 		}
+		switch p.Type {
+		case "object":
+			if _, ok := v.(M); !ok {
+				return fmt.Errorf("Invalid project request: %s must be an object", k)
+			}
+			continue
+		case "array":
+			if _, ok := v.([]any); !ok {
+				return fmt.Errorf("Invalid project request: %s must be a list", k)
+			}
+			continue
+		case "boolean":
+			if _, ok := v.(bool); !ok {
+				return fmt.Errorf("Invalid project request: %s must be true or false", k)
+			}
+			continue
+		}
 		s, ok := v.(string)
 		n := float64(utf8.RuneCountInString(s))
 		if !ok || p.MinLength != nil && n < *p.MinLength {
@@ -154,9 +172,18 @@ func argumentsFit(name string, args M) error {
 		}
 	}
 	for _, k := range schema.Required {
-		if s, _ := args[k].(string); strings.TrimSpace(s) == "" {
-			return fmt.Errorf("Invalid project request: %s needs %s", name, k)
+		switch v := args[k].(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				continue
+			}
+		case nil:
+		default:
+			if t := schema.Properties[k].Type; t != "" && t != "string" {
+				continue
+			}
 		}
+		return fmt.Errorf("Invalid project request: %s needs %s", name, k)
 	}
 	return nil
 }
