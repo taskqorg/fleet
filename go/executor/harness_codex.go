@@ -203,7 +203,8 @@ func (h harness) Protocol(cmd *exec.Cmd, root, native string, p map[string]any, 
 	return cmd, nil
 }
 
-// codexAppServer turns the exec command into `codex app-server`, keeping only its -c/--disable/--enable flags.
+// codexAppServer turns the exec command into `codex app-server`, keeping only its -c/--disable/--enable flags: all of
+// codexIsolation and the per-run additions; codexExecOnly has no app-server form (see there).
 func codexAppServer(old *exec.Cmd) *exec.Cmd {
 	c := exec.Command(old.Path)
 	c.Args = []string{old.Args[0], "app-server"}
