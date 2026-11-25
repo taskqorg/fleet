@@ -226,8 +226,16 @@ func (e *lawEnv) violate(law, format string, args ...any) {
 	if len(tail) > 80 {
 		tail = tail[len(tail)-80:]
 	}
-	e.t.Fatalf("LAW VIOLATION %s (seed %d, replay with FLEET_LAW_SEED=%d): %s\ntrace (last %d of %d):\n  %s", law, e.seed, e.seed,
+	msg := fmt.Sprintf("LAW VIOLATION %s (seed %d, replay with FLEET_LAW_SEED=%d): %s\ntrace (last %d of %d):\n  %s", law, e.seed, e.seed,
 		fmt.Sprintf(format, args...), len(tail), len(e.trace), strings.Join(tail, "\n  "))
+	if os.Getenv("FLEET_LAW_MUTANT") != "" {
+		// A mutant run (TestLawMutants) needs only the first violation: end now instead of waiting for the other
+		// seeds already running (-failfast starts no new ones but lets those finish). The parent's cluster, which
+		// holds this run's databases, goes with the parent.
+		fmt.Println(msg)
+		os.Exit(1)
+	}
+	e.t.Fatal(msg)
 }
 
 func (e *lawEnv) owner(sql string, args ...any) {
