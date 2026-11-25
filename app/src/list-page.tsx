@@ -74,6 +74,8 @@ export type ListPageOptions = {
   scope?: () => string | undefined;
   /** What a row's link opens by (the URL item): its human code where the page resolves codes (OR-38), else its id. */
   focusOf?: (r: ListRow) => string;
+  /** View keys that belong to the open item (Conversations: ?thread): opening another row drops them. */
+  itemExtra?: string[];
   /** A change of this value is a switch to another list: it ends selection mode and a pending confirmation; a saved view
    * that switches lists also drops the checked rows. */
   listId?: (v: View) => unknown;
@@ -287,6 +289,12 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     isLocal: !!localMemo,
     entity: o.entity,
     focusOf: (r: ListRow) => o.focusOf?.(r) ?? r.id,
+    /** The view patch that opens a row: its focus, without the keys of the item open before. */
+    opening: (r: ListRow): Partial<View> => {
+      const focus = o.focusOf?.(r) ?? r.id, extra = url.view.extra;
+      if (!o.itemExtra?.length || !extra || focus === url.view.focus || r.id === url.view.focus) return { focus };
+      return { focus, extra: Object.fromEntries(Object.entries(extra).filter(([k]) => !o.itemExtra!.includes(k))) };
+    },
     scope: () => o.scope?.(),
   };
 }
@@ -360,7 +368,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
 }) {
   const g = p.page;
   const rowMenu = (r: R): MenuItems => [
-    { label: 'Open', icon: actions.open, onClick: () => g.set({ focus: g.focusOf(r) }) },
+    { label: 'Open', icon: actions.open, onClick: () => g.set(g.opening(r)) },
     { label: g.pins.has(r.id) ? 'Unpin' : 'Pin', icon: g.pins.has(r.id) ? 'pin-off' : 'pin', onClick: () => g.pins.toggle(r.id) },
     { label: g.sel.includes(r.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => g.select(r) },
     { label: 'Copy code', icon: actions.copy, onClick: () => copyText(r.code ?? r.id) },
@@ -404,8 +412,8 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
                 g.pins.toggle(i.r.id); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(i.r.id)}"] .row-link`)?.focus({ preventScroll: true }));
               }} /></span></Show>
               <span class="lead">{p.state(i.r)}</span>
-              <span class="tt">{p.before?.(i.r)}<a class="title row-link" href={targetUrl(g.href({ focus: g.focusOf(i.r) }))} aria-keyshortcuts="P X"
-                onClick={e => { e.preventDefault(); if (g.selecting || e.shiftKey) g.select(i.r); else g.set({ focus: g.focusOf(i.r) }); }}
+              <span class="tt">{p.before?.(i.r)}<a class="title row-link" href={targetUrl(g.href(g.opening(i.r)))} aria-keyshortcuts="P X"
+                onClick={e => { e.preventDefault(); if (g.selecting || e.shiftKey) g.select(i.r); else g.set(g.opening(i.r)); }}
                 onKeyDown={e => {
                   if (e.altKey || e.ctrlKey || e.metaKey) return;
                   if (e.key === 'p') { e.preventDefault(); g.pins.toggle(i.r.id); }

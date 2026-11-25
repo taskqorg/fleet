@@ -351,6 +351,7 @@ export function Results(props: { id?: string; project?: string; frame?: Frame })
     get filtered() { return basePage.filtered; },
     clearFilters: basePage.clearFilters,
     focusOf: basePage.focusOf,
+    opening: basePage.opening,
     scope: basePage.scope,
     get shown() { return basePage.shown; },
     isLocal: basePage.isLocal,
