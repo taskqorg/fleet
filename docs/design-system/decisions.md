@@ -567,10 +567,11 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question (owner):** a button in the left menu shows bots, off by default; on, a zone shows the pinned bots and the recently active ones, with a configurable count and a link to all bots.
 * **Options:** the zone at the bottom of the rail, above the user block, growing into free space (A); or at the top under the head, with a fixed number of rows so the sections do not move with bot activity (B).
 * **Choice (owner):** A, bottom. Placement is therefore not a setting. The switch and the recent count are the person setting `railBots`; pins stay the Library pins. Recorded in [nav-rail](controls/nav-rail.md) (**Bots**), board [shell](board/screens/shell.bl), frame "Shell · rail bots zone".
+
 ## 2026-11-25: Balancing lives on Live as items
 
 * **Question (owner):** one place that decides where and on what work runs: take a host out, pin a project to hosts and subscriptions, keep personal subscriptions personal, see quota that will go unused, and say "Antigravity wherever possible" instead of one fixed model per profile; shown one item at a time and changed by voice through HAL0.
-* **Options** (drawn in Fleet tokens on a local board): A, a band of rules as sentences on top of Live; B, a Balancing root in System with Live showing one summary line; C, a Balance block on Live with one line per host, subscription, model class and pinned project, each with its own state and why, and no rule list.
+* **Options** (drawn in Fleet tokens on the board home's `drafts/balancing.bl`): A, a band of rules as sentences on top of Live; B, a Balancing root in System with Live showing one summary line; C, a Balance block on Live with one line per host, subscription, model class and pinned project, each with its own state and why, and no rule list.
 * **Choice (owner):** C. A profile names a shared model class, not one model. Quota that will go unused is shown and HAL0 offers the preference; Fleet never switches on its own.
 * **Reason:** the owner reads the balance per item on the technical screen; fields on items keep one fact in one place, with no rule engine.
 * **Recorded in:** [work allocation and balancing](../work-allocation.md), [Live](pages/live.md#balance), [inventory](inventory.md#balancing).
