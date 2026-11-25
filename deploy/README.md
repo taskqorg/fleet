@@ -69,7 +69,6 @@ Proves the three-start rollback on the live hosts. It needs a breakage on `main`
 - [release-recent.sh](release-recent.sh): the five newest published native release versions and Linux asset digests.
 - [verify-release.sh](verify-release.sh): extracts archives, checks static build metadata and runs Linux binary selftests.
 - [migrate-check.sh](migrate-check.sh): starts a temporary PostgreSQL database, upgrades from the latest release and checks recent coordinators against the new schema.
-- [window-covered.sh](window-covered.sh): verifies whether speculative migration evidence still covers current release digests and source trees.
 - [workflows-moved.sh](workflows-moved.sh): reports workflow changes between a candidate and main for tag publication.
 - [Infrastructure](infrastructure/README.md): service definitions, access checks and backup scripts. Linux and macOS host service files remain under `hosts/`.
 

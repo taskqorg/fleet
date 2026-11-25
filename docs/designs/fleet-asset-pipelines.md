@@ -318,7 +318,7 @@ S2 needs the S4 binary example form and the measure and render scripts for the s
 
 ### Verification Plan
 
-*   **Build and tests:** `pnpm run build`; `cd go && go vet ./... && go test ./...`; `tests/go/run.sh`; `scripts/lab-examples.ts check` on every seed including the crate.
+*   **Build and tests:** `pnpm run build`; `cd go && go vet ./... && go test ./...`; `scripts/lab-examples.ts check` on every seed including the crate.
 *   **Live:** the "Done when" line of each stage.
 *   **Secrets:** no key value appears in any commit, log, transcript, artifact, command line or pull request; key moves are described by item and connection name only.
 

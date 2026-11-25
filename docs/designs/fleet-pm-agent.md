@@ -313,12 +313,11 @@ One pull request per stage. Each ends with its check.
 *   `app/src/views/tasks.tsx`, `app/src/views/conversations.tsx`: Held chip; `createdBy` link; focus and watch status on the session.
 *   `config/agents/pm.json`: instructions (§9).
 *   `docs/designs/fleet-data-foundation.md`: agent permissions paragraph.
-*   `tests/go/pm.test.ts`: outside HTTP tests run by `tests/go/run.sh`. An agent call is driven as a host: `hosts_register`, a queued execution claimed by `/api/hosts/poll`, then `/api/hosts/agent-tools` with the start command's ID.
 
 ### Verification Plan
 
 *   **Build:** `cd go && go vet ./... && go build -o bin/fleet-coordinator ./coordinator`.
-*   **Tests:** `FLEET_TRIAL_TESTS=tests/go/pm.test.ts node tests/trial/run.ts` locally; the full gate in CI (`fleet.md`).
+*   **Tests:** the checks per change in CI ([delivery pipeline](fleet-delivery-pipeline.md#checks-per-change)).
 *   **Design check:** `pnpm run check:design` for app changes.
 *   **Live:** CUJ 1 on `desiign`; CUJ 2 and CUJ 3 on the owner's coordinator; record wakes.
 

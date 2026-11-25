@@ -1,11 +1,6 @@
 package main
 
-// Map adapters for the pipeline tests, which build and read runs as map records (pipelines.go, pipeline_plan.go hold a
-// *runRecord): each converts the map once at the call and writes the typed run back into it in place, so the test's
-// step maps and plan stay the ones it holds.
-
 import (
-	"context"
 	"encoding/json"
 
 	"fleet/contract"
@@ -28,20 +23,8 @@ func viaRun(d doc, f func(*runRecord) error) error {
 	return err
 }
 
-func putRun(q *Request, run doc) error {
-	return viaRun(run, func(r *runRecord) error { return r.put(q) })
-}
-
-func finishRun(q *Request, run doc, state, problem string) error {
-	return viaRun(run, func(r *runRecord) error { return r.finish(q, state, problem) })
-}
-
 func initPipelinePlan(run doc) error {
 	return viaRun(run, func(r *runRecord) error { return r.initPlan() })
-}
-
-func selectPipelineStep(q *Request, run doc, index int) error {
-	return viaRun(run, func(r *runRecord) error { return r.selectStep(q, index) })
 }
 
 func completeStep(q *Request, run doc, i int, output any, extra doc) error {
@@ -90,27 +73,6 @@ func rerunInputs(old doc, identity string) doc {
 	return docOf(extra)
 }
 
-func pipelineRevision(run doc) int64 {
-	if p := pipelinePlanOfRun(run); p != nil {
-		return p.Revision
-	}
-	return 0
-}
-
-func pipelinePlanRead(q *Request, run doc) (doc, error) {
-	r, err := runOfDoc(run)
-	if err != nil {
-		return nil, err
-	}
-	out, err := r.planRead(q)
-	if err != nil {
-		return nil, err
-	}
-	d := docOf(out)
-	d["planSummary"] = planSummary(r.entries())
-	return d, nil
-}
-
 // withArguments: the merged arguments' keys, each with the value the test wrote (an override over the step's).
 func withArguments(def, overrides doc) any {
 	d, _ := asT[pipelineDefStep](def)
@@ -139,26 +101,6 @@ func jobMatches(task, args, tool doc) bool {
 func jobTool(def doc, name string) string {
 	d, _ := asT[pipelineDefStep](def)
 	return d.jobTool(name)
-}
-
-// runPipelineTransition retries DB work with the complete pre-transition
-// snapshot, including a paid answer's already materialized output binding.
-// Effects and object I/O must remain outside this callback.
-func runPipelineTransition(ctx context.Context, a *App, run doc, fn func(*Request) error) error {
-	snapshot := restorePipelineValue(nil, run)
-	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		cancelled, err := q.db().PipelineRunCancelled(q.ctx(), astr(run["id"]))
-		if err != nil {
-			return err
-		}
-		if cancelled {
-			return fail(409, "Pipeline is cancelled")
-		}
-		afterRollback(q, func() {
-			restorePipelineValue(run, snapshot)
-		})
-		return fn(q)
-	})
 }
 
 // restorePipelineValue keeps existing map/slice aliases alive while restoring a
@@ -260,58 +202,6 @@ func docOfRun(r *runRecord) doc {
 		d["plan"] = r.Plan
 	}
 	return d
-}
-
-// getRunDoc: getRun as a map record.
-func getRunDoc(q *Request, id string) (doc, error) {
-	r, err := getRun(q, id)
-	return docOfRun(r), err
-}
-
-// pipelineStart: startRun from the options as a map (lab.go; a draftDefinition and draftBase too); the run as a map
-// record.
-func pipelineStart(q *Request, o doc) (doc, error) {
-	opts, err := asT[pipelineStartOptions](o)
-	if err != nil {
-		return nil, err
-	}
-	draft, err := asT[struct {
-		Definition *pipelineDef `json:"draftDefinition"`
-		Base       *int64       `json:"draftBase"`
-	}](o)
-	if err != nil {
-		return nil, err
-	}
-	opts.draft = draft.Definition
-	if draft.Base != nil {
-		opts.draftBase, opts.hasDraftBase = *draft.Base, true
-	}
-	r, err := startRun(q, opts)
-	return docOfRun(r), err
-}
-
-// succeededPrefix: runPrefix of a map record and definition; each reused step as its map record.
-func succeededPrefix(q *Request, old, def doc) ([]any, error) {
-	r, err := runOfDoc(old)
-	if err != nil {
-		return nil, err
-	}
-	d, err := asT[pipelineDef](def)
-	if err != nil {
-		return nil, err
-	}
-	steps, err := runPrefix(q, r, &d)
-	out := []any{}
-	for _, s := range steps {
-		out = append(out, docOf(s))
-	}
-	return out, err
-}
-
-// stepRow: the step row id of a map record's step i.
-func stepRow(run doc, i int) string {
-	r, _ := runOfDoc(run)
-	return r.row(i)
 }
 
 // pipelineRecoveryFence: recoveryFence of a map record.

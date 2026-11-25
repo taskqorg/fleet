@@ -900,7 +900,7 @@ Today `fleet-executor.service` and every agent turn it starts run as `fleet`, th
 ### Verification
 
 *   Build and unit tests: `cd go && go vet ./... && go test ./...`; the app with `pnpm run build`.
-*   Outside tests: `tests/go/run.sh` after `pnpm run go:build`.
+*   Smoke: `node tests/trial/run.ts`.
 *   Live, per phase on PDS18 and the Mac: Phase 4, CUJ 4 and CUJ 6, and a seeded fake token never reaches ClickHouse or Garage; Phase 5, an agent turn cannot read another account's files; Phase 6, an agent answers the CUJ 4 question by citing execution IDs.
 *   Backups: a restore proof of Postgres, ClickHouse and Garage from `/backup/fleet/` before the design counts as shipped.
 

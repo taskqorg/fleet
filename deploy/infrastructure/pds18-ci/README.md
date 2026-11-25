@@ -1,27 +1,20 @@
 # PDS18 warm runner pool
 
-One persistent Ubuntu 24.04 KVM guest, 12 vCPU / 16 GiB / 160 GiB disk, four GitHub runners sharing one warm cache tree. It runs the heavy jobs of merge queue groups of `main` and pushes to `main` (`ci.yml` go, app, browser and release-build jobs, `release.yml` build) when it has a free slot; everything else, pull requests included, stays GitHub-hosted. This is **not** an ephemeral or fork-safe runner. No Fleet production mounts, credentials, sockets or host root access enter the guest.
+One persistent Ubuntu 24.04 KVM guest, 12 vCPU / 16 GiB / 160 GiB disk, four GitHub runners sharing one warm cache tree. Since 2026-11-25 it runs only the `build` job of `release.yml` (archives, Linux selftests, migration check) on pushes to `main`; every `ci.yml` job, pull requests included, is GitHub-hosted ([checks per change](../../../docs/designs/fleet-delivery-pipeline.md#checks-per-change)). This is **not** an ephemeral or fork-safe runner. No Fleet production mounts, credentials, sockets or host root access enter the guest.
 
 ## Trust
 
-The pool runs code that reached a merge queue group of `main`: a reviewed pull request with the `code-review` status, enqueued by a collaborator, or a push to `main`. Pull request runs, a fork's included, never reach it. The slots share the warm caches (Go build and module caches, Playwright browsers) and the docker daemon, so one admitted job can leave entries a later job, a release build included, reads. That is the accepted boundary: the same queue code already builds the speculative release (`ci.yml` release-build) that `release.yml` signs. Per-slot users isolate jobs from each other's processes, ports-by-socket, `/dev/shm` and `HOME`; they are not a security boundary.
+The pool runs code that reached `main`: a reviewed pull request with the `code-review` status that passed the merge queue, or an admin push. Pull request runs, a fork's included, never reach it. The slots share the warm caches (Go build and module caches) and the docker daemon, so one admitted job can leave entries a later job reads; every job is a release build of `main`. Per-slot users isolate jobs from each other's processes, ports-by-socket, `/dev/shm` and `HOME`; they are not a security boundary.
 
 ## Admission
 
-Organization runner group `fleet-pds18-trusted-main` (id 6) admits only repository `taskqorg/fleet` and jobs defined in the selected workflows at `refs/heads/main`. The API takes no wildcard ref (`ci.yml@refs/heads/gh-readonly-queue/main/*` is refused with HTTP 400, ref not found), so a job defined in `ci.yml` of a merge queue group can never be admitted. Merge queue jobs reach the pool through the reusable `.github/workflows/pds18.yml`, which `ci.yml` calls at `@main`: a selected reusable workflow admits the jobs defined in it, whatever the caller. Its job goes to the pool only when the caller's event is `merge_group` on `refs/heads/gh-readonly-queue/main/*` or `push` to `refs/heads/main`, which no caller can change; any other caller gets a hosted job that fails at once (never a skipped one, which would pass).
-
-Read back on 2026-11-12 (`gh api orgs/taskqorg/actions/runner-groups/6`): `restricted_to_workflows=true`, `visibility=selected`, `allows_public_repositories=true`, selected repository `taskqorg/fleet` only, `selected_workflows`:
-
-* `taskqorg/fleet/.github/workflows/ci.yml@refs/heads/main`
-* `taskqorg/fleet/.github/workflows/pds18.yml@refs/heads/main`
-* `taskqorg/fleet/.github/workflows/pds18-heartbeat.yml@refs/heads/main`
-* `taskqorg/fleet/.github/workflows/release.yml@refs/heads/main`
+Organization runner group `fleet-pds18-trusted-main` (id 6) admits only repository `taskqorg/fleet` and jobs defined in the selected workflows at `refs/heads/main`. The release `build` job asks for the pool only on `refs/heads/main` and runs hosted otherwise. Selected workflows to keep: `taskqorg/fleet/.github/workflows/release.yml@refs/heads/main` (the `ci.yml`, `pds18.yml` and `pds18-heartbeat.yml` entries are obsolete since 2026-11-25).
 
 Labels and `if` conditions are routing, not the security boundary. Never enable public access on Default or reuse another provider's group.
 
 ## Routing and fallback
 
-The `selection` job of `ci.yml` runs `scripts/pds18-route.ts`. Free slots are the pool size (4) less the pool's jobs queued or running in the repository. release-build takes a free slot always (warm: 69-106 s on the pool against 68-125 s hosted, its recent coordinators stay extracted); the others only when hosted is busy: 14 or more of the repository's jobs running on hosted runners (of 20 per organization), or a hosted job of another run waiting more than 30 s for a runner (the organization's limit reached through other repositories too); app, go vet and the browser shards first, go outside and go unit last. PDS18's CPU is a 2014 Xeon E5-2620 v3: warm on the pool, setup is about 3 s against 20-40 s hosted, but go outside took 275-290 s against 184 s and browser shard 0 106 s against 49-80 s (2026-11-12), so the pool pays only where its caches win or hosted would make the job wait. The pool counts as down or full, and everything runs hosted, when the newest successful `pds18-heartbeat.yml` run (every 5 minutes on the pool) is older than 40 minutes (GitHub delays scheduled runs), or when a pool job, a heartbeat included, has waited for a runner for more than 2 minutes while no pool job runs; a dead pool shows within one beat, which also comes with every push to `main`. Any API error routes hosted. Jobs already routed have no hosted fallback: the `pds18-watch` job cancels its run when one has waited 5 minutes while no pool job runs, so the queue drops the group at once instead of at its timeout, and the next run routes hosted. Each heavy family has a hosted job and a PDS18 twin; the `app` qualification merges the two results, and `release.yml` reads whichever release-build ran. The job commands live in `scripts/ci-job.sh`, shared by both.
+`release.yml` `build` names the pool's labels on `main`; it waits for a free slot. When the pool is down, dispatch the release with the job on hosted runners through a reviewed change of `runs-on`. The test-job routing (`scripts/pds18-route.ts`, `pds18.yml`, the heartbeat) was removed on 2026-11-25 with the test jobs it routed.
 
 ## Provision
 
@@ -48,7 +41,7 @@ Git comes from `ppa:git-core/ppa`, as on the hosted image (Ubuntu's 2.43 lacks `
 
 ## Logins on the guest
 
-logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, written by cloud-init. With the default, a runner service, which is no login session, loses its shared memory when the last SSH session of its user ends, and a job's PostgreSQL fails. It is host-wide rather than linger per user because the guest exists only for the pool. On an existing guest, write the same drop-in and run `systemctl restart systemd-logind`. Every `pds18.yml` job and the release `build` job fail first thing when the readback is not `b false`.
+logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, written by cloud-init. With the default, a runner service, which is no login session, loses its shared memory when the last SSH session of its user ends, and a job's PostgreSQL fails. It is host-wide rather than linger per user because the guest exists only for the pool. On an existing guest, write the same drop-in and run `systemctl restart systemd-logind`. The release `build` job fails first thing when the readback is not `b false`.
 
 ## Guest state the release job keeps
 
@@ -56,7 +49,7 @@ logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-
 
 ## Rollback
 
-To take the pool out of routing without a pull request, stop the runner services (`systemctl stop 'actions.runner.*'` in the guest): the heartbeat goes stale and `ci.yml` routes hosted within 40 minutes, or at once for any run whose pool job waited 2 minutes. Drain before stopping; do not interrupt uncertain work. To remove it, restore hosted-only jobs through the normal reviewed PR, remove only the verified registrations with the supported GitHub API, stop/disable `fleet-ci-vm.service`, and remove only `table inet fleet_ci` after the VM is stopped. Leave existing firewall tables and production services alone. Keep guest disk/evidence for review; deletion is a separate explicit action.
+To take the pool out of use, stop the runner services (`systemctl stop 'actions.runner.*'` in the guest) after the running release ends, and move `release.yml` `build` to hosted runners through a reviewed change. To remove it, move `release.yml` `build` to hosted runners through the normal reviewed PR, remove only the verified registrations with the supported GitHub API, stop/disable `fleet-ci-vm.service`, and remove only `table inet fleet_ci` after the VM is stopped. Leave existing firewall tables and production services alone. Keep guest disk/evidence for review; deletion is a separate explicit action.
 
 ## Interface
 
@@ -76,4 +69,4 @@ Preparation installs packages, creates a service user, image/overlay/seed, manag
 
 ## Verification
 
-README edits: `git diff --check` and relative-link validation. Runner routing has `node scripts/pds18-route.ts --self-check` from the repository root. Provisioning and guest probes require the dedicated host/guest and the runbook's capacity, admission and network readbacks; do not run them on a developer machine as bootstrap checks.
+README edits: `git diff --check` and relative-link validation.  Provisioning and guest probes require the dedicated host/guest and the runbook's capacity, admission and network readbacks; do not run them on a developer machine as bootstrap checks.

@@ -47,7 +47,7 @@ The schema is `go/coordinator/schema.sql` (embedded in the binary); [fleet-data-
 
 ## Tests
 
-`tests/go/run.sh [index total]` builds nothing; build first, then it runs `tests/trial` and `tests/go` against `go/bin/fleet-coordinator` on a fresh local Postgres database per file, `OUTSIDE_JOBS` files at once (default 1; CI: `nproc`, `scripts/ci-part.sh`). Go unit tests: `cd go && go test ./...`.
+`scripts/check.sh` runs every check of a change ([checks per change](designs/fleet-delivery-pipeline.md#checks-per-change)). The smoke `node tests/trial/run.ts` builds nothing; build first, then it runs `tests/trial/slice.test.ts` against `go/bin/fleet-coordinator` on a fresh local Postgres database. Go unit tests: `cd go && go test ./...`.
 
 ## Deployment
 

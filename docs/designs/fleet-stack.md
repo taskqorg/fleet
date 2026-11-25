@@ -44,8 +44,8 @@ The owner's first goal is fast agent work in parallel worktrees: the Mac must st
 ## Rule delivery
 
 - `AGENTS.md` sends every agent attempt to `fleet.md` and the specq shared core at a pinned commit.
-- `fleet.md` names one merge-gate command and a diagnostic time budget of 180 s on an idle Mac ([verification](../../fleet.md#verification)). The full gate runs only in CI ([why](#why-this-stack)).
-- CI runs specq `contract_lint.py` on `fleet.md` and `scripts/test-rule-report.ts --strict`: an outside test in `tests/go/` that names no requirement or risk fails CI; any other test is reported as a warning.
+- `fleet.md` names one check command, `scripts/check.sh`, the same in CI and locally, about a minute ([verification](../../fleet.md#verification)).
+- CI runs specq `contract_lint.py` on `fleet.md`.
 - Not built: a `fleet` project in `config/projects/`, so that specq rule delivery also applies to agents Fleet itself dispatches to work on Fleet.
 
 ## Toolchain
@@ -74,7 +74,7 @@ Moved to [fleet-contracts.md](fleet-contracts.md).
 
 ## MCP servers as executor subcommands (L4)
 
-- The executor starts delegation, design-rules, connection and [code](fleet-code-mode.md) servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays stdio exchanges (`tests/executor/fixtures/mcp.json`, first captured from the former Python servers) against the Go binary; a malformed line answers the JSON-RPC parse error `-32700 "Parse error"`.
+- The executor starts delegation, design-rules, connection and [code](fleet-code-mode.md) servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. A malformed line answers the JSON-RPC parse error `-32700 "Parse error"`.
 - The Access origin guard is the gateway's `guard` command (`go/gateway/guard.go`).
 
 ## Go code

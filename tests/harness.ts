@@ -1,6 +1,6 @@
 // The Go coordinator under test (go/bin/fleet-coordinator, or FLEET_TRIAL_SERVER): a fresh Postgres database with the PDS18
 // roles on the machine's one test PostgreSQL, which the Go tests share (docs/designs/fleet-host-cleanup.md#8-test-postgresql;
-// tests/go/run-files.ts gives each parallel file its own database on it), the binary started against it on a free port.
+// each caller name gets its own database on it), the binary started against it on a free port.
 // Used by tests/trial/run.ts and the app checks in tests/ui. Node standard library and the PostgreSQL client programs only;
 // seed data goes in through sql().
 //
@@ -24,7 +24,7 @@ const pgArgs = ['-h', pgdata, '-p', pgport, '-U', 'postgres'];
 const sh = (cmd: string, args: string[], input?: string) => execFileSync(cmd, args, {input, encoding: 'utf8', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: {...process.env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8'}});
 const ready = () => { try { sh('pg_isready', pgArgs); return true; } catch { return false; } };
 // startPostgres: the server ready, as the Go tests' startTestCluster (go/coordinator/pg_fixture_test.go) does it, with the
-// same options, durable (tests/go/interface-writer.test.ts checks fsync and synchronous_commit on; Go test databases
+// same options, durable (fsync and synchronous_commit on; Go test databases
 // turn synchronous_commit off per database). initdb runs only without PG_VERSION, into a private directory
 // renamed into place: of two racing starters the loser uses the winner's. pg_ctl start runs only when the server does not
 // answer, and a lost start race waits for the winner's server. The server runs without the executor's run marker
@@ -69,7 +69,7 @@ export type Coordinator = {base: string, secret: string, pid: number, sql: (text
 export async function startCoordinator(o: {name?: string, env?: Record<string, string>, people?: string} = {}): Promise<Coordinator> {
   startPostgres();
   // deploy/infrastructure/fleet-postgres.sql itself, with only the database name changed (roles are per server).
-  // scope: the file's run (FLEET_TRIAL_NAME, tests/go/run-files.ts), so files run at once on the one server never share a
+  // scope: the run (FLEET_TRIAL_NAME), so runs at once on the one server never share a
   // database, also for their unnamed or same-named coordinators.
   const scope = process.env.FLEET_TRIAL_NAME ? process.env.FLEET_TRIAL_NAME + '/' : '';
   const db = 'fleet_trial_' + basename(root.replace(/\/$/, '')).replace(/\W/g, '_').toLowerCase().slice(0, 24) + '_' + createHash('sha256').update(root + scope + (o.name ?? '')).digest('hex').slice(0, 6) + (o.name ? '_' + o.name.replace(/\W/g, '_').slice(0, 10) : '');
@@ -98,7 +98,7 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
       FLEET_CLICKHOUSE_URL: 'off', FLEET_CLICKHOUSE_ENV: '/nonexistent',
       // Never GitHub from tests: the Runners CI pass would spend the runner's keyless 60 requests an hour.
       FLEET_RUNNERS_CI_TICK_MS: '0',
-    // The lost sweep at test speed (tests/go/run.sh used to set it; a file run alone must behave the same).
+    // The lost sweep at test speed.
     FLEET_LOST_AFTER_MS: process.env.FLEET_LOST_AFTER_MS ?? '6000', ...o.env}});
     // Each process reports only its own exit: a late exit of the previous one never marks this one exited.
     gone = new Promise(r => child.on('exit', () => { if (server === child) exited = true; r(); }));

@@ -104,7 +104,6 @@ test('projects view and focus round-trip', () => {
   assert.equal(formatView({ view: 'projects', focus: 'hello-world' }), '/projects/hello-world');
 });
 
-// review 7 (every codec grouping is accepted by task_page) is an outside test now: tests/go/artifacts.test.ts.
 
 test("review #31-7: a project named '-' does not collide with the no-project marker", () => {
   const v: View = { view: 'tasks', project: ['-', null, 'a'] };

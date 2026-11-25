@@ -71,7 +71,7 @@ Target: replaced by a merge that releases by itself ([delivery pipeline](fleet-d
 
 *   **Given**: commit C on `main`; its `ci` run may still be running. Every host has `autoUpdate: "on"`.
 *   **When**: the owner runs `git tag v1.261111.0 C && git push origin v1.261111.0`.
-*   **Then**: the release workflow waits for C's `app` job (it also posts the `go` and `browser` statuses), builds, publishes. Within about 2 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
+*   **Then**: the release workflow waits for C's `app` job, builds, publishes. Within about 2 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
 
 ### CUJ 2: Bad release on PDS18
 
@@ -124,14 +124,14 @@ Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery
 
 *   **Job `gate`** (`contents: read`, `actions: read`, checkout with `fetch-depth: 0`):
     *   Refuse a tag whose name is not `v<N>.<yymmdd>.<M>` (strict regex `^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`) with `yymmdd` the UTC date of the annotated tag's tagger date (lightweight tag: the commit date), or whose commit is not an ancestor of `origin/main`, or whose version is not newer than the current latest release.
-    *   Find the `ci` run with `gh run list --workflow ci --commit <sha> --event push --branch main --json databaseId,status`. No run yet: poll every 30 s. Then `gh run watch <id>` until it completes. Both waits end at the gate job's `timeout-minutes` (GitHub's default 360). Proceed only when job `app` concluded `success` (its validation posts the required `go` and `browser` statuses); the report jobs do not gate. A timeout fails the release; the owner re-runs the workflow, no new tag needed.
+    *   Find the `ci` run with `gh run list --workflow ci --commit <sha> --event push --branch main --json databaseId,status`. No run yet: poll every 30 s. Then `gh run watch <id>` until it completes. Both waits end at the gate job's `timeout-minutes` (GitHub's default 360). Proceed only when job `app` concluded `success`; the report jobs do not gate. A timeout fails the release; the owner re-runs the workflow, no new tag needed.
     *   Output `previous`: the version of the latest published release (empty for the first release); a tag whose release never published is skipped.
 *   **Job `build`** (`needs: gate`, `contents: read`): `deploy/build-release.sh <commit> out <version> <previous> linux/amd64 darwin/arm64`, the one build script for releases and local trials. Each tarball `fleet-<ver>-<os>-<arch>.tgz` holds `fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update`, `dist/app/`, `config/`, `deploy/` (unit files, `install-release.sh`, `status.sh`) and `release.json` `{version, previous, commit, target, builtAt}`. Runs every linux binary's `selftest`. Uploads the tarballs with `actions/upload-artifact`.
 *   **No macOS job** (removed 2026-11-12, [delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release)): the darwin tarball is a `CGO_ENABLED=0` cross-build checked static in CI; each Mac's `fleet-update` runs the `selftest` of every binary it runs before switching (step 7 below, COREQ-R25).
 *   **Migration check** (originally a job `migrate-check` with `needs: build`; now a step of `build`, see above): on the runner's PostgreSQL, the newest published release's coordinator builds the database, the new coordinator migrates it, and each of the last 5 published releases' coordinators then starts on it and must answer `/api/health` 200 ([delivery pipeline, section 5](fleet-delivery-pipeline.md#5-compatibility-across-skipped-versions)). Skipped when there is no published release. This enforces "expand in N, contract in N+1": a migration that breaks a checked release's coordinator never publishes.
-*   **Job `publish`** (`needs: build`, or the merge queue's artifact, and job `supersede`: a push run whose commit `main` has since moved past with workflow changes publishes nothing, [delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release); a UI release needs only the gate and signs the `fleet-ui` tree of the qualifying ci run; environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
+*   **Job `publish`** (`needs: build` and job `supersede`: a push run whose commit `main` has since moved past with workflow changes publishes nothing, [delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release); a UI release needs only the gate and signs the `fleet-ui` tree of the qualifying ci run; environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
 
-`ci.yml` job `release-build` builds these tarballs in the merge queue with the release's own version, and the release signs those bytes ([delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release)).
+The merge queue builds no tarballs: job `build` builds them after the merge, and the release signs those bytes ([checks per change](fleet-delivery-pipeline.md#checks-per-change)).
 
 ### 2. Versions in binaries
 
@@ -349,7 +349,7 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 4.  `go/gateway/main.go` (Modify): selftest output unchanged; version now set by the release build.
 5.  `go/coordinator/health.go` (Modify): `version`, `autoUpdate` of the coordinator's host.
 6.  `deploy/install-release.sh` (Modify): version from `release.json`, unpack into `releases/<version>/`, selftest every binary present (`fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update`), check against `SHA256SUMS`; old names not accepted.
-*   Tests: `health` returns `version` and `autoUpdate`; each `selftest` exits 0 without env (shell check in `tests/go/run.sh`).
+*   Tests: `health` returns `version` and `autoUpdate`; each `selftest` exits 0 without env (run by `release.yml` job `build`).
 
 #### Phase 2: protocol expand and coordinator
 

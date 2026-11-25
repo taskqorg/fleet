@@ -48,7 +48,7 @@ Copying one message or a selection writes two formats ([conversations](pages/con
 * `text/plain`, light markdown: one header line per message, `**alex · 11 Nov 14:03**` or `**codex gpt-6.1-sol low · 11 Nov 14:04**`, then the body unchanged; code blocks stay fenced. Times are in the reader's zone.
 * `text/html` with only `b`, `i`, `code`, `pre`, `a` and `br`, which Telegram, other chat apps, documents and editors keep.
 
-Code: `packages/ui/src/clip.ts`; export of a selection: `thread_export` with `tz`. Test: `tests/ui/clip.test.ts`, `tests/ui/conversations.check.ts`.
+Code: `packages/ui/src/clip.ts`; export of a selection: `thread_export` with `tz`. Test: `tests/ui/clip.test.ts`.
 
 ## What each screen answers
 

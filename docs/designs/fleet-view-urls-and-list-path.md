@@ -7,7 +7,7 @@ This specification defines the operator app's URL codec and live list path for f
 1. **URL view contract.** One grammar for filters, grouping, search, presets, the focused row and the checked rows. A shared codec (`parseView` / `formatView`) used by the app and the coordinator, and a `view_link` operation for agents.
 2. **List data path.** The normalized entity store implemented in `app/src/store.ts`, following [operator-app](fleet-operator-app.md) decision D4. Lists keep their rows on screen while new data loads, the list element is created once, and search sends one request per typing pause.
 3. **`task_page` query.** A side table `task_derived`, kept by Postgres triggers, so a page read no longer computes four subqueries for every task in the table.
-4. **Asserting check.** `tests/ui/filter.check.ts` gains an asserting mode that fails when any of the above regresses.
+4. **List rules.** Rules for the list path, checked live on the deployed site.
 
 The [stack toolchain](fleet-stack.md#toolchain) is canonical for Node/pnpm, exact dependencies and shared stores; this topic does not retain the superseded vendoring/Bun proposal.
 
@@ -32,11 +32,10 @@ The earlier TypeScript/PGlite measurements explained this design choice; they do
 * A filter, grouping, search, preset or selection change keeps the filter bar, counters and current rows on screen. New data replaces them in place; the list element is never re-created after the first load.
 * Back, Forward and returning to a view through the nav rail show the last known rows in the first frame, then refresh in place.
 * Search sends one request per typing pause (no key for 300 ms); a newer request supersedes the older one.
-* `task_page` over HTTP: median under 300 ms at 20,000 tasks for each filter and grouping case of the check, on the operator's machine against the coordinator binary (asserted by `pnpm run check:filter`). The 20,000 → 100,000 growth factor is reported, not asserted, because counts and search stay proportional to the matching set (see §3).
+* `task_page` over HTTP: median under 300 ms at 20,000 tasks for each filter and grouping case. Counts and search stay proportional to the matching set (see §3).
 * Every view state is in the URL in one canonical form. A link opens the same list, the same focused row and the same checked rows for any operator with access.
 * The last list view of each section (`/<id>?<query>`, without `focus` and `sel`) is the person setting `lastViews`, saved when the person leaves the section or the tab hides; the navigation opens a section at it, so leaving and coming back keeps sort, grouping and filters.
 * Agents build and read view links through one operation, with the same code the app uses.
-* `pnpm run check:filter` fails on any regression of the asserted goals.
 
 ## Non-Goals
 
@@ -119,7 +118,7 @@ The earlier TypeScript/PGlite measurements explained this design choice; they do
 * **Length:** no fixed limit. If a real limit is hit (chat tools, Cloudflare Access, MCP transport), it is recorded and short links are designed then. URLs are never cut.
 * **Privacy:** URLs carry search text and preset names into chats and logs; the app renders them as text only.
 
-**Codec.** `packages/view-url/view-url.ts`, the import-free browser codec. The coordinator implements the equivalent codec in `go/coordinator/view_link.go`; `tests/go/view.test.ts` compares the two. They are separate implementations with a parity test, not one runtime module:
+**Codec.** `packages/view-url/view-url.ts`, the import-free browser codec. The coordinator implements the equivalent codec in `go/coordinator/view_link.go`; They are separate implementations kept equal by review, not one runtime module:
 
 ```ts
 type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results';
@@ -175,12 +174,12 @@ Migration 10 in `go/coordinator/schema.sql` (migration 9 is the artifact store):
   * The page joins `task_derived` (LEFT JOIN, so a task missing its row still lists with empty values) only where it is needed: for agent and host grouping the order needs it; otherwise the page is chosen on `task` alone and only its rows are joined.
   * `taskSummary(q, filter, group, groupCounts)` returns per-state counts (the `WHERE` without the state filter, so every counter keeps its number) and group summaries (joined only for agent and host). `page` and `list_membership` both use it.
   * The group expression comes from the fixed Go `taskGroups` map (`taskGroup` and `groupOf`); an unknown group is rejected, and only the selected map values are interpolated.
-* **Cost after the change.** The page read is an index-ordered read of `n` rows. Counts and group summaries remain a scan of the matching rows on plain columns. This is why the growth factor is reported, not asserted.
+* **Cost after the change.** The page read is an index-ordered read of `n` rows. Counts and group summaries remain a scan of the matching rows on plain columns.
 * **Drift check:** `task_derived_check` reads `task_derived_drift()` and returns `{ checked, drifted: [{ taskId, stored, expected }] }` for the caller's projects; `checked` counts the same tasks. Used by tests and exposed as the read operation `task_derived_check`.
 
-### 4. Asserting filter check
+### 4. List rules
 
-`tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]`. Each size gets a fresh Go coordinator and PostgreSQL fixture through `tests/ui/seed.ts` and `tests/harness.ts`. Without `--assert` it only prints. With `--assert` it exits 1 when a rule fails at 3,000 or 20,000 tasks; the 100,000-task run is always report-only. On CI (env `CI` set) the two 300 ms budgets are written to the job summary and do not fail the job, because a shared runner's timing is noise; locally they are asserted. Rules:
+The asserting filter check was deleted on 2026-11-25 ([checks per change](fleet-delivery-pipeline.md#checks-per-change)). A change to the list path is checked live on the deployed site against these rules:
 
 * the `[data-ui=data-list]` element is the same node before and after a filter, grouping, "All", preset, focus and check change;
 * no `.skeleton` appears after the first load;
@@ -191,8 +190,6 @@ Migration 10 in `go/coordinator/schema.sql` (migration 9 is the artifact store):
 * focusing a row does not change `sel`, and checking a row does not change focus;
 * a URL copied from one page and opened in a second page reproduces focus, `sel`, filters and grouping;
 * `task_page` over HTTP: median under 300 ms at 20,000 tasks per case.
-
-It prints fixture load time and, when the larger sizes are requested, the growth factor. Not built: a separate migration10 backfill timing in this check.
 
 ## Alternatives Considered
 
@@ -241,7 +238,7 @@ It prints fixture load time and, when the larger sizes are requested, the growth
 ## Non-Functional Requirements
 
 * **Performance:** targets in Goals; the check measures them.
-* **Write cost:** an execution or question write that changes a watched column adds one function call, one row lock and at most one write of `task_derived`. The filter check records fixture load time; it does not currently measure a before/after migration10 comparison.
+* **Write cost:** an execution or question write that changes a watched column adds one function call, one row lock and at most one write of `task_derived`.
 * **Security:** `fleet_task_derived` sets `fleet.project_ids` to `*` for its own call, so it reads all of one task's rows whatever the writer's scope. It takes only a task id, writes only `task_derived`, and copies the task's `project_id`, so reads of `task_derived` and its change rows stay scoped. `view_link` builds URLs only on the configured origin and never includes credentials. A shared link grants nothing.
 * **Rollout and rollback:** migration 10 is additive. The reading code ships in the same release. If values drift, `task_derived_check` finds them; re-running the recompute for the drifted ids repairs them: `SELECT fleet_task_derived(id) FROM unnest(ARRAY[...]) AS id` as the owner role. The old query stays as the reference in the tasks test.
 
@@ -257,27 +254,26 @@ It prints fixture load time and, when the larger sizes are requested, the growth
 
 These targets remain in the backlog; polishing them is not the critical path for project/PM/first-task and Lab control breadth. Existing acceptance targets above are unchanged.
 
-* Not built: a Conversations list filter-path browser assertion equivalent to `filter.check.ts` (the current check exercises Tasks; transcript paging checks are a separate concern).
 * Not qualified: the deployed SSE list-update path after a real write. Source and fixture checks alone do not establish that live-chain observation; a read-only URL smoke does not either.
 
 * **Toolchain:** follow [fleet-stack.md](fleet-stack.md#toolchain). Its selected Node22/pnpm10 and native TypeScript paths supersede the old vendoring/Bun proposal; those rejected options are not remaining work for this topic.
 * Not built: optimizing the per-session subqueries in `go/coordinator/sessions.go` with the proposed side-table pattern. This remains performance work, not a new requirement to launch a first supervised task.
 * **Overview** already uses one grouped `task_page` call with `group: "project"`, `groupCounts: true` and `limit: 1` (`app/src/views/overview.tsx`); the old per-project-call follow-up is complete.
 * **Per-operation timing:** coordinator request spans are implemented in `go/coordinator/telemetry.go`; their live availability is a separate [telemetry](fleet-telemetry.md) observation. Not built: the separately proposed slow-query log. A span mechanism alone does not establish production query latency.
-* **Counts at very large sizes:** cached counters if the reported growth factor shows counts dominate.
+* **Counts at very large sizes:** cached counters if a measurement shows counts dominate.
 
 --------------------------------------------------------------------------------
 
 ## Implementation
 
-Built: the codec `packages/view-url/view-url.ts` (`tests/ui/view-url.test.ts`); `task_derived` and its triggers in `go/coordinator/schema.sql`; the query in `taskPage` (`go/coordinator/tasks.go`); the entity store `app/src/store.ts` with `app/src/offline.ts` (`tests/ui/store.test.ts`, `tests/ui/lists.test.ts`); the filter check `tests/ui/filter.check.ts`.
+Built: the codec `packages/view-url/view-url.ts` (`tests/ui/view-url.test.ts`); `task_derived` and its triggers in `go/coordinator/schema.sql`; the query in `taskPage` (`go/coordinator/tasks.go`); the entity store `app/src/store.ts` with `app/src/offline.ts` (`tests/ui/store.test.ts`, `tests/ui/lists.test.ts`).
 
-Built: `view_link` is registered by `op` in `go/coordinator/view_link.go`, with generated request/reply types; `tests/go/view.test.ts` checks parity and validation.
+Built: `view_link` is registered by `op` in `go/coordinator/view_link.go`, with generated request/reply types.
 
 ### Verification
 
 * Build and tests: `pnpm run build`; `pnpm test`.
-* Filter check: `pnpm run check:filter` (Chromium) uses the default 3,000/20,000 sizes. A 100,000-task run is report-only and happens only when explicitly included with `--sizes`; CI timing is report-only as described in §4. Browser checks run in CI under the current local no-launch guard, not through a local wrapper.
+* List rules: a live check on the deployed site (§4).
 * Design: `pnpm run check:design`.
 
 --------------------------------------------------------------------------------

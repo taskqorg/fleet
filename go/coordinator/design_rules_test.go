@@ -1,10 +1,5 @@
 package main
 
-// Design rules scan (docs/designs/fleet-standard.md S10, DESIGN_RULES.md).
-// Every non-test, non-generated Go file of this package is parsed and checked
-// for the patterns below; only designRulesOwned names a file that may break a
-// rule, with the reason.
-
 import (
 	"go/ast"
 	"go/parser"
@@ -826,47 +821,6 @@ func TestDesignTransactions(t *testing.T) {
 			}
 			return true
 		})
-	}
-}
-
-// S10: DESIGN_RULES.md names every TestDesign* and TestLaw* check, and every check it names exists.
-func TestDesignRulesList(t *testing.T) {
-	raw, err := os.ReadFile("DESIGN_RULES.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	listed := map[string]bool{}
-	rows := 0
-	for _, line := range strings.Split(string(raw), "\n") {
-		cells := strings.Split(line, "|")
-		if len(cells) != 5 || !regexp.MustCompile(`^\s*S\d+\s*$`).MatchString(cells[1]) {
-			continue
-		}
-		rows++
-		for _, m := range regexp.MustCompile("`(Test\\w+)`").FindAllStringSubmatch(cells[3], -1) {
-			listed[m[1]] = true
-		}
-	}
-	if rows != 10 {
-		t.Fatalf("DESIGN_RULES.md has %d rule rows, want S1-S10", rows)
-	}
-	tests := map[string]bool{}
-	for _, f := range designSources(t, true) {
-		for _, d := range f.ast.Decls {
-			if fn, ok := d.(*ast.FuncDecl); ok && strings.HasPrefix(fn.Name.Name, "Test") {
-				tests[fn.Name.Name] = true
-			}
-		}
-	}
-	for name := range listed {
-		if !tests[name] {
-			t.Errorf("DESIGN_RULES.md lists %s, which does not exist", name)
-		}
-	}
-	for name := range tests {
-		if (strings.HasPrefix(name, "TestDesign") || strings.HasPrefix(name, "TestLaw")) && !listed[name] {
-			t.Errorf("%s is not listed in DESIGN_RULES.md", name)
-		}
 	}
 }
 

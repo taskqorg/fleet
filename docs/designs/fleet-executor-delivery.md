@@ -4,8 +4,8 @@ How executor files are built in CI, published and fetched by a host. Language an
 
 ## Build
 
-- The merge queue job `release-build` packs the release tarballs for linux/amd64 and darwin/arm64 with `deploy/build-release.sh` (`CGO_ENABLED=0`, `-trimpath`, each binary checked static) into the workflow artifact `release` with `SHA256SUMS` ([delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release)); those are the bytes the release signs. The Linux binaries are static, so there is no glibc requirement.
-- A trial before release downloads that artifact from the merge queue run; pull requests build no tarballs.
+- `release.yml` job `build` packs the release tarballs after the merge for linux/amd64 and darwin/arm64 with `deploy/build-release.sh` (`CGO_ENABLED=0`, `-trimpath`, each binary checked static) into the workflow artifact `release` with `SHA256SUMS` ([checks per change](fleet-delivery-pipeline.md#checks-per-change)); those are the bytes the release signs. The Linux binaries are static, so there is no glibc requirement.
+- Pull requests and the merge queue build no tarballs.
 - Releases: A host runs a release from GitHub Releases, published by `.github/workflows/release.yml` on a `v*` tag; each tarball carries the executor, the gateway, the coordinator and `fleet-update` ([self-update](fleet-self-update.md)).
 - PDS18 is amd64 ([PDS Codex environment](../pds-codex-environment.md)); the Mac is arm64. WSL uses the Linux file. Windows without WSL is not a target; a Windows executor is not built.
 

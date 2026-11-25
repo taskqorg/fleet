@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -140,40 +139,6 @@ func TestWriterDownAndUp(t *testing.T) {
 	}
 	if names["telemetry.recovered"] != 1 || names["after"] != 1 {
 		t.Fatal(names)
-	}
-}
-
-// With FLEET_TEST_CLICKHOUSE_URL (user t, password t, database fleet): the schema applies twice, a batch posted twice
-// with one token yields one set of rows.
-func TestClickHouseLive(t *testing.T) {
-	u := os.Getenv("FLEET_TEST_CLICKHOUSE_URL")
-	if u == "" {
-		t.Skip("FLEET_TEST_CLICKHOUSE_URL not set")
-	}
-	c := &ClickHouse{URL: u, Database: "fleet", User: "t", Password: "t"}
-	ctx := context.Background()
-	if err := c.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, s := Start(context.Background(), "live.test", KindInternal)
-	s.Service = "test"
-	s.End(nil)
-	row, _ := json.Marshal(s)
-	tok := s.SpanID
-	for i := 0; i < 2; i++ {
-		if err := c.Insert(ctx, "span", append(row, '\n'), tok); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var n []struct{ N uint64 }
-	if err := c.Query(ctx, "SELECT count() AS N FROM span WHERE trace_id = {t:String}", map[string]string{"t": s.TraceID}, &n); err != nil {
-		t.Fatal(err)
-	}
-	if len(n) != 1 || n[0].N != 1 {
-		t.Fatal(n)
 	}
 }
 

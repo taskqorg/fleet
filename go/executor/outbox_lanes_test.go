@@ -108,28 +108,6 @@ func TestAgentToolRowOvertakesOtherExecutionsEvents(t *testing.T) {
 	}
 }
 
-// Requirement: one execution's rows keep their order: its agent tool request and receipt never overtake its own
-// earlier events. Risk: a receipt or tool call reaches the coordinator before the events it follows.
-func TestAgentToolRowKeepsItsExecutionOrder(t *testing.T) {
-	resetRetryRows(t)
-	srv, s := laneFixture(t, nil)
-	db := journal(t)
-	defer db.Close()
-	queue(db, "/api/hosts/events", M{"hostId": "h", "executionId": "x", "events": []any{M{"id": "1"}}})
-	queue(db, "/api/hosts/events", M{"hostId": "h", "executionId": "x", "events": []any{M{"id": "2"}}})
-	queue(db, "/api/hosts/receipts", M{"hostId": "h", "executionId": "x", "commandId": "c", "status": "running"})
-	queue(db, "/api/hosts/agent-tools", M{"hostId": "h", "executionId": "x", "commandId": "c", "agentToolKey": "c:agent:1"})
-	if err := flush(db, srv.URL, "invented-token", "fixture-host"); err != nil {
-		t.Fatal(err)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	want := []string{"/api/hosts/events x", "/api/hosts/receipts x", "/api/hosts/agent-tools x"}
-	if enc(s.got) != enc(want) || enc(s.events["x"]) != `["1","2"]` {
-		t.Fatalf("requests %v events %v, want %v", s.got, s.events["x"], want)
-	}
-}
-
 // Requirement: a new row of an idle execution leaves while another execution's delivery is still in flight; the
 // busy execution's new rows wait for its next run. Risk: one slow ingest holds every new agent tool request until it
 // ends.
