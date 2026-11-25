@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -514,7 +515,11 @@ func pipelineSubmitted(q *Request, c *kitClaim, run *runRecord, i int, line cont
 		return nil
 	}
 	if line.Outcome != contract.CallOutcomeOk {
-		return run.failStep(q, i, problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code))
+		msg := fmt.Sprintf("Connection call %s: %s", line.Outcome, code)
+		if d := providerErrorDetail(line.Output); d != "" {
+			msg += ": " + d
+		}
+		return run.failStep(q, i, problemOf(string(line.Outcome), code), msg)
 	}
 	if job {
 		return pipelineJobStarted(q, run, i, line)
@@ -728,6 +733,55 @@ func pipelinePollRecord(q *Request, now time.Time, run *runRecord, i int, line c
 		return err
 	}
 	return pipelineLater(q, runID)
+}
+
+const providerErrorDetailMax = 500
+
+// providerErrorDetail: the reason a provider gave in a failed reply, so a step failure says which limit or rule refused
+// it (a Google 429 names its quota: free tier, per model, per project). It reads the common error shapes: {error:
+// {message, status, details: [{violations: [{quotaId}]}]}}, {error: "..."}, {message: "..."}; "" when there is none.
+// The gateway already replaced an echoed key value; at most providerErrorDetailMax characters.
+func providerErrorDetail(body json.RawMessage) string {
+	var v struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if json.Unmarshal(body, &v) != nil {
+		return ""
+	}
+	var e struct {
+		Message string `json:"message"`
+		Status  string `json:"status"`
+		Type    string `json:"type"`
+		Details []struct {
+			Violations []struct {
+				QuotaID string `json:"quotaId"`
+			} `json:"violations"`
+		} `json:"details"`
+	}
+	parts := []string{}
+	if s, ok := jsonString(v.Error); ok {
+		parts = append(parts, s, v.Message)
+	} else if json.Unmarshal(v.Error, &e) == nil {
+		parts = append(parts, firstString(e.Status, e.Type), e.Message)
+		for _, d := range e.Details {
+			for _, x := range d.Violations {
+				if x.QuotaID != "" {
+					parts = append(parts, "quota "+x.QuotaID)
+				}
+			}
+		}
+	}
+	if len(parts) == 0 || strings.Join(parts, "") == "" {
+		parts = append(parts, v.Message)
+	}
+	out := []string{}
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return compactProblemDetail(strings.Join(out, "; "), providerErrorDetailMax)
 }
 
 // callOutput: the provider's reply body of an in-process call, decoded; nil when there is none.
