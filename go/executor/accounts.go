@@ -9,11 +9,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,6 +228,8 @@ func (e *executor) readLimits(c contract.Command, p contract.AccountInspectPaylo
 		reading, err = codexReadLimits(x)
 	case "claude":
 		reading, err = claudeReadLimits(x)
+	case "antigravity":
+		reading, err = antigravityReadLimits(x)
 	default:
 		return fail("unsupported: " + p.Harness + " has no limits request")
 	}
@@ -364,6 +369,106 @@ func claudeReadLimits(x registryEntry) (M, error) {
 	}](a.Response.Response).RateLimits.V
 	return claudeUsageReading(json.RawMessage(enc(a.Response.Response.V)), native), nil
 }
+
+// antigravityReadLimits: agy's /usage slash command in print mode (agy 1.5.10, seen live 2026-11-25). It sends no prompt,
+// so it uses no quota. It runs with the run's GEMINI_HOME and, for a native-current login, its own HOME.
+func antigravityReadLimits(x registryEntry) (M, error) {
+	cmd := probeCmd(x, "-p", "/usage")
+	setEnv(cmd, "GEMINI_HOME", x.NativeHome)
+	if x.CredentialAuthority == "native-current" {
+		setEnv(cmd, "HOME", x.CredentialHome)
+	}
+	text, err := textExchange(cmd)
+	if err != nil {
+		return nil, err
+	}
+	windows := antigravityUsageWindows(text)
+	if len(windows) == 0 {
+		return nil, errors.New("agy /usage answered no limit lines")
+	}
+	return limitReading("antigravity", windows, text), nil
+}
+
+// antigravityUsageWindows reads agy /usage lines "<model group>\t<Weekly|Five Hour> Limit Remaining\t<n>%\t<RFC 3339
+// reset>". Pct is the used share (100 minus remaining), as for the other harnesses. A reset at the Unix epoch means the
+// window has not started, so it has no reset time. The model is the group's name in lower case with dashes
+// ("gemini-models", "claude-and-gpt-models").
+func antigravityUsageWindows(text string) []contract.LimitWindow {
+	windows := []contract.LimitWindow{}
+	for _, line := range strings.Split(text, "\n") {
+		f := strings.Split(strings.TrimSpace(line), "\t")
+		if len(f) < 3 || !strings.HasSuffix(f[2], "%") {
+			continue
+		}
+		period := map[string]string{"weekly limit remaining": "weekly", "five hour limit remaining": "5h"}[strings.ToLower(f[1])]
+		left, err := strconv.ParseFloat(strings.TrimSuffix(f[2], "%"), 64)
+		if period == "" || err != nil || left < 0 || left > 100 {
+			continue
+		}
+		used := math.Round((100-left)*100) / 100
+		model := strings.ToLower(strings.Join(strings.Fields(f[0]), "-"))
+		w := contract.LimitWindow{Period: period, Pct: &used, Model: &model}
+		if len(f) > 3 {
+			if at, err := time.Parse(time.RFC3339, f[3]); err == nil && at.Unix() > 0 {
+				v := at.UnixMilli()
+				w.ResetsAt = &v
+			}
+		}
+		windows = append(windows, w)
+	}
+	return windows
+}
+
+// textExchange starts cmd and returns its whole stdout once it exits, within probeWait. A CLI that asks for a sign-in on
+// stderr (agy: "Authentication required") ends the wait at once with errSignIn instead of the timeout.
+func textExchange(cmd *exec.Cmd) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), probeWait)
+	defer cancel()
+	out, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+	errOut, errW, err := os.Pipe()
+	if err != nil {
+		w.Close()
+		return "", err
+	}
+	defer errOut.Close()
+	cmd.Stdout, cmd.Stderr = w, errW
+	p, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	w.Close()
+	errW.Close()
+	if err != nil {
+		return "", err
+	}
+	defer func() { p.Kill(); p.Wait() }() // the CLI runs in its own group
+	read, signIn := make(chan string, 1), make(chan struct{}, 1)
+	errtrack.Go("text.read", func() {
+		b, _ := io.ReadAll(io.LimitReader(out, 1<<20))
+		read <- string(b)
+	})
+	errtrack.Go("text.stderr", func() {
+		sc := bufio.NewScanner(errOut)
+		for sc.Scan() {
+			if strings.Contains(sc.Text(), "Authentication required") {
+				signIn <- struct{}{}
+				return
+			}
+		}
+	})
+	select {
+	case text := <-read:
+		return text, nil
+	case <-signIn:
+		return "", errSignIn
+	case <-ctx.Done():
+		return "", errors.New("no answer from the CLI")
+	}
+}
+
+// errSignIn: the CLI is not signed in on this binding; it asked for a browser sign-in.
+var errSignIn = errors.New("not signed in: the CLI asks for a Google sign-in (run agy on this host and sign in)")
 
 // claudeControl: a Claude Code stream-json control response; a field of another type reads as absent.
 // A response that is not an object: only the type is read.
