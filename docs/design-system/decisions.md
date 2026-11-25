@@ -616,3 +616,8 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Rule:** [OR-65](owner-rules.md); [OR-30](owner-rules.md) now means a fixed preview whose title opens the full list.
 * **Pattern:** [infinite list](patterns/infinite-list.md): one sentinel per list, cursor pages, one request in flight, an abort on close, a danger row with Retry, nothing after the last row.
 * **Board (OR-62):** [infinite-lists.bl](board/infinite-lists.bl), 1440 and 390.
+## 2026-11-25: A person's Telegram is set on the person card
+
+* **Owner's ask:** "Телеграм id его добавь - добавь такую возможность": set a person's Telegram id in Fleet, not only through an op.
+* **Choice:** one option drawn, approved as drawn ("ok"). System › People › person gets a Telegram section: a pick among the Telegram users who wrote to the bot without a link, or a typed id, with the language; once linked, the state, the user, the language, when it was linked and Unlink. The People list shows the @username. Spec: [system.md](pages/system.md#states); canvas [screens/people.bl](board/screens/people.bl).
+* **Reads and writes:** `telegram_people` and `telegram_person_set`, unchanged; agents use the same ops.
