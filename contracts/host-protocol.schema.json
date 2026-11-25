@@ -27,6 +27,16 @@
     "/api/hosts/stores": {"request": "StoresRequest", "reply": "StoresReply", "long": true, "decode": "checked"}
   },
   "$defs": {
+    "ForgeLogin": {
+      "type": "object",
+      "required": ["provider", "host", "ok"],
+      "properties": {
+        "provider": {"type": "string"},
+        "host": {"type": "string"},
+        "ok": {"type": "boolean"},
+        "checkedAt": {"type": "integer"}
+      }
+    },
     "ChildRequest": {
       "type": "object",
       "required": [
@@ -346,6 +356,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/EdgeProblem"
+          }
+        },
+        "forgeLogins": {
+          "$comment": "the forge logins this host checked from its forge store (forge_login.go): provider, forge host, whether its CLI answered as a user; the publishing capabilities follow from them, and System › Access shows a missing one",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ForgeLogin"
           }
         },
         "projectRoots": {

@@ -920,6 +920,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	if b.ProjectRoots != nil {
 		obs.ProjectRoots = &b.ProjectRoots
 	}
+	if b.ForgeLogins != nil {
+		obs.ForgeLogins = &b.ForgeLogins
+	}
 	if b.ActiveExecutions != nil {
 		active := append([]string(nil), b.ActiveExecutions...)
 		sort.Strings(active)
@@ -1217,6 +1220,7 @@ type hostPollObservationPayload struct {
 	ToolVersions     *[]contract.ToolVersion    `json:"toolVersions,omitempty"`
 	GitConnections   *[]string                  `json:"gitConnections,omitempty"`
 	ProjectRoots     *[]string                  `json:"projectRoots,omitempty"`
+	ForgeLogins      *[]contract.ForgeLogin     `json:"forgeLogins,omitempty"`
 	ActiveExecutions *[]string                  `json:"activeExecutions,omitempty"`
 	Version          *string                    `json:"version,omitempty"`
 	Problems         []hostProblem              `json:"problems,omitempty"`
