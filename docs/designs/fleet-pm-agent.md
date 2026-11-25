@@ -220,9 +220,10 @@ An agent whose profile has `fleetOperations` gets one more instruction section a
 *   the API connections of the turn with their tools;
 *   the git connections (deploy keys) each execution host that is not removed last reported;
 *   that the native shell is sandboxed, so its network errors are no evidence about external services, and that repository access is checked with `project_readiness` on the hosts;
+*   that people read replies in the Fleet web app and Telegram, so a file is named as `path:line` from the repository root or linked by its forge URL, never by a local host path, which opens nowhere there;
 *   that a question to a person comes after the agent's own tools and names what it tried and what each returned.
 
-The section changes with grants, tools and hosts and is rebuilt on every turn. Every other agent run outside pipelines and Lab gets the sandbox line alone, naming `project-publishing` for pushes and pull requests; pipeline and Lab runs keep their exact instructions. The PM profile also grants the `github` and `bugsink` connections (the PM triages error signals itself); GitHub's `repos_search` and GitLab's `projects_search` find a repository by name ([connections](fleet-connections.md)); the `pm-fleet` skill gives the steps to connect a repository: find, `project_create`, `project_readiness`, then one question for what only a person can do.
+The section changes with grants, tools and hosts and is rebuilt on every turn. Every other agent run outside pipelines and Lab gets the sandbox and reader lines alone, naming `project-publishing` for pushes and pull requests; pipeline and Lab runs keep their exact instructions. The PM profile also grants the `github` and `bugsink` connections (the PM triages error signals itself); GitHub's `repos_search` and GitLab's `projects_search` find a repository by name ([connections](fleet-connections.md)); the `pm-fleet` skill gives the steps to connect a repository: find, `project_create`, `project_readiness`, then one question for what only a person can do.
 
 ## Alternatives Considered
 
