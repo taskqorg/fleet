@@ -481,8 +481,117 @@ func telegramWatch(ctx context.Context, a *App) error {
 				return err
 			}
 		}
-		return telegramMilestones(q, now)
+		if err := telegramMilestones(q, now); err != nil {
+			return err
+		}
+		return telegramOverlaps(q)
 	})
+}
+
+// telegramOverlaps: when another Fleet conversation (any host) runs on a work item's task, the room hears once, with
+// [Join it] (later messages go to that conversation) and [Work separately].
+func telegramOverlaps(q *Request) error {
+	works, err := q.db().TelegramWorkActive(q.ctx())
+	if err != nil {
+		return err
+	}
+	for _, w := range works {
+		s, err := sessionMaybe(q, w.SessionID)
+		if err != nil {
+			return err
+		}
+		if s == nil {
+			continue
+		}
+		tasks, err := sessionTasks(q, *s, nil, nil)
+		if err != nil {
+			return err
+		}
+		ids := []string{}
+		for _, t := range tasks {
+			ids = append(ids, t.Id)
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		others, err := q.db().TelegramOverlaps(q.ctx(), db.TelegramOverlapsParams{TaskIds: ids, SessionID: &w.SessionID})
+		if err != nil {
+			return err
+		}
+		lang := ""
+		if tp, err := q.db().TelegramPersonGet(q.ctx(), w.CreatedBy); err == nil {
+			lang = tp.Language
+		}
+		room, err := q.db().TelegramRoomGet(q.ctx(), w.RoomID)
+		if err != nil {
+			return err
+		}
+		for _, o := range others {
+			// callback_data holds at most 64 bytes: the outbox id carries the pair, the buttons point at it.
+			id := "overlap:" + w.ID + ":" + o.SessionID
+			title := o.Title
+			if title == "" {
+				title = clip(o.SessionID, 8)
+			}
+			where := ""
+			if o.HostID != "" {
+				where = " · " + o.HostID
+			}
+			key := clip(o.SessionID, 36)
+			rows := [][]map[string]string{{{"text": say(lang, "join", ""), "callback_data": "j:" + clip(w.ID, 24) + ":" + key},
+				{"text": say(lang, "separate", ""), "callback_data": "sep:" + clip(w.ID, 20) + ":" + key}}}
+			if link := conversationLink(o.SessionID); link != "" {
+				rows = append(rows, []map[string]string{{"text": say(lang, "open", ""), "url": link}})
+			}
+			if err := telegramOutbox(q, db.TelegramOutboxAddParams{ID: id, ChatID: room.ChatID, ThreadID: room.ThreadID, Kind: "text",
+				Text: "**" + w.Title + "**\n" + say(lang, "overlap", title+where), WorkID: &w.ID, SessionID: &w.SessionID,
+				Payload: jsonBytes(tgMarkup{InlineKeyboard: rows})}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// telegramOverlapTap: [Join it] moves the work item to the other conversation; [Work separately] keeps it. Either
+// edits the notice; only a linked person who may see the project counts.
+func telegramOverlapTap(q *Request, row *db.TelegramUpdate, cb *tgCallback, join bool, workPrefix, session string) error {
+	tp, err := q.db().TelegramPersonByUser(q.ctx(), cb.From.ID)
+	if err != nil || cb.Message == nil {
+		return telegramDone(q, row.ID, "tap-ignored", "")
+	}
+	o, err := q.db().TelegramOutboxBySent(q.ctx(), db.TelegramOutboxBySentParams{ChatID: cb.Message.Chat.ID, TelegramMessageID: &cb.Message.MessageID})
+	if err != nil || o.WorkID == nil || !strings.HasPrefix(o.ID, "overlap:") || !strings.HasPrefix(*o.WorkID, workPrefix) {
+		return telegramDone(q, row.ID, "tap-stale", "")
+	}
+	other := strings.TrimPrefix(o.ID, "overlap:"+*o.WorkID+":")
+	if !strings.HasPrefix(other, session) {
+		return telegramDone(q, row.ID, "tap-stale", "")
+	}
+	w, err := q.db().TelegramWorkGet(q.ctx(), *o.WorkID)
+	if err != nil {
+		return telegramDone(q, row.ID, "tap-stale", "")
+	}
+	p := q.app.peopleSnapshot().person(tp.Email)
+	room, err := q.db().TelegramRoomGet(q.ctx(), w.RoomID)
+	if err != nil {
+		return err
+	}
+	if p == nil || (room.ProjectHint != "" && !mayAccessProjectID(p, room.ProjectHint)) {
+		return telegramDone(q, row.ID, "tap-ignored", "")
+	}
+	line := say(tp.Language, "separately", "")
+	if join {
+		if _, err := q.db().TelegramWorkJoin(q.ctx(), db.TelegramWorkJoinParams{ID: w.ID, SessionID: other}); err != nil {
+			return err
+		}
+		line = say(tp.Language, "joined", "")
+	}
+	if err := telegramOutbox(q, db.TelegramOutboxAddParams{ID: "overlapped:" + o.ID, ChatID: o.ChatID, Kind: "edit", EditMessageID: o.TelegramMessageID,
+		Text: o.Text + "\n" + line + " (" + personName(p) + ")"}); err != nil {
+		return err
+	}
+	return telegramDone(q, row.ID, "tap", w.ID)
 }
 
 // telegramMilestones: a work item's room hears once when its pull request opens, fails its checks or merges, and when
@@ -607,6 +716,11 @@ func init() {
 			"keyInFleet":    "Keys are never typed in chat: add it in Fleet (Open in Fleet).",
 			"replyToAnswer": "Reply to this message to answer.",
 			"withdrawn":     "withdrawn",
+			"overlap":       "Another Fleet conversation works on the same task: %s",
+			"join":          "Join it",
+			"separate":      "Work separately",
+			"joined":        "Joined: messages go to that conversation now",
+			"separately":    "Working separately",
 		},
 		"ru": {
 			"runNone":       "Запусков ещё не было",
@@ -634,6 +748,11 @@ func init() {
 			"keyInFleet":    "Ключи не вводятся в чат: добавьте его во Fleet (Открыть во Fleet).",
 			"replyToAnswer": "Ответьте на это сообщение, чтобы ответить.",
 			"withdrawn":     "отозван",
+			"overlap":       "Над той же задачей работает другой разговор Fleet: %s",
+			"join":          "Присоединиться",
+			"separate":      "Работать отдельно",
+			"joined":        "Присоединено: сообщения теперь идут в тот разговор",
+			"separately":    "Работаем отдельно",
 		},
 	} {
 		for k, v := range words {

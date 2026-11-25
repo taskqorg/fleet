@@ -12,6 +12,62 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const telegramDeliveryHealth = `-- name: TelegramDeliveryHealth :one
+SELECT count(*) FILTER (WHERE state = 'sent')::bigint AS sent, count(*) FILTER (WHERE state = 'failed')::bigint AS failed,
+  count(*) FILTER (WHERE state = 'unknown')::bigint AS unknown,
+  coalesce((SELECT o.error FROM telegram_outbox o WHERE o.state = 'failed' AND o.error <> 'no status message' ORDER BY o.sent_at DESC LIMIT 1), '')::text AS last_error,
+  (SELECT max(o.sent_at) FROM telegram_outbox o WHERE o.state = 'sent')::timestamptz AS last_sent_at
+FROM telegram_outbox WHERE created_at > clock_timestamp() - interval '1 day'
+`
+
+type TelegramDeliveryHealthRow struct {
+	Sent       int64
+	Failed     int64
+	Unknown    int64
+	LastError  string
+	LastSentAt pgtype.Timestamptz
+}
+
+// The outbox in the last day: sends refused or of unknown outcome, and the newest refusal (telegram_status.delivery).
+func (q *Queries) TelegramDeliveryHealth(ctx context.Context) (TelegramDeliveryHealthRow, error) {
+	row := q.db.QueryRow(ctx, telegramDeliveryHealth)
+	var i TelegramDeliveryHealthRow
+	err := row.Scan(
+		&i.Sent,
+		&i.Failed,
+		&i.Unknown,
+		&i.LastError,
+		&i.LastSentAt,
+	)
+	return i, err
+}
+
+const telegramIntakeHealth = `-- name: TelegramIntakeHealth :one
+SELECT count(*)::bigint AS updates, count(*) FILTER (WHERE outcome = 'unknown-sender')::bigint AS strangers,
+  count(*) FILTER (WHERE outcome = 'failed')::bigint AS failed, max(received_at)::timestamptz AS last_at
+FROM telegram_update WHERE received_at > clock_timestamp() - interval '1 day'
+`
+
+type TelegramIntakeHealthRow struct {
+	Updates   int64
+	Strangers int64
+	Failed    int64
+	LastAt    pgtype.Timestamptz
+}
+
+// The intake in the last day: updates routed, from unknown senders, and failed deliveries.
+func (q *Queries) TelegramIntakeHealth(ctx context.Context) (TelegramIntakeHealthRow, error) {
+	row := q.db.QueryRow(ctx, telegramIntakeHealth)
+	var i TelegramIntakeHealthRow
+	err := row.Scan(
+		&i.Updates,
+		&i.Strangers,
+		&i.Failed,
+		&i.LastAt,
+	)
+	return i, err
+}
+
 const telegramLinkAdd = `-- name: TelegramLinkAdd :exec
 INSERT INTO telegram_link(code, email) VALUES ($1, $2)
 `
@@ -271,6 +327,57 @@ func (q *Queries) TelegramOutboxSettle(ctx context.Context, arg TelegramOutboxSe
 		arg.ID,
 	)
 	return err
+}
+
+const telegramOverlaps = `-- name: TelegramOverlaps :many
+SELECT DISTINCT ON (e.session_id) e.session_id::text AS session_id, coalesce(s.title, '')::text AS title, coalesce(e.host_id, '')::text AS host_id,
+  e.task_id::text AS task_id
+FROM execution e JOIN session s ON s.id = e.session_id
+WHERE e.task_id = ANY($1::text[]) AND e.session_id <> $2 AND e.state IN ('preparing', 'running', 'waiting')
+  AND s.archived_at IS NULL
+  -- The work item's own workers are no overlap: sessions it started, directly or one level down.
+  AND coalesce(s.created_by_session_id, '') <> $2::text
+  AND coalesce(s.created_by_session_id, '') NOT IN (SELECT c.id FROM session c WHERE c.created_by_session_id = $2::text)
+  AND NOT EXISTS (SELECT 1 FROM session w WHERE w.id = $2::text AND w.created_by_session_id = e.session_id)
+ORDER BY e.session_id, e.seq DESC LIMIT 5
+`
+
+type TelegramOverlapsParams struct {
+	TaskIds   []string
+	SessionID *string
+}
+
+type TelegramOverlapsRow struct {
+	SessionID string
+	Title     string
+	HostID    string
+	TaskID    string
+}
+
+// Other conversations running on one of these tasks now: a work item's room hears of them once (FLT-36).
+func (q *Queries) TelegramOverlaps(ctx context.Context, arg TelegramOverlapsParams) ([]TelegramOverlapsRow, error) {
+	rows, err := q.db.Query(ctx, telegramOverlaps, arg.TaskIds, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramOverlapsRow
+	for rows.Next() {
+		var i TelegramOverlapsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.Title,
+			&i.HostID,
+			&i.TaskID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const telegramPersonByUser = `-- name: TelegramPersonByUser :one
@@ -1197,6 +1304,24 @@ func (q *Queries) TelegramWorkGet(ctx context.Context, id string) (TelegramWork,
 		&i.ClosedAt,
 	)
 	return i, err
+}
+
+const telegramWorkJoin = `-- name: TelegramWorkJoin :execrows
+UPDATE telegram_work SET session_id = $1, last_at = clock_timestamp() WHERE id = $2 AND closed_at IS NULL
+`
+
+type TelegramWorkJoinParams struct {
+	SessionID string
+	ID        string
+}
+
+// A work item moves to another conversation (join): later messages go there.
+func (q *Queries) TelegramWorkJoin(ctx context.Context, arg TelegramWorkJoinParams) (int64, error) {
+	result, err := q.db.Exec(ctx, telegramWorkJoin, arg.SessionID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const telegramWorkList = `-- name: TelegramWorkList :many

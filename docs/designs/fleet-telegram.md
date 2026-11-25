@@ -73,6 +73,7 @@ Everything here is read from Fleet state; no worker turn runs.
 - **"So?"** A short message that only asks how things stand ("So?", "??", "ну?", "is it live?") is answered with the facts: of the replied-to work item, else of every open item of the room; in a private chat, `/now`. The conductor's model marks the same with `status: true` for longer phrasings. The message reaches no session.
 - **Commands** (`/cmd` or `/cmd@bot`): `/help`; `/now` (the room's open work; in a private chat the home conversation and the work items the person opened); `/needs` (open questions of the room's work, or the person's, each as a message to answer); `/status [task]` (one task by code or id within the person's projects; without an argument as "So?").
 - **Needs you** (pass `telegram-watch`, every 5 s): an open question of a work item's conversation goes to its room, one of a home conversation to the private chat, once (`q:<question>`). Options that are a list of strings become buttons. A tap or a Telegram reply answers through `questions_answer` as that person (an agent's question gets the reply delivered to its session, as from the web app), within their projects; a key request only links to Fleet and is never answered from chat. An answered or withdrawn question's message is edited to "✓ <who>: <answer>".
+- **Overlap** (same pass): when another Fleet conversation, on any host, runs on one of a work item's tasks, the room hears once, with [Join it] (the work item moves to that conversation: later messages go there) and [Work separately]. A tap counts from a linked person who may see the room's project.
 - **Milestones** (same pass): a work item's room hears once when its pull request opens, fails its checks or merges, and when its task completes or fails (`ms:<work>:<event>`); the status message follows. Fleet knows delivery as pull request stages; a project's own DEV or LIVE deploys reach the chat as the worker's answers.
 
 ### Approvals (`approvals.go`)
@@ -108,6 +109,14 @@ Every action an agent takes has a risk level. The defaults are permissive, and a
 2. System › Access › Telegram: paste the token once. Fleet checks it with `getMe`.
 3. Each person runs `telegram_link_code` (or asks their PM) and opens the link, or the owner links a user id from `telegram_people`.
 
+## Health
+
+`telegram_status` reports each part (pilotq L18): the Telegram API (`pollError`, `polledAt`, `botUsername`, `groupReads`), the intake over the last day (`intake`: updates, ignored strangers, undelivered messages, the newest), the delivery over the last day (`delivery`: sent, refused, unknown and never resent, the newest refusal and send), and the conductor's last model call. Fleet sends no alerts through Telegram, so there is no "alert sent" to be false.
+
+## Hermes rooms
+
+The Hermes Telegram rooms (pds18 `~/.hermes/channel_directory.json`, sessions in `state.db`) are mapped to Fleet rooms. Rooms with a Fleet project get its hint ahead of the bot (`telegram_room_set`: the AI BUDDIES topics 542 and 11275 and Tight Cyprus.bz carry `cs`). P&H rooms work outside projects until P&H is a Fleet project. Monitoring groups stay on Hermes. The cutover is the owner's: add the Fleet bot to the group (privacy off, or as an admin) and remove or mute Hermes there.
+
 ## Failure and recovery
 
 - Coordinator restart: unconfirmed updates come again and are skipped by `update_id`; routing, replies and sends resume from their rows.
@@ -117,7 +126,9 @@ Every action an agent takes has a risk level. The defaults are permissive, and a
 
 ## Not built
 
-- Overlap warnings, attachments and albums, edits, channel health on the System screen, moving the Hermes rooms (FLT-36).
+- Photos, documents and albums as session attachments: the gateway's download mode fetches a file without the key, while Telegram's file URL carries it (`/file/bot<key>/<path>`); the bytes then go to the project's artifact store through an upload. Edits of sent messages.
+- Channel health on the System screen (a web view: drawn on the board first); agents read it from `telegram_status`.
+- The cutover of the Hermes rooms: the map is ready, the switch is the owner's (below).
 - Learning a room's project hint from use; the owner sets it with `telegram_room_set`.
 
 ## Verification

@@ -254,6 +254,12 @@
         },
         "conductor": {
           "$ref": "#/$defs/TelegramConductorCall"
+        },
+        "delivery": {
+          "$ref": "#/$defs/TelegramDeliveryHealth"
+        },
+        "intake": {
+          "$ref": "#/$defs/TelegramIntakeHealth"
         }
       },
       "required": [
@@ -481,6 +487,59 @@
         "connection",
         "model",
         "at"
+      ]
+    },
+    "TelegramDeliveryHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "the outbox in the last day: what Telegram took, refused, or left unknown (never resent), and the newest refusal",
+      "properties": {
+        "sent": {
+          "type": "integer"
+        },
+        "failed": {
+          "type": "integer"
+        },
+        "unknown": {
+          "type": "integer"
+        },
+        "lastError": {
+          "type": "string"
+        },
+        "lastSentAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sent",
+        "failed",
+        "unknown"
+      ]
+    },
+    "TelegramIntakeHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "the intake journal in the last day",
+      "properties": {
+        "updates": {
+          "type": "integer"
+        },
+        "strangers": {
+          "type": "integer",
+          "$comment": "updates from Telegram users not linked to a Fleet person, ignored"
+        },
+        "failed": {
+          "type": "integer",
+          "$comment": "messages Fleet could not deliver to a session"
+        },
+        "lastAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "updates",
+        "strangers",
+        "failed"
       ]
     }
   }

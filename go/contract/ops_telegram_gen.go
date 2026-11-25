@@ -20,6 +20,33 @@ func (v *TelegramConductorCall) Validate() error {
 	return nil
 }
 
+// TelegramDeliveryHealth: the outbox in the last day: what Telegram took, refused, or left unknown (never resent), and the newest refusal
+type TelegramDeliveryHealth struct {
+	Failed     int64   `json:"failed"`
+	LastError  *string `json:"lastError,omitempty"`
+	LastSentAt *int64  `json:"lastSentAt,omitempty"`
+	Sent       int64   `json:"sent"`
+	Unknown    int64   `json:"unknown"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramDeliveryHealth) Validate() error {
+	return nil
+}
+
+// TelegramIntakeHealth: the intake journal in the last day
+type TelegramIntakeHealth struct {
+	Failed    int64  `json:"failed"`
+	LastAt    *int64 `json:"lastAt,omitempty"`
+	Strangers int64  `json:"strangers"`
+	Updates   int64  `json:"updates"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramIntakeHealth) Validate() error {
+	return nil
+}
+
 type TelegramLinkCodeReply struct {
 	Code      string  `json:"code"`
 	Command   string  `json:"command"`
@@ -198,21 +225,33 @@ func (v *TelegramRoomsReply) Validate() error {
 type TelegramRoomsRequest = map[string]json.RawMessage
 
 type TelegramStatusReply struct {
-	BotId       *int64                 `json:"botId,omitempty"`
-	BotUsername *string                `json:"botUsername,omitempty"`
-	Conductor   *TelegramConductorCall `json:"conductor,omitempty"`
-	Connected   bool                   `json:"connected"`
-	GroupReads  *bool                  `json:"groupReads,omitempty"`
-	Me          TelegramMe             `json:"me"`
-	Pending     TelegramPending        `json:"pending"`
-	PollError   *string                `json:"pollError,omitempty"`
-	PolledAt    *int64                 `json:"polledAt,omitempty"`
+	BotId       *int64                  `json:"botId,omitempty"`
+	BotUsername *string                 `json:"botUsername,omitempty"`
+	Conductor   *TelegramConductorCall  `json:"conductor,omitempty"`
+	Connected   bool                    `json:"connected"`
+	Delivery    *TelegramDeliveryHealth `json:"delivery,omitempty"`
+	GroupReads  *bool                   `json:"groupReads,omitempty"`
+	Intake      *TelegramIntakeHealth   `json:"intake,omitempty"`
+	Me          TelegramMe              `json:"me"`
+	Pending     TelegramPending         `json:"pending"`
+	PollError   *string                 `json:"pollError,omitempty"`
+	PolledAt    *int64                  `json:"polledAt,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TelegramStatusReply) Validate() error {
 	if v.Conductor != nil {
 		if err := Check(v.Conductor, "conductor"); err != nil {
+			return err
+		}
+	}
+	if v.Delivery != nil {
+		if err := Check(v.Delivery, "delivery"); err != nil {
+			return err
+		}
+	}
+	if v.Intake != nil {
+		if err := Check(v.Intake, "intake"); err != nil {
 			return err
 		}
 	}
