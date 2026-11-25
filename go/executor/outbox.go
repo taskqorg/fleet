@@ -182,6 +182,24 @@ type hold struct {
 	detail   string
 	attempts int
 	nextAt   int64
+	firstAt  int64 // the first failed delivery of the row (retryFailed); 0 for held lanes
+}
+
+// serverFailLimit: how long a row may fail with a coordinator server error (5xx other than 503) on every attempt
+// before it is set aside like a rejected row. A deterministic 500 otherwise holds its lane, the receipts behind it and
+// the update drain forever (2026-11-26: task_get's created_task scan failed, and pds18-native's finished run kept its
+// completion receipt and 41 event batches in the outbox for two hours).
+const serverFailLimit = 30 * 60 * 1000
+
+// serverFailedLong: the row has failed since at least serverFailLimit and the coordinator answered a server error.
+func serverFailedLong(n int64, a answer) bool {
+	if a.status < 500 || a.status == http.StatusServiceUnavailable || a.unreachable || a.timeout {
+		return false
+	}
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	h, ok := holds[rowKey(n)]
+	return ok && h.firstAt > 0 && nowMs()-h.firstAt >= serverFailLimit
 }
 
 var (
@@ -226,7 +244,7 @@ func edgeRedirect(route string, status int, detail string) {
 	if route != pollRoute {
 		wait = backoff(int64(attempts))
 	}
-	holds[route] = &hold{status, detail, attempts, nowMs() + wait}
+	holds[route] = &hold{status: status, detail: detail, attempts: attempts, nextAt: nowMs() + wait}
 }
 
 func edgeOK(route string) {
@@ -389,11 +407,14 @@ func retryWait(n int64) bool {
 func retryFailed(n int64) {
 	holdMu.Lock()
 	defer holdMu.Unlock()
-	attempts := 0
+	attempts, first := 0, nowMs()
 	if r, ok := holds[rowKey(n)]; ok {
 		attempts = r.attempts + 1
+		if r.firstAt > 0 {
+			first = r.firstAt
+		}
 	}
-	holds[rowKey(n)] = &hold{attempts: attempts, nextAt: nowMs() + backoff(int64(attempts))}
+	holds[rowKey(n)] = &hold{attempts: attempts, nextAt: nowMs() + backoff(int64(attempts)), firstAt: first}
 }
 
 func retryDone(n int64) {
@@ -718,6 +739,10 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 		} else {
 			answered(db, !stop, probe)
 		}
+		serverFailed := a.kind == answerRetry && !stop && len(batch) == 1 && serverFailedLong(r.n, a)
+		if serverFailed {
+			a.kind = answerReject // set aside below, reported as outbox.failed on its execution
+		}
 		var response any
 		switch a.kind {
 		case answerOK:
@@ -757,6 +782,12 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 					Message string `json:"message"`
 				}]([]byte(a.text))
 				response = M{"error": "Coordinator rejected delegation", "statusCode": a.status, "message": problem.Message}
+				if serverFailed {
+					// The waiting agent gets the error; the owner sees the set-aside row on the run (outbox.failed).
+					if err := p.poisoned(r, value, a, reason+" (server error on every retry for 30 minutes)"); err != nil {
+						return err
+					}
+				}
 			} else if len(batch) > 1 {
 				single = true // retry this batch row by row so only the poisoned row is set aside
 				continue

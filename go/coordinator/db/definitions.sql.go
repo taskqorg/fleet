@@ -986,7 +986,7 @@ func (q *Queries) DefShippedHeads(ctx context.Context) ([]DefShippedHeadsRow, er
 }
 
 const defUsage = `-- name: DefUsage :many
-SELECT (d->>'id')::text AS id,
+SELECT coalesce(d->>'id','')::text AS id,
  coalesce(CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END, -1)::bigint AS rev,
  GROUPING(CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END)::int AS total,
  count(*)::bigint AS runs, (count(*) FILTER (WHERE e.state='succeeded'))::bigint AS succeeded,
@@ -1060,7 +1060,7 @@ WITH recent AS (
  SELECT x.id, x.state, x.started_at, x.ended_at, x.definitions FROM execution x
  WHERE x.started_at IS NULL AND x.updated_at >= now() - make_interval(days => $2::int) AND jsonb_typeof(x.definitions) = 'array' AND x.definitions <> '[]'::jsonb
 )
-SELECT (d->>'kind')::text AS kind, (d->>'id')::text AS id,
+SELECT coalesce(d->>'kind','')::text AS kind, coalesce(d->>'id','')::text AS id,
  count(*)::bigint AS runs, (count(*) FILTER (WHERE e.state='succeeded'))::bigint AS succeeded,
  coalesce((percentile_disc(0.5) WITHIN GROUP (ORDER BY coalesce(t.wall_ms, CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0, (extract(epoch FROM e.ended_at - e.started_at)*1000)::bigint) END)))::bigint, -1)::bigint AS median,
  coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint AS tokens

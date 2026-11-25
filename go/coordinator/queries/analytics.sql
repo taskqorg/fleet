@@ -683,7 +683,7 @@ spend_items AS (
  FROM stale_cost_items sc
 )
 SELECT
- dim_key::text AS dim_key,
+ coalesce(dim_key, '')::text AS dim_key,
  purpose::text AS purpose,
  proj_key::text AS proj_key,
  cost_currency,
