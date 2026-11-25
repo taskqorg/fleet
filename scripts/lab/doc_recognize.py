@@ -232,7 +232,7 @@ def finish(args):
 
 
 def summary(result):
-    """One line naming what was recognised, the title of the result in Fleet: the model, the files and what needs a look."""
+    """One line naming what was recognised: the model, the files and what needs a look."""
     m = result['model']
     n = result['files']
     parts = [m['legal_name'] or 'Name not found', '%d file%s' % (n, '' if n == 1 else 's')]
