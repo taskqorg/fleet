@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -344,9 +346,13 @@ func pinsHostPass(ctx context.Context, a *App, open []ghPull) map[string][]strin
 		}
 		candidate, err := pinsCandidateAt(ctx, a, pr.Head.SHA)
 		if err != nil {
+			log.Printf("pins qualification %s: candidate: %v", pr.URL, err)
 			continue
 		}
 		st, err := pinsQualifyHead(ctx, a, pr, candidate)
+		if err != nil {
+			log.Printf("pins qualification %s: %v", pr.URL, err)
+		}
 		if err != nil || st == nil {
 			continue
 		}
@@ -392,11 +398,30 @@ func pinsCandidateAt(ctx context.Context, a *App, sha string) (pinsCandidate, er
 	if err != nil {
 		return nil, err
 	}
+	return pinsCandidateOf(b, sha)
+}
+
+// pinsCandidateOf: the CLI pins in a file_at reply, every target validated as a candidate.
+func pinsCandidateOf(b []byte, sha string) (pinsCandidate, error) {
+	var err error
+	// The keyed read answers the raw file; the keyless one the contents object with the file in base64.
+	var wrapped struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if json.Unmarshal(b, &wrapped) == nil && wrapped.Encoding == "base64" {
+		if b, err = base64.StdEncoding.DecodeString(strings.ReplaceAll(wrapped.Content, "\n", "")); err != nil {
+			return nil, err
+		}
+	}
 	var m struct {
 		Targets pinsCandidate `json:"targets"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, err
+	}
+	if len(m.Targets) == 0 {
+		return nil, fmt.Errorf("no CLI pins at %s", sha)
 	}
 	out := pinsCandidate{}
 	for target, assets := range m.Targets {
