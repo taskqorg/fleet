@@ -346,3 +346,17 @@ test('a doc reread keeps the objects it did not change, so rows, cards and their
     assert.equal(docData(name).questions[1], first.questions[0], 'a row moved by an insert keeps its object (matched by id)');
   } finally { release(); }
 });
+
+test('mounts of one read share its quiet window: a change burst rereads it once per window, not once per mount', async () => {
+  // Requirement: data layer, one read per screen. Risk: two parts of a screen that ask the same view (Projects'
+  // catalogue and summary) each throttle on their own and reread it twice per window on a busy system.
+  const { sharedThrottle } = await import('../../app/src/store.ts');
+  let reads = 0;
+  const a = sharedThrottle('projects_view:{}', () => reads++, 50), b = sharedThrottle('projects_view:{}', () => reads++, 50);
+  a.read(); b.read(); await new Promise(r => setTimeout(r, 10)); a.read(); b.read();
+  await new Promise(r => setTimeout(r, 80));
+  assert.equal(reads, 2, 'one read at once, one at the end of the window');
+  a.stop(); b.read(); await new Promise(r => setTimeout(r, 80));
+  assert.equal(reads, 3, 'the other mount keeps the window');
+  b.stop();
+});

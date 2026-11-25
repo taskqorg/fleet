@@ -17,7 +17,7 @@ It drifted back because every guarantee lived in prose or in a per-view choice. 
 
 **A read mirror.** `app/src/persist.ts` keeps the last answer of every read, list and the person's settings in IndexedDB, under a hash of the person and grants that read them. A reload renders from it before any read answers. Another person or changed grants purge it.
 
-**One read per screen.** A screen reads one view operation, marked `view: true` in its contract (`session_view` first). The server composes it from summaries: the head, the composer target, items as rows, cursors for lists. Details load on demand (`tool_output`, `execution_get`). `useView(name, request, {quiet})` in `app/src/store.ts` is that read. It takes no `every`. `contracts/gen-ts.mjs` generates `ViewName`.
+**One read per screen.** A screen reads one view operation, marked `view: true` in its contract (`session_view` first). The server composes it from summaries: the head, the composer target, items as rows, cursors for lists. Details load on demand (`tool_output`, `execution_get`). `useView(name, request, {quiet})` in `app/src/store.ts` is that read. It takes no `every`. `quiet` is the shortest time between rereads of that read, shared by every part of the screen that asks for it. A view counts on the server and sends rows only for what the screen shows (`home_view`: no finished sessions or runs to count). `contracts/gen-ts.mjs` generates `ViewName`.
 
 **The change stream is the only reread.** A read is reread when a change's `touches` names its operation and the change concerns its entities (`store.ts:touchedBy`). The app never rereads on focus or visibility. A hidden tab reads nothing: reads asked for while it is hidden run once when it shows again, and `useOp` timers skip their ticks. A failed person check keeps the page. Only another person or changed grants clear it. A release never reloads a tab the person is away from. Reads keep object identity across rereads (`share.ts`).
 
@@ -48,7 +48,8 @@ A list that a screen rereads reads stored facts, not a recount:
 ## Lessons
 
 - **Measure under RLS.** Run EXPLAIN as `fleet_app` with `fleet.project_ids` set and a `statement_timeout` ([standard S2a](fleet-standard.md)). As postgres, the runners' queries looked 3-5 times faster than the app's.
-- **Leakproof conditions reach an index; others do not.** Under RLS, an index serves a condition only when its functions are leakproof. Timestamps, numbers, text and `IS NULL` are; regular expressions, most casts and enum comparisons are not. So choose rows by such columns first, then join and build.
+- **Leakproof conditions reach an index; others do not.** Under RLS, an index serves a condition only when its functions are leakproof. Timestamps, numbers, text and `IS NULL` are; regular expressions, most casts and enum comparisons are not. So choose rows by such columns first, then join and build. A jsonb containment (`@>`) is not leakproof either: `DefUsage` scanned every execution under RLS until `DefUsageRecent` chose the window by `started_at`.
+- **Execution changes are a stream.** A busy Fleet writes over 100 execution changes in 20 s (prod, 2026-11-26), and a view touched by `execution` rereads once per `quiet`. Home rereads at most every 2 s; Projects and Lab, whose counts are a glance, every 5 s.
 - **Keep object identity.** A reread goes through `share(prev, next)` (`app/src/share.ts`). A screen that renders with `<For>` by reference otherwise rebuilds its rows and loses input text.
 - **Each request costs a round trip through Access** (~350 ms from the owner's network, even for a static file). Many parallel reads also contend, so a screen of 15 reads of ≤0.25 s each still settles in 1-1.5 s. One view operation per screen removes that. The mirror makes the cold open feel instant meanwhile.
 - **Ship summaries, not rows for counts.** A screen that counts or picks one item from hundreds of rows asks the server for the count or the item.
@@ -61,15 +62,18 @@ A list that a screen rereads reads stored facts, not a recount:
 | Alt-Tab on a running HAL0 session | 29 reads, 248 KB | 1 read (`me`) |
 | HAL0 session screen | `session_get` 7.6 MB, 2-14 s; 9-12 reads | `session_view` 15.5 KB; 5 reads |
 | HAL0 thread page | 3.4 s server | ~1 s (rows by index, one publishing read per page) |
-| `executions_runners` | ~4 s server, TTFB 5.4 s | TTFB 1.8 s; tool-call groups 1.26 s → 69 ms under RLS |
-| `sessions_list` | 368 ms under RLS, p50 ~700 ms | 55 ms under RLS, p50 172 ms |
+| `executions_runners` | ~4 s server | ~2.5 s; the rest is summing 20000 calls a poll |
+| Home | 15 reads, 106 KB; 10 of them Home's | 9 reads, 22 KB; one, `home_view`, p50 157 ms server |
+| Projects | 12 reads, 49 KB | 9 reads, 19 KB; one, `projects_view` |
+| Library | 13 reads, 47 KB; `definition_list` p50 1.6 s server | 9 reads, 33 KB; one, `library_view` |
+| Lab | 10 reads, 52 KB | one, `lab_view` |
+
+The remaining reads on every screen are the shell's: `me`, `person_settings_get`, `project_list`, `nav_counts`, `system_versions`, the pins' `list_membership` and the rail's `bot_list`.
 
 ## Next
 
-- **Home: `home_view`.** Home now reads 15 operations. It ships 200 finished sessions only to count "done since", 500 failed runs only to pick each failed session's cause, and the delivery list only to count merges. The view returns the active sessions, open questions and blockers as rows, plus those counts and causes computed on the server, the bots and projects the cards need, and the visit time.
-- Then Projects and Tasks, Library, Lab, and the rest of Live and System, one per pull request, each proved with `scripts/page-budget.ts` and walked on prod against its canvas.
-- `RunnerRuns` (0.5 s under RLS): tool calls are left out only after the index, because `kind` is an enum. A leakproof way to tell runs from calls would let an index do it.
-- `ThreadTotal` counts blocks from each event's payload (~0.15 s on HAL0).
-- Prepared reads (project resources) still refresh on visibility and online.
-- `session_summary` keys follow the conversation model the owner picks (consilium, `session-model/synthesis.md`): unchanged for options A and C, keyed by line for B.
+- The shell's reads as one view.
+- The opened project in Projects, the Tasks list's `list_spend`, and the rest of Live and System.
+- Incremental call groups for Runners: sums kept by the gateway ingest, not recomputed per poll.
+- `ThreadTotal` counts blocks from each event's payload.
 - An EXPLAIN check of view queries under `fleet_app` with RLS on a seeded schema, once seeded data makes plans meaningful.

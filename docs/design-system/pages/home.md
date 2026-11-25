@@ -92,7 +92,7 @@ One read: `home_view` (a view operation, [data layer](../../designs/fleet-data-l
 | Composer | Project PMs from `project_list` (the shell's read) and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets` when sent, `session_start`); bots from `home_view.bots`. The last target picked stays in this browser |
 | Failed cards by cause | `home_view.failures`: the plain cause of each failed session's newest failed run |
 | Pulse line | Working and queued sessions (by `life`) from the cards' rows; done today: `home_view.counts.doneToday`; blockers: `home_view.blockers`, failed runs that need a look grouped by plain cause and host, plus problem questions grouped by what they are about |
-| Live updates | The change stream rereads `home_view` when sessions, executions, questions, bots, bot runs or delivery change, at most once a second |
+| Live updates | The change stream rereads `home_view` when sessions, executions, questions, bots, bot runs or delivery change, at most once in 2 s |
 
 ## Open
 

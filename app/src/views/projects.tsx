@@ -137,7 +137,7 @@ export function Projects(props: { screen: Screen; id?: string }) {
  * The Projects screen's one read (projects_view): the catalogue's facts per project and the summary over the focus. The
  * catalogue and the summary ask with the same request, so they share it.
  */
-const useProjectsView = () => useView('projects_view', () => (prefsRead.value ? scopeIds() : null), { quiet: 2000 });
+const useProjectsView = () => useView('projects_view', () => (prefsRead.value ? scopeIds() : null), { quiet: 5000 });
 
 /** The control column: one row per project with readiness, name and code, and its live facts (OR-22, OR-29). */
 function Catalogue(props: {
