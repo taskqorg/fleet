@@ -1836,7 +1836,6 @@ type TelegramPerson struct {
 	TelegramUserID int64
 	Username       string
 	Language       string
-	HomeSessionID  *string
 	LinkedAt       time.Time
 }
 
@@ -1849,6 +1848,7 @@ type TelegramRoom struct {
 	ProjectHint string
 	CreatedAt   time.Time
 	SeenAt      time.Time
+	ChatTitle   string
 }
 
 type TelegramTurn struct {

@@ -1351,7 +1351,6 @@ CREATE TABLE telegram_person (
   "telegram_user_id" bigint NOT NULL,
   "username" text NOT NULL,
   "language" text NOT NULL,
-  "home_session_id" text,
   "linked_at" timestamp with time zone NOT NULL
 );
 CREATE TABLE telegram_room (
@@ -1362,7 +1361,8 @@ CREATE TABLE telegram_room (
   "title" text NOT NULL,
   "project_hint" text NOT NULL,
   "created_at" timestamp with time zone NOT NULL,
-  "seen_at" timestamp with time zone NOT NULL
+  "seen_at" timestamp with time zone NOT NULL,
+  "chat_title" text NOT NULL
 );
 CREATE TABLE telegram_turn (
   "id" text NOT NULL,

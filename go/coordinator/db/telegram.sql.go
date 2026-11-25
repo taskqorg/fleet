@@ -202,8 +202,7 @@ const telegramOpenQuestions = `-- name: TelegramOpenQuestions :many
 SELECT q.id, q.kind::text AS kind, q.text, q.session_id FROM question q
 WHERE q.state = 'open' AND q.session_id IN (
   SELECT w.session_id FROM telegram_work w WHERE w.closed_at IS NULL
-    AND ((NOT $1::boolean AND w.room_id = $2) OR ($1::boolean AND w.created_by = $3))
-  UNION SELECT p.home_session_id FROM telegram_person p WHERE $1::boolean AND p.email = $3 AND p.home_session_id IS NOT NULL)
+    AND ((NOT $1::boolean AND w.room_id = $2) OR ($1::boolean AND w.created_by = $3)))
 ORDER BY q.asked_at LIMIT 10
 `
 
@@ -220,8 +219,8 @@ type TelegramOpenQuestionsRow struct {
 	SessionID *string
 }
 
-// Open questions of a group room's work items, or (private) of the person's home conversation and the work items they
-// opened, oldest first (/needs).
+// Open questions of a group room's work items, or (private) of the work items the person opened (their private
+// chat's current conversation included), oldest first (/needs).
 func (q *Queries) TelegramOpenQuestions(ctx context.Context, arg TelegramOpenQuestionsParams) ([]TelegramOpenQuestionsRow, error) {
 	rows, err := q.db.Query(ctx, telegramOpenQuestions, arg.Private, arg.RoomID, arg.Email)
 	if err != nil {
@@ -524,7 +523,7 @@ func (q *Queries) TelegramOverlaps(ctx context.Context, arg TelegramOverlapsPara
 }
 
 const telegramPersonByUser = `-- name: TelegramPersonByUser :one
-SELECT email, telegram_user_id, username, language, home_session_id, linked_at FROM telegram_person WHERE telegram_user_id = $1
+SELECT email, telegram_user_id, username, language, linked_at FROM telegram_person WHERE telegram_user_id = $1
 `
 
 func (q *Queries) TelegramPersonByUser(ctx context.Context, telegramUserID int64) (TelegramPerson, error) {
@@ -535,7 +534,6 @@ func (q *Queries) TelegramPersonByUser(ctx context.Context, telegramUserID int64
 		&i.TelegramUserID,
 		&i.Username,
 		&i.Language,
-		&i.HomeSessionID,
 		&i.LinkedAt,
 	)
 	return i, err
@@ -554,7 +552,7 @@ func (q *Queries) TelegramPersonDelete(ctx context.Context, email string) (int64
 }
 
 const telegramPersonGet = `-- name: TelegramPersonGet :one
-SELECT email, telegram_user_id, username, language, home_session_id, linked_at FROM telegram_person WHERE email = $1
+SELECT email, telegram_user_id, username, language, linked_at FROM telegram_person WHERE email = $1
 `
 
 func (q *Queries) TelegramPersonGet(ctx context.Context, email string) (TelegramPerson, error) {
@@ -565,7 +563,6 @@ func (q *Queries) TelegramPersonGet(ctx context.Context, email string) (Telegram
 		&i.TelegramUserID,
 		&i.Username,
 		&i.Language,
-		&i.HomeSessionID,
 		&i.LinkedAt,
 	)
 	return i, err
@@ -576,7 +573,6 @@ INSERT INTO telegram_person(email, telegram_user_id, username, language)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (email) DO UPDATE SET telegram_user_id = EXCLUDED.telegram_user_id, username = EXCLUDED.username,
   language = CASE WHEN EXCLUDED.language <> '' THEN EXCLUDED.language ELSE telegram_person.language END,
-  home_session_id = CASE WHEN telegram_person.telegram_user_id = EXCLUDED.telegram_user_id THEN telegram_person.home_session_id END,
   linked_at = CASE WHEN telegram_person.telegram_user_id = EXCLUDED.telegram_user_id THEN telegram_person.linked_at ELSE clock_timestamp() END
 `
 
@@ -598,7 +594,7 @@ func (q *Queries) TelegramPersonLink(ctx context.Context, arg TelegramPersonLink
 }
 
 const telegramPersonList = `-- name: TelegramPersonList :many
-SELECT email, telegram_user_id, username, language, home_session_id, linked_at FROM telegram_person ORDER BY email
+SELECT email, telegram_user_id, username, language, linked_at FROM telegram_person ORDER BY email
 `
 
 func (q *Queries) TelegramPersonList(ctx context.Context) ([]TelegramPerson, error) {
@@ -615,7 +611,6 @@ func (q *Queries) TelegramPersonList(ctx context.Context) ([]TelegramPerson, err
 			&i.TelegramUserID,
 			&i.Username,
 			&i.Language,
-			&i.HomeSessionID,
 			&i.LinkedAt,
 		); err != nil {
 			return nil, err
@@ -626,20 +621,6 @@ func (q *Queries) TelegramPersonList(ctx context.Context) ([]TelegramPerson, err
 		return nil, err
 	}
 	return items, nil
-}
-
-const telegramPersonSetHome = `-- name: TelegramPersonSetHome :exec
-UPDATE telegram_person SET home_session_id = $1 WHERE email = $2
-`
-
-type TelegramPersonSetHomeParams struct {
-	SessionID *string
-	Email     string
-}
-
-func (q *Queries) TelegramPersonSetHome(ctx context.Context, arg TelegramPersonSetHomeParams) error {
-	_, err := q.db.Exec(ctx, telegramPersonSetHome, arg.SessionID, arg.Email)
-	return err
 }
 
 const telegramPersonSetLanguage = `-- name: TelegramPersonSetLanguage :execrows
@@ -771,17 +752,10 @@ func (q *Queries) TelegramQuestionsEnded(ctx context.Context) ([]TelegramQuestio
 }
 
 const telegramQuestionsToPush = `-- name: TelegramQuestionsToPush :many
-SELECT q.id, q.kind::text AS kind, q.text, q.options, q.session_id::text AS session_id, w.id AS work_id, r.chat_id, r.thread_id,
-  ''::text AS email
+SELECT q.id, q.kind::text AS kind, q.text, q.options, q.session_id::text AS session_id, w.id AS work_id, r.chat_id, r.thread_id
 FROM question q
 JOIN telegram_work w ON w.session_id = q.session_id AND w.closed_at IS NULL
 JOIN telegram_room r ON r.id = w.room_id
-WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
-  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
-UNION ALL
-SELECT q.id, q.kind::text, q.text, q.options, q.session_id::text, ''::text, p.telegram_user_id, 0::bigint, p.email
-FROM question q
-JOIN telegram_person p ON p.home_session_id = q.session_id
 WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
   AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
 LIMIT 50
@@ -796,10 +770,10 @@ type TelegramQuestionsToPushRow struct {
 	WorkID    string
 	ChatID    int64
 	ThreadID  int64
-	Email     string
 }
 
-// Open questions of a work item's or a home conversation not yet sent to Telegram, with where they go.
+// Open questions of a work item's conversation (a private chat's current one included) not yet sent to Telegram, with
+// where they go.
 func (q *Queries) TelegramQuestionsToPush(ctx context.Context) ([]TelegramQuestionsToPushRow, error) {
 	rows, err := q.db.Query(ctx, telegramQuestionsToPush)
 	if err != nil {
@@ -818,7 +792,6 @@ func (q *Queries) TelegramQuestionsToPush(ctx context.Context) ([]TelegramQuesti
 			&i.WorkID,
 			&i.ChatID,
 			&i.ThreadID,
-			&i.Email,
 		); err != nil {
 			return nil, err
 		}
@@ -830,8 +803,39 @@ func (q *Queries) TelegramQuestionsToPush(ctx context.Context) ([]TelegramQuesti
 	return items, nil
 }
 
+const telegramRoomCloseWork = `-- name: TelegramRoomCloseWork :exec
+UPDATE telegram_work SET closed_at = clock_timestamp() WHERE room_id = $1 AND closed_at IS NULL
+`
+
+func (q *Queries) TelegramRoomCloseWork(ctx context.Context, roomID string) error {
+	_, err := q.db.Exec(ctx, telegramRoomCloseWork, roomID)
+	return err
+}
+
+const telegramRoomCurrent = `-- name: TelegramRoomCurrent :one
+SELECT id, room_id, session_id, title, created_by, created_at, last_at, closed_at FROM telegram_work WHERE room_id = $1 AND closed_at IS NULL ORDER BY last_at DESC LIMIT 1
+`
+
+// A room's current conversation: its most recent open work item. In a private chat it is the person's ongoing chat
+// (conversation model step 5); /new closes it.
+func (q *Queries) TelegramRoomCurrent(ctx context.Context, roomID string) (TelegramWork, error) {
+	row := q.db.QueryRow(ctx, telegramRoomCurrent, roomID)
+	var i TelegramWork
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.SessionID,
+		&i.Title,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.LastAt,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const telegramRoomGet = `-- name: TelegramRoomGet :one
-SELECT id, chat_id, thread_id, kind, title, project_hint, created_at, seen_at FROM telegram_room WHERE id = $1
+SELECT id, chat_id, thread_id, kind, title, project_hint, created_at, seen_at, chat_title FROM telegram_room WHERE id = $1
 `
 
 func (q *Queries) TelegramRoomGet(ctx context.Context, id string) (TelegramRoom, error) {
@@ -846,6 +850,7 @@ func (q *Queries) TelegramRoomGet(ctx context.Context, id string) (TelegramRoom,
 		&i.ProjectHint,
 		&i.CreatedAt,
 		&i.SeenAt,
+		&i.ChatTitle,
 	)
 	return i, err
 }
@@ -917,7 +922,7 @@ func (q *Queries) TelegramRoomHistory(ctx context.Context, arg TelegramRoomHisto
 }
 
 const telegramRoomList = `-- name: TelegramRoomList :many
-SELECT id, chat_id, thread_id, kind, title, project_hint, created_at, seen_at FROM telegram_room ORDER BY seen_at DESC
+SELECT id, chat_id, thread_id, kind, title, project_hint, created_at, seen_at, chat_title FROM telegram_room ORDER BY seen_at DESC
 `
 
 func (q *Queries) TelegramRoomList(ctx context.Context) ([]TelegramRoom, error) {
@@ -938,6 +943,7 @@ func (q *Queries) TelegramRoomList(ctx context.Context) ([]TelegramRoom, error) 
 			&i.ProjectHint,
 			&i.CreatedAt,
 			&i.SeenAt,
+			&i.ChatTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -967,19 +973,21 @@ func (q *Queries) TelegramRoomSetHint(ctx context.Context, arg TelegramRoomSetHi
 }
 
 const telegramRoomUpsert = `-- name: TelegramRoomUpsert :one
-INSERT INTO telegram_room(id, chat_id, thread_id, kind, title)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO telegram_room(id, chat_id, thread_id, kind, title, chat_title)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (chat_id, thread_id) DO UPDATE SET seen_at = clock_timestamp(), kind = EXCLUDED.kind,
-  title = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE telegram_room.title END
-RETURNING id, chat_id, thread_id, kind, title, project_hint, created_at, seen_at
+  title = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE telegram_room.title END,
+  chat_title = CASE WHEN EXCLUDED.chat_title <> '' THEN EXCLUDED.chat_title ELSE telegram_room.chat_title END
+RETURNING id, chat_id, thread_id, kind, title, project_hint, created_at, seen_at, chat_title
 `
 
 type TelegramRoomUpsertParams struct {
-	ID       string
-	ChatID   int64
-	ThreadID int64
-	Kind     string
-	Title    string
+	ID        string
+	ChatID    int64
+	ThreadID  int64
+	Kind      string
+	Title     string
+	ChatTitle string
 }
 
 func (q *Queries) TelegramRoomUpsert(ctx context.Context, arg TelegramRoomUpsertParams) (TelegramRoom, error) {
@@ -989,6 +997,7 @@ func (q *Queries) TelegramRoomUpsert(ctx context.Context, arg TelegramRoomUpsert
 		arg.ThreadID,
 		arg.Kind,
 		arg.Title,
+		arg.ChatTitle,
 	)
 	var i TelegramRoom
 	err := row.Scan(
@@ -1000,6 +1009,7 @@ func (q *Queries) TelegramRoomUpsert(ctx context.Context, arg TelegramRoomUpsert
 		&i.ProjectHint,
 		&i.CreatedAt,
 		&i.SeenAt,
+		&i.ChatTitle,
 	)
 	return i, err
 }

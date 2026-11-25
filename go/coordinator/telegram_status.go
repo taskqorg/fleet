@@ -213,8 +213,8 @@ func telegramStatusAnswer(q *Request, now time.Time, row *db.TelegramUpdate, roo
 	return telegramOutbox(q, db.TelegramOutboxAddParams{ID: "so:" + row.ID, ChatID: room.ChatID, ThreadID: room.ThreadID, Kind: "text", ReplyTo: &m.MessageID, Text: body})
 }
 
-// telegramGlance (/now): in a group room its open work; in a private chat the person's home conversation and the work
-// items they opened.
+// telegramGlance (/now): in a group room its open work; in a private chat the room's current conversation and the work
+// items the person opened elsewhere.
 func telegramGlance(q *Request, now time.Time, room db.TelegramRoom, tp db.TelegramPerson) (string, error) {
 	works, err := q.db().TelegramWorkOpen(q.ctx(), room.ID)
 	if err != nil {
@@ -222,8 +222,8 @@ func telegramGlance(q *Request, now time.Time, room db.TelegramRoom, tp db.Teleg
 	}
 	parts := []string{}
 	if room.Kind == "private" {
-		if tp.HomeSessionID != nil {
-			run, rest, err := telegramFacts(q, *tp.HomeSessionID, tp.Language, now)
+		if len(works) > 0 {
+			run, rest, err := telegramFacts(q, works[0].SessionID, tp.Language, now)
 			if err != nil {
 				return "", err
 			}
@@ -235,7 +235,7 @@ func telegramGlance(q *Request, now time.Time, room db.TelegramRoom, tp db.Teleg
 		}
 		works = works[:0]
 		for _, w := range all {
-			if w.CreatedBy == tp.Email {
+			if w.CreatedBy == tp.Email && w.RoomID != room.ID {
 				works = append(works, w)
 			}
 		}
@@ -497,11 +497,7 @@ func telegramWatch(ctx context.Context, a *App) error {
 		}
 		for _, x := range push {
 			lang := ""
-			if x.Email != "" {
-				if tp, err := q.db().TelegramPersonGet(q.ctx(), x.Email); err == nil {
-					lang = tp.Language
-				}
-			} else if w, err := q.db().TelegramWorkGet(q.ctx(), x.WorkID); err == nil {
+			if w, err := q.db().TelegramWorkGet(q.ctx(), x.WorkID); err == nil {
 				if tp, err := q.db().TelegramPersonGet(q.ctx(), w.CreatedBy); err == nil {
 					lang = tp.Language
 				}
@@ -858,9 +854,9 @@ func isApprovalText(text string) bool {
 
 func isDeclineText(text string) bool { return declineWords.MatchString(approvalCore(text)) }
 
-// telegramApprovalText: free text that approves, while approval cards are open in the room's work (a group) or the
-// person's home conversation (a private chat). One card: answered as the author (Fleet checks they may). More: each is
-// listed with its buttons to choose. None: false, the message is routed as usual.
+// telegramApprovalText: free text that approves, while approval cards are open in the room's work (a private chat's is
+// its current conversation). One card: answered as the author (Fleet checks they may). More: each is listed with its
+// buttons to choose. None: false, the message is routed as usual.
 func telegramApprovalText(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.TelegramRoom, m *tgMessage, tp db.TelegramPerson, p *Person) (bool, error) {
 	// Only explicit approval words count here; a bare "ok" or "yes" may be about any work, and approves only as a
 	// Telegram reply to the card itself (telegramAnswer).
@@ -868,18 +864,12 @@ func telegramApprovalText(q *Request, c *kitClaim, row *db.TelegramUpdate, room 
 		return false, nil
 	}
 	sessions := []string{}
-	if room.Kind == "private" {
-		if tp.HomeSessionID != nil {
-			sessions = append(sessions, *tp.HomeSessionID)
-		}
-	} else {
-		open, err := q.db().TelegramWorkOpen(q.ctx(), room.ID)
-		if err != nil {
-			return false, err
-		}
-		for _, w := range open {
-			sessions = append(sessions, w.SessionID)
-		}
+	open, err := q.db().TelegramWorkOpen(q.ctx(), room.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, w := range open {
+		sessions = append(sessions, w.SessionID)
 	}
 	cards := []string{}
 	for _, s := range sessions {

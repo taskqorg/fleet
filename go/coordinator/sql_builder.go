@@ -1204,19 +1204,23 @@ var sessionGroups = map[string]string{
 }
 var sessionGroupLabels = map[string]string{"project": "CASE WHEN x.state='waiting' THEN 'waiting' ELSE x.project_id END", "agent": sessionLineLabel, "room": sessionRoomLabel, "state": "x.state"}
 
-// sessionRoom: the Telegram room a conversation is bound to (its open work item, else the private chat it is the
-// current conversation of).
-const sessionRoom = `coalesce((SELECT w.room_id FROM telegram_work w WHERE w.session_id=x.id ORDER BY w.closed_at NULLS FIRST LIMIT 1),
- (SELECT 'dm:' || p.telegram_user_id FROM telegram_person p WHERE p.home_session_id=x.id LIMIT 1))`
+// sessionRoom: the Telegram room a conversation is bound to: its open work item, else its newest closed one. A private
+// chat is a room too, and its current conversation one of its work items (conversation model step 5).
+const sessionRoom = `(SELECT w.room_id FROM telegram_work w WHERE w.session_id=x.id ORDER BY w.closed_at DESC NULLS FIRST LIMIT 1)`
 
 // sessionLine: the agent grouping of the conversation model (fleet-conversations.md#entities; board D1): the bot, else
 // the Telegram room, else the PM of the project, else none. Keys sort bots, PMs, rooms, none (b:, p:, r:, ~).
 const sessionLine = `(CASE WHEN x.bot_id IS NOT NULL THEN 'b:' || x.bot_id WHEN (` + sessionRoom + `) IS NOT NULL THEN 'r:' || (` + sessionRoom + `)
  WHEN x.profile_id='pm' THEN 'p:' || coalesce(x.project_id,'') ELSE '~' END)`
 
-const sessionRoomTitle = `(SELECT CASE WHEN r.title<>'' THEN r.title ELSE 'room' END FROM telegram_room r WHERE r.id=(` + sessionRoom + `))`
-
-const sessionRoomLabel = `(CASE WHEN (` + sessionRoom + `) LIKE 'dm:%' THEN 'Telegram · private chat' ELSE 'Telegram · ' || coalesce(` + sessionRoomTitle + `,'room') END)`
+// sessionRoomLabel: one label per room (chat and topic): a group's general chat "Telegram · <group>", a forum topic
+// "Telegram · <group> › <topic>" (the topic alone while the group's title is unknown), a private chat "Telegram · private
+// chat"; null without a room ("No room"). The group's title is the room's chat_title, else its general room's title.
+const sessionRoomLabel = `(SELECT 'Telegram · ' || CASE WHEN r.kind='private' THEN 'private chat'
+   WHEN r.thread_id=0 THEN coalesce(nullif(r.title,''),nullif(r.chat_title,''),'group')
+   ELSE coalesce(coalesce(nullif(r.chat_title,''),(SELECT nullif(g.title,'') FROM telegram_room g WHERE g.chat_id=r.chat_id AND g.thread_id=0)) || ' › ','')
+     || coalesce(nullif(r.title,''),'topic ' || r.thread_id) END
+ FROM telegram_room r WHERE r.id=(` + sessionRoom + `))`
 
 const sessionLineLabel = `(CASE WHEN x.bot_id IS NOT NULL THEN (SELECT r.name FROM bot_revision r WHERE r.bot_id=x.bot_id ORDER BY r.revision DESC LIMIT 1)
  WHEN (` + sessionRoom + `) IS NOT NULL THEN ` + sessionRoomLabel + `
