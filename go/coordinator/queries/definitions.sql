@@ -201,3 +201,25 @@ SELECT object_kind, object_id FROM person_grant WHERE email=$1 FOR SHARE;
 
 -- name: DefInitialMemberships :many
 SELECT id FROM definition WHERE kind='project' AND initial_member=$1 AND initial_member_revoked_at IS NULL;
+
+-- name: DefUsageRecent :many
+-- DefUsage's totals for every definition of the kinds in one pass (Library's tree, system_changes): the last days'
+-- executions are chosen by plain timestamp comparisons on execution_started_at, which RLS lets an index serve (a
+-- jsonb containment is not leakproof, so DefUsage's pin cannot start from execution_definitions under RLS); a run that
+-- has not started counts by its last update, as in DefUsage.
+WITH recent AS (
+ SELECT x.id, x.state, x.started_at, x.ended_at, x.definitions FROM execution x
+ WHERE x.started_at >= now() - make_interval(days => sqlc.arg(days)::int) AND jsonb_typeof(x.definitions) = 'array' AND x.definitions <> '[]'::jsonb
+ UNION ALL
+ SELECT x.id, x.state, x.started_at, x.ended_at, x.definitions FROM execution x
+ WHERE x.started_at IS NULL AND x.updated_at >= now() - make_interval(days => sqlc.arg(days)::int) AND jsonb_typeof(x.definitions) = 'array' AND x.definitions <> '[]'::jsonb
+)
+SELECT (d->>'kind')::text AS kind, (d->>'id')::text AS id,
+ count(*)::bigint AS runs, (count(*) FILTER (WHERE e.state='succeeded'))::bigint AS succeeded,
+ coalesce((percentile_disc(0.5) WITHIN GROUP (ORDER BY coalesce(t.wall_ms, CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0, (extract(epoch FROM e.ended_at - e.started_at)*1000)::bigint) END)))::bigint, -1)::bigint AS median,
+ coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint AS tokens
+FROM recent e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
+LEFT JOIN execution_totals t ON t.execution_id=e.id
+WHERE d->>'kind' = ANY(sqlc.arg(kinds)::text[])
+ AND coalesce((d->>'draft')::boolean,false)=false AND coalesce(d->>'revision','') ~ '^[0-9]+$'
+GROUP BY d->>'kind', d->>'id';

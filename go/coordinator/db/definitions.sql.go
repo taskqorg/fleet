@@ -1052,6 +1052,70 @@ func (q *Queries) DefUsage(ctx context.Context, arg DefUsageParams) ([]DefUsageR
 	return items, nil
 }
 
+const defUsageRecent = `-- name: DefUsageRecent :many
+WITH recent AS (
+ SELECT x.id, x.state, x.started_at, x.ended_at, x.definitions FROM execution x
+ WHERE x.started_at >= now() - make_interval(days => $2::int) AND jsonb_typeof(x.definitions) = 'array' AND x.definitions <> '[]'::jsonb
+ UNION ALL
+ SELECT x.id, x.state, x.started_at, x.ended_at, x.definitions FROM execution x
+ WHERE x.started_at IS NULL AND x.updated_at >= now() - make_interval(days => $2::int) AND jsonb_typeof(x.definitions) = 'array' AND x.definitions <> '[]'::jsonb
+)
+SELECT (d->>'kind')::text AS kind, (d->>'id')::text AS id,
+ count(*)::bigint AS runs, (count(*) FILTER (WHERE e.state='succeeded'))::bigint AS succeeded,
+ coalesce((percentile_disc(0.5) WITHIN GROUP (ORDER BY coalesce(t.wall_ms, CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0, (extract(epoch FROM e.ended_at - e.started_at)*1000)::bigint) END)))::bigint, -1)::bigint AS median,
+ coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint AS tokens
+FROM recent e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
+LEFT JOIN execution_totals t ON t.execution_id=e.id
+WHERE d->>'kind' = ANY($1::text[])
+ AND coalesce((d->>'draft')::boolean,false)=false AND coalesce(d->>'revision','') ~ '^[0-9]+$'
+GROUP BY d->>'kind', d->>'id'
+`
+
+type DefUsageRecentParams struct {
+	Kinds []string
+	Days  int32
+}
+
+type DefUsageRecentRow struct {
+	Kind      string
+	ID        string
+	Runs      int64
+	Succeeded int64
+	Median    int64
+	Tokens    int64
+}
+
+// DefUsage's totals for every definition of the kinds in one pass (Library's tree, system_changes): the last days'
+// executions are chosen by plain timestamp comparisons on execution_started_at, which RLS lets an index serve (a
+// jsonb containment is not leakproof, so DefUsage's pin cannot start from execution_definitions under RLS); a run that
+// has not started counts by its last update, as in DefUsage.
+func (q *Queries) DefUsageRecent(ctx context.Context, arg DefUsageRecentParams) ([]DefUsageRecentRow, error) {
+	rows, err := q.db.Query(ctx, defUsageRecent, arg.Kinds, arg.Days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DefUsageRecentRow
+	for rows.Next() {
+		var i DefUsageRecentRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Runs,
+			&i.Succeeded,
+			&i.Median,
+			&i.Tokens,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const defWriteRequest = `-- name: DefWriteRequest :one
 SELECT payload_sha, result FROM project_write_request WHERE directing_email=$1 AND operation=$2 AND request_id=$3
 `
