@@ -15,7 +15,7 @@ import { op, online, writeOnce, prepareSending, submissionKey, sendingId, author
 import { useAnswers } from '../answers.ts';
 import { useAttachments } from '../uploads.ts';
 import { useOp } from '../store.ts';
-import type { SessionGetReply } from '../../../contracts/generated/ops.ts';
+import type { SessionAgent, SessionGetReply } from '../../../contracts/generated/ops.ts';
 import { nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
@@ -62,25 +62,23 @@ export function SessionView(props: { id: string; frame: SessionFrame; onClose?: 
 function Session(props: { id: string; frame: SessionFrame; onClose?: () => void; onTitle?: (title: string) => void }) {
   const [, go] = useLocation();
   const alive = useAlive();
-  const sDoc = useOp('session_get', () => ({ sessionId: props.id }));
-  const targetDoc = useOp('thread_composer', () => ({ conversationId: props.id }));
-  // quiet: a running session's execution changes many times a second; the panel rereads at most once a second.
-  const ctxDoc = useOp('session_context', () => ({ sessionId: props.id }), { quiet: 1000 });
-  // The session's triggers (fleet-triggers.md): the timers of the context panel and the head chip; a trigger change rereads.
-  const trigDoc = useOp('trigger_list', () => ({ sessionId: props.id }));
-  const projects = useOp('project_list', () => (sDoc.data?.projectId ? {} : null));
+  // One read for the screen (session_view, docs/designs/fleet-conversations.md "Session view"): the head, the composer
+  // target, open questions, threads, triggers, the context panel and the newest turns as summaries. quiet: a running
+  // session's execution changes many times a second; the view rereads at most once a second.
+  const sDoc = useOp('session_view', () => ({ sessionId: props.id }), { quiet: 1000 });
   const [verifiedTarget, setVerifiedTarget] = createSignal<string | null>(null, { ownedWrite: true });
   createEffect(() => [sDoc.data, sDoc.restored, props.id] as const, ([s, restored, id]) => { if (s && !restored) setVerifiedTarget(id); });
-  let previousCode: string | null | undefined;
-  createEffect(() => sDoc.data?.code, c => { if (previousCode && c && previousCode !== c) projects.reload(); previousCode = c; });
-  const project = createMemo(() => projects.data?.projects.find(p => rec(p).id === sDoc.data?.projectId));
-  const s = () => sDoc.data;
+  const s = () => sDoc.data?.head;
+  const view = () => sDoc.data;
+  // The project's name for the head chip: project_list is one read every page shares.
+  const projects = useOp('project_list', () => (s()?.projectId ? {} : null));
+  const project = createMemo(() => projects.data?.projects.find(p => rec(p).id === s()?.projectId));
 
   // Thread: a session that got a task shows the task's thread; Thread quiet folds its blocks (tool-fold.ts).
   const thread = useThread(() => ({ session: props.id }));
   const key = createMemo<ThreadKey>(() => thread.win?.key ?? { session: props.id });
   const answers = useAnswers();
-  const execStates = createMemo(() => new Map((s()?.executions ?? []).map(e => [e.id, String(e.state)])));
+  const execStates = createMemo(() => new Map((view()?.executions.rows ?? []).map(e => [e.id, e.state])));
   // An answer given here shows in its place in the transcript at once (UR-58).
   const blocks = createMemo(() => {
     return (thread.win?.blocks ?? []).map(b => {
@@ -102,49 +100,41 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e) { setFailure({ text: errText(e), retry: () => run(fn) }); } };
   const off = () => !online.value;
 
-  // Composer target (thread_composer): the session that receives the next message and its running execution.
-  const active = createMemo(() => targetDoc.data?.active);
-  const targetID = createMemo(() => targetDoc.data?.sessionId);
-  const targetSessionDoc = useOp('session_get', () => { const sid = targetID(); return sid && sid !== props.id ? { sessionId: sid } : null; });
-  const targetSession = () => (targetID() === props.id ? s() : targetSessionDoc.data);
+  // Composer target (session_view composer): the session that receives the next message and its running execution.
+  const composer = () => view()?.composer;
+  const active = createMemo(() => composer()?.activeExecutionId ?? undefined);
+  const targetID = createMemo(() => composer()?.sessionId ?? undefined);
   const composerReason = () => {
     if (off()) return 'offline';
-    if (targetDoc.error || targetSessionDoc.error) return 'Session target unavailable';
-    if (!targetDoc.data || verifiedTarget() !== props.id) return 'Validating session';
-    if (!targetID()) return 'No session can receive messages';
+    if (sDoc.error && !view()) return 'Session target unavailable';
+    if (!view() || verifiedTarget() !== props.id) return 'Validating session';
+    if (!targetID()) return composer()?.reason ?? 'No session can receive messages';
   };
-  const latest = createMemo(() => s()?.executions.at(-1));
-  const runError = () => { const r = rec(latest()); return str(r.error) ?? str(r.errorMessage) ?? str(r.reason); };
-  const state = () => String(s()?.state ?? latest()?.state ?? 'idle');
+  // The newest turn of the session (session_view lists turns newest first).
+  const latest = createMemo(() => view()?.executions.rows.find(e => e.kind === 'agent_run') ?? view()?.executions.rows[0]);
+  const runError = () => s()?.error ?? undefined;
+  const state = () => s()?.state ?? 'idle';
   const life = () => lifeOfSession(state());
-  const openQs = createMemo(() => {
-    const qs = new Map((s()?.questions ?? []).map(q => [q.id, q]));
-    for (const q of targetSession()?.questions ?? []) qs.set(q.id, q);
-    return [...qs.values()].filter(q => q.state === 'open' && !answers.answered(q.id));
-  });
-  // A question's choices: the stored record in session_get may not carry them; its thread block does.
+  const openQs = createMemo(() => (view()?.questions ?? []).filter(q => !answers.answered(q.id)));
+  // A question's choices: the stored record may not carry them; its thread block does.
   const blockOptions = createMemo(() => new Map((thread.win?.blocks ?? []).flatMap(b => (b.kind === 'question' ? [[b.questionId, b.options] as const] : []))));
-  const optionsOf = (q: { id: string; options?: unknown }) => q.options ?? blockOptions().get(q.id);
-  const last = () => s()?.messages.at(-1);
-  const lastFiles = createMemo<string[]>(() => (last()?.attachments ?? []).map(a => str(rec(a).artifactId)).filter((x): x is string => !!x));
+  const optionsOf = (q: { id: string; options?: string[] }) => (q.options?.length ? q.options : blockOptions().get(q.id));
+  const last = () => view()?.lastMessage;
+  const lastFiles = createMemo<string[]>(() => last()?.attachments ?? []);
   const retryLast = () => {
     const requestId = reqId(), msg = last()?.text, fs = lastFiles();
     run(() => writeOnce('message_send', { sessionId: props.id, requestId, text: msg ?? '', ...(fs.length ? { attachments: fs } : {}) }, unknown, { signal: alive }));
   };
-  const title = createMemo(() => {
-    const session = s();
-    if (!session) return 'Session';
-    const fallback = (session.messages[0]?.text ?? '').replace(new RegExp(titleUUID.source, 'gi'), '').trim();
-    return session.title || [...fallback].slice(0, 200).join('') || 'New conversation';
-  });
+  // The set or generated title, else the first message's start (the server resolves it), never a UUID.
+  const title = createMemo(() => (s() ? s()!.title.replace(new RegExp(titleUUID.source, 'gi'), '').trim() || 'New conversation' : 'Session'));
   createEffect(() => (s() ? title() : null), t => { if (t) props.onTitle?.(t); });
   onSettled(() => () => props.onTitle?.(''));
   const avatar = createMemo<AvatarMark>(() => {
-    const h = str(rec(s()?.agentConfig).harness) ?? latest()?.harness;
+    const h = s()?.agent.harness ?? latest()?.harness ?? undefined;
     return s()?.role === 'pm' ? { letter: 'P' } : isHarness(h) ? { harness: h } : { letter: title().slice(0, 1).toUpperCase() };
   });
-  const projectName = () => str(rec(project()).name) ?? str(rec(project()).code);
-  const stop = createMemo(() => { const x = active()?.id; return x ? () => run(() => op('execution_stop', { executionId: x })) : undefined; });
+  const projectName = () => str(rec(project()).name) ?? s()?.projectCode ?? undefined;
+  const stop = createMemo(() => { const x = active(); return x ? () => run(() => op('execution_stop', { executionId: x })) : undefined; });
 
   // The URL a link to this session takes, in the frame it is open in.
   const here = (c: string) => `/${props.frame === 'home' ? 'home' : 'conversations'}/${encodeURIComponent(c)}`;
@@ -187,8 +177,10 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const copyThread = () => copySel(all()!);
 
   // Panels that open in place under the head (OR-14): rename, start fresh, switch or hand off, details, swarm board.
-  const [panel, setPanel] = createSignal<'rename' | 'fresh' | 'details' | 'swarm' | { session: SessionGetReply; handoff: boolean } | null>(null);
-  const switchPanel = createMemo(() => { const p = panel(); return p && typeof p === 'object' && 'session' in p ? p : null; });
+  const [panel, setPanel] = createSignal<'rename' | 'fresh' | 'details' | 'swarm' | { sessionId: string; profileId: string | null; handoff: boolean } | null>(null);
+  const switchPanel = createMemo(() => { const p = panel(); return p && typeof p === 'object' && 'sessionId' in p ? p : null; });
+  // Details (session_get: forks, handoffs, the resource rollup) is read only while the panel is open.
+  const detailsDoc = useOp('session_get', () => (panel() === 'details' ? { sessionId: props.id } : null));
   const [nextInstruction, setNextInstruction] = createSignal('');
   const [forking, setForking] = createSignal(false);
   const fork = (text?: string) => {
@@ -212,9 +204,11 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   });
   const copyLink = () => { const c = s()?.code; writeClip(location.origin + here(c ?? props.id)).catch(e => setFailure({ text: `Copy failed: ${errText(e)}` })); };
 
-  // Context panel (session_context): plan, timers, automations, swarm, tasks. A side panel (side-panel.md): open or closed and
-  // its width are the person's settings (session-context), the same for every session; at phone width it opens as a sheet.
-  const ctx = () => ctxDoc.data;
+  // Context panel (session_view context and triggers): plan, timers, automations, swarm, tasks. A side panel (side-panel.md):
+  // open or closed and its width are the person's settings (session-context), the same for every session; at phone width it
+  // opens as a sheet.
+  const ctx = () => view()?.context;
+  const trigDoc = { get data() { return view()?.triggers; }, reload: () => sDoc.reload() };
   const plan = createMemo<PlanStep[]>(() => (ctx()?.plan?.steps ?? []).map(st => ({ text: st.title, done: st.done })));
   // Timers: the session's timed triggers. One that checks every pass (passMs, the server's FLEET_TRIGGER_TICK_MS, or less) follows changes, not the clock, and
   // is not shown, as in session_context.
@@ -229,7 +223,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const headTimer = createMemo(() => { const ts = timed(); const t = ts.find(x => x.settings.enabled) ?? ts[0]; return t ? { t, more: ts.length - 1 } : null; });
   const [reveal, setReveal] = createSignal(0);
   // The automations of the session's bot: its triggers, one line each (name and when).
-  const botTrigDoc = useOp('trigger_list', () => (ctx()?.botId ? { botId: ctx()!.botId } : null));
+  const botTrigDoc = { get data() { return view()?.botTriggers; } };
   const automations = createMemo<Automation[]>(() => (botTrigDoc.data?.triggers ?? []).map(t => ({
     rule: t.settings.name, when: !t.settings.enabled ? 'paused' : whenOf(t.settings, botTrigDoc.data!.passMs),
   })));
@@ -305,21 +299,22 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   });
   // In the sheet the panel has its own Hide; the column is toggled from the shell header only, like the navigation.
   const contextPanel = (where: 'column' | 'sheet', close: () => void) => (
-    <ContextPanel loading={!ctx() && !ctxDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} tasks={tasks()}
+    <ContextPanel loading={!ctx() && !sDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} tasks={tasks()}
       onHide={where === 'sheet' ? close : undefined} onTimer={(id, a) => onTimer(id, a, close)} onOpen={href => { close(); go(href); }} />
   );
 
   // Files for the next message: uploaded as they are added (picker, paste, drop over the session).
-  const taskUpload = createMemo(() => !!targetDoc.data?.key.task);
+  const taskUpload = createMemo(() => { const k = thread.win?.key; return !!k && 'task' in k; });
   const uploadTarget = createMemo(() => (taskUpload() ? { projectId: s()?.projectId ?? undefined } : { sessionId: props.id }));
   const files = useAttachments(uploadTarget);
   const chips = createMemo<ComposerChip[]>(() => {
-    const ts = targetSession();
-    return ts ? composerChips(ts, active(), () => setPanel({ session: ts, handoff: false })) : [];
+    const a = composer()?.agent, sid = targetID();
+    const running = view()?.executions.rows.find(e => e.id === active());
+    return a && sid ? composerChips(a, running ? { harness: running.harness ?? undefined, model: running.model ?? undefined } : undefined, () => setPanel({ sessionId: sid, profileId: a.profileId, handoff: false })) : [];
   });
   const draftPersistence = createMemo(() => (s() && !sDoc.restored && verifiedTarget() === props.id ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id: props.id })) : undefined));
   const send = async (text: string) => {
-    const sid = untrack(targetID), executionId = untrack(active)?.id ?? null;
+    const sid = untrack(targetID), executionId = untrack(active) ?? null;
     if (!sid || untrack(composerReason)) throw Error('Session target unavailable');
     // Files still uploading finish first; a failed one fails the send and stays on its chip.
     let attachments: string[];
@@ -337,7 +332,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     } catch (e) {
       if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) {
         if (!unknownOutcome(e)) sendingId(dScope, null, sKey);
-        if (e instanceof OpError && e.status === 409) targetDoc.reload();
+        if (e instanceof OpError && e.status === 409) sDoc.reload();
         setFailure({ text: errText(e) });
       }
       throw e;
@@ -397,8 +392,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
                   { label: 'Copy as markdown', icon: 'file-text', onClick: copyThread },
                   { label: 'Rename', icon: 'type', onClick: () => setPanel('rename') },
                   { label: 'Retry last message', icon: 'rotate-ccw', disabledReason: last()?.text || lastFiles().length ? undefined : 'no message yet', onClick: retryLast },
-                  { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel({ session: s()!, handoff: false }) },
-                  { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel({ session: s()!, handoff: true }) },
+                  { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel({ sessionId: props.id, profileId: s()!.agent.profileId, handoff: false }) },
+                  { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel({ sessionId: props.id, profileId: s()!.agent.profileId, handoff: true }) },
                   { label: 'Start fresh with context', icon: 'git-merge', disabledReason: latest() ? undefined : 'Send a message first', onClick: () => setPanel('fresh') },
                   ...(hasSwarmBoard(board.data) ? [{ label: 'Swarm board', icon: 'messages-square' as IconName, onClick: () => setPanel(p => (p === 'swarm' ? null : 'swarm')) }] : []),
                   archived()
@@ -411,11 +406,15 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 
             <Show when={panel() === 'details'}>
               <section class="sv-panel" aria-label="Details">
-                <ScopedRollupBar rollup={s()!.resources} cost={s()!.cost} inlineDetails={false} />
                 <KvRow icon="messages-square" label="Session" value={<EntityCode code={s()!.code} id={props.id} kind="conversation" />} />
                 <Show when={latest()} keyed>{e => <KvRow icon="activity" label="Latest run" value={<EntityCode id={e.id} kind="execution" />} />}</Show>
-                <ForkDetails session={s()!} open={openSession} />
-                <Show when={s()!.resources}>{r => <Disclosure summary="Related work"><ScopedRollupDetails rollup={r()} /></Disclosure>}</Show>
+                <Show when={detailsDoc.data} keyed fallback={<Show when={detailsDoc.error} fallback={<Skeleton rows={3} />}>{err => <ErrorBanner text={`Details did not load: ${err()}`} onRetry={detailsDoc.reload} />}</Show>}>
+                  {d => <>
+                    <ScopedRollupBar rollup={d.resources} cost={d.cost} inlineDetails={false} />
+                    <ForkDetails session={d} open={openSession} />
+                    <Disclosure summary="Related work"><ScopedRollupDetails rollup={d.resources} /></Disclosure>
+                  </>}
+                </Show>
               </section>
             </Show>
             <Show when={panel() === 'rename'}>
@@ -434,7 +433,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
               </DetailSection>
             </Show>
             <Show when={switchPanel()} keyed>
-              {a => <SwitchPanel sessionId={a.session.sessionId} handoff={a.handoff} current={str(rec(a.session.agentConfig).id)} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
+              {a => <SwitchPanel sessionId={a.sessionId} handoff={a.handoff} current={a.profileId ?? undefined} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
             </Show>
 
             {/* The open question, pinned above the transcript (OR-53); a failed run asks to retry (UR-63). */}
@@ -447,8 +446,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 
             <div class="sv-status" role="status">
               <Show when={failure()} keyed fallback={
-                <Show when={targetDoc.error || targetSessionDoc.error} fallback={<Show when={thread.error}>{err => <ErrorBanner text={`Transcript did not load: ${err()}`} onRetry={thread.newest} />}</Show>}>
-                  {err => <ErrorBanner text={`Session target did not load: ${err()}`} onRetry={() => { targetDoc.reload(); targetSessionDoc.reload(); }} />}
+                <Show when={view() ? null : sDoc.error} fallback={<Show when={thread.error}>{err => <ErrorBanner text={`Transcript did not load: ${err()}`} onRetry={thread.newest} />}</Show>}>
+                  {err => <ErrorBanner text={`Session target did not load: ${err()}`} onRetry={() => sDoc.reload()} />}
                 </Show>
               }>
                 {f => <ErrorBanner text={f.text} onRetry={f.retry} />}
@@ -539,16 +538,15 @@ const scheduleOf = (t: { when: string; everyMs?: number; dailyTime?: string; dai
  * The composer's facts (controls/composer.md): the agent profile with its model and effort (a click opens Switch profile
  * or model), and the permissions the profile grants, shown only.
  */
-function composerChips(s: SessionGetReply, active: { harness?: string; model?: string; effort?: string } | undefined, onSwitch: () => void): ComposerChip[] {
-  const cfg = rec(s.agentConfig), settings = rec(cfg.settings), harness: string | null = str(cfg.harness) ?? active?.harness ?? null;
-  const mark = agentLabel(active?.model ?? str(cfg.model), active?.effort ?? str(cfg.effort));
-  const chips: ComposerChip[] = [{ harness, icon: 'bot', label: mark || str(cfg.id) || 'Agent', tip: `${cfg.id ? `Profile ${str(cfg.id)}` : 'No profile'} · switch profile or model`, onClick: onSwitch }];
-  const tools: string[] = Array.isArray(cfg.tools) ? cfg.tools.filter((t): t is string => typeof t === 'string') : [];
-  const network = cfg.gitNetwork === true, mode = str(settings.mode) ?? null;
+function composerChips(a: SessionAgent, active: { harness?: string; model?: string; effort?: string } | undefined, onSwitch: () => void): ComposerChip[] {
+  const harness: string | null = a.harness ?? active?.harness ?? null;
+  const mark = agentLabel(active?.model ?? a.model ?? undefined, active?.effort ?? a.effort ?? undefined);
+  const chips: ComposerChip[] = [{ harness, icon: 'bot', label: mark || a.profileId || 'Agent', tip: `${a.profileId ? `Profile ${a.profileId}` : 'No profile'} · switch profile or model`, onClick: onSwitch }];
+  const tools = a.tools, network = a.gitNetwork === true, mode = a.mode ?? null;
   chips.push({
     icon: 'shield',
     label: [mode ?? 'Workspace', network ? 'network' : null].filter(Boolean).join(' · '),
-    tip: `Permissions of the profile: ${tools.length ? `tools ${tools.join(', ')}` : 'the harness tools'}${network ? ', git network' : cfg.gitNetwork === false ? ', no git network' : ', git network as the project grants'}${settings.sandbox === false ? ', no sandbox' : ''}`,
+    tip: `Permissions of the profile: ${tools.length ? `tools ${tools.join(', ')}` : 'the harness tools'}${network ? ', git network' : a.gitNetwork === false ? ', no git network' : ', git network as the project grants'}${a.sandbox === false ? ', no sandbox' : ''}`,
   });
   return chips;
 }
