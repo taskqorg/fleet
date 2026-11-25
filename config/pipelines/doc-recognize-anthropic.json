@@ -1,0 +1,29 @@
+{
+  "id": "doc-recognize-anthropic",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider anthropic",
+      "host": "owner-mac",
+      "id": "request",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "max_tokens": "${steps.request.output.body.max_tokens}",
+        "messages": "${steps.request.output.body.messages}",
+        "model": "claude-sonnet-5-5"
+      },
+      "connection": "anthropic-cyprus",
+      "id": "call",
+      "kind": "api",
+      "tool": "create_message"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from call",
+      "host": "owner-mac",
+      "id": "result",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}

@@ -1,0 +1,14 @@
+{
+  "harness": "antigravity",
+  "id": "doc-reader-antigravity",
+  "instructionRole": "user",
+  "instructions": "You read one model's identity and consent documents and answer with one JSON object. Look at each image file yourself with your image viewing tool. Never run OCR programs, never upload or send the files anywhere, never copy personal data into any other file. Write only $FLEET_OUTPUT_DIR/output.json, then stop. Do not spawn subagents.",
+  "mcpServers": [],
+  "model": "gemini-4-neon-medium",
+  "purpose": "Reads a model's document images with the run's subscription and returns the doc-recognize JSON (DAM, LBG2-124).",
+  "settings": {
+    "includeDefaultCustomizations": false,
+    "mode": "accept-edits",
+    "sandbox": true
+  }
+}

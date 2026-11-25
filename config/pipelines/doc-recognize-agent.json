@@ -1,0 +1,24 @@
+{
+  "id": "doc-recognize-agent",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py prompt",
+      "host": "owner-mac",
+      "id": "prompt",
+      "kind": "script"
+    },
+    {
+      "id": "read",
+      "kind": "agent",
+      "profile": "doc-reader-claude",
+      "prompt": "${steps.prompt.output.prompt}"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from read",
+      "host": "owner-mac",
+      "id": "result",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}

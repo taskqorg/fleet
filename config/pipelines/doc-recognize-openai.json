@@ -1,0 +1,30 @@
+{
+  "id": "doc-recognize-openai",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider openai",
+      "host": "owner-mac",
+      "id": "request",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "input": "${steps.request.output.body.input}",
+        "max_output_tokens": "${steps.request.output.body.max_output_tokens}",
+        "model": "gpt-6.2-sol",
+        "reasoning": "${steps.request.output.body.reasoning}"
+      },
+      "connection": "openai-2",
+      "id": "call",
+      "kind": "api",
+      "tool": "create_response"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from call",
+      "host": "owner-mac",
+      "id": "result",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}

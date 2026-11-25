@@ -1,0 +1,143 @@
+{
+ "id": "dam-docs-04",
+ "use_case_id": "dam:document-recognition",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "Classify and extract the 4 documents of one model (synthetic specimen set dam-docs-04).",
+ "inputs": [
+  {
+   "path": "d1.jpg",
+   "sha256": "98cb3f0cd561826ee73a3ddc5cdefe70113932599893972da99b914871b0f3fc",
+   "media_type": "image/jpeg"
+  },
+  {
+   "path": "d2.jpg",
+   "sha256": "bf4ce216f0b3dbe61f732d759d2ee2d22e8dfc502504d3549a4432e737dd169a",
+   "media_type": "image/jpeg"
+  },
+  {
+   "path": "d3.jpg",
+   "sha256": "9c84a1aa0dd13081ddf797d805b41870480a15563db1f283f657a69a358a28c6",
+   "media_type": "image/jpeg"
+  },
+  {
+   "path": "d4.jpg",
+   "sha256": "312a30dfd3517a51866728253a5979a48c0235970e367cdc262c73fe2f1b2e78",
+   "media_type": "image/jpeg"
+  }
+ ],
+ "references": [
+  {
+   "path": "output.json",
+   "text": "{\"documents\": [{\"alias\": null, \"dob\": \"1999-01-30\", \"file\": \"d1.jpg\", \"legal_name\": \"Marisol Quintana\", \"readable\": true, \"signature\": true, \"site\": null, \"type\": \"id_card\"}, {\"alias\": null, \"dob\": null, \"file\": \"d2.jpg\", \"legal_name\": null, \"readable\": true, \"signature\": null, \"site\": null, \"type\": \"selfie_with_id\"}, {\"alias\": \"Mari Q\", \"dob\": \"1999-01-30\", \"file\": \"d3.jpg\", \"legal_name\": \"Marisol Quintana\", \"readable\": true, \"signature\": true, \"site\": \"northlight-media.example\", \"type\": \"model_release\"}, {\"alias\": \"Mari Q, Sol Rivera\", \"dob\": \"1999-01-30\", \"file\": \"d4.jpg\", \"legal_name\": \"Marisol Quintana\", \"readable\": true, \"signature\": true, \"site\": \"northlight-media.example\", \"type\": \"2257_form\"}], \"files\": 4, \"model\": {\"aliases\": [\"Mari Q\", \"Sol Rivera\"], \"duplicates\": [], \"legal_name\": \"Marisol Quintana\", \"name_variants\": false, \"unreadable\": []}}\n"
+  },
+  {
+   "path": "expected.json",
+   "text": "{\"documents\": [{\"alias\": null, \"dob\": \"1999-01-30\", \"file\": \"d1.jpg\", \"legal_name\": \"Marisol Quintana\", \"readable\": true, \"signature\": true, \"site\": null, \"type\": \"id_card\"}, {\"alias\": null, \"dob\": null, \"file\": \"d2.jpg\", \"legal_name\": null, \"readable\": true, \"signature\": null, \"site\": null, \"type\": \"selfie_with_id\"}, {\"alias\": \"Mari Q\", \"dob\": \"1999-01-30\", \"file\": \"d3.jpg\", \"legal_name\": \"Marisol Quintana\", \"readable\": true, \"signature\": true, \"site\": \"northlight-media.example\", \"type\": \"model_release\"}, {\"alias\": \"Mari Q, Sol Rivera\", \"dob\": \"1999-01-30\", \"file\": \"d4.jpg\", \"legal_name\": \"Marisol Quintana\", \"readable\": true, \"signature\": true, \"site\": \"northlight-media.example\", \"type\": \"2257_form\"}], \"model\": {\"aliases\": [\"Mari Q\", \"Sol Rivera\"], \"duplicates\": [], \"legal_name\": \"Marisol Quintana\", \"name_variants\": false, \"unreadable\": []}}\n"
+  },
+  {
+   "path": "score.py",
+   "text": "\"\"\"Lab check for DAM document recognition: python3 references/score.py <file|model> <field>.\n\nCompares one field of the trial's output.json with references/expected.json; exit 0 when it matches.\nNames match without case, accents, punctuation or word order; aliases as sets; dates as ISO; sites by domain.\n\"\"\"\nimport json, re, sys, unicodedata\n\n\ndef fold(s):\n    s = unicodedata.normalize('NFKD', str(s)).encode('ascii', 'ignore').decode().lower()\n    return sorted(w for w in re.split(r'[^a-z0-9]+', s) if w)\n\n\ndef aliases(v):\n    if v is None:\n        return set()\n    items = v if isinstance(v, list) else re.split(r'[,;/]|\\band\\b', str(v))\n    return {' '.join(fold(x)) for x in items if fold(x)}\n\n\ndef site(v):\n    s = str(v or '').lower()\n    m = re.search(r'([a-z0-9-]+\\.example)', s)\n    return m.group(1) if m else ' '.join(fold(s))\n\n\ndef same(field, want, got):\n    if field in ('legal_name',):\n        return got is not None and fold(want) == fold(got)\n    if field == 'alias':\n        return aliases(want) == aliases(got)\n    if field == 'site':\n        return site(want) == site(got)\n    if field in ('signature', 'readable', 'name_variants'):\n        return want is got\n    if field in ('duplicates',):\n        return {tuple(sorted(p)) for p in want} == {tuple(sorted(p)) for p in (got or []) if isinstance(p, list)}\n    if field == 'unreadable':\n        return set(want) == set(got or [])\n    return want == got\n\n\ndef main():\n    target, field = sys.argv[1], sys.argv[2]\n    want = json.load(open('references/expected.json'))\n    try:\n        got = json.load(open('output.json'))\n    except Exception as e:\n        sys.exit('no output.json: %s' % e)\n    if target == 'model':\n        w, g = want['model'].get(field), (got.get('model') or {}).get(field)\n    else:\n        w = next(d for d in want['documents'] if d['file'] == target)[field]\n        g = next((d for d in got.get('documents') or [] if isinstance(d, dict) and d.get('file') == target), {}).get(field)\n    if not same(field, w, g):\n        sys.exit('%s %s: expected %r, got %r' % (target, field, w, g))\n\n\nmain()\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "d1.jpg:type",
+   "run": "python3 references/score.py d1.jpg type"
+  },
+  {
+   "id": "d1.jpg:readable",
+   "run": "python3 references/score.py d1.jpg readable"
+  },
+  {
+   "id": "d1.jpg:legal_name",
+   "run": "python3 references/score.py d1.jpg legal_name"
+  },
+  {
+   "id": "d1.jpg:dob",
+   "run": "python3 references/score.py d1.jpg dob"
+  },
+  {
+   "id": "d1.jpg:signature",
+   "run": "python3 references/score.py d1.jpg signature"
+  },
+  {
+   "id": "d2.jpg:type",
+   "run": "python3 references/score.py d2.jpg type"
+  },
+  {
+   "id": "d2.jpg:readable",
+   "run": "python3 references/score.py d2.jpg readable"
+  },
+  {
+   "id": "d3.jpg:type",
+   "run": "python3 references/score.py d3.jpg type"
+  },
+  {
+   "id": "d3.jpg:readable",
+   "run": "python3 references/score.py d3.jpg readable"
+  },
+  {
+   "id": "d3.jpg:legal_name",
+   "run": "python3 references/score.py d3.jpg legal_name"
+  },
+  {
+   "id": "d3.jpg:alias",
+   "run": "python3 references/score.py d3.jpg alias"
+  },
+  {
+   "id": "d3.jpg:dob",
+   "run": "python3 references/score.py d3.jpg dob"
+  },
+  {
+   "id": "d3.jpg:site",
+   "run": "python3 references/score.py d3.jpg site"
+  },
+  {
+   "id": "d3.jpg:signature",
+   "run": "python3 references/score.py d3.jpg signature"
+  },
+  {
+   "id": "d4.jpg:type",
+   "run": "python3 references/score.py d4.jpg type"
+  },
+  {
+   "id": "d4.jpg:readable",
+   "run": "python3 references/score.py d4.jpg readable"
+  },
+  {
+   "id": "d4.jpg:legal_name",
+   "run": "python3 references/score.py d4.jpg legal_name"
+  },
+  {
+   "id": "d4.jpg:alias",
+   "run": "python3 references/score.py d4.jpg alias"
+  },
+  {
+   "id": "d4.jpg:dob",
+   "run": "python3 references/score.py d4.jpg dob"
+  },
+  {
+   "id": "d4.jpg:site",
+   "run": "python3 references/score.py d4.jpg site"
+  },
+  {
+   "id": "d4.jpg:signature",
+   "run": "python3 references/score.py d4.jpg signature"
+  },
+  {
+   "id": "model:duplicates",
+   "run": "python3 references/score.py model duplicates"
+  },
+  {
+   "id": "model:name_variants",
+   "run": "python3 references/score.py model name_variants"
+  },
+  {
+   "id": "model:unreadable",
+   "run": "python3 references/score.py model unreadable"
+  }
+ ],
+ "split": "tune"
+}
