@@ -65,6 +65,31 @@ type pipelineScriptPayload struct {
 	TimeoutMs json.RawMessage `json:"timeout_ms,omitempty"`
 }
 
+// scriptHost: the host for a script step that names none, chosen as dispatch chooses for agent work: online, accepting
+// work, able to run scripts, not updating and not overloaded, in host order with the default host first; a spare host
+// only when no other host qualifies (fleet-people-access.md §7). With none, the default host, as before.
+func scriptHost(q *Request) (string, error) {
+	k, err := loadDispatchContext(q)
+	if err != nil {
+		return "", err
+	}
+	now := nowMs()
+	order := append([]string{q.app.hostID}, k.hostIDs...)
+	for _, spare := range []bool{false, true} {
+		for _, id := range order {
+			h, ok := k.hosts[id]
+			switch {
+			case !ok || k.spare(id) != spare || deref(h.Intake) == "paused":
+			case !(float64(now)-k.seen[id] < onlineMs) || !inList(k.caps[id], "script") || k.updating[id] != "":
+			case hostOverloadReason(id, k.loads[id], now) != "":
+			default:
+				return id, nil
+			}
+		}
+	}
+	return q.app.hostID, nil
+}
+
 // startScript: a script command for the executor, as its own session and execution.
 func (run *runRecord) startScript(q *Request, stepExecutionID, command string, timeout json.RawMessage, hostID string, inputs []fileRef) (string, error) {
 	sid := newID()
@@ -75,7 +100,11 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 		return "", err
 	}
 	if hostID == "" {
-		hostID = q.app.hostID
+		h, err := scriptHost(q)
+		if err != nil {
+			return "", err
+		}
+		hostID = h
 	}
 	id := newID()
 	e := pipelineHostJob{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", PipelineStepID: stepExecutionID,
