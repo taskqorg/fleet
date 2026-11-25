@@ -602,7 +602,11 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 	}
 
 	// Fetch lineage, precomputed leaf spend/tokens, and resolved model/profile per trial.
-	lineage, err := q.db().LabTrialsLineage(q.ctx(), filteredTrialIDs)
+	settled := map[string]bool{}
+	for _, ft := range filtered {
+		settled[ft.row.ID] = labTrialSettled(ft.row.State, ft.row.EndedAt)
+	}
+	lineage, err := labTrialsLineage(q, cacheKey.scope, filteredTrialIDs, settled)
 	if err != nil {
 		return out, err
 	}
@@ -884,4 +888,75 @@ func labLeaderboardVersion(q *Request) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%d@%d|%d@%d|%d@%d", v.Trials, v.TrialsAt.Time.UnixMicro(), v.Scores, v.ScoreSeq, v.Experiments, v.ExperimentSeq), nil
+}
+
+// A settled trial's lineage (its leaf executions) does not change, so it is kept per caller scope and trial: the
+// comparison's recompute after a new trial or score reads only the new trials' lineage (LabTrialsLineage: 126 ms for
+// 445 trials under RLS on prod, 2026-11-26). Under another scope (grants) it is read again.
+const (
+	labLineageSettle   = 10 * time.Minute
+	labLineageCacheMax = 50000
+)
+
+type labLineageKey struct{ scope, trial string }
+
+var (
+	labLineageMu    sync.Mutex
+	labLineageCache = map[labLineageKey][]string{}
+)
+
+// labTrialSettled: a trial that ended in success or failure long enough ago that no late child execution joins it.
+func labTrialSettled(state string, ended *time.Time) bool {
+	return (state == "succeeded" || state == "failed") && ended != nil && labLeaderboardNow().Sub(*ended) >= labLineageSettle
+}
+
+// labTrialsLineage: LabTrialsLineage of trials, read only for the trials whose settled lineage is not kept for scope;
+// leaves in (trial, leaf) order as the query gives them.
+func labTrialsLineage(q *Request, scope string, trials []string, settled map[string]bool) (db.LabTrialsLineageRow, error) {
+	leaves := map[string][]string{}
+	missing := make([]string, 0, len(trials))
+	labLineageMu.Lock()
+	for _, t := range trials {
+		if l, ok := labLineageCache[labLineageKey{scope, t}]; ok {
+			leaves[t] = l
+		} else {
+			missing = append(missing, t)
+		}
+	}
+	labLineageMu.Unlock()
+	if len(missing) > 0 {
+		got, err := q.db().LabTrialsLineage(q.ctx(), missing)
+		if err != nil {
+			return db.LabTrialsLineageRow{}, err
+		}
+		read := map[string][]string{}
+		for i, lid := range got.LeafIds {
+			if i < len(got.ScopeKeys) && i < len(got.Scopes) && got.Scopes[i] == "trial" {
+				read[got.ScopeKeys[i]] = append(read[got.ScopeKeys[i]], lid)
+			}
+		}
+		labLineageMu.Lock()
+		if len(labLineageCache) > labLineageCacheMax {
+			clear(labLineageCache)
+		}
+		for _, t := range missing {
+			leaves[t] = read[t]
+			if settled[t] {
+				labLineageCache[labLineageKey{scope, t}] = read[t]
+			}
+		}
+		labLineageMu.Unlock()
+	}
+	ids := make([]string, 0, len(leaves))
+	for t := range leaves {
+		ids = append(ids, t)
+	}
+	sort.Strings(ids)
+	var out db.LabTrialsLineageRow
+	for _, t := range ids {
+		for _, lid := range leaves[t] {
+			out.Scopes, out.ScopeKeys, out.LeafIds = append(out.Scopes, "trial"), append(out.ScopeKeys, t), append(out.LeafIds, lid)
+		}
+	}
+	return out, nil
 }
