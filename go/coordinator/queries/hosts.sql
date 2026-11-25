@@ -82,6 +82,11 @@ UPDATE artifact_copy c SET state='deleted', last_error='host-removed' FROM store
 -- name: StoresOfHostUnreachable :exec
 UPDATE store SET state='unreachable' WHERE host_id=$1;
 
+-- name: HolderNoticeOpen :one
+-- An open holder notice with the same text already addressed to the holder: a repeated change asks once.
+SELECT EXISTS (SELECT 1 FROM question WHERE addressed_to= @holder::text AND text= @text::text AND state='open'
+ AND data->>'notice'='owner-override');
+
 -- name: AddressQuestion :exec
 UPDATE question SET addressed_to= @holder::text WHERE id= @id::text;
 

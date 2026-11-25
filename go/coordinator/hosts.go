@@ -212,17 +212,23 @@ func mintSecret() string {
 	return hex.EncodeToString(b)
 }
 
-// holderNoticeData: the data of the question that tells a holder the owner changed a setting of their row.
+// holderNoticeData: the data of the question that tells a holder someone changed a setting of their row.
 type holderNoticeData struct {
 	Notice string `json:"notice"`
 }
 
-// notifyHolder: the owner changed a setting of a row someone else holds; tell the holder with a question addressed to them.
-func notifyHolder(q *Request, holder, text string) error {
+// notifyHolder: someone with full access changed a setting of a row another person holds; tell the holder with a
+// question addressed to them. what is the change without its subject ("changed autoUpdate of your host x."): the
+// notice names who made it (an agent person such as Site agents too), never "the owner" by default.
+func notifyHolder(q *Request, holder, what string) error {
 	if q.person == nil || !fullAccess(q.person) || q.person.Email == holder {
 		return nil
 	}
 	by := q.person.Email
+	text := personName(q.person) + " " + what
+	if open, err := q.db().HolderNoticeOpen(q.ctx(), db.HolderNoticeOpenParams{Holder: holder, Text: text}); err != nil || open {
+		return err // 2026-11-26: seven identical notices for seven hold changes of one host
+	}
 	id, err := askQuestionAs(q, questionAsk{Kind: "operator_decision", Text: text, Options: jsonBytes([]string{"ok"}), AskedBy: &by,
 		Data: jsonBytes(holderNoticeData{Notice: "owner-override"})})
 	if err != nil {
@@ -436,7 +442,7 @@ func hostsUpdate(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpda
 		}
 	}
 	if len(changed) > 0 {
-		if err := notifyHolder(q, h.holder(), fmt.Sprintf("The owner changed %s of your host %s.", strings.Join(changed, ", "), h.ID)); err != nil {
+		if err := notifyHolder(q, h.holder(), fmt.Sprintf("changed %s of your host %s.", strings.Join(changed, ", "), h.ID)); err != nil {
 			return out, err
 		}
 	}
