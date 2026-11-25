@@ -114,6 +114,9 @@ func TestComponentHostCell(t *testing.T) {
 	if c := componentHost(harnessrelease.Tools, "node", true, node, h, pinsRegression{}); c.State != contract.ComponentHostStateOwn {
 		t.Fatalf("a PATH tool (no pin reported) is the host's own, not the pin: %+v", c)
 	}
+	if c := componentHost(harnessrelease.Tools, "node", true, "", h, pinsRegression{}); c.State != contract.ComponentHostStateOwn {
+		t.Fatalf("a PATH tool with nothing pinned for the target is own: %+v", c)
+	}
 	h.ToolVersions[0].Expected = &node
 	if c := componentHost(harnessrelease.Tools, "node", true, node, h, pinsRegression{}); c.State != contract.ComponentHostStatePinned {
 		t.Fatalf("tool on its pin: %+v", c)

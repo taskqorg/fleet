@@ -323,7 +323,7 @@ function ReleaseRow(p: { versions: SystemVersionsReply; onHost: (path: string) =
   const behind = () => p.versions.hosts.filter(h => h.behind && !pending().includes(h));
   const row = () => {
     const f = failing(), w = pending(), b = behind();
-    if (f.length) return { life: 'failed' as Life, tone: 't-danger', text: `${names(f.map(h => h.id))} ${({ refused: 'refused', failed: 'rolled back', error: 'update error' } as Record<string, string>)[updateOf(f[0].update)!.state]}${why(f[0])}`, host: f[0], at: updateOf(f[0].update)?.at };
+    if (f.length) return { life: 'failed' as Life, tone: 't-danger', text: `${names(f.map(h => h.id))} ${new Set(f.map(h => updateOf(h.update)!.state)).size > 1 ? 'failed' : ({ refused: 'refused', failed: 'rolled back', error: 'update error' } as Record<string, string>)[updateOf(f[0].update)!.state]}${why(f[0])}`, host: f[0], at: updateOf(f[0].update)?.at };
     if (w.length) return { life: 'working' as Life, tone: 't-running', text: `${names(w.map(h => h.id))} installing${why(w[0])}`, host: w[0], at: updateOf(w[0].update)?.at };
     if (b.length) return { life: 'waiting' as Life, tone: 't-attention', text: `${names(b.map(h => h.id))} behind`, host: b[0], at: undefined };
     return { life: 'done' as Life, tone: 'muted', text: 'every host runs it', host: undefined, at: undefined };

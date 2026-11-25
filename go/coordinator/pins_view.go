@@ -362,12 +362,15 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 		return cell
 	}
 	if pinned == "" { // nothing pinned for this host's target: no drift to show
+		if unmanaged {
+			cell.State = contract.ComponentHostStateOwn
+		}
 		return cell
 	}
 	cell.Pinned = &pinned
 	upd, hasUpd := decodeUpdate(rawAny(h.Update))
 	switch {
-	case flagged.Total > 0 && flagged.Version == pinned:
+	case !unmanaged && flagged.Total > 0 && flagged.Version == pinned:
 		cell.State, cell.Failed, cell.Total = contract.ComponentHostStateFailing, &flagged.Failed, &flagged.Total
 	case !unmanaged && cell.Observed != nil && *cell.Observed == pinned:
 		cell.State = contract.ComponentHostStatePinned
