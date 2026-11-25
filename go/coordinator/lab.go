@@ -906,26 +906,10 @@ func init() {
 		return labMapReply(expDecide(q, r))
 	})
 	op("lab_experiments_list", func(q *Request, r *contract.LabExperimentsListRequest) (contract.LabExperimentsListReply, error) {
-		out := contract.LabExperimentsListReply{Experiments: []contract.LabExperimentRecord{}}
 		if r.Limit != nil && *r.Limit <= 0 {
-			return out, fail(400, "Expected positive integer limit")
+			return contract.LabExperimentsListReply{Experiments: []contract.LabExperimentRecord{}}, fail(400, "Expected positive integer limit")
 		}
-		rs, err := q.db().LabExperiments(q.ctx(), r.Limit)
-		if err != nil {
-			return out, err
-		}
-		for _, r := range rs {
-			e, err := expOf(r)
-			if err != nil {
-				return out, err
-			}
-			v, err := expView(e)
-			if err != nil {
-				return out, err
-			}
-			out.Experiments = append(out.Experiments, v)
-		}
-		return out, nil
+		return labExperimentsList(q, r.Limit)
 	})
 	op("lab_leaderboard", func(q *Request, r *contract.LabLeaderboardRequest) (contract.LabLeaderboardReply, error) {
 		return labLeaderboard(q, r)
@@ -992,6 +976,27 @@ func init() {
 		return labRegistry()
 	})
 
+}
+
+// labExperimentsList: lab_experiments_list's experiments, at most limit (nil: all).
+func labExperimentsList(q *Request, limit *int64) (contract.LabExperimentsListReply, error) {
+	out := contract.LabExperimentsListReply{Experiments: []contract.LabExperimentRecord{}}
+	rs, err := q.db().LabExperiments(q.ctx(), limit)
+	if err != nil {
+		return out, err
+	}
+	for _, r := range rs {
+		e, err := expOf(r)
+		if err != nil {
+			return out, err
+		}
+		v, err := expView(e)
+		if err != nil {
+			return out, err
+		}
+		out.Experiments = append(out.Experiments, v)
+	}
+	return out, nil
 }
 
 // exampleRef: <id>@<version>.
