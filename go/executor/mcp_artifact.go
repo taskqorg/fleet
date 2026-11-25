@@ -2,7 +2,7 @@ package main
 
 // Artifact tools of the delegation server: artifact_save spools a file from the working area (walked component by
 // component with openat O_NOFOLLOW, so no symlink can lead outside it; an absolute path must name the working area or
-// its resolved spelling), artifact_list (own execution by default, paged) and artifact_get queue transfers.
+// its resolved spelling, or the run's temporary directory), artifact_list (own execution by default, paged) and artifact_get queue transfers.
 
 import (
 	"database/sql"
@@ -161,6 +161,10 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 	if strings.HasPrefix(path, "/") && parts != nil {
 		if inside := insideParts(workdir, parts); inside != nil {
 			parts = inside
+		} else if ctx.TempDir != nil && insideParts(*ctx.TempDir, parts) != nil {
+			// The run's own temporary directory (TMPDIR, run-tmp/<execution>) holds files the agent made for this
+			// turn; they are saved from there as from the working area.
+			workdir, parts = *ctx.TempDir, insideParts(*ctx.TempDir, parts)
 		} else {
 			rooted = true
 		}
@@ -170,7 +174,7 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 	}
 	f, err := openInside(workdir, parts)
 	if err != nil && rooted {
-		return nil, refusal("path must be a regular file inside your working area " + workdir + " (relative, or absolute through it), not a link")
+		return nil, refusal("path must be a regular file inside your working area " + workdir + " or your temporary directory $TMPDIR (relative to the working area, or absolute), not a link")
 	}
 	if err != nil {
 		return nil, err

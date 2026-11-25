@@ -151,6 +151,7 @@ WHERE tombstoned_at IS NULL
  AND (sqlc.narg(search_state)::text IS NULL OR state=sqlc.narg(search_state)::text)
  AND NOT sqlc.arg(never)::boolean
  AND (NOT sqlc.arg(no_examples)::boolean OR role<>'example')
+ AND role<>'diagnostic'
  AND (sqlc.narg(before)::bigint IS NULL OR seq<sqlc.narg(before)::bigint)
 ORDER BY seq DESC
 LIMIT sqlc.narg(row_limit)::bigint;
@@ -173,6 +174,7 @@ WHERE tombstoned_at IS NULL
  AND (sqlc.narg(search_state)::text IS NULL OR state=sqlc.narg(search_state)::text)
  AND NOT sqlc.arg(never)::boolean
  AND (NOT sqlc.arg(no_examples)::boolean OR role<>'example')
+ AND role<>'diagnostic'
 GROUP BY state;
 
 -- name: ArtTaskCodes :many

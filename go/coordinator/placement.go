@@ -363,6 +363,9 @@ func placeOne(ctx context.Context, a *App, x *Artifact, copies []db.DispArtifact
 	if err := ctx.Err(); err != nil {
 		return 0, 0, err
 	}
+	if x.Role == "diagnostic" && time.Since(x.Created) >= diagnosticDays*24*time.Hour {
+		return 0, 0, deleteArtifact(ctx, a, x, "diagnostic")
+	}
 	verified := []*StoreRow{}
 	for _, c := range copies {
 		if c.State == "verified" {
