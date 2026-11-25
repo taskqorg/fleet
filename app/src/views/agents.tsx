@@ -14,7 +14,7 @@ import {
 import { op } from '../api.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, prefs, prefsRead, scopeIds, setListGroups, usePins } from '../prefs.ts';
-import { useOp } from '../store.ts';
+import { useOp, useView } from '../store.ts';
 import { parseMs as ms } from '../task-facts.ts';
 import { Changes } from './changes.tsx';
 import { BotCreateForm, BotDetail, botPath } from './bots.tsx';
@@ -138,16 +138,25 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
   const pins = usePins(LIBRARY_PINS);
   const treeFlipped = createMemo(() => listGroups(LIBRARY_TREE_GROUPS));
 
-  const agentsOp = useOp('definition_list', { kind: 'agent' });
-  const pipelinesOp = useOp('definition_list', { kind: 'pipeline' });
-  const catalogueOp = useOp('definition_list', { kind: 'catalogue' });
-  const skillsOp = useOp('skills_list', {});
-  const botsOp = useOp('bot_list', () => (prefsRead.value ? scopeIds() : null));
+  // One read for the tree (library_view, docs/designs/fleet-data-layer.md): the definition lists without the resource
+  // rollup, skills, the focus's bots, the drift Changes shows and this week's recommendations. Each part below reads
+  // its slice; a reload of any rereads the view.
+  const view = useView('library_view', () => (prefsRead.value ? scopeIds() : null), { quiet: 2000 });
+  const part = <T,>(of: (d: NonNullable<typeof view.data>) => T) => ({
+    get data() { return view.data ? of(view.data) : null; },
+    get error() { return view.error; },
+    get state() { return view.state; },
+    reload: () => view.reload(),
+  });
+  const agentsOp = part(d => ({ items: d.agents }));
+  const pipelinesOp = part(d => ({ items: d.pipelines }));
+  const catalogueOp = part(d => ({ items: d.methods }));
+  const skillsOp = part(d => ({ skills: d.skills }));
+  const botsOp = part(d => ({ bots: d.bots }));
   const projectsOp = useOp('project_list', {});
-  // Host observations touch system_changes every few seconds; reread it at most every 30 s (FLT-38).
-  const changesOp = useOp('system_changes', {}, { quiet: 30_000 });
+  const changesOp = part(d => d.changes);
   // Recommendations projects selected this week: a Lab promotion names its experiment (J3).
-  const recentRecs = useOp('recommendation_changes', {});
+  const recentRecs = part(d => ({ changes: d.recommendations }));
 
   const agentItems = createMemo(() => agentsOp.data?.items ?? []);
   const pipelineItems = createMemo(() => pipelinesOp.data?.items ?? []);
@@ -346,7 +355,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
   const lists = [agentsOp, pipelinesOp, catalogueOp, skillsOp, botsOp] as const;
   const initialLoading = createMemo(() => lists.every(o => !o.data && !o.error));
   const loadError = createMemo(() => lists.map(o => (o.error && !o.data ? o.error : null)).find(Boolean) ?? null);
-  const reloadAll = () => { void Promise.all([...lists.map(o => o.reload()), changesOp.reload()]); };
+  const reloadAll = () => view.reload();
 
   const listPane = (
     <>
@@ -410,7 +419,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
       } else {
         setPreviewRepoKeys(null);
         setNotice({ severity: 'warning', title: `${plural(r.applied, 'definition')} took the repository version`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}`).join(' · ') });
-        await Promise.all([agentsOp.reload(), pipelinesOp.reload(), catalogueOp.reload(), changesOp.reload()]);
+        view.reload();
       }
     } catch (e) {
       setNotice({ severity: 'failure', title: 'Repository sync failed', facts: e instanceof Error ? e.message : String(e) });
@@ -534,7 +543,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
                 agentItems={agentItems()}
                 busy={busy()}
                 setBusy={setBusy}
-                onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
+                onChanged={async () => { view.reload(); }}
                 onClose={close}
               />
             )}</Show>

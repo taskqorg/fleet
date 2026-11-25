@@ -88,7 +88,7 @@ func TestViewRepliesCarryNoBlobs(t *testing.T) {
 					case map[string]any:
 						if props, ok := v["properties"].(map[string]any); ok {
 							for name, p := range props {
-								if why, bad := viewBlobFields[name]; bad {
+								if why, bad := viewBlobFields[name]; bad && !countField(p) {
 									t.Errorf("view %s carries %s at %s.%s: %s", op, name, path, name, why)
 								}
 								visit(p, path+"."+name)
@@ -120,6 +120,23 @@ func TestViewRepliesCarryNoBlobs(t *testing.T) {
 	if views == 0 {
 		t.Fatal("no view operation found (contract view: true)")
 	}
+}
+
+// countField: a property that is a number (a token count named input or output), never a stored blob.
+func countField(p any) bool {
+	m, _ := p.(map[string]any)
+	switch t := m["type"].(type) {
+	case string:
+		return t == "integer" || t == "number"
+	case []any:
+		for _, x := range t {
+			if x != "integer" && x != "number" && x != "null" {
+				return false
+			}
+		}
+		return len(t) > 0
+	}
+	return false
 }
 
 // opType: an operation name as its type prefix (session_view: SessionView), as contracts/gen-ts.mjs names it.
