@@ -374,7 +374,7 @@
   },
   {
     "name": "artifact_save",
-    "description": "Store a file of your working area, or of your temporary directory $TMPDIR (absolute path), as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
+    "description": "Store a file of your working area, of your temporary directory $TMPDIR or of your input folder $FLEET_INPUT_DIR (absolute path; a files_get download lands there), as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": false,

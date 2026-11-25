@@ -159,14 +159,26 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 	parts := pathParts(path)
 	rooted := false // an absolute path not through the working area keeps its former meaning: below the working area
 	if strings.HasPrefix(path, "/") && parts != nil {
+		rooted = true
+		// The run's own temporary directory (TMPDIR, run-tmp/<execution>) holds files the agent made for this turn; its
+		// input folder (FLEET_INPUT_DIR) holds files Fleet handed it, a connection download (files_get) among them. Both
+		// are saved from there as from the working area, so a file never has to be copied into the worktree first.
+		roots := []string{}
+		if ctx.TempDir != nil {
+			roots = append(roots, *ctx.TempDir)
+		}
+		if in, ok := ctx.InputDir.V.(string); ok && in != "" {
+			roots = append(roots, in)
+		}
 		if inside := insideParts(workdir, parts); inside != nil {
-			parts = inside
-		} else if ctx.TempDir != nil && insideParts(*ctx.TempDir, parts) != nil {
-			// The run's own temporary directory (TMPDIR, run-tmp/<execution>) holds files the agent made for this
-			// turn; they are saved from there as from the working area.
-			workdir, parts, rooted = *ctx.TempDir, insideParts(*ctx.TempDir, parts), true
+			parts, rooted = inside, false
 		} else {
-			rooted = true
+			for _, root := range roots {
+				if inside := insideParts(root, parts); inside != nil {
+					workdir, parts = root, inside
+					break
+				}
+			}
 		}
 	}
 	if len(parts) == 0 {
@@ -174,7 +186,7 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 	}
 	f, err := openInside(workdir, parts)
 	if err != nil && rooted {
-		return nil, refusal("path must be a regular file inside your working area " + *ctx.Workdir + " or your temporary directory $TMPDIR (relative to the working area, or absolute), not a link")
+		return nil, refusal("path must be a regular file inside your working area " + *ctx.Workdir + ", your temporary directory $TMPDIR or your input folder $FLEET_INPUT_DIR (relative to the working area, or absolute), not a link")
 	}
 	if err != nil {
 		return nil, err
