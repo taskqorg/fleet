@@ -8,7 +8,7 @@ import {
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
   type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages,
-  keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus,
+  keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useOp } from '../store.ts';
@@ -412,10 +412,10 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             />
           )}
         </For>
-        <Show when={latestExecution()?.problem}>
-          {problem => (
+        <Show when={causeOf(latestExecution()?.failure, latestExecution()?.problem)} keyed>
+          {c => (
             <DetailSection title="Latest execution problem">
-              <ErrorBanner text={problem()} />
+              <ProblemRow title={c.text} code={c.long} severity="failure" facts="" actions={[]} />
             </DetailSection>
           )}
         </Show>

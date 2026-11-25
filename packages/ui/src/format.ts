@@ -1,5 +1,6 @@
 // The only place that formats time, numbers, sizes and money for the UI (OR-2).
 // Each formatter returns the short text and the long form for tooltips and accessible names.
+import vocabulary from '../../../contracts/vocabulary.json' with { type: 'json' };
 
 export type Basis = 'measured' | 'estimated' | 'subscription' | 'unavailable';
 /** A number with its measurement basis. `partial` marks a lower bound ("≥"). Unknown is never 0. */
@@ -253,4 +254,26 @@ export function fileLabel(path: string): string {
   const s = stem.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '').replace(/(^|[-_.])[0-9a-f]{12,}(?=$|[-_.])/gi, '$1')
     .replace(/[-_.]{2,}/g, '-').replace(/^[-_.]+|[-_.]+$/g, '');
   return s ? s + ext : '';
+}
+
+/** A run failure cause in plain words: `id` the cause (`abandoned`), `text` its sentence, `long` the stored code for the tooltip and copy. */
+export type Cause = Formatted & { id: string };
+/** A served failure (`failure` on execution and bot run rows), as the coordinator sends it. */
+export type FailureLike = { cause: string; text: string; code: string };
+
+/**
+ * A stored failure cause code (`unknown:abandoned`, `step:provider-429`) in plain words: the first contracts/vocabulary.json
+ * `causes` entry whose match the code starts with, the same mapping as the coordinator's contract.PlainCause. An unknown
+ * code gets the generic sentence; the code itself is never the text, only `long`.
+ */
+export function cause(code: string): Cause {
+  const all = vocabulary.causes;
+  const c = all.find(x => x.match.some(m => code.startsWith(m))) ?? all[all.length - 1];
+  return { id: c.id, text: c.text, long: code };
+}
+
+/** A row's cause: its served `failure` when there is one, else its stored `problem` code mapped here; nothing when neither. */
+export function causeOf(failure: FailureLike | null | undefined, code?: string | null): Cause | undefined {
+  if (failure) return { id: failure.cause, text: failure.text, long: failure.code };
+  return code ? cause(code) : undefined;
 }

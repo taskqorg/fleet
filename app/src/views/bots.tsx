@@ -4,12 +4,12 @@ import { For, Match, Show, Switch, createMemo, createSignal, untrack } from 'sol
 import { useLocation, useSearch } from '../router.ts';
 import {
   Ago, Button, Choice, DataTable, DetailSection, Empty, EntityCode, EntityPicker, ErrorBanner,
-  KvRow, ProblemRow, Skeleton, StateBadge, TabBar, TextField, states as uiStates,
+  KvRow, ProblemRow, Skeleton, StateBadge, TabBar, TextField, states as uiStates, causeOf,
   type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { writeOnce, useAlive, type Ops } from '../api.ts';
 import {
-  BOT_TABS, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, formatBotTriggers,
+  BOT_TABS, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, formatBotTriggers, reasonLabel, wakeLabel,
   type BotRunFilter, type BotTab, type BotTaskBucket,
 } from '../bot-view.ts';
 
@@ -26,6 +26,8 @@ import { BotAutomations } from './bot-automations.tsx';
 type Bot = Ops['bot_get']['reply']['bot'];
 type Settings = Bot['settings'];
 type BotRun = Ops['bot_runs']['reply']['runs'][number];
+/** A failed or cancelled run's cause in words (formats.md); a finished run that carries a problem did not fail. */
+const runCause = (r: BotRun) => r.state === 'failed' || r.state === 'cancelled' ? causeOf(r.failure, r.problem) : undefined;
 type BotTask = Ops['bot_tasks']['reply']['tasks'][number];
 
 const blank: Settings = { name: '', purpose: '', profileId: '', instructions: '', soul: '', scheduleTime: '', scheduleZone: '', wakeOnNeedsYou: false };
@@ -106,7 +108,7 @@ export function BotDetail(props: {
     try {
       if (kind === 'run') {
         const rep = await writeOnce('bot_run', { botId: props.bot.id, requestId: crypto.randomUUID() }, () => setActionNote('Queuing run…'), { signal });
-        setActionNote(rep.admitted ? 'Run queued.' : `Wake recorded (${rep.run.reason ?? rep.run.state}).`);
+        setActionNote(rep.admitted ? 'Run queued.' : `Wake recorded (${reasonLabel(rep.run.reason) ?? rep.run.state}).`);
       } else if (kind === 'pause') {
         const nextPaused = !props.bot.paused;
         await writeOnce('bot_pause', { botId: props.bot.id, paused: nextPaused }, () => setActionNote(nextPaused ? 'Pausing…' : 'Resuming…'), { signal });
@@ -261,8 +263,9 @@ function BotOverviewTab(props: {
             {r => (
               <ProblemRow
                 severity={r.state === 'failed' || r.problem ? 'failure' : 'warning'}
-                title={r.problem ?? (r.observation === 'unconfirmed' ? 'Run outcome unconfirmed' : `Run ${r.state}`)}
-                facts={<>{r.cause} · <Ago t={ms(r.createdAt)!} /></>}
+                title={runCause(r)?.text ?? (r.observation === 'unconfirmed' ? 'Run outcome unconfirmed' : `Run ${r.state}`)}
+                code={runCause(r)?.long}
+                facts={<>{wakeLabel(r.cause)} · <Ago t={ms(r.createdAt)!} /></>}
                 actions={r.sessionId ? [{ label: 'Open conversation', onClick: () => go('/conversations/' + encodeURIComponent(r.sessionId!)) }] : []}
               />
             )}
@@ -417,21 +420,21 @@ function BotRunsTable(props: { runs: BotRun[]; projectNames: Map<string, string>
           <tr>
             <td>
               <div class="row" style={{ gap: 'var(--space-1)', 'flex-wrap': 'wrap' }}>
-                <StateBadge family="botRun" state={asBotRunState(r.state)} unconfirmed={r.observation === 'unconfirmed'} reason={r.reason ?? undefined} />
+                <StateBadge family="botRun" state={asBotRunState(r.state)} unconfirmed={r.observation === 'unconfirmed'} reason={reasonLabel(r.reason)} />
                 <Show when={r.quiet}><span class="badge t-neutral">Quiet</span></Show>
               </div>
             </td>
             <td>
-              <div><strong>{r.cause}</strong></div>
+              <div><strong>{wakeLabel(r.cause)}</strong></div>
               <Show when={r.automation}>{a => <div>{a().name} · revision {a().revision}</div>}</Show>
               <Show when={r.triggers.length > 0}>
-                <div class="muted">{r.triggers.map(tr => tr.summary || `${tr.kind}:${tr.id}`).join(', ')}</div>
+                <div class="muted">{r.triggers.map(tr => tr.summary || tr.kind.replace(/_/g, ' ')).join(', ')}</div>
               </Show>
             </td>
             <td>
-              <Show when={r.problem}><div><span class="badge t-danger">{r.problem}</span></div></Show>
-              <Show when={!r.problem && r.reason}><span class="muted">{r.reason}</span></Show>
-              <Show when={!r.problem && !r.reason}><span class="muted">{props.projectNames.get(r.projectId) ?? r.projectId}</span></Show>
+              <Show when={runCause(r)} keyed>{c => <div><span class="badge t-danger" data-tip={c.long}>{c.text}</span></div>}</Show>
+              <Show when={!runCause(r) && r.reason}><span class="muted">{reasonLabel(r.reason)}</span></Show>
+              <Show when={!runCause(r) && !r.reason}><span class="muted">{props.projectNames.get(r.projectId) ?? 'Project not in view'}</span></Show>
             </td>
             <td>
               <div class="row" style={{ gap: 'var(--space-1)', 'flex-wrap': 'wrap' }}>

@@ -11,7 +11,7 @@ import {
   SearchField, CatalogueTree, ContextMenu, ErrorBanner, Skeleton, ROW2, percent, SettingField, StepList, msMeasured,
   type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem,
   type IconName, ShellStatus, ShellActions, actions, Presets, QuestionCard, DetailHead, StateDot, MatrixCell, DiffRow,
-  InheritedRows, AgeChip, type Life, type MatrixCellState, type View,
+  InheritedRows, AgeChip, cause, type Life, type MatrixCellState, type View,
 } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
@@ -36,17 +36,26 @@ const decodeSafe = (s: string): string => { try { return decodeURIComponent(s); 
 
 const TERMINAL_STATES = new Set(['done', 'stopped', 'succeeded', 'failed', 'cancelled']);
 
-/** Extract a concise human-readable problem string from a trial or strategy problem field. */
+/**
+ * A trial or strategy problem in words (formats.md, causes): a stored `code` or `code: detail` reads as its cause's first
+ * sentence and the detail; an object reads its message, else its code the same way. The code itself is never the text.
+ */
 const problemText = (p: unknown): string | undefined => {
   if (p == null) return undefined;
-  if (typeof p === 'string') return p.trim() || undefined;
+  const coded = (v: string) => {
+    const t = v.trim(), i = t.indexOf(': '), detail = i < 0 ? '' : t.slice(i + 2).trim();
+    if (!t) return undefined;
+    const head = cause(t).text.split('. ')[0].replace(/\.$/, ''); // the whole string: some matches span ': '
+    return detail ? `${head}: ${detail}` : head;
+  };
+  if (typeof p === 'string') return coded(p);
   if (typeof p === 'object') {
     const r = p as { code?: unknown; message?: unknown; reason?: unknown; error?: unknown };
-    const parts = [r.code, r.message ?? r.reason ?? r.error].filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
-    if (parts.length > 0) return parts.join(': ');
-    try { return JSON.stringify(p); } catch { return String(p); }
+    const msg = [r.message, r.reason, r.error].find((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    if (msg) return msg.trim();
+    if (typeof r.code === 'string') return coded(r.code);
   }
-  return String(p);
+  return undefined;
 };
 
 /** A typed score's value: the answer given and the example's label. */
@@ -1222,7 +1231,7 @@ function TrialPlan(props: { id: string; projectId: string; trialProblem?: string
       const execution = entry.execution;
       const definitions = (run?.definition as { steps?: { id: string; kind: string }[] } | undefined)?.steps ?? [];
       const definition = definitions.find(step => step.id === entry.id);
-      return { id: entry.id, kind: definition?.kind === 'api' ? 'tool' : definition?.kind === 'agent' ? 'agent' : 'program', executor: definition?.kind ?? '', reads: '', writes: '', activation: entry.activation, activationReason: entry.problem?.code ?? entry.decision?.reason,
+      return { id: entry.id, kind: definition?.kind === 'api' ? 'tool' : definition?.kind === 'agent' ? 'agent' : 'program', executor: definition?.kind ?? '', reads: '', writes: '', activation: entry.activation, activationReason: entry.problem?.message ?? entry.decision?.reason,
         result: entry.id === run?.canonicalResult?.stepId,
         run: execution ? { state: execution.state, reason: execution.waitDetail ?? execution.observation, note: execution.waitDetail ?? (entry.executionRef?.mode === 'reused' ? 'reused · original resources' : execution.observation === 'unconfirmed' ? 'unconfirmed' : undefined),
           time: msMeasured(execution.durationMs), cost: { value: null, basis: 'unavailable' as const }, error: execution.error ? JSON.stringify(execution.error) : undefined } : undefined };

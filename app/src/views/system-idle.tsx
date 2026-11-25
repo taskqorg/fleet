@@ -5,12 +5,11 @@
 // (hosts_list, telemetry_*, executions_runners, subscription_limits, account_list, connections_list, spend_summary).
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
-  AgeChip, Button, DetailSection, ErrorBanner, FigureTile, Icon, KvRow, Num, ProblemRow, Skeleton, duration, money,
+  AgeChip, Button, DetailSection, ErrorBanner, FigureTile, Icon, KvRow, Num, ProblemRow, Skeleton, cause, duration, money,
   type CostFigureLike,
 } from '../../../packages/ui/src/index.ts';
 import type { HostRow, RunnerRun } from '../../../contracts/generated/ops.ts';
 import { op, type Ops } from '../api.ts';
-import { plainCause } from '../causes.ts';
 import { useOp } from '../store.ts';
 import { prefsRead } from '../prefs.ts';
 import { accountHosts, accountName, nearLimit, readinessText, tightest, useAccountLimits } from './accounts.tsx';
@@ -18,6 +17,8 @@ import type { Conn } from './keys.tsx';
 import { spendRequest, usdOf } from './spend.tsx';
 
 const HOUR = 36e5;
+/** A telemetry finding without its sentence (every rule writes one): the generic words, never the cause code. */
+export const FINDING = 'A health check found something unusual';
 /** A provider's refusal can be a whole JSON body: the row keeps its first 140 characters; the connection has the rest. */
 const clip = (t: string) => t.length > 140 ? t.slice(0, 139) + '…' : t;
 const hostPath = (id: string) => `/hosts/${encodeURIComponent(id)}`;
@@ -30,7 +31,7 @@ export type Problem = {
 };
 
 /** First sentence of a plain cause: the row title; the rest is the fix. */
-const firstSentence = (t: string) => { const i = t.indexOf('. '); return i < 0 ? [t.replace(/\.$/, ''), ''] : [t.slice(0, i), t.slice(i + 2)]; };
+export const firstSentence = (t: string) => { const i = t.indexOf('. '); return i < 0 ? [t.replace(/\.$/, ''), ''] : [t.slice(0, i), t.slice(i + 2)]; };
 
 /** Failed runs of the last hour by host and cause (OR-58): one problem per pair, with how many and the newest. */
 export function hostFailures(runs: readonly RunnerRun[], now: number): Map<string, { cause: string; text: string; n: number; at: number }[]> {
@@ -39,11 +40,11 @@ export function hostFailures(runs: readonly RunnerRun[], now: number): Map<strin
     if (r.state !== 'failed' || !r.hostId || !r.problem) continue;
     const at = r.endedAt ?? r.lastSeenAt ?? r.startedAt ?? 0;
     if (now - at > HOUR) continue;
-    const c = plainCause(r.problem);
+    const c = cause(r.problem);
     const byCause = out.get(r.hostId) ?? new Map();
-    const cur = byCause.get(c.cause) ?? { cause: c.cause, text: c.text, n: 0, at: 0 };
+    const cur = byCause.get(c.id) ?? { cause: c.id, text: c.text, n: 0, at: 0 };
     cur.n++; cur.at = Math.max(cur.at, at);
-    byCause.set(c.cause, cur); out.set(r.hostId, byCause);
+    byCause.set(c.id, cur); out.set(r.hostId, byCause);
   }
   return new Map([...out].map(([h, m]) => [h, [...m.values()].toSorted((a, b) => b.n - a.n)]));
 }
@@ -78,7 +79,7 @@ export function readiness(input: {
   }
   for (const f of input.findings) {
     const open = f.hostId ? { label: 'Open host', path: hostPath(f.hostId) } : { label: 'Open Runners', path: '/runners' };
-    out.push({ key: `finding:${f.cause}`, severity: 'warning', count: 1, open, at: Date.parse(f.since), title: f.text ?? f.cause, facts: f.groupCause ? `part of ${f.groupCause}` : '' });
+    out.push({ key: `finding:${f.cause}`, severity: 'warning', count: 1, open, at: Date.parse(f.since), title: f.text ?? FINDING, facts: f.groupCause ? 'Part of a wider problem shown above' : '' });
   }
   for (const s of input.subs) {
     const p = tightest(s);

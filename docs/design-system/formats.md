@@ -29,6 +29,7 @@ One way to show each kind of value, everywhere ([OR-28](owner-rules.md)). The fo
 | Path | The file's stem (`web-research`) where the kind is known; scope and full path in the detail head | full path | — |
 | Hash, revision | First 7 characters, mono | full hash | — |
 | Counter block | Bold total `Σ 12`, then the breakdown; zero chips and all-zero blocks hidden (OR-29) | value per part | — |
+| Failure cause | One plain sentence per cause from `contracts/vocabulary.json` `causes` (`The run stopped without reporting how it ended…`); a title takes its first clause. An unknown code reads the generic sentence (`The run failed. Read the detail.`). The stored code (`unknown:abandoned`) is never the text | the code, in the tooltip and copy only | `cause`, `causeOf`; served as `failure` (`contract.PlainCause`) |
 | Unknown | `—` and the reason on hover; never `0`, never empty | reason | `Num` |
 
 ## Rows and columns

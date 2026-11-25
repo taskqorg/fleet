@@ -6,12 +6,13 @@
 import { createMemo, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, bytes, clock, count, duration, money, states, useTick,
+  Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, bytes, causeOf, clock, count, duration, money, states, useTick,
   type DataTone, type GaugeProps, type HostBandProps, type Measured, type Stage, type Tone, type WorkerSlotProps,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
 import { prefs, scopeIds, noProject } from '../prefs.ts';
 import { useClockOffset } from './hosts.tsx';
+import { firstSentence } from './system-idle.tsx';
 import type { CostFigure, DeliveryStage, HostRow } from '../../../contracts/generated/ops.ts';
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 24 * HOUR;
@@ -94,8 +95,8 @@ export function Live(props: { wall: boolean }) {
       if (r.state !== 'failed') continue;
       const at = r.endedAt ?? r.startedAt;
       if (at == null || t - at > RECENT) continue;
-      const f = failures().get(r.id)?.failure;
-      add(r.hostId, f?.cause ?? r.problem ?? 'failed', f?.text ?? plain(r.problem), at);
+      const f = causeOf(failures().get(r.id)?.failure, r.problem);
+      add(r.hostId, f?.id ?? 'other', f?.text ?? 'The run failed.', at);
     }
     return [...by.values()].toSorted((a, b) => b.n - a.n || b.latest - a.latest);
   });
@@ -130,7 +131,7 @@ export function Live(props: { wall: boolean }) {
       const f = failing[0];
       if (f) {
         const i = slots.findIndex(s => s.state === 'idle');
-        const tile: WorkerSlotProps = { slot: i < 0 ? slots.length + 1 : slots[i].slot, state: 'failing', title: f.text + (f.n > 1 ? ` ×${f.n}` : ''), cause: f.cause, onOpen: open(`/hosts/${encodeURIComponent(h.id)}`) };
+        const tile: WorkerSlotProps = { slot: i < 0 ? slots.length + 1 : slots[i].slot, state: 'failing', title: firstSentence(f.text)[0] + (f.n > 1 ? ` ×${f.n}` : ''), cause: firstSentence(f.text)[1] || undefined, onOpen: open(`/hosts/${encodeURIComponent(h.id)}`) };
         if (i < 0) slots.push(tile);
         else if ((slots[i].free ?? 1) > 1) slots.splice(i, 1, tile, { ...slots[i], slot: slots[i].slot + 1, free: slots[i].free! - 1 });
         else slots[i] = tile;
@@ -314,8 +315,3 @@ export function Live(props: { wall: boolean }) {
   );
 }
 
-/** A stored problem code without its plain words (the run is not in the failures read): `unknown:caller-cancelled` reads "Caller cancelled". */
-function plain(code: string | null): string {
-  const w = (code ?? '').split(':').pop()!.replace(/[-_]+/g, ' ').trim();
-  return w ? w[0].toUpperCase() + w.slice(1) : 'Run failed';
-}

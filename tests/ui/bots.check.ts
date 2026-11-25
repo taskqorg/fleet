@@ -132,11 +132,14 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await runGroup.getByRole('button', { name: /^Quiet/ }).click();
     await detail.locator('[data-ui="data-table"]').getByText('Quiet', { exact: true }).waitFor();
     await runGroup.getByRole('button', { name: /^Skipped/ }).click();
-    await detail.locator('[data-ui="data-table"]').getByText('paused', { exact: true }).first().waitFor();
+    await detail.locator('[data-ui="data-table"]').getByText('The bot is paused', { exact: true }).first().waitFor();
     await runGroup.getByRole('button', { name: /^Failed/ }).click();
-    await detail.locator('[data-ui="data-table"]').getByText('exit 2 in check', { exact: true }).first().waitFor();
+    // A failed run's stored cause reads as its plain sentence; the code is only its tooltip (formats.md, Failure cause).
+    const failedCause = detail.locator('[data-ui="data-table"]').getByText('The run failed. Read the detail.', { exact: true }).first();
+    await failedCause.waitFor();
+    assert.equal(await failedCause.getAttribute('data-tip'), 'exit 2 in check');
     await runGroup.getByRole('button', { name: /^Unconfirmed/ }).click();
-    await detail.locator('[data-ui="data-table"]').getByText('needs_you', { exact: true }).waitFor();
+    await detail.locator('[data-ui="data-table"]').getByText('Needs you', { exact: true }).first().waitFor();
 
     // 6. Pause & Resume control updates badge cleanly, then Run now + Stop exercises active run lifecycle.
     const pauseReq = p.waitForResponse(r => r.url().endsWith('/api/ops/bot_pause') && r.status() === 200);

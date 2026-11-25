@@ -64,3 +64,11 @@ export function botStatusBadge(bot: Pick<BotListItem, 'paused' | 'activeRunId' |
   }
   return bot.lastRunState ? { family: 'botRun', state: 'queued' } : null;
 }
+
+/** What woke a bot run (BotRunCause), in words: a list never shows the stored value. */
+export const WAKE: Record<string, string> = { manual: 'Woken by hand', schedule: 'Daily schedule', needs_you: 'Needs you', message: 'New message' };
+export const wakeLabel = (c: string) => WAKE[c] ?? 'Other wake';
+
+/** Why a wake did not run (BotRunRecord.reason): the two stored codes in words; any other reason is already a sentence. */
+const SKIP: Record<string, string> = { paused: 'The bot is paused', active_run: 'Another run of this bot was still going' };
+export const reasonLabel = (r: string | null | undefined) => r ? SKIP[r] ?? r : undefined;
