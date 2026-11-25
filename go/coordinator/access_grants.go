@@ -86,6 +86,11 @@ func accessDBUser(project, grantID string) string {
 
 func accessKeyName(project, server string) string { return project + "@" + server }
 
+// accessJumpLabel: the name of a project's key on a jump server (fleet-provision's label pattern).
+func accessJumpLabel(project, server string) string {
+	return strings.TrimPrefix(accessOSUser(project), "fleet-") + "@" + server
+}
+
 func accessPasswordName(g accessGrant) string {
 	return accessKeyName(g.ProjectID, g.ServerID) + "/" + accessDBUser(g.ProjectID, g.ID) + ".pw"
 }

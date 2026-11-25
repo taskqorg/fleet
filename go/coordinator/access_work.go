@@ -1,8 +1,9 @@
 // The provisioner's queue on the work kit (docs/designs/fleet-standard.md S6, docs/designs/fleet-project-access.md):
 // one access_work row per grant with pending work (provision, probe or revoke). The step reads the grant, its server
-// and the project's other live grants on that server, leaves the SSH work (accessApply, access_provision.go) as its
+// and the project's other live grants on that server, leaves the SSH work (accessPlan.apply, access_provision.go) as its
 // call and records the outcome: the probe, the credential's fingerprint and the grant's next state. Every recipe is
-// idempotent, so a crash between the call and its record only repeats work.
+// idempotent, so a crash between the call and its record only repeats work. Claims run one at a time (Workers 1): a
+// project's grants on one server share its OS user, and their recipes must not interleave.
 package main
 
 import (
@@ -16,7 +17,7 @@ import (
 )
 
 func init() {
-	kitRegister(&kitQueue{Name: "access-work", Period: 2 * time.Second, Limit: 4, Workers: 4, Due: accessWorkDue, Step: accessWorkStep,
+	kitRegister(&kitQueue{Name: "access-work", Period: 2 * time.Second, Limit: 4, Workers: 1, Due: accessWorkDue, Step: accessWorkStep,
 		Retry: kitRetry{Table: "access_work", Key: "grant_id", Guard: `access_work.attempts=$5::int`, Class: func(error) string { return "access_work_failed" }}})
 }
 
@@ -50,7 +51,10 @@ func accessWorkStep(q *Request, now time.Time, c *kitClaim) error {
 	}
 	if c.Result != nil {
 		out, _ := c.Result.(accessOutcome)
-		return accessWorkRecord(q, now, g, w.Op, out)
+		if out.Op == "" {
+			out.Op = w.Op
+		}
+		return accessWorkRecord(q, now, g, out.Op, out)
 	}
 	p, err := accessPlanOf(q, g, w.Op)
 	if err != nil {
@@ -105,7 +109,9 @@ func accessWorkRecord(q *Request, now time.Time, g accessGrant, op string, out a
 	}
 	var err error
 	switch {
-	case op == "revoke" && res.Ok:
+	case op != "revoke" && g.State == "revoking": // revoked meanwhile: the revoke that replaced this work decides
+		err = note("probe", res)
+	case op == "revoke" && res.Ok && g.State == "revoking":
 		err = accessGrantTransition(q, g.ID, "revoked")
 	case op == "revoke":
 	case res.Ok:
@@ -113,7 +119,7 @@ func accessWorkRecord(q *Request, now time.Time, g accessGrant, op string, out a
 			err = accessGrantTransition(q, g.ID, "ready")
 		}
 	default:
-		if err = note("probe", res); err == nil && g.State != "revoking" {
+		if err = note("probe", res); err == nil {
 			err = accessGrantTransition(q, g.ID, "failed")
 		}
 	}

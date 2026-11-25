@@ -84,9 +84,9 @@ r_os_user() {
 		local keep=0
 		for w in "${wanted[@]+"${wanted[@]}"}"; do [[ "$w" == "$dst" ]] && keep=1; done
 		if [[ $keep == 0 ]]; then
-			mountpoint -q "$dst" && umount "$dst"
+			if mountpoint -q "$dst"; then umount "$dst"; fi
 			sed -i "\\#^[^ ]* $dst none bind#d" /etc/fstab
-			rmdir "$dst"
+			rmdir "$dst" 2>/dev/null || echo "warning: $dst is not empty; left in place, not mounted" >&2
 		fi
 	done
 	local force="internal-sftp -R"

@@ -20,6 +20,7 @@ type accessPlan struct {
 
 // accessOutcome: what a run did; Error is empty when it worked.
 type accessOutcome struct {
+	Op         string // the work that ran: the row may name newer work by the time it is recorded
 	Steps      []string
 	Error      string
 	Credential string
@@ -32,6 +33,7 @@ func (p accessPlan) apply(ctx context.Context) any {
 }
 
 func (p accessPlan) run(ctx context.Context) (out accessOutcome) {
+	out.Op = p.Op
 	failed := func(err error) accessOutcome { out.Error = err.Error(); return out }
 	prov, err := accessKey("provisioner")
 	if err != nil {
@@ -44,7 +46,7 @@ func (p accessPlan) run(ctx context.Context) (out accessOutcome) {
 	body, fingerprint := accessPublic(proj)
 	g := p.Grant
 	target := p.Hops[len(p.Hops)-1]
-	label := strings.ToLower(p.KeyName)
+	label := accessJumpLabel(g.ProjectID, g.ServerID)
 	// onVia runs a recipe on the jump server, when there is one.
 	onVia := func(args ...string) error {
 		if len(p.Hops) < 2 {

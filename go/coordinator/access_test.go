@@ -37,7 +37,7 @@ func TestAccessNamesMatchRecipes(t *testing.T) {
 		if u := accessDBUser(p, "grant:0123"); !dbUser.MatchString(u) || len(u) > 32 {
 			t.Errorf("project %s: database user %s refused by the script or too long for MySQL", p, u)
 		}
-		if l := strings.ToLower(accessKeyName(p, "pds9")); strings.ContainsAny(p, "abcdefghijklmnopqrstuvwxyz") && !label.MatchString(l) && !strings.ContainsAny(p, ".") {
+		if l := accessJumpLabel(p, "pds9"); !label.MatchString(l) {
 			t.Errorf("project %s: jump label %s refused by the script", p, l)
 		}
 	}
