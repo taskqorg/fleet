@@ -446,3 +446,51 @@ func TestHostMoveHandoffIsBounded(t *testing.T) {
 		t.Fatalf("host_move handoff: %d runes", n)
 	}
 }
+
+// Requirement: fleet-people-access.md §7: a host with intake spare takes work only when no other host can.
+// Risk: 2026-11-25 the owner's Mac, which the owner also works on, kept winning queued work by host creation order while
+// Windows and PDS18 stood idle.
+func TestDispatchSpareHostIsLast(t *testing.T) {
+	env := openTestCoordinator(t, true)
+	mac, pds := "spare-mac", "spare-pds"
+	macSecret, pdsSecret := env.registerHost(t, mac), env.registerHost(t, pds)
+	healthy := &contract.HostLoad{Load1: ptr(1.0), Cpus: ptr(int64(8)), MemFree: ptr(8e9), MemTotal: ptr(24e9)}
+	poll := func(host, secret string) {
+		t.Helper()
+		v := "1.261125.1"
+		if code, body := env.callJSON(t, "POST", "/api/hosts/poll", contract.PollRequest{
+			HostId: host, Platform: contract.Platform("darwin"), Capabilities: []string{"codex"}, Stores: []contract.StoreReport{},
+			Problems: []contract.EdgeProblem{}, ProjectRoots: []string{}, GitConnections: []string{}, ActiveExecutions: []string{},
+			Load: healthy, Version: &v,
+		}, map[string]string{"Authorization": "Bearer " + secret}); code != 200 {
+			t.Fatalf("poll(%s) = %d %v", host, code, body)
+		}
+	}
+	intake := func(host, v string) {
+		t.Helper()
+		if code, body := env.callJSON(t, "POST", "/api/ops/hosts_update", doc{"id": host, "intake": v}, env.ownerHeaders()); code != 200 {
+			t.Fatalf("hosts_update %s intake %s = %d %v", host, v, code, body)
+		}
+	}
+	poll(mac, macSecret)
+	poll(pds, pdsSecret)
+
+	// Created first, the Mac would win by host order; spare, it yields to the other host.
+	intake(mac, "spare")
+	sid1, eid1 := dispatchTestCreateQueued(t, env, "req-spare-1", nil)
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	if ex := dispatchTestExecution(t, env, sid1, eid1); ex["hostId"] != pds {
+		t.Fatalf("run with a spare and an open host placed on %v, want %s", ex["hostId"], pds)
+	}
+
+	// When no other host can take the work, the spare host does.
+	intake(pds, "paused")
+	sid2, eid2 := dispatchTestCreateQueued(t, env, "req-spare-2", nil)
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	if ex := dispatchTestExecution(t, env, sid2, eid2); ex["hostId"] != mac {
+		t.Fatalf("run with only a spare host open placed on %v, want %s", ex["hostId"], mac)
+	}
+	if code, _ := env.callJSON(t, "POST", "/api/ops/hosts_update", doc{"id": mac, "intake": "later"}, env.ownerHeaders()); code != 400 {
+		t.Fatalf("hosts_update intake later = %d, want 400", code)
+	}
+}

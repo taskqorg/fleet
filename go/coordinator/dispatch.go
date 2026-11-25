@@ -205,6 +205,9 @@ type dispatchContext struct {
 	orders   map[string]contract.DispatchOrder // the directors' order setting, read once per pass
 }
 
+// spare: the host takes work only when no other host can (intake spare, fleet-people-access.md §7).
+func (k *dispatchContext) spare(id string) bool { return deref(k.hosts[id].Intake) == "spare" }
+
 // dispatchHost: the fields dispatch reads of a live execution host record (hostsLive).
 type dispatchHost struct {
 	ID            string
@@ -831,7 +834,7 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			if v := k.updating[id]; v != "" {
 				// A continuation waits, unplaced, for its own host's update, where its native session and worktree live,
 				// for up to continuationHostWait; past that it moves and starts with a context handoff (startCommand).
-				if id == deref(x.Last) {
+				if id == deref(x.Last) && deref(hv.Intake) != "spare" {
 					since := float64(now)
 					if e.HoldSince != nil {
 						since = *e.HoldSince
@@ -883,6 +886,8 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			}
 		}
 	}
+	// A spare host takes work only when no other host can: its candidates go after every other one.
+	sort.SliceStable(out, func(i, j int) bool { return !k.spare(out[i].Host) && k.spare(out[j].Host) })
 	// Held for its own host: no other host takes it now. It stays unplaced, so every pass ranks it again.
 	if holdFor != "" {
 		for _, c := range out {

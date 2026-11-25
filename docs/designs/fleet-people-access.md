@@ -23,7 +23,7 @@ Section numbers §1-§12 are cited by code; keep them.
 - **Binding:** subscription × environment: one private profile root on that host. Credential kind (`interactive-login`, `copied-file`, `long-lived-token`, `api-key`), readiness, last check.
 - **Director:** the person whose work an execution is (`directed_by`). Set by the coordinator only.
 - **Take:** a subscription holder accepts another person's task and becomes its director.
-- **Intake:** what a host or subscription accepts now: `all` or `paused`.
+- **Intake:** what a host or subscription accepts now: `all` or `paused`; a host may also be `spare`.
 - **Dispatch:** the moment Fleet picks host and subscription for queued work. **Route decision:** its record. **Wait reason:** why queued work has not started.
 - **Reading:** the latest provider limit value seen for a subscription, with its time. **Limit period:** a provider's 5-hour or weekly period.
 - **Budget:** an owner-set limit on a scope with a unit and an action (`warn`, `pause`, `stop`).
@@ -146,7 +146,7 @@ Not built (all of §6). Today `enqueue` picks a host at queue time (§5 rule) an
 1. **Trust.** Skip hosts whose holder may not see the project (§3).
 2. **Director.** Keep subscriptions held by the director, then those whose `take.projects` lists the project (§5).
 3. **Placement.** Skip pairs whose harness is not allowed on that host.
-4. **Intake.** Skip a paused host or subscription.
+4. **Intake.** Skip a paused host or subscription. A `spare` host's candidates go after every other candidate: it takes work only when no other host can, and a continuation does not wait for a spare host's update.
 5. **Readiness.** Login ready on that host; host online (poll within the last 30 s, the existing `connectivity` rule); project files reachable or copyable.
 6. **Order.** Director's candidates before take-rule candidates; then the project's `subscriptions` order list (replaces `project-account` and `account_preference`), else the director's subscriptions in creation order. An explicit choice is a list of one. Among one subscription's hosts, hosts holding the project's files first, then host creation order. Skip a subscription whose latest reading is at or over its `switchPct`; a reading past `resetsAt` counts as unknown. Without `switchPct`, a reading of 100 % skips it (a full subscription cannot run); without a percent, skip only after the provider rejects.
 7. **Budgets.** A reached `pause` or `stop` budget covering the execution skips it; `warn` adds a warning.
@@ -162,7 +162,8 @@ Not built (all of §6). Today `enqueue` picks a host at queue time (§5 rule) an
 ### 7. Intake and stall alerts
 
 - **Intake** (`all`, `paused`) is a field on `host` and `managed-account`. A paused subscription is skipped by `pickAccount` and refused (409) as an explicit choice at the next start; running work is never touched.
-- Not built: host intake taking effect (needs §6); `urgent` and `projects:<ids>` modes (wait for a priority-aware scheduler).
+- **Host intake `spare`** (`hosts_update {id, intake: "spare"}`): the host runs only work no other host can take now, such as a subscription bound to it alone, or work that finds every other host paused, offline, updating, full or overloaded. A host its owner also works on (owner-mac) keeps the work that needs it and leaves the rest to the others.
+- Not built: `urgent` and `projects:<ids>` modes (wait for a priority-aware scheduler).
 - Every change of intake, placement, take, `switchPct`, plan, comment, holder or a task's director writes one audit row `setting-change {target, field, previous, value, actor, at}`, visible to holders under row-level security. Not built: telling the holder when the owner overrides.
 - Not built: **stall alert.** When dispatch leaves a queued execution with no candidate, upsert one open `operator_decision` question with a unique `cause` (`host:<id>:paused`, `subscription:<id>:limit`, `files:<store>:offline`, `budget:<id>:reached`), addressed to the director and naming the holder of the cause. Five tasks with one cause give one question; it closes when a dispatch finds the cause gone. Web push later.
 

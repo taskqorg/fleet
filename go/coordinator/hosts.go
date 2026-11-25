@@ -374,8 +374,8 @@ func hostsUpdate(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpda
 	}
 	var next []setting
 	if b.Intake != nil {
-		if *b.Intake != "all" && *b.Intake != "paused" {
-			return out, fail(400, "intake: all or paused")
+		if *b.Intake != "all" && *b.Intake != "spare" && *b.Intake != "paused" {
+			return out, fail(400, "intake: all, spare or paused")
 		}
 		var prev json.RawMessage
 		if h.Intake != nil {
