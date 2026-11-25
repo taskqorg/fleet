@@ -505,11 +505,9 @@ func (q *Queries) ArtLeasesExpired(ctx context.Context) ([]ArtLeasesExpiredRow, 
 }
 
 const artLimitReadings = `-- name: ArtLimitReadings :many
-SELECT DISTINCT ON (x.account_id, r.value->>'period') x.account_id::text AS account_id, x.host_id, r.value::jsonb AS reading, d.updated_at
-FROM event d JOIN execution x ON x.id=d.execution_id
- CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) AS r(value)
-WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL
-ORDER BY x.account_id, r.value->>'period', d.seq DESC
+SELECT DISTINCT ON (l.account_id, l.period) l.account_id::text AS account_id, l.host_id, l.payload::jsonb AS reading, l.updated_at
+FROM limit_reading_latest l
+ORDER BY l.account_id, l.period, l.event_seq DESC
 `
 
 type ArtLimitReadingsRow struct {
@@ -519,7 +517,8 @@ type ArtLimitReadingsRow struct {
 	UpdatedAt time.Time
 }
 
-// The latest limit reading per subscription and period.
+// The latest visible limit reading per subscription and period, at any age (limit_reading_latest holds the latest per
+// visibility scope; row-level security leaves the caller's).
 func (q *Queries) ArtLimitReadings(ctx context.Context) ([]ArtLimitReadingsRow, error) {
 	rows, err := q.db.Query(ctx, artLimitReadings)
 	if err != nil {

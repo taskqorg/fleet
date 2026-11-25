@@ -768,6 +768,17 @@ CREATE TABLE lab_work (
   "next_attempt_at" timestamp with time zone NOT NULL,
   "last_error" text
 );
+CREATE TABLE limit_reading_latest (
+  "account_id" text NOT NULL,
+  "period" text NOT NULL,
+  "scope" text NOT NULL,
+  "project_id" text,
+  "session_id" text,
+  "host_id" text,
+  "event_seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "payload" jsonb NOT NULL
+);
 CREATE TABLE managed_account (
   "id" text NOT NULL,
   "name" text,

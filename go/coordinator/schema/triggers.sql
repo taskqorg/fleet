@@ -72,6 +72,8 @@ CREATE OR REPLACE TRIGGER delivery_state_change AFTER INSERT OR DELETE OR UPDATE
 -- event
 CREATE OR REPLACE TRIGGER event_change AFTER INSERT OR DELETE OR UPDATE ON event FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER event_tombstone BEFORE INSERT ON event FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE OR REPLACE TRIGGER limit_reading_latest_ins AFTER INSERT ON event REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_limit_reading_latest();
+CREATE OR REPLACE TRIGGER limit_reading_latest_upd AFTER UPDATE ON event REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_limit_reading_latest();
 CREATE OR REPLACE TRIGGER session_summary_event_ins AFTER INSERT ON event REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_session_summary_event();
 CREATE OR REPLACE TRIGGER session_summary_event_upd AFTER UPDATE ON event REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_session_summary_event();
 

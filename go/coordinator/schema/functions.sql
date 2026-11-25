@@ -465,6 +465,33 @@ BEGIN
 END;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.fleet_limit_reading_latest()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ INSERT INTO limit_reading_latest (account_id, period, scope, project_id, session_id, host_id, event_seq, updated_at, payload)
+ SELECT DISTINCT ON (x.account_id, coalesce(r.value->>'period', ''), coalesce(n.project_id, 'session:' || coalesce(n.session_id, '')))
+  x.account_id, coalesce(r.value->>'period', ''), coalesce(n.project_id, 'session:' || coalesce(n.session_id, '')),
+  n.project_id, n.session_id, x.host_id, n.seq, n.updated_at, r.value
+ FROM new_rows n JOIN execution x ON x.id = n.execution_id
+  CROSS JOIN LATERAL jsonb_array_elements(coalesce(n.payload->'data'->'readings', '[]'::jsonb)) AS r(value)
+ WHERE NOT n.delta AND n.type = 'limit_reading' AND x.account_id IS NOT NULL
+ ORDER BY x.account_id, coalesce(r.value->>'period', ''), coalesce(n.project_id, 'session:' || coalesce(n.session_id, '')), n.seq DESC
+ ON CONFLICT (account_id, period, scope) DO UPDATE SET project_id = excluded.project_id, session_id = excluded.session_id,
+  host_id = excluded.host_id, event_seq = excluded.event_seq, updated_at = excluded.updated_at, payload = excluded.payload
+  WHERE excluded.event_seq >= limit_reading_latest.event_seq;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+END;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_note_append_only()
  RETURNS trigger
  LANGUAGE plpgsql
