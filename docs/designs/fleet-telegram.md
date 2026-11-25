@@ -72,7 +72,7 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 | `telegram_person_set` | person, not agents; owner for others | language, unlink; the owner links a Telegram user id directly |
 | `telegram_people` | owner | linked people and the Telegram users who wrote without a link |
 | `telegram_rooms` | owner | rooms, project hints, open work items |
-| `telegram_room_set` | owner | a room's project hint |
+| `telegram_room_set` | owner | a room's project hint; with `chatId` (and `threadId`) it creates the room ahead of its first message |
 | `telegram_work_close` | owner | close a work item; its conversation stays |
 
 ## Setup
