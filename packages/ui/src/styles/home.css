@@ -23,7 +23,7 @@
   .avatar.pic { background: var(--surface-sunken); }
   .avatar.pic > :is(img, video) { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
   /* Activity (owner pick A): the avatar's light. Dimming and the glow animate opacity only (compositor). */
-  .avatar[data-state=asleep], .avatar[data-state=failed] { opacity: .55; }
+  .avatar[data-state=asleep] { opacity: .55; }
   .avatar[data-state=paused] { opacity: .35; }
   .avatar[data-state=working]::after {
     content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
@@ -42,7 +42,6 @@
   .avatar-pick:disabled { cursor: default; }
   .avatar-making { @media (prefers-reduced-motion: no-preference) { animation: avatar-breathe 1.6s ease-in-out infinite; } }
   .avatar[data-state=failed] .avatar-dot { background: var(--danger-fg); }
-  .avatar[data-state=failed] { opacity: 1; }
   .avatar[data-state=failed] > :not(.avatar-dot) { opacity: .55; }
   .pchip { display: inline-flex; align-items: center; padding: var(--space-1) var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface-sunken); color: var(--fg-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); line-height: 1.2; white-space: nowrap; }
 
