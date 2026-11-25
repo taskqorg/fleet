@@ -120,18 +120,20 @@ var settingsDefaults = func() map[string]json.RawMessage {
 	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "autoAccept": null, "syncCheckoutAfterMerge": true},
 	"cleanup": {"keepWhen": ["uncommitted", "unpushed", "teardown-failed"]}, "identity": null, "subscriptions": [],
 	"errors": {"bugsink": [], "ignore": []},
-	"presets": []}`), &d); err != nil {
+	"presets": [], "data": "internal", "risks": {}, "approvals": {}}`), &d); err != nil {
 		panic(err)
 	}
 	// errors.bugsink: the Bugsink projects (names) holding this project's errors (docs/designs/fleet-error-tracking.md);
 	// errors.ignore: title substrings of Bugsink issues that open no needs-you problem (the issue stays in Bugsink).
 	// presets: what a new conversation does (presets.go); empty: the system presets.
+	// data: the project's data class, public, internal or personal (docs/designs/fleet-project-access.md#personal-data).
+	// risks, approvals: the approval card's risk per action and approvers per action (approvals.go).
 	return d
 }()
 
-var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors", "presets"}
+var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors", "presets", "data", "risks", "approvals"}
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "host", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
-var settingEnums = map[string][]string{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}}
+var settingEnums = map[string][]string{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}, "data": {"public", "internal", "personal"}}
 
 // jsType: a JSON value's type as a setting's default and value compare (lists are objects).
 func jsType(v json.RawMessage) string {
@@ -154,7 +156,7 @@ func jsType(v json.RawMessage) string {
 func projectSettings(p any) (rawObject, []string, error) {
 	unknown := []string{}
 	bad := func(k string) error {
-		if k == "execution.profiles" || k == "errors.bugsink" || k == "errors.ignore" {
+		if k == "execution.profiles" || k == "errors.bugsink" || k == "errors.ignore" || k == "data" || k == "risks" || k == "approvals" {
 			return fail(400, "Invalid project setting "+k)
 		}
 		return fail(500, "Invalid project setting "+k)
@@ -197,6 +199,33 @@ func projectSettings(p any) (rawObject, []string, error) {
 		case k == "presets":
 			if _, err := parsePresets(rawAny(v)); err != nil {
 				return nil, nil, err
+			}
+			out[k] = v
+		case k == "risks": // {action: free|reversible|radical}
+			o := pipelineRuleOf(v)
+			if o == nil {
+				return nil, nil, bad(k)
+			}
+			for _, x := range o {
+				if s, _ := jsonString(x); s != "free" && s != "reversible" && s != "radical" {
+					return nil, nil, bad(k)
+				}
+			}
+			out[k] = v
+		case k == "approvals": // {action: [person e-mail]}
+			o := pipelineRuleOf(v)
+			if o == nil {
+				return nil, nil, bad(k)
+			}
+			for _, x := range o {
+				if !isArr(x) {
+					return nil, nil, bad(k)
+				}
+				for _, e := range jsonList(x) {
+					if s, ok := jsonString(e); !ok || !strings.Contains(s, "@") {
+						return nil, nil, bad(k)
+					}
+				}
 			}
 			out[k] = v
 		case k == "subscriptions":
