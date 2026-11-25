@@ -373,6 +373,12 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 			err = json.NewEncoder(w).Encode(out)
 		}
 	}
+	var he *HTTPError
+	if err != nil && q.r.Context().Err() != nil && !errors.As(err, &he) {
+		// The client left (a closed tab, an aborted fetch, a restart's reconnect): the unexpected error the work then
+		// failed with is the cancel, not a server error, so it is 499 with no error report (fleet-telemetry.md §1).
+		err = fail(499, "Request cancelled")
+	}
 	if err != nil {
 		writeError(w, err)
 	}
