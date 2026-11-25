@@ -156,7 +156,7 @@ function App() {
   const activeNav = createMemo(() => sectionOf(current()));
   const shellTitle = createMemo(() => NAV.find(w => w.id === activeNav())?.label ?? '');
   const me = useOp('me', {});
-  const showPage = (id: string) => id === 'humans' ? me.data?.owner === true :
+  const showPage = (id: string) => id === 'humans' ? me.data?.owner === true || me.data?.managesPeople === true :
     id === 'personal-lab' ? !!me.data?.personalLab || me.data?.roles.includes('architect') === true : true;
   const search = [subPages(go, showPage), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))];
   const viewer = createMemo(() => viewerOnly(me.data?.roles));

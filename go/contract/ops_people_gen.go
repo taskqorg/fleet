@@ -238,6 +238,7 @@ type MeReply struct {
 	ChangeLogRetentionDays int64    `json:"changeLogRetentionDays"`
 	Email                  *string  `json:"email"`
 	GrantsVersion          *string  `json:"grantsVersion"`
+	ManagesPeople          *bool    `json:"managesPeople,omitempty"`
 	Name                   *string  `json:"name"`
 	Owner                  bool     `json:"owner"`
 	PersonalLab            *bool    `json:"personalLab,omitempty"`

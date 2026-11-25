@@ -22,9 +22,11 @@ const roles = [{ id: 'operator', label: 'Operator' }, { id: 'architect', label: 
 export function Humans(props: { id?: string }) {
   const [, go] = useLocation();
   const me = useOp('me', {});
-  const roster = useOp('people_list', () => me.data?.owner ? { manage: true } : null);
-  const projects = useOp('project_list', () => me.data?.owner ? {} : null);
-  const telegram = useOp('telegram_people', () => me.data?.owner ? {} : null);
+  /** The owner or a full-access person (people_list manage); the coordinator refuses anyone else. */
+  const manages = () => me.data?.owner === true || me.data?.managesPeople === true;
+  const roster = useOp('people_list', () => manages() ? { manage: true } : null);
+  const projects = useOp('project_list', () => manages() ? {} : null);
+  const telegram = useOp('telegram_people', () => manages() ? {} : null);
   const [message, setMessage] = createSignal('');
   const rows = () => roster.data?.roster ?? [];
   const removals = () => roster.data?.cloudflareRemovals ?? [];
@@ -52,9 +54,9 @@ export function Humans(props: { id?: string }) {
     if (removed) close();
   };
   const canSync = () => canRead() && mode() === 'active';
-  return <Show when={me.data?.owner} fallback={
+  return <Show when={manages()} fallback={
     <Show when={me.data || me.error} fallback={<Skeleton rows={4} />}>
-      <Empty text="Only the Fleet owner manages people and access." />
+      <Empty text="Only the Fleet owner or a full-access person manages people and access." />
     </Show>
   }>
     <ShellActions>
