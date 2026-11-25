@@ -30,15 +30,31 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.sha || inputs.sha }}
+          # The user of the github-pins key (System > Access), whose statuses are the coordinator's.
+          PINS_STATUS_LOGIN: alexkirs
         run: |
           set -euo pipefail
-          # Only an open proposal of this repository whose head is this commit.
-          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[] | select(.state == "open" and (.head.ref | test("^automation/[a-z]+-pins$")) and .head.repo.full_name == env.GITHUB_REPOSITORY and .base.ref == "main" and .head.sha == env.SHA)][0].number // empty')
+          # Everything is read through the API and checked here; the event is not trusted and no pull request code is
+          # checked out or run with this token.
+          # 1. An open proposal of this repository (not a fork): head automation/<kind>-pins at this commit, base main.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[] | select(.state == "open" and (.head.ref | test("^automation/(cli|tool)-pins$")) and .head.repo.full_name == env.GITHUB_REPOSITORY and .base.repo.full_name == env.GITHUB_REPOSITORY and .base.ref == "main" and .head.sha == env.SHA)][0].number // empty')
           [ -n "$pr" ] || { echo "not a pin proposal head"; exit 0; }
-          states=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/status" --jq '[.statuses[] | {(.context): .state}] | reverse | add')
-          for c in qualify-offline qualify-hosts code-review; do
-            [ "$(jq -r --arg c "$c" '.[$c] // ""' <<< "$states")" = success ] || { echo "$c is not success"; exit 0; }
-          done
+          kind=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.head.ref | capture("^automation/(?<k>[a-z]+)-pins$").k')
+          file=config/$([ "$kind" = cli ] && echo harness || echo tool)-pins.json
+          # 2. The diff touches only that kind's pin file.
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/files" --jq '.[] | "\(.status) \(.filename)"')
+          [ "$files" = "modified $file" ] || { echo "the proposal changes more than $file: $files"; exit 1; }
+          # 3. On the current head: qualify-offline by this workflow's bot, qualify-hosts and code-review by the github-pins
+          #    key's user (the coordinator), each success.
+          statuses=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/statuses")
+          check() {
+            got=$(jq -r --arg c "$1" 'map(select(.context == $c)) | sort_by(.created_at) | last | "\(.state) \(.creator.login)"' <<< "$statuses")
+            [ "$got" = "success $2" ] || { echo "$1 is '$got', expected 'success $2'"; exit 1; }
+          }
+          check qualify-offline 'github-actions[bot]'
+          check qualify-hosts "$PINS_STATUS_LOGIN"
+          check code-review "$PINS_STATUS_LOGIN"
+          [ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)" = "$SHA" ] || { echo "head moved"; exit 0; }
           gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --auto
           declare -A dispatched=()
           for _ in $(seq 170); do
