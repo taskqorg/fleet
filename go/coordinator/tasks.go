@@ -836,6 +836,9 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 	if cur.State != db.QuestionStateOpen {
 		return nil, fail(409, "Question withdrawn")
 	}
+	if err := approvalMayAnswer(q, id); err != nil { // every answer path: an approval card is its approvers' (approvals.go)
+		return nil, err
+	}
 	var data questionData
 	var decodeErr error
 	if len(cur.Data) > 0 {

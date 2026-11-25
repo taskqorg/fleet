@@ -75,6 +75,21 @@ Everything here is read from Fleet state; no worker turn runs.
 - **Needs you** (pass `telegram-watch`, every 5 s): an open question of a work item's conversation goes to its room, one of a home conversation to the private chat, once (`q:<question>`). Options that are a list of strings become buttons. A tap or a Telegram reply answers through `questions_answer` as that person (an agent's question gets the reply delivered to its session, as from the web app), within their projects; a key request only links to Fleet and is never answered from chat. An answered or withdrawn question's message is edited to "✓ <who>: <answer>".
 - **Milestones** (same pass): a work item's room hears once when its pull request opens, fails its checks or merges, and when its task completes or fails (`ms:<work>:<event>`); the status message follows. Fleet knows delivery as pull request stages; a project's own DEV or LIVE deploys reach the chat as the worker's answers.
 
+### Approvals (`approvals.go`)
+
+Every action an agent takes has a risk level. The defaults are permissive, and a project's `settings.risks` overrides them per action:
+
+| Level | Actions (`ApprovalAction`) | What the agent does |
+|---|---|---|
+| free | read, analyze, mockup, task, dev-branch | does it and reports |
+| reversible | dev-deploy, test-data | does it and reports how to undo |
+| radical | live-deploy, delete-accounts, ban-accounts, user-messages, keys, money, data-drop, other-radical | asks first |
+
+- **Card.** Before acting, the agent calls `approval_ask {executionId, requestId, action, what, where, version, rollback}` (the PM profile says so). For a free or reversible action the answer is `not-needed`. A radical action becomes an approval card: an agent question with Approve / Not now whose `data.approval` holds the scope. The card states the agent's understanding of what, where, version and rollback, and who it waits for. It shows in Web Needs you and, through the question push, in the work item's room. The reply reaches the session as any reply does. The agent calls again with the same `requestId` and acts only on `approved`. A changed scope withdraws the old card and asks again.
+- **Approvers.** The owner; the people `settings.approvals.<action>` names; else, for every action but keys and money, every person with a grant to the project. An agent identity never approves (a `{kind: "*"}` grant without the owner flag, such as `site-agents`, and any agent caller). Every answer path checks this (`answerQuestion`, `agentReplyTo`); a refused answer says whom the card waits for.
+- **Free text.** "go live", "live it", "good u can live", "давай" approve the card when exactly one is open in the room's work (a private chat: the home conversation), as the author. A Telegram reply to a card maps free text onto Approve or Not now. With several open, each card is listed with its buttons. Negations ("not now", "не выкатывай") never approve.
+- **Keys.** A key request in chat only links to Fleet; agents point to System › Access and never accept a key in chat.
+
 ## Operations
 
 | Operation | Who | Does |
@@ -102,7 +117,6 @@ Everything here is read from Fleet state; no worker turn runs.
 
 ## Not built
 
-- Risk levels and approval cards for radical actions (FLT-35).
 - Overlap warnings, attachments and albums, edits, channel health on the System screen, moving the Hermes rooms (FLT-36).
 - Learning a room's project hint from use; the owner sets it with `telegram_room_set`.
 
