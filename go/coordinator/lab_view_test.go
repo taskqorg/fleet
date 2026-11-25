@@ -24,6 +24,23 @@ func TestLabView(t *testing.T) {
 	if got.Experiments == nil || got.Ratings == nil || len(got.Leaderboard.Entries) != len(lb.Entries) || len(got.Leaderboard.Collections) != len(lb.Collections) {
 		t.Fatalf("parts: %+v", got)
 	}
+	// The header focus: experiments of the focus only, ignored projects left out.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO experiment (id, project_id, kind, pipeline_id) VALUES ('lv-a', 'fleet', 'single', 'p'), ('lv-b', 'dam', 'single', 'p')`); err != nil {
+		t.Fatal(err)
+	}
+	ids := func(r contract.LabViewReply) string {
+		var out []string
+		for _, x := range r.Experiments {
+			out = append(out, x.Id)
+		}
+		return strings.Join(out, ",")
+	}
+	var dam, notDam contract.LabViewReply
+	e.opInto(t, "lab_view", map[string]any{"projectIds": []string{"dam"}}, e.ownerHeaders(), &dam)
+	e.opInto(t, "lab_view", map[string]any{"excludeProjectIds": []string{"dam"}}, e.ownerHeaders(), &notDam)
+	if ids(dam) != "lv-b" || strings.Contains(ids(notDam), "lv-b") || !strings.Contains(ids(notDam), "lv-a") {
+		t.Fatalf("focus: dam %q, without dam %q", ids(dam), ids(notDam))
+	}
 }
 
 // Requirement: lab_trial keeps each Lab trial's leaderboard facts equal to its run's data, so the leaderboard never

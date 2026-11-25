@@ -19,7 +19,7 @@ import { useAnswers } from '../answers.ts';
 import { HistoryPreview } from './history.tsx';
 import { useOp, useView } from '../store.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
-import { listGroups, setListGroups, usePins, useViews } from '../prefs.ts';
+import { listGroups, prefsRead, scopeIds, setListGroups, usePins, useViews } from '../prefs.ts';
 import { LabCreate } from './lab-create.tsx';
 import { LabComparison } from './lab-matrix.tsx';
 import { selectDefaultSwarmTrial } from './lab-swarm.ts';
@@ -140,7 +140,7 @@ export function Lab(props: { id?: string }) {
   const me = useOp('me', {});
   // One read for the screen (lab_view, docs/designs/fleet-data-layer.md): experiments, registry, open ratings and the
   // last 30 days' leaderboard; an opened use case or suite reads its own leaderboard.
-  const view = useView('lab_view', {}, { quiet: 5000 });
+  const view = useView('lab_view', () => (prefsRead.value ? scopeIds() : null), { quiet: 5000 });
   const part = <T,>(of: (d: NonNullable<typeof view.data>) => T) => ({
     get data() { return view.data ? of(view.data) : null; },
     get error() { return view.error; },
