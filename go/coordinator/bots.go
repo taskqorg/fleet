@@ -45,7 +45,7 @@ func formatTimePtr(t *time.Time) *string {
 }
 
 // botRunStateOf: a bot run's state from its execution's (a preparing run is queued); nil without a run.
-// botListRunState: bot_list's latest run state ('' none; preparing reads as queued).
+// botListRunState: bot_list's latest run state (” none; preparing reads as queued).
 func botListRunState(s string) *string {
 	if s == "preparing" {
 		return ptr("queued")
