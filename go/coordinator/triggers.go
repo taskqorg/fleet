@@ -630,16 +630,8 @@ func triggerBusy(q *Request, t db.Trigger, target triggerTarget) (bool, error) {
 	if target.bot == nil {
 		return q.db().TriggerWakeQueued(q.ctx(), target.sessionID)
 	}
-	if _, err := q.db().BotRunActiveForBot(q.ctx(), target.botID); err == nil {
-		return true, nil
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return false, err
-	}
-	if home := deref(target.bot.HomeSessionId); home != "" {
-		active, err := agentActive(q, home)
-		return active != nil, err
-	}
-	return false, nil
+	// A bot's conversations run in parallel: only this trigger's own message still queued holds it.
+	return q.db().BotTriggerWakeQueued(q.ctx(), db.BotTriggerWakeQueuedParams{BotID: &target.botID, Column2: t.ID})
 }
 
 // triggerCheck: one check of t; manual fires whatever the time and the condition say. Reports whether it sent.
@@ -749,44 +741,26 @@ func triggerTargetChanges(q *Request, t db.Trigger, target triggerTarget) (db.Tr
 }
 
 // triggerSend: the trigger's message to its target.
-// Changes go one turn per work item (threads_bot.go): each item's lines start a turn in its own thread, in the order
-// the items first changed; a check without changes (a timed wake, Run now) is one turn in the main thread.
+// Changes go one message per subject (threads_bot.go changeThread), in the order the subjects first changed. A session
+// target gets them in its threads; a bot target in its conversation for each subject (fleet-conversations.md#rules). A
+// check without changes (a timed wake, Run now) is one message: in the session, or in the bot's trigger conversation.
 func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, all []threadPart, manual bool) (bool, error) {
 	if len(all) == 0 {
 		return triggerSendOne(q, t, target, slot, nil, "", manual)
 	}
 	keys, lines := threadGroups(all)
 	sent := false
-	for i, k := range keys {
+	for _, k := range keys {
 		var ok bool
 		var err error
-		if i == 0 || target.bot == nil {
-			ok, err = triggerSendOne(q, t, target, slot, lines[k], k, manual)
-		} else {
-			// The bot runs one turn at a time: the next items queue in its Home session, each in its thread.
-			ok, err = triggerQueueThread(q, t, target, slot, lines[k], k)
-		}
+		// A bot target: each subject's changes go to the bot's conversation for that subject, each its own turn.
+		ok, err = triggerSendOne(q, t, target, slot, lines[k], k, manual)
 		if err != nil {
 			return sent, err
-		}
-		if i == 0 && !ok && target.bot != nil {
-			return false, nil // the bot's wake was refused (paused, busy, no authority): no item queues behind it
 		}
 		sent = sent || ok
 	}
 	return sent, nil
-}
-
-// triggerQueueThread: one item's changes as a queued message of the bot's Home session, in the item's thread.
-func triggerQueueThread(q *Request, t db.Trigger, target triggerTarget, slot string, parts []string, thread string) (bool, error) {
-	home := deref(target.bot.HomeSessionId)
-	if home == "" {
-		return false, nil
-	}
-	rid := "trigger:" + t.ID + ":" + slot + ":" + thread
-	text := fmt.Sprintf("Fleet: %d changes in project %s: %s", len(parts), target.bot.ProjectId, strings.Join(parts, "; "))
-	_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &home, RequestId: &rid, Text: &text}, "trigger", t.ID, thread)
-	return err == nil, err
 }
 
 // triggerSendOne: the trigger's message to its target for one thread ("" the main thread).
@@ -817,8 +791,12 @@ func triggerSendOne(q *Request, t db.Trigger, target triggerTarget, slot string,
 	case t.WhenKind == "daily":
 		head = fmt.Sprintf("Fleet: scheduled daily wake (%s %s) in project %s.", t.DailyTime, t.DailyZone, b.ProjectId)
 	}
+	subject := thread
+	if subject == "" {
+		subject = "trigger:" + t.ID // a timed wake or Run now: the trigger's own conversation
+	}
 	run, admitted, err := admitBotWake(q, b, botWakeReq{Cause: cause, DedupKey: rid, Text: head, SentBy: "Fleet", Source: "trigger",
-		CheckPause: !manual, Trigger: &t, Thread: thread})
+		CheckPause: !manual, Trigger: &t, Thread: subject})
 	_ = run
 	return admitted, err
 }
@@ -838,21 +816,37 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 		return nil, t.ChangeCursor, t.LimitsSignaled, fail(403, "Director of the trigger's target is not a person of this Fleet")
 	}
 	own, children := map[string]bool{}, map[string]bool{}
+	selves := []string{}
 	if self != "" {
-		es, err := q.db().BotOwnExecutions(q.ctx(), &self) // the session's and its children's executions
+		selves = append(selves, self)
+	}
+	if target.bot != nil { // every conversation of the bot is its own
+		ids, err := q.db().BotSessionIDs(q.ctx(), &target.bot.Id)
+		if err != nil {
+			return nil, t.ChangeCursor, t.LimitsSignaled, err
+		}
+		for _, id := range ids {
+			if id != self {
+				selves = append(selves, id)
+			}
+		}
+	}
+	for _, sid := range selves {
+		es, err := q.db().BotOwnExecutions(q.ctx(), &sid) // the session's and its children's executions
 		if err != nil {
 			return nil, t.ChangeCursor, t.LimitsSignaled, err
 		}
 		for _, e := range es {
 			own["execution:"+e] = true
 		}
-		cs, err := q.db().ChildSessionIDs(q.ctx(), &self)
+		cs, err := q.db().ChildSessionIDs(q.ctx(), &sid)
 		if err != nil {
 			return nil, t.ChangeCursor, t.LimitsSignaled, err
 		}
 		for _, c := range cs {
 			children[c] = true
 		}
+		children[sid] = true
 	}
 	cursor := t.ChangeCursor
 	parts, seen := []threadPart{}, map[string]bool{}

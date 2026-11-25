@@ -1127,7 +1127,8 @@ CREATE TABLE session (
   "seq" bigint NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone,
-  "bot_id" text
+  "bot_id" text,
+  "subject" text
 );
 CREATE TABLE session_fork (
   "id" text NOT NULL,

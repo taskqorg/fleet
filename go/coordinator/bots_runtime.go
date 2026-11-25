@@ -245,6 +245,86 @@ func ensureBotHomeSession(q *Request, b *botFull) (agentSession, error) {
 	return s, nil
 }
 
+// botConversation: the bot's conversation for a subject (fleet-conversations.md#rules), created when it has none and
+// opened again when archived. The empty subject is the bot's Home: person messages and direct runs.
+func botConversation(q *Request, b *botFull, subject string) (agentSession, error) {
+	if subject == "" {
+		return ensureBotHomeSession(q, b)
+	}
+	if err := acquireTxLock(q, "bot-subject:"+b.Id+":"+subject); err != nil { // one conversation per (bot, subject)
+		return agentSession{}, err
+	}
+	id, err := q.db().BotConversationBySubject(q.ctx(), db.BotConversationBySubjectParams{BotID: &b.Id, Subject: &subject})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return agentSession{}, err
+	}
+	if err == nil {
+		s, err := sessionMaybe(q, id)
+		if err != nil || s == nil {
+			return agentSession{}, err
+		}
+		if s.ArchivedAt != nil {
+			s.ArchivedAt = nil
+			if err := sessionPut(q, s); err != nil {
+				return agentSession{}, err
+			}
+		}
+		return *s, nil
+	}
+	profile, err := readTrustedProfile(q, b.Settings.ProfileId)
+	if err != nil {
+		return agentSession{}, err
+	}
+	branch := true
+	s := agentSession{ID: newID(), CreatedAt: nowMs(), AgentConfig: jsonBytes(profile), Access: "write", Branch: &branch,
+		ProjectID: b.ProjectId, DirectedBy: b.Director, BotID: b.Id}
+	if err := sessionPut(q, &s); err != nil {
+		return agentSession{}, err
+	}
+	if err := q.db().SessionSetSubject(q.ctx(), db.SessionSetSubjectParams{ID: s.ID, Subject: &subject}); err != nil {
+		return agentSession{}, err
+	}
+	title, err := subjectTitle(q, subject)
+	if err != nil {
+		return agentSession{}, err
+	}
+	if _, err := q.db().TitleRename(q.ctx(), db.TitleRenameParams{ID: s.ID, Title: title, TitleBy: "subject"}); err != nil {
+		return agentSession{}, err
+	}
+	return s, nil
+}
+
+// subjectTitle: a new conversation's title from its subject: the task's title, the question's text, Host <id>, the
+// trigger's name; never the raw key.
+func subjectTitle(q *Request, subject string) (string, error) {
+	kind, id, _ := strings.Cut(subject, ":")
+	var p db.SessionViewThreadItemsParams
+	switch kind {
+	case "task":
+		p.TaskIds = []string{id}
+	case "question":
+		p.QuestionIds = []string{id}
+	case "trigger":
+		if t, err := q.db().TriggerGet(q.ctx(), id); err == nil && t.Name != "" {
+			return t.Name, nil
+		}
+		return "Trigger", nil
+	default:
+		return threadTitle(subject, ""), nil
+	}
+	rows, err := q.db().SessionViewThreadItems(q.ctx(), p)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range rows {
+		if r.Title != "" {
+			line, _, _ := strings.Cut(strings.TrimSpace(r.Title), "\n")
+			return clip(line, 120), nil
+		}
+	}
+	return threadTitle(subject, ""), nil
+}
+
 // syncBotSessionCompatibility continues the native session when project, workspace, host, profile and account are
 // compatible, and otherwise creates a retained handoff scoped to the bot's execution project.
 func syncBotSessionCompatibility(q *Request, s *agentSession, b *botFull) error {
@@ -464,7 +544,7 @@ type botWakeReq struct {
 	CheckPause  bool
 	Trigger     *db.Trigger
 	ManualInput string
-	Thread      string // the work item the wake belongs to (threads_bot.go); "" the main thread
+	Thread      string // the subject the wake belongs to (threads_bot.go changeThread); "" the bot's Home
 }
 
 // admitBotWake runs the shared admission flow for Run now, scheduled wakes and Needs you triggers.
@@ -498,7 +578,7 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 		}
 	}
 
-	s, err := ensureBotHomeSession(q, b)
+	s, err := botConversation(q, b, req.Thread)
 	if err != nil {
 		return none, false, err
 	}
@@ -558,16 +638,18 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 		return recordTerminalSkip("skipped", "paused", optStr(req.DedupKey))
 	}
 
-	activeRun, err := q.db().BotRunActiveForBot(q.ctx(), b.Id)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return none, false, err
-	}
-	hasActiveRun := err == nil && activeRun.ID != ""
+	// One turn at a time per conversation; a bot's conversations run in parallel (fleet-conversations.md#rules). A
+	// trigger's message to a busy conversation waits in its queue.
 	activeExec, err := agentActive(q, s.ID)
 	if err != nil {
 		return none, false, err
 	}
-	if hasActiveRun || activeExec != nil {
+	if activeExec != nil && req.Trigger != nil && req.DedupKey != "" {
+		rid := req.DedupKey
+		_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &s.ID, RequestId: &rid, Text: &req.Text}, req.Source, req.Trigger.ID, "")
+		return none, err == nil, err
+	}
+	if activeExec != nil {
 		dedupKey := req.DedupKey
 		if req.Cause == "needs_you" {
 			// Keep the real event identity available for admission after the active run ends.
@@ -585,7 +667,7 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 
 	e, err := agentEnqueue(q, &s, req.Text, "bot:"+runID, nil, struct {
 		BotContext *botExecutionContext `json:"botContext,omitempty"`
-	}{botContextOf(b, runID)}, "", &agentProvenance{SentBy: req.SentBy, Source: req.Source, Thread: req.Thread})
+	}{botContextOf(b, runID)}, "", &agentProvenance{SentBy: req.SentBy, Source: req.Source})
 	if err != nil {
 		return none, false, err
 	}

@@ -51,6 +51,26 @@ func (q *Queries) BotByHomeSession(ctx context.Context, homeSessionID *string) (
 	return id, err
 }
 
+const botConversationBySubject = `-- name: BotConversationBySubject :one
+SELECT id FROM session
+WHERE bot_id = $1 AND subject = $2 AND tombstoned_at IS NULL
+ORDER BY archived_at NULLS FIRST, seq DESC
+LIMIT 1
+`
+
+type BotConversationBySubjectParams struct {
+	BotID   *string
+	Subject *string
+}
+
+// A bot's conversation for one subject (fleet-conversations.md#rules), an open one before an archived one.
+func (q *Queries) BotConversationBySubject(ctx context.Context, arg BotConversationBySubjectParams) (string, error) {
+	row := q.db.QueryRow(ctx, botConversationBySubject, arg.BotID, arg.Subject)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const botCreate = `-- name: BotCreate :execrows
 INSERT INTO bot(id, project_id, director, revision)
 VALUES ($1, $2, $3, 1)
@@ -888,6 +908,31 @@ func (q *Queries) BotRunsList(ctx context.Context, arg BotRunsListParams) ([]Bot
 	return items, nil
 }
 
+const botSessionIDs = `-- name: BotSessionIDs :many
+SELECT id FROM session WHERE bot_id = $1 AND tombstoned_at IS NULL
+`
+
+// Every conversation of a bot: its Home and one per subject.
+func (q *Queries) BotSessionIDs(ctx context.Context, botID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, botSessionIDs, botID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const botSetHomeSession = `-- name: BotSetHomeSession :exec
 UPDATE bot SET home_session_id = $2 WHERE id = $1
 `
@@ -1258,4 +1303,36 @@ func (q *Queries) BotTasksList(ctx context.Context, arg BotTasksListParams) ([]B
 		return nil, err
 	}
 	return items, nil
+}
+
+const botTriggerWakeQueued = `-- name: BotTriggerWakeQueued :one
+SELECT EXISTS (SELECT 1 FROM queued_message qm JOIN session s ON s.id = qm.session_id
+ WHERE s.bot_id = $1 AND qm.state = 'queued' AND qm.payload->>'triggerId' = $2::text)
+`
+
+type BotTriggerWakeQueuedParams struct {
+	BotID   *string
+	Column2 string
+}
+
+// A message of this trigger still queued in one of the bot's conversations.
+func (q *Queries) BotTriggerWakeQueued(ctx context.Context, arg BotTriggerWakeQueuedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, botTriggerWakeQueued, arg.BotID, arg.Column2)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const sessionSetSubject = `-- name: SessionSetSubject :exec
+UPDATE session SET subject = $2 WHERE id = $1
+`
+
+type SessionSetSubjectParams struct {
+	ID      string
+	Subject *string
+}
+
+func (q *Queries) SessionSetSubject(ctx context.Context, arg SessionSetSubjectParams) error {
+	_, err := q.db.Exec(ctx, sessionSetSubject, arg.ID, arg.Subject)
+	return err
 }

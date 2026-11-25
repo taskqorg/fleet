@@ -1596,6 +1596,7 @@ type Session struct {
 	UpdatedAt               time.Time
 	TombstonedAt            *time.Time
 	BotID                   *string
+	Subject                 *string
 }
 
 type SessionFork struct {
