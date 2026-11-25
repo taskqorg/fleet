@@ -50,8 +50,9 @@ In order:
 
 1. A Telegram reply to a Fleet message or to a routed human message goes to that message's work item (no model).
 2. A room with no open work item: the message opens one, titled by its first line; the room gets "New: <title>".
-3. Otherwise one model call (the first OpenAI connection open to all projects with model `gpt-6.2-sol`, or `FLEET_TELEGRAM_CONDUCTOR=<connection>/<model>`; Responses API, `text.format` `json_object`) answers `{choice: <work item> | new | ask, title}` from the open items' titles and the message. `telegram_status.conductor` shows the last call: connection, model, choice and why it gave no usable answer.
-4. `ask`, a failed call or no model: one message "Is this about: [A] [B] [Something new]". Only the author's tap counts; the tap edits the question to "→ <title>" and delivers the message.
+3. A short message (up to 120 characters) within 5 minutes of the author's last routed message in the room goes to that message's work item, unless it opens with a new-work cue ("Новая задача", "Другой вопрос", "new", "another"). Per author, so two people's threads never mix.
+4. Otherwise one model call (the first OpenAI connection open to all projects with model `gpt-6.2-sol`, or `FLEET_TELEGRAM_CONDUCTOR=<connection>/<model>`; Responses API, `text.format` `json_object`) answers `{choice: <work item> | new | ask, title}` from the open items' titles, how long ago each was active and its last answer, and the message. `telegram_status.conductor` shows the last call: connection, model, choice and why it gave no usable answer.
+5. `ask`, a failed call or no model: one message "Is this about: [A] [B] [Something new]". Only the author's tap counts; the tap edits the question to "→ <title>" and delivers the message.
 
 **Status message.** When a room already has open work, the "New: <title>" notice of the next work item is its status message, with an [Open in Fleet] button; the only work item of a room opens quietly and has none. Fleet edits it in place: the title and the facts below ("Working on a message from Simon", the task, the pull request). It stays "working" while any of the item's messages waits for its reply. Every answer in a room carries a [Status] button that opens the status message (supergroups only: `t.me/c/...` links). An edit resolves the message at send time; the chat's order sends the notice first.
 

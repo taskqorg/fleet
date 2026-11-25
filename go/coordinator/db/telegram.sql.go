@@ -12,6 +12,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const telegramAuthorRecentWork = `-- name: TelegramAuthorRecentWork :one
+SELECT u.work_id::text AS work_id FROM telegram_update u JOIN telegram_work w ON w.id = u.work_id
+WHERE u.chat_id = $1 AND u.from_id = $2 AND u.outcome IN ('delivered', 'status') AND w.room_id = $3
+  AND w.closed_at IS NULL AND u.received_at > $4::timestamptz AND u.id <> $5
+ORDER BY u.update_id DESC LIMIT 1
+`
+
+type TelegramAuthorRecentWorkParams struct {
+	ChatID *int64
+	FromID *int64
+	RoomID string
+	Since  pgtype.Timestamptz
+	ID     string
+}
+
+// The work item the author's last routed message in this room went to, within the window: a follow-up of theirs
+// goes there without a model (owner-tester F19). Per author, so two people's threads never mix (pilotq L14).
+func (q *Queries) TelegramAuthorRecentWork(ctx context.Context, arg TelegramAuthorRecentWorkParams) (string, error) {
+	row := q.db.QueryRow(ctx, telegramAuthorRecentWork,
+		arg.ChatID,
+		arg.FromID,
+		arg.RoomID,
+		arg.Since,
+		arg.ID,
+	)
+	var work_id string
+	err := row.Scan(&work_id)
+	return work_id, err
+}
+
 const telegramDeliveryHealth = `-- name: TelegramDeliveryHealth :one
 SELECT count(*) FILTER (WHERE state = 'sent')::bigint AS sent, count(*) FILTER (WHERE state = 'failed')::bigint AS failed,
   count(*) FILTER (WHERE state = 'unknown')::bigint AS unknown,
@@ -1458,6 +1488,23 @@ func (q *Queries) TelegramWorkJoin(ctx context.Context, arg TelegramWorkJoinPara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const telegramWorkLastReply = `-- name: TelegramWorkLastReply :one
+SELECT text, created_at FROM telegram_outbox WHERE work_id = $1 AND id LIKE 'reply:%' ORDER BY created_at DESC LIMIT 1
+`
+
+type TelegramWorkLastReplyRow struct {
+	Text      string
+	CreatedAt time.Time
+}
+
+// The newest answer Fleet sent for a work item, for the conductor's context.
+func (q *Queries) TelegramWorkLastReply(ctx context.Context, workID *string) (TelegramWorkLastReplyRow, error) {
+	row := q.db.QueryRow(ctx, telegramWorkLastReply, workID)
+	var i TelegramWorkLastReplyRow
+	err := row.Scan(&i.Text, &i.CreatedAt)
+	return i, err
 }
 
 const telegramWorkList = `-- name: TelegramWorkList :many
