@@ -303,6 +303,8 @@ export function Results(props: { id?: string; project?: string; frame?: Frame })
     get query() { return basePage.query; },
     setQuery: basePage.setQuery,
     pins: basePage.pins,
+    reorder: basePage.reorder,
+    setPinRoot: basePage.setPinRoot,
     views: basePage.views,
     list: {
       get rows() { return basePage.list.rows; },

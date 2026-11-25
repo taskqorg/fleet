@@ -152,6 +152,13 @@
   .row-pin { display: inline-grid; place-items: center; width: var(--size-icon); height: var(--size-icon); padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--fg-muted); cursor: pointer; position: relative; z-index: 1; }
   .row-pin:hover { color: var(--fg); background: var(--hover); }
   .row-pin .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  /* Drag to reorder (reorder.tsx): the lifted item follows the pointer, a keyboard-grabbed one is outlined, the drop line marks the gap. */
+  [data-reorder]:not(.vl-row) { position: relative; }
+  [data-reorder=lifted] { z-index: 3; background: var(--float); box-shadow: var(--elevation-popover); scale: 1.02; pointer-events: none; }
+  [data-reorder=grabbed] { z-index: 2; background: var(--selected); outline: 2px solid var(--fg); outline-offset: -2px; }
+  .drop-line { position: fixed; z-index: 1000; border-radius: 1px; background: var(--drop-marker-color, var(--running-fg)); pointer-events: none; }
+  @media (forced-colors: active) { .drop-line { background: Highlight; } }
+  :root.reordering, :root.reordering * { cursor: grabbing !important; -webkit-user-select: none; user-select: none; }
   .row-pin.off { flex: none; margin-left: var(--space-1); visibility: hidden; }
   .vl-row:hover .row-pin.off, .vl-row:focus-within .row-pin.off { visibility: visible; }
   @media (hover: none) { .row-pin.off { display: none; } }

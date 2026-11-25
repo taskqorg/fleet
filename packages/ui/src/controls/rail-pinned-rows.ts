@@ -11,7 +11,7 @@ export type RailPinnedProps = {
   pins: RailPin[];
   onOpen: (p: RailPin) => void;
   onUnpin: (p: RailPin) => void;
-  /** The whole new order of the zone's keys (Move up, Move down). */ onOrder: (keys: string[]) => void;
+  /** The whole new order of the zone's keys (drag to reorder). */ onOrder: (keys: string[]) => void;
   onHide: () => void;
 };
 
@@ -24,13 +24,4 @@ export function railPinOrder(order: readonly string[], keys: readonly string[]):
   const head = [...new Set(order)].filter(k => pinned.has(k));
   const seen = new Set(head);
   return [...head, ...keys.filter(k => !seen.has(k) && (seen.add(k), true))];
-}
-
-/** The order after moving `key` one place up (-1) or down (1); unchanged at either end. */
-export function railPinMove(keys: readonly string[], key: string, by: -1 | 1): string[] {
-  const i = keys.indexOf(key), j = i + by;
-  if (i < 0 || j < 0 || j >= keys.length) return [...keys];
-  const next = [...keys];
-  [next[i], next[j]] = [next[j], next[i]];
-  return next;
 }
