@@ -6,14 +6,15 @@
 -- Runs of the last 24 hours and every active run, tool calls apart; active first. ponytail: newest 500.
 -- session_title: the session's stored or generated title, naming a run without a task.
 -- attempt: the run's place among its task's executions (execution_task_seq), 0 without a task (work facts' ×N).
-SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.host_id,e.harness,e.task_id,t.title,s.title AS session_title,e.session_id,e.parent_execution_id,e.problem,
+SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.host_id,e.harness,e.task_id,coalesce(t.title,'')::text AS title,s.title AS session_title,e.session_id,e.parent_execution_id,e.problem,
  (SELECT count(*) FROM execution a WHERE e.task_id IS NOT NULL AND a.task_id=e.task_id AND a.seq<=e.seq)::bigint AS attempt,
  e.ended_at,e.last_seen_at,x.wall_ms,x.cpu_ms,x.peak_memory_bytes,
  (coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool',''))::text AS subject,x.connection_cost,
  x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,
  CASE WHEN coalesce(x.billing_basis,'') IN ('','unavailable') AND e.account_id IS NOT NULL THEN coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',e.account_id) m),false) ELSE false END AS is_api_conn,
  x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at
-FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN task t ON t.id=e.task_id LEFT JOIN session s ON s.id=e.session_id
+FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id
+ LEFT JOIN LATERAL (SELECT t.title FROM task t WHERE t.id=e.task_id) t ON true LEFT JOIN LATERAL (SELECT s.title FROM session s WHERE s.id=e.session_id) s ON true
 WHERE (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
  AND e.kind NOT IN ('pipeline_run','pipeline_step','tool_run')
 ORDER BY (e.state IN ('preparing','running','waiting')) DESC,e.seq DESC LIMIT 500;
@@ -22,8 +23,13 @@ ORDER BY (e.state IN ('preparing','running','waiting')) DESC,e.seq DESC LIMIT 50
 -- Tool calls of the last 24 hours and every active one (newest 20000), summed per host and caller: the caller run when
 -- it exists, else the task, else the connection (the coordinator's own reads carry a fresh session per call). Cost
 -- comes per currency and basis from execution_spend, where each call is priced once; a call whose spend row is stale
--- or multi-currency counts as unpriced here (spend_summary prices it).
-WITH c AS MATERIALIZED (
+-- or multi-currency counts as unpriced here (spend_summary prices it). The page of calls is chosen before the joins:
+-- under RLS the planner otherwise joins every call of the day before the limit.
+WITH page AS MATERIALIZED (
+ SELECT e.id FROM execution e
+ WHERE e.kind='tool_run' AND (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
+ ORDER BY e.seq DESC LIMIT 20000
+), c AS MATERIALIZED (
  SELECT e.id, e.seq, coalesce(e.host_id, '')::text AS host,
   coalesce(p.id, e.task_id, 'conn:' || coalesce(e.data->>'connection', ''))::text AS caller,
   e.state::text AS state, e.session_id, e.task_id, t.title, e.parent_execution_id, e.problem,
@@ -32,10 +38,8 @@ WITH c AS MATERIALIZED (
   CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_basis END AS basis,
   CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_value END AS value,
   CASE WHEN s.execution_id IS NULL OR s.stale OR s.payload IS NOT NULL THEN 1 ELSE s.cost_unpriced END AS unpriced
- FROM execution e LEFT JOIN execution p ON p.id=e.parent_execution_id LEFT JOIN task t ON t.id=e.task_id
-  LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN execution_spend s ON s.execution_id=e.id
- WHERE e.kind='tool_run' AND (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
- ORDER BY e.seq DESC LIMIT 20000
+ FROM page JOIN execution e ON e.id = page.id LEFT JOIN execution p ON p.id=e.parent_execution_id
+  LEFT JOIN LATERAL (SELECT t.title FROM task t WHERE t.id=e.task_id) t ON true LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN execution_spend s ON s.execution_id=e.id
 ), costs AS (
  SELECT z.host, z.caller, jsonb_agg(jsonb_build_object('currency', z.currency, 'basis', z.basis, 'value', z.value, 'unpriced', z.unpriced)) AS j
  FROM (SELECT host, caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM c GROUP BY 1, 2, 3, 4) z
