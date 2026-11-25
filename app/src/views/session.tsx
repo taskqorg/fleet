@@ -88,6 +88,15 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // At phone width the list and the thread take turns: the list first, a pick opens the thread, Threads goes back.
   const [threadsMode, setThreadsMode] = createSignal<'list' | 'thread'>('list');
   const pickThread = (k: string) => { setPicked(k); setThreadsMode('thread'); };
+  // The shown thread counts as read (person_visit page thread; it writes no change row, so session_view rereads after it)
+  // once it has something unread; one mark per thread and unread count, so a failed mark is not repeated in a loop.
+  let readMark = '';
+  createEffect(() => [hasThreads(), shownThread(), threadItems().find(t => t.key === shownThread())?.unread ?? 0] as const, ([on, th, unread]) => {
+    const mark = `${th}:${unread}`;
+    if (!on || unread === 0 || mark === readMark) return;
+    readMark = mark;
+    op('person_visit', { page: 'thread', thread: { sessionId: props.id, thread: th } }, { signal: alive }).then(() => sDoc.reload(), () => {});
+  });
   // Thread: a session that got a task shows the task's thread; Thread quiet folds its blocks (tool-fold.ts).
   const thread = useThread(() => (hasThreads() ? { session: props.id, thread: shownThread() } : { session: props.id }));
   const key = createMemo<ThreadKey>(() => thread.win?.key ?? { session: props.id });
