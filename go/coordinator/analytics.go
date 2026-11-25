@@ -1218,6 +1218,8 @@ func spendDimension(by contract.SpendGroupBy) (contract.AnalyticsDimension, erro
 		return contract.AnalyticsDimensionHost, nil
 	case contract.SpendGroupByBot:
 		return contract.AnalyticsDimensionBot, nil
+	case contract.SpendGroupByDay:
+		return contract.AnalyticsDimensionDay, nil
 	}
 	return "", fail(400, "Unknown spend group by: "+string(by))
 }
@@ -1619,6 +1621,10 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 	}
 
 	rows := spendRowsFromAcc(byDim, totalUsd)
+	if r.By == contract.SpendGroupByDay {
+		// One row per UTC day with spend, oldest first (a sparkline reads them in order; days without runs are absent).
+		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Key < rows[j].Key })
+	}
 	if r.By == contract.SpendGroupByBot && len(rows) > 0 {
 		botRows, err := q.db().AnalyticsBotNames(q.ctx())
 		if err != nil {

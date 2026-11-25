@@ -1,6 +1,6 @@
 # System
 
-**Status.** Built, rail section System ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)): one view (`app/src/views/hosts.tsx`) renders every System route; the earlier paths `/hosts`, `/hosts/limits`, `/keys`, `/runners`, `/spend` and `/humans` redirect. This spec is the section frame; the content of each root keeps its own spec: [Hosts and limits](hosts.md), [Runners](runners.md), [Spend](spend.md). Not built yet: the per-account model probe of J5 (the account page shows which hosts can run it, not which models), the spend sparklines (no per-day spend read), and the Add host and Add connection header actions.
+**Status.** Built, rail section System ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)): one view (`app/src/views/hosts.tsx`) renders every System route; the earlier paths `/hosts`, `/hosts/limits`, `/keys`, `/runners`, `/spend` and `/humans` redirect. This spec is the section frame; the content of each root keeps its own spec: [Hosts and limits](hosts.md), [Runners](runners.md), [Spend](spend.md).
 
 **Purpose.** Are hosts, accounts, connections and spend healthy, and who has access? [Live](live.md) answers "what runs now"; System is where the person configures and repairs.
 
@@ -9,9 +9,11 @@
 | Route | Opens |
 |---|---|
 | `/system` | Idle: readiness and spend summary |
-| `/system/hosts/<name>` | One host: state, workers, readings, CLIs, store, Remove |
+| `/system/hosts/<name>` | One host: state, workers, readings, CLIs, accounts and models, store, Remove |
+| `/system/hosts/new` | Add host (`hosts_register`) |
 | `/system/accounts`, `/system/accounts/<id>` | Accounts & limits; one subscription |
 | `/system/connections/<id>` | One connection: keys, access, intake, balancing, limits |
+| `/system/connections/new` | Add connection (`connections_create`) |
 | `/system/runners` | CI runners and agent runs per host |
 | `/system/spend` | Spend: period, total, breakdown, what it bought |
 | `/system/people/<id>`, `/system/people/new` | One person and their access (owner only) |
@@ -24,6 +26,9 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, the section's a
 * **Control column** (`CatalogueTree`, [OR-48](../owner-rules.md)): one tree with the roots **Hosts, Accounts & limits, Connections & keys, Runners, Spend, People** (People only for the owner), no mode switch ([OR-46](../owner-rules.md)). Runners and Spend are roots without children: a click opens their page. A host leaf: state icon (red only for a dead or failing host, [OR-56](../owner-rules.md)), name, and on the right running of slots and last seen ([OR-22](../owner-rules.md)). An account leaf: harness mark, name, left of capacity as a small gauge.
 * **Work area, idle:** readiness first: hosts with a problem, accounts near their limit, connections with failing keys, each as one [problem row](../controls/problem-row.md) with its fix action, repeats as `×N` ([OR-58](../owner-rules.md)); then today's and the month's spend as figures with the link to Spend; then services with errors in the last hour. A healthy System says so in one line.
 * **Work area, a host open:** the host's stacked [detail sections](../controls/detail-section.md) as [Hosts](hosts.md) specifies, with "Show on Live" in the head.
+* **J5 compatibility** ([journey J5](../../designs/fleet-ia-and-journeys.md#3-core-user-journeys-j1j5)): an account inspection (`account_connect`) probes the models the host's vendor CLI offers that binding (codex `model/list`, Claude Code `initialize`); a run that fails because the vendor does not know its model marks the model rejected on that binding until the next probe. The router skips a binding for a model it is known not to serve (cause `subscription:<id>:model:<model>`); a binding whose list is unknown is never skipped. The host page lists **Accounts and models** with the probe's age and a problem row per profile no account there can serve; the account page shows the models per host in **Runs on**, **Profiles on this account** one row per model, and **Router skips, 24 h** (`route_decisions` with `subscriptionId`); idle readiness has one row per profile no ready binding anywhere serves.
+* **Spend figures** carry a [sparkline](../controls/figure-tile.md), one bar per UTC day from `spend_summary` with `by: day`: the last 12 days on the idle screen (Spend today, Unpriced runs), the chosen period on Spend (Total, Runs, Unpriced usage). Cost per task and Tasks done have no daily read and no sparkline.
+* **Add host** (owner or full access) and **Add connection** are the shell header's plus on their root; each opens its form in the work area (OR-14). Add host sends the SHA-256 printed by `scripts/host-secret.sh` on the host; without it Fleet mints a secret, shown once on that page and kept nowhere in the browser. Add connection opens the new connection's page, where its key is added.
 * **Work area, Spend:** the [Spend](spend.md) page; cost is shown here because it is the question ([OR-54](../owner-rules.md)).
 
 ## States
@@ -45,7 +50,7 @@ Checked against the [product map](../product-map.md) rows for System.
 
 ## Data
 
-`hosts_list`, `telemetry_summary`, `telemetry_findings`, `account_list`, `subscription_limits`, `connections_list`, `executions_runners`, `executions_ci`, `spend_summary`, `people_list`. The idle summary is one read over the same operations, so agents see the same readiness (fleet.md R2).
+`hosts_list`, `telemetry_summary`, `telemetry_findings`, `account_list` (bindings carry `models`, `modelsObservedAt`, `rejectedModels`), `profiles_list` (architects), `route_decisions` (`subscriptionId`), `subscription_limits`, `connections_list`, `executions_runners`, `executions_ci`, `spend_summary` (also `by: day`), `people_list`; writes `hosts_register`, `connections_create`. The idle summary is one read over the same operations, so agents see the same readiness (fleet.md R2).
 
 ## Blocks
 

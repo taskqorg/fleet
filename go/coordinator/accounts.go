@@ -78,7 +78,11 @@ type accountBinding struct {
 	Platform   *string         `json:"platform"`
 	Readiness  *string         `json:"readiness"`
 	Roots      json.RawMessage `json:"roots"`
-	raw        json.RawMessage // the binding as stored
+	// J5: the models the host's probe found (nil: not probed) and the models a run proved it rejects (model -> ms).
+	Models           []string         `json:"models"`
+	ModelsObservedAt *int64           `json:"modelsObservedAt"`
+	RejectedModels   map[string]int64 `json:"rejectedModels"`
+	raw              json.RawMessage  // the binding as stored
 }
 
 // accountOf decodes a row's payload; a binding that is not an object is left out.
@@ -1066,6 +1070,11 @@ type accountBindingOut struct {
 	LastCheck      accountLastCheck  `json:"lastCheck"`
 	ReadinessBasis string            `json:"readinessBasis"`
 	Authority      string            `json:"authority"`
+	// J5 (docs/designs/fleet-ia-and-journeys.md section 3): models probed at inspection; rejectedModels are models a run on
+	// this binding failed with as not found. A fresh probe clears what runs learned.
+	Models           []string         `json:"models,omitempty"`
+	ModelsObservedAt *int64           `json:"modelsObservedAt,omitempty"`
+	RejectedModels   map[string]int64 `json:"rejectedModels,omitempty"`
 }
 
 // accountReport: a host's observation of one binding of a subscription.
@@ -1131,6 +1140,20 @@ func accountReport(q *Request, b *contract.AccountObservation, host string) (any
 	last := accountLastCheck{Readiness: b.Readiness, Reason: reason, NativeLoginObserved: b.NativeLoginObserved, Quota: "unknown", ObservedAt: observedAt}
 	binding := accountBindingOut{HostID: host, Binding: b.Binding, Platform: b.Platform, Readiness: readiness, ObservedAt: observedAt, Roots: roots,
 		LastCheck: last, ReadinessBasis: basis, Authority: "host-owned native registry; no credentials transferred"}
+	switch {
+	case b.Models != nil:
+		for _, m := range b.Models {
+			if m == "" || len(m) > 200 {
+				return nil, fail(400, "Invalid host account observation: models")
+			}
+		}
+		if len(b.Models) > 200 {
+			return nil, fail(400, "Invalid host account observation: models")
+		}
+		binding.Models, binding.ModelsObservedAt = b.Models, &observedAt
+	case previous != nil:
+		binding.Models, binding.ModelsObservedAt, binding.RejectedModels = previous.Models, previous.ModelsObservedAt, previous.RejectedModels
+	}
 	check := accountCheckRec{ID: newID(), AccountID: a.ID, HostID: host, Binding: b.Binding,
 		accountCheckPayload: accountCheckPayload{Readiness: b.Readiness, Roots: roots, Reason: jsonBytes(reason), NativeLoginObserved: b.NativeLoginObserved,
 			Quota: "unknown", ObservedAt: jsonBytes(observedAt)}}

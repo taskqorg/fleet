@@ -120,6 +120,20 @@ export function windowBounds(days: number): { from: string; to: string } {
   return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
 }
 
+/** One value per UTC day of the last `days` days, oldest first, from a spend_summary by:'day' reply (row key YYYY-MM-DD):
+ *  a covered day without runs is 0; no reply yet is an empty series (the tile shows no sparkline). */
+export function dailySeries(reply: Ops['spend_summary']['reply'] | null | undefined, days: number,
+  pick: (row: Ops['spend_summary']['reply']['rows'][number]) => number): number[] {
+  if (!reply) return [];
+  const byKey = new Map(reply.rows.map(r => [r.key, r]));
+  const { to } = windowBounds(days);
+  const end = Date.parse(to + 'T00:00:00Z');
+  return Array.from({ length: days }, (_, i) => {
+    const row = byKey.get(new Date(end - (days - i) * 86_400_000).toISOString().slice(0, 10));
+    return row ? pick(row) : 0;
+  });
+}
+
 function measureNum(totals: Ops['spend_summary']['reply']['totals']['measures'], key: string): number {
   const m = totals[key];
   return m && typeof m.value === 'number' ? m.value : 0;
@@ -231,6 +245,12 @@ export function Spend() {
     summary.data ? measureNum(summary.data.totals.measures, 'tokens_input') + measureNum(summary.data.totals.measures, 'tokens_output') : 0,
   );
   const totalUnpriced = createMemo(() => (summary.data ? summary.data.rows.reduce((s, r) => s + r.unpriced, 0) : 0));
+  // One bar per day of the period (spend_summary by day, canvas board/screens/system.bl state 3); Tasks done has no daily read.
+  const daily = useOp('spend_summary', () => (prefsRead.value ? spendRequest(Number(days()) || 30, 'day') : null), { quiet: 30_000 });
+  const n = () => Number(days()) || 30;
+  const costByDay = createMemo(() => dailySeries(daily.data, n(), r => usdOf(r.cost as CostFigureLike[])));
+  const runsByDay = createMemo(() => dailySeries(daily.data, n(), r => r.runs));
+  const unpricedByDay = createMemo(() => dailySeries(daily.data, n(), r => r.unpriced));
 
   return (
     <article class="detail stack" aria-label="Spend">
@@ -253,14 +273,14 @@ export function Spend() {
             <div class="sys-figures">
               <FigureTile label={`Total, ${days() === '1' ? 'UTC day' : `${days()} days`}`} kind="money" value={{ value: usdOf(totalCost()), basis: 'measured' }}
                 sub={[shareAmount(totalCost(), 'billed') != null ? `billed ${money(shareAmount(totalCost(), 'billed')!).text}` : '', shareAmount(totalCost(), 'subscription') != null ? `subscription value ${money(shareAmount(totalCost(), 'subscription')!).text}` : ''].filter(Boolean).join(' · ') || undefined}
-                trend={[]} trendLabel="Spend by day" />
+                trend={costByDay()} trendLabel={`Spend by day, last ${n()} days`} />
               <FigureTile label="Runs" value={{ value: totalRuns(), basis: 'measured' }} sub={totalFailed() ? `${count(totalFailed()).text} failed · ${count(totalTokens()).text} tokens` : `${count(totalTokens()).text} tokens`}
-                trend={[]} trendLabel="Runs by day" />
+                trend={runsByDay()} trendLabel={`Runs by day, last ${n()} days`} />
               <FigureTile label="Tasks done" value={{ value: data.bought.completedTasks, basis: 'measured' }}
                 sub={data.bought.completedTasks ? `${money(usdOf(data.bought.taskCost as CostFigureLike[]) / data.bought.completedTasks).text} each` : undefined}
                 trend={[]} trendLabel="Tasks done by day" />
               <Show when={totalUnpriced() > 0}>
-                <FigureTile label="Unpriced usage" value={{ value: totalUnpriced(), basis: 'measured' }} sub="no price entry" alert trend={[]} trendLabel="Unpriced usage by day" />
+                <FigureTile label="Unpriced usage" value={{ value: totalUnpriced(), basis: 'measured' }} sub="no price entry" alert trend={unpricedByDay()} trendLabel={`Unpriced usage by day, last ${n()} days`} />
               </Show>
             </div>
             <p class="small-note">Amounts marked ≈ are estimates, including subscription list-price equivalents: <CostFigures cost={totalCost()} empty="no priced usage" /></p>

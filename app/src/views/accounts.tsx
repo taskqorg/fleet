@@ -3,13 +3,21 @@
 // run, per host, from the account's own inspections, so an account no host can start shows before work is routed to it.
 import { createMemo, createSignal, For, onSettled, Show } from 'solid-js';
 import {
-  AgeChip, Button, DetailHead, DetailSection, Empty, ErrorBanner, FillBar, HarnessMark, KvRow, Skeleton, StateBadge,
+  AgeChip, Button, DataTable, DetailHead, DetailSection, Empty, ErrorBanner, FillBar, HarnessMark, KvRow, Skeleton, StateBadge,
   countdown, exact, harnesses, type Harness,
 } from '../../../packages/ui/src/index.ts';
 import type { LimitPeriod, LimitSubscription } from '../../../contracts/generated/ops.ts';
 import { useOp } from '../store.ts';
+import { accountProfiles, compatProfiles, modelSkips, type CompatAccount, type ModelBinding } from '../compat.ts';
 
 const HOUR = 36e5;
+/** The profiles for J5 checks: profiles_list is an architect read, so others ask nothing and see no profile rows. */
+export function useCompatProfiles() {
+  const me = useOp('me', {});
+  const list = useOp('profiles_list', () => (me.data && (me.data.owner || me.data.roles.includes('architect')) ? {} : null));
+  return createMemo(() => compatProfiles(list.data?.profiles as Record<string, unknown>[] | undefined));
+}
+
 
 /** The limits read without chart history: the last hour only, so the tree and readiness stay light. The request changes
  *  once an hour, so every view in that hour shares one read. */
@@ -37,7 +45,13 @@ export function nearLimit(p: LimitPeriod | undefined): boolean {
 
 type Check = { hostId: string; binding?: string | null; readiness: string; reason?: string | null; observedAt?: number };
 type Account = { id: string; name: string; harness?: string; holder?: string; intake?: string; plan?: string | null;
-  bindings?: { hostId: string; binding: string; readiness?: string; observedAt?: number }[]; checks?: Check[] };
+  bindings?: (ModelBinding & { observedAt?: number })[]; checks?: Check[] };
+
+/** A binding's probed models in words (J5): the list, or why it is unknown. */
+export function modelsText(b: ModelBinding | undefined): string {
+  if (!b?.models) return 'models not probed yet: the router does not skip on unknown';
+  return b.models.length ? b.models.join(' · ') : 'offers no models';
+}
 
 /** Host readiness of an account: its latest inspection per host, else the binding's own readiness. */
 export function accountHosts(a: Account | undefined): Check[] {
@@ -68,6 +82,21 @@ export function AccountDetail(props: { id: string; onClose: () => void; onOpen: 
   const harness = () => accountHarness(sub()?.harness ?? acct()?.harness ?? '');
   const hostRow = (id: string) => hostsOp.data?.hosts.find(h => h.id === id);
   const cli = (id: string) => hostRow(id)?.harnessVersions?.find(v => v.harness === (sub()?.harness ?? acct()?.harness));
+  // J5: profiles of this harness and the hosts that serve their model; the router's model skips over the last day.
+  const compatList = useCompatProfiles();
+  const skipsOp = useOp('route_decisions', () => ({ subscriptionId: props.id }), { every: 60_000 });
+  const binding = (host: string) => acct()?.bindings?.find(b => b.hostId === host);
+  const profiles = createMemo(() => acct() ? accountProfiles(acct() as CompatAccount, compatList()) : []);
+  const skips = createMemo(() => modelSkips(skipsOp.data?.decisions ?? [], props.id));
+  const models = createMemo(() => {
+    const by = new Map<string, { model: string; names: string[]; serving: string[]; refusing: string[]; of: number }>();
+    for (const p of profiles()) {
+      const g = by.get(p.profile.model!) ?? { model: p.profile.model!, names: [], serving: p.serving, refusing: p.refusing, of: p.of };
+      g.names.push(p.profile.id);
+      by.set(g.model, g);
+    }
+    return [...by.values()].toSorted((a, b) => b.refusing.length - a.refusing.length || b.names.length - a.names.length);
+  });
   return (
     <article class="detail" data-ui="detail" tabindex={-1} aria-label={sub() ? accountName(sub()!) : props.id}>
       <DetailHead crumb="system · account" onClose={props.onClose}
@@ -96,7 +125,7 @@ export function AccountDetail(props: { id: string; onClose: () => void; onOpen: 
             <Show when={hosts().length} fallback={<span class="muted">No host has a login for this account.</span>}>
               <For each={hosts()}>{c => (
                 <KvRow icon="panels-top-left" label={c.hostId}
-                  meta={<span data-tip={c.reason ?? undefined}>{c.binding ?? ''}</span>}
+                  meta={<span data-tip={c.binding ?? undefined}>{modelsText(binding(c.hostId))}</span>}
                   value={<span class={c.readiness === 'ready' ? '' : 't-danger'}>
                     {readinessText(c)}
                     <Show when={cli(c.hostId)}>{v => <span class="muted mono"> · {v().observed ?? '—'}</span>}</Show>
@@ -104,6 +133,30 @@ export function AccountDetail(props: { id: string; onClose: () => void; onOpen: 
               )}</For>
             </Show>
           </DetailSection>
+          <Show when={models().length}>
+            {/* One row per model: many profiles share a model, and the hosts that serve it are the model's (J5). */}
+            <DetailSection title={`Profiles on this account ${profiles().length}`}>
+              <For each={models()}>{g => (
+                <KvRow icon={g.refusing.length ? 'triangle-alert' : 'bot'} label={g.model}
+                  meta={`${g.names.slice(0, 3).join(', ')}${g.names.length > 3 ? ` +${g.names.length - 3}` : ''}${g.refusing.length ? ` · ${g.serving.length ? `only ${g.serving.join(', ')} offers it` : 'no host offers it'}; ${g.refusing.join(', ')} skipped` : ''}`}
+                  value={<span class={g.serving.length ? 'mono' : 'mono t-attention'}>{g.serving.length} of {g.of}</span>} />
+              )}</For>
+            </DetailSection>
+          </Show>
+          <Show when={skips().length}>
+            <DetailSection title={`Router skips, 24 h ${skips().length}`}>
+              <DataTable label="Router skips" head={<tr><th scope="col">Execution · reason</th><th scope="col" class="num">Skipped</th><th scope="col" class="num">Won</th><th scope="col" class="num">Age</th></tr>}>
+                <For each={skips()}>{k => (
+                  <tr>
+                    <th scope="row" data-tip={k.executionId}>{k.reason.includes('modelNotFound') ? `${k.model}: rejected after start (modelNotFound)` : `${k.model} not offered (probe)`}</th>
+                    <td class="num mono">{k.host}</td>
+                    <td class="num mono">{k.won ?? '—'}</td>
+                    <td class="num"><AgeChip t={Date.parse(k.at)} /></td>
+                  </tr>
+                )}</For>
+              </DataTable>
+            </DetailSection>
+          </Show>
         </Show>
       </Show>
     </article>

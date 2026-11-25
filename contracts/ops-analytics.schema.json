@@ -4,7 +4,7 @@
   "operations": {
     "analytics_query": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "description": "Aggregate usage and outcome analytics: window, dimensions, measures, filters, optional projectId and system rows"},
     "list_spend": {"read": true, "errors": [400], "auth": "person", "agent": "no", "changes": ["execution", "task", "session", "definition", "api-connection"], "description": "Cumulative visible spend for a batch of task, conversation or project list rows"},
-    "spend_summary": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "changes": ["execution", "task"], "description": "Spend breakdown for a window (by purpose, project, category, profile, model, or host) and what it bought (completed tasks, conversation runs, per-project cost per task)"}
+    "spend_summary": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "changes": ["execution", "task"], "description": "Spend breakdown for a window (by purpose, project, category, profile, model, host, bot, or UTC day: key YYYY-MM-DD) and what it bought (completed tasks, conversation runs, per-project cost per task)"}
   },
   "$defs": {
     "ListSpendKind": {"type": "string", "enum": ["tasks", "sessions", "projects"]},
@@ -178,7 +178,7 @@
     },
     "SpendGroupBy": {
       "type": "string",
-      "enum": ["purpose", "project", "category", "profile", "model", "host", "bot"]
+      "enum": ["purpose", "project", "category", "profile", "model", "host", "bot", "day"]
     },
     "SpendSummaryRequest": {
       "type": "object",

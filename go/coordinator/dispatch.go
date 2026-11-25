@@ -447,6 +447,16 @@ func causeOf(a dispatchAccountRec, host, message string) string {
 	return "subscription:" + a.ID + ":refused"
 }
 
+// bindingOn: the subscription's binding on host (the zero binding, which refuses nothing, when it has none).
+func bindingOn(s *dispatchAccountRec, host string) accountBinding {
+	for _, b := range s.parsedBindings {
+		if deref(b.HostID) == host {
+			return b
+		}
+	}
+	return accountBinding{}
+}
+
 // subOf: the subscription a candidate names, as route decisions record it.
 func subOf(a *dispatchAccountRec) *candidateSubscription {
 	if a == nil {
@@ -802,6 +812,10 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 					continue
 				}
 				c.binding = b
+				if why := bindingOn(s, id).modelRefusal(e.Model); why != "" {
+					skip(fmt.Sprintf("%s on %s %s", name, id, why), "subscription:"+s.ID+":model:"+e.Model)
+					continue
+				}
 				if over := readingOverSwitch(s, k.readings[s.ID]); over != "" {
 					skip(over, "subscription:"+s.ID+":limit")
 					continue

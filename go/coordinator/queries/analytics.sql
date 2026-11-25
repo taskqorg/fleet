@@ -519,6 +519,7 @@ stale_cost_items AS (
    WHEN 'model' THEN coalesce(nullif(p.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(p.host_id, ''), 'unknown')
    WHEN 'bot' THEN coalesce(nullif(p.bot_id, ''), 'unknown')
+   WHEN 'day' THEN coalesce(to_char(p.leaf_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), 'unknown')
   END AS dim_key,
   p.purpose,
   coalesce(p.project_id, '') AS proj_key,
@@ -563,6 +564,7 @@ spend_items AS (
    WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
    WHEN 'bot' THEN coalesce(nullif(s.bot_id, ''), 'unknown')
+   WHEN 'day' THEN to_char(s.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
   END AS dim_key,
   s.purpose,
   coalesce(s.project_id, '') AS proj_key,
@@ -609,6 +611,7 @@ spend_items AS (
    WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
    WHEN 'bot' THEN coalesce(nullif(s.bot_id, ''), 'unknown')
+   WHEN 'day' THEN to_char(s.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
   END AS dim_key,
   s.purpose,
   coalesce(s.project_id, '') AS proj_key,

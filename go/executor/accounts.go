@@ -166,6 +166,9 @@ func (e *executor) accountInspect(c contract.Command) error {
 				o.Reason = "registry readiness " + nonEmpty(x.Readiness, "unset")
 			}
 			o.Roots = &contract.AccountRoots{Home: &x.Home, NativeHome: &x.NativeHome, Executable: &x.Executable}
+			if o.Readiness == "ready" {
+				o.Models = probeModels(x) // J5: absent when the probe fails, never an empty list
+			}
 		}
 		r.AccountObservation = &o
 	}
@@ -443,4 +446,76 @@ func claudePeriod(t string) string {
 		return "weekly-" + strings.TrimPrefix(t, "seven_day_")
 	}
 	return t
+}
+
+// probeModels (J5, docs/designs/fleet-ia-and-journeys.md section 3): the models the vendor CLI offers this binding,
+// read at inspection: codex app-server model/list, Claude Code's stream-json initialize answer. Nil when the CLI cannot
+// answer, so the coordinator reads "not probed", not "offers nothing".
+func probeModels(x registryEntry) []string {
+	if runnable(x) != nil {
+		return nil
+	}
+	executable, managed, err := managedExecutable(x.Harness, x.Executable, "")
+	if err != nil {
+		return nil
+	}
+	x.Executable, x.ReleaseManaged = executable, managed
+	var list any
+	switch x.Harness {
+	case "codex":
+		r, err := rpcExchange(probeCmd(x, "app-server", "-c", "mcp_servers={}", "--disable", "hooks", "--disable", "plugins", "--disable", "apps", "--disable", "memories"), []M{
+			{"id": 1, "method": "initialize", "params": M{"clientInfo": M{"name": "fleet", "version": "0.1.0"}}},
+			{"method": "initialized"},
+			{"id": 2, "method": "model/list", "params": M{}},
+		}, func(v M) bool { return isID(v, 2) })
+		if err != nil || has(r, "error") {
+			return nil
+		}
+		list = jAt(r, "result", "data")
+		if list == nil {
+			list = jAt(r, "result", "models")
+		}
+	case "claude":
+		r, err := rpcExchange(probeCmd(x, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+			"--strict-mcp-config", "--setting-sources", ""), []M{
+			{"type": "control_request", "request_id": "fleet-init", "request": M{"subtype": "initialize"}},
+		}, func(v M) bool {
+			a := claudeControlAnswer(v)
+			return a.Type == "control_response" && a.Response.RequestId == "fleet-init"
+		})
+		if err != nil || claudeControlAnswer(r).Response.Subtype != "success" {
+			return nil
+		}
+		list = jAt(r, "response", "response", "models")
+	}
+	return modelNames(list)
+}
+
+// modelNames: the names in a vendor model list (strings, or objects naming value, id, model or name), at most 200,
+// each at most 200 characters, duplicates dropped. Nil when the list holds none.
+func modelNames(list any) []string {
+	items, _ := list.([]any)
+	var out []string
+	seen := map[string]bool{}
+	for _, it := range items {
+		name, _ := it.(string)
+		if m, ok := it.(M); ok {
+			for _, k := range []string{"value", "id", "model", "name"} {
+				if v, ok := m[k].(string); ok && v != "" {
+					name = v
+					break
+				}
+			}
+		}
+		name = strings.TrimSpace(name)
+		if name == "" || len(name) > 200 || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+		if len(out) == 200 {
+			break
+		}
+	}
+	return out
 }
