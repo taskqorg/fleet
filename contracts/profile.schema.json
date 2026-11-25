@@ -21,6 +21,7 @@
       "codeMode": {"$comment": "add: a code server bridges the Fleet tools and connections beside them; only: instead of them (docs/designs/fleet-code-mode.md).", "$ref": "#/$defs/CodeMode"},
       "imageGeneration": {"$comment": "Codex only: true turns on Codex's built-in image generation, which draws on the run's ChatGPT subscription; absent or false keeps it off.", "type": "boolean"},
     "gitNetwork": {"$comment": "The agent may use the network for git.", "type": "boolean"},
+      "publishing": {"$comment": "The agent publishes to the project's forge (project-publishing: publish_draft, request_merge). Its runs in a project with execution.forge, pipeline steps included, need a forge login; a pipeline step of a profile without it never publishes. Absent: false.", "type": "boolean"},
       "purpose": {"$comment": "Short one-line summary shown in the Agent Library.", "type": "string"},
       "category": {"$comment": "Agent Library category (coding, research, review, operations, design, lab).", "type": "string"},
       "tags": {"$comment": "At most 16 library filter tags.", "type": "array", "items": {"type": "string"}},

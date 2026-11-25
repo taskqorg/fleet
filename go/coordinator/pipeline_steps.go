@@ -876,6 +876,18 @@ type pipelineAgentExtra struct {
 	PipelineRunID  string `json:"pipelineRunId"`
 	DirectedBy     string `json:"directedBy,omitempty"`
 	ExperimentID   string `json:"experimentId,omitempty"`
+	// StepPublishes: the step publishes to the project's forge (its profile's publishing, or the step's publishes),
+	// so dispatch keeps execution.forge for it (publishes); every other pipeline agent step goes without.
+	StepPublishes bool `json:"stepPublishes,omitempty"`
+}
+
+// stepPublishes: the agent step publishes: the pipeline step says so, or its profile does (publishing). A Lab trial
+// never publishes (publishes in dispatch.go).
+func stepPublishes(step *pipelineDefStep, profile rawObject) bool {
+	p, _ := jsonAs[struct {
+		Publishing bool `json:"publishing"`
+	}](jsonBytes(profile))
+	return step.Publishes || p.Publishing
 }
 
 func startAgentStep(q *Request, run *runRecord, step *pipelineDefStep, stepExecutionID, prompt string, inputs []fileRef) (string, error) {
@@ -914,7 +926,8 @@ func startAgentStep(q *Request, run *runRecord, step *pipelineDefStep, stepExecu
 		inputs = []fileRef{}
 	}
 	payload := map[string]json.RawMessage{"inputs": jsonBytes(inputs), "skills": jsonBytes(skills), "webRoute": jsonBytes(web)}
-	extra := pipelineAgentExtra{PipelineStepID: stepExecutionID, PipelineRunID: run.ID, DirectedBy: run.director(), ExperimentID: run.ExperimentID}
+	extra := pipelineAgentExtra{PipelineStepID: stepExecutionID, PipelineRunID: run.ID, DirectedBy: run.director(), ExperimentID: run.ExperimentID,
+		StepPublishes: stepPublishes(step, profile)}
 	e, err := agentEnqueue(q, &s, prompt, "pipeline:"+stepExecutionID, payload, extra, overrides.host(), nil)
 	if err != nil {
 		return "", err

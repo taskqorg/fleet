@@ -51,7 +51,7 @@ func validatePipelineDef(b []byte) (*pipelineDef, error) {
 	if len(steps) == 0 {
 		return bad("steps")
 	}
-	allowed := map[string][]string{"api": {"id", "kind", "description", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "description", "profile", "prompt", "output"}, "script": {"id", "kind", "description", "command", "timeout_ms", "host"}}
+	allowed := map[string][]string{"api": {"id", "kind", "description", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "description", "profile", "prompt", "output", "publishes"}, "script": {"id", "kind", "description", "command", "timeout_ms", "host"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
 		s := pipelineRuleOf(x)
@@ -72,6 +72,9 @@ func validatePipelineDef(b []byte) (*pipelineDef, error) {
 			if _, ok := jsonString(raw); !ok {
 				return bad("step " + id + " description must be text")
 			}
+		}
+		if raw, has := s["publishes"]; has && string(raw) != "true" && string(raw) != "false" {
+			return bad("step " + id + " publishes must be true or false")
 		}
 		kind, _ := jsonString(s["kind"])
 		keys, ok := allowed[kind]
