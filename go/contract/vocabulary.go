@@ -10,9 +10,9 @@ type VocabularyData struct {
 		Match    []string
 	}
 	Harnesses []struct {
-		ID, Label, Icon, Login string
-		LoginArgv              []string
-		Assets                 bool
+		ID, Model, Label, Icon, Login string
+		LoginArgv                     []string
+		Assets                        bool
 	}
 	Views []string
 	Lists map[string]struct {
@@ -40,6 +40,21 @@ func HarnessIDs() []string {
 		out = append(out, h.ID)
 	}
 	return out
+}
+
+// HarnessDefaultModel: the model a start without a profile model records for this harness (its vocabulary row's model);
+// no model, or an unknown or empty harness: codex's.
+func HarnessDefaultModel(harness string) string {
+	fallback := ""
+	for _, h := range Vocabulary.Harnesses {
+		if h.ID == harness && h.Model != "" {
+			return h.Model
+		}
+		if h.ID == "codex" {
+			fallback = h.Model
+		}
+	}
+	return fallback
 }
 
 // PlainCause: a stored failure cause code (an execution's problem, such as unknown:abandoned or step:provider-429) in
