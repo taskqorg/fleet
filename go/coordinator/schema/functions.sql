@@ -259,7 +259,7 @@ BEGIN
    ttl := coalesce((SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = r.task_id), (SELECT coalesce(x.lab_group, x.goal, x.kind::text) || ' trial' FROM experiment x WHERE x.id = r.experiment_id), (SELECT s.title FROM session s WHERE s.id = r.session_id), '');
   ELSIF TG_TABLE_NAME = 'task' THEN ttl := coalesce(r.code || ' ', '') || r.title;
   ELSIF TG_TABLE_NAME = 'question' THEN ttl := r.text;
-  ELSIF TG_TABLE_NAME = 'experiment' THEN ttl := coalesce(r.goal, r.lab_group, r.kind::text);
+  ELSIF TG_TABLE_NAME = 'experiment' THEN ttl := coalesce(r.lab_group, r.goal, r.kind::text);
   ELSE ttl := r.target || ' ' || r.field; END IF;
   INSERT INTO activity (kind, verb, outcome, section, subject, title, actor, project_id, task_id, session_id, host_id, bot_id, experiment_id, holder, group_key, detail)
   VALUES (k, v, o, sec, subj, left(coalesce(ttl, ''), 300), coalesce(act, nullif(current_setting('fleet.actor', true), ''), nullif(current_setting('fleet.person', true), '')),
