@@ -4,7 +4,7 @@
 // flows (a key, a host login, a monthly limit) open in the same work area. Every fact and write is an operation agents
 // call too (access_status, access_check, access_onboard, connections_key_add, account_login_handoff). A check is
 // read-only and never starts a login.
-import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
+import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from 'solid-js';
 import {
   AgeChip, Button, Choice, DataTable, DetailHead, DetailSection, Empty, ErrorBanner, KvRow, Skeleton, StateBadge, TableRow, TextField,
   copyText,
@@ -132,17 +132,19 @@ function KeyFlow(props: { flow: Flow & { kind: 'key' }; onDone: () => void; onCh
   const [value, setValue] = createSignal('');
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal('');
-  // added: the new key's addedAt (server ms). The server checks every added key at once (connections_key_add, by any
-  // path) and its change rereads access_status; the first check after addedAt is this key's result.
-  // late: no check came within 30 s (the server could not run one); the item shows as it is, with its Check button.
+  // added: the connection's last check time before the add (0: none). The server checks every added key at once
+  // (connections_key_add, by any path) and its change rereads access_status (the read the list shares); the first
+  // check after that is this key's result. late: none came within 30 s; the item shows as it is, with its Check button.
   const [added, setAdded] = createSignal<number | null>(null);
   const [late, setLate] = createSignal(false);
-  const live = useOp('access_status', () => (added() !== null ? {} : null), { every: 5000 });
+  const live = useOp('access_status', {}, { every: 30_000 });
   const item = () => live.data?.items.find(i => i.id === `connection:${guide()?.connection}`) ?? null;
   const result = createMemo(() => {
-    const at = added(), it = item();
-    return at !== null && it && (late() || (it.lastCheck && it.lastCheck.at >= at)) ? it : null;
+    const before = added(), it = item();
+    return before !== null && it && (late() || (it.lastCheck && it.lastCheck.at > before)) ? it : null;
   });
+  let timer = 0;
+  onCleanup(() => clearTimeout(timer));
   const prepare = () => {
     setBusy(true); setErr('');
     void op('access_onboard', { kind: 'key', provider: provider(), ...(name().trim() ? { connection: name().trim() } : {}) })
@@ -152,9 +154,10 @@ function KeyFlow(props: { flow: Flow & { kind: 'key' }; onDone: () => void; onCh
     const g = guide(); const v = value().trim();
     if (!g?.connection || !v) return;
     setBusy(true); setErr('');
+    const before = item()?.lastCheck?.at ?? 0;
     // The value goes once to connections_key_add and is dropped here; only its fingerprint comes back.
     void op('connections_key_add', { connection: g.connection, value: v })
-      .then(k => { setValue(''); setAdded(typeof k.addedAt === 'number' ? k.addedAt : 0); setTimeout(() => setLate(true), 30_000); }, e => { setBusy(false); setValue(''); setErr(String(e.message ?? e)); });
+      .then(() => { setValue(''); setAdded(before); timer = window.setTimeout(() => setLate(true), 30_000); }, e => { setBusy(false); setValue(''); setErr(String(e.message ?? e)); });
   };
   return <DetailSection title="Add an API key">
     <div class="stack sys-form">
@@ -178,6 +181,7 @@ function KeyFlow(props: { flow: Flow & { kind: 'key' }; onDone: () => void; onCh
       <Show when={err()}>{e => <ErrorBanner text={e()} />}</Show>
       <Show when={result()}>{r => <>
         <div><StateBadge family="access" state={r().state} /> <span>{r().stateText}{r().lastCheck && !r().lastCheck!.ok ? `: ${r().lastCheck!.text}` : ''}</span></div>
+        <Show when={!(r().lastCheck && r().lastCheck!.at > added()!)}><span class="muted">Fleet has not checked the new key yet; press Check on its row.</span></Show>
         <Show when={r().state !== 'works' && r().guide?.billingUrl}>{u => <Button label="Open billing" icon="external-link" onClick={() => window.open(u(), '_blank', 'noopener')} />}</Show>
         <div class="res-bar"><Button label="Done" kind="primary" onClick={props.onDone} /></div>
       </>}</Show>
