@@ -439,18 +439,24 @@ func definitionKind(k contract.DefinitionKind) error {
 // settings.execution.profiles name ("project:execution.profiles").
 func projectRoleProfiles(q *Request, execution bool) (map[string][]string, error) {
 	out := map[string][]string{}
-	ids, err := projectIDs(q)
+	// Every visible project's head, read once; each project's settings from it (projectHeadSettings), not its whole
+	// context (projectSettingsOf reads the head again, hashes its context files and reads its source state and access).
+	heads, err := headTexts(q, "project")
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range ids {
+	for _, h := range heads {
+		if q.person != nil && !mayAccessProjectID(q.person, h.id) {
+			continue
+		}
+		id := h.id
 		var s struct {
 			Roles     map[string]json.RawMessage `json:"roles"`
 			Execution struct {
 				Profiles []json.RawMessage `json:"profiles"`
 			} `json:"execution"`
 		}
-		json.Unmarshal(jsonBytes(projectSettingsOf(q, id)), &s)
+		json.Unmarshal(jsonBytes(projectHeadSettings(id, h.text)), &s)
 		for role, v := range s.Roles {
 			p := profileNamed(v)
 			out[p] = append(out[p], id+":"+role)

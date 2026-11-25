@@ -436,6 +436,34 @@ func projectContext(q *Request, id string) (rawObject, error) {
 	return out, nil
 }
 
+// projectHeadSettings: a project's settings as projectContext gives them ("settings": projectSettings of the head's
+// settings), from the head's content already read, without its context files, their hashes, its source state or its
+// access (a list of every project's roles reads only this). An invalid bundle has none, as projectSettingsOf answers.
+func projectHeadSettings(id string, content []byte) rawObject {
+	b, err := openObject(content)
+	if err != nil {
+		return nil
+	}
+	if _, err = projectBundle(id, b); err != nil {
+		return nil
+	}
+	var parts struct {
+		Settings json.RawMessage `json:"settings"`
+	}
+	if json.Unmarshal(jsonBytes(b), &parts) != nil {
+		return nil
+	}
+	var settings rawObject
+	if json.Unmarshal(orNull(parts.Settings), &settings) != nil {
+		return nil
+	}
+	parsed, _, err := projectSettings(settings)
+	if err != nil {
+		return nil
+	}
+	return parsed
+}
+
 func projectIDs(q *Request) ([]string, error) {
 	rows, err := headTexts(q, "project")
 	if err != nil {
