@@ -738,6 +738,24 @@ func (q *Queries) DefRepoState(ctx context.Context, arg DefRepoStateParams) (Def
 	return i, err
 }
 
+const defRestoreVariant = `-- name: DefRestoreVariant :execrows
+UPDATE definition SET deleted_at=NULL, retired_at=NULL WHERE kind=$1 AND id=$2 AND deleted_at IS NOT NULL AND NOT ever_shipped
+`
+
+type DefRestoreVariantParams struct {
+	Kind string
+	ID   string
+}
+
+// A Lab variant a decision deleted comes back when a changed decision adopts it (labRetireVariants).
+func (q *Queries) DefRestoreVariant(ctx context.Context, arg DefRestoreVariantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, defRestoreVariant, arg.Kind, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const defRevisionBySha = `-- name: DefRevisionBySha :one
 SELECT revision::bigint AS revision FROM definition_revision WHERE kind=$1 AND id=$2 AND content_sha=$3 ORDER BY revision DESC LIMIT 1
 `

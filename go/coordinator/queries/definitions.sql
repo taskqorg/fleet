@@ -98,6 +98,10 @@ DELETE FROM definition_draft WHERE kind=sqlc.arg(kind) AND id=sqlc.arg(id) AND (
 -- name: DefDelete :exec
 UPDATE definition SET deleted_at=now(), retired_at=coalesce(retired_at,now()) WHERE kind=$1 AND id=$2;
 
+-- name: DefRestoreVariant :execrows
+-- A Lab variant a decision deleted comes back when a changed decision adopts it (labRetireVariants).
+UPDATE definition SET deleted_at=NULL, retired_at=NULL WHERE kind=$1 AND id=$2 AND deleted_at IS NOT NULL AND NOT ever_shipped;
+
 -- name: DefRunning :one
 -- Unfinished executions that pin the definition; older runs name it only in data (pipelineId) or config_ref (profileId).
 SELECT count(*)::bigint FROM execution WHERE state IN ('preparing','running','waiting')

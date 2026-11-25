@@ -9,8 +9,8 @@ import (
 )
 
 // labRetireVariants: a decided experiment's Lab variants leave the store (fleet-definition-editors.md, One home per
-// kind: a variant belongs to its experiment). Every store-only agent or pipeline the experiment names (its pipeline, or a
-// JSON string anywhere in its variants) is deleted as definition_delete deletes it, unless the decision adopts the
+// kind: a variant belongs to its experiment). Every store-only agent or pipeline its variants name (a JSON string
+// anywhere in a variant) is deleted as definition_delete deletes it, unless the decision adopts the
 // variant that names it (that one goes to the repository by its pull request) or something else still uses it
 // (definition_delete's own refusal: another live experiment, a project role, a pipeline step, an open session, an
 // unfinished run). The revisions stay, so the experiment's trials keep the content they ran. It answers the deleted
@@ -18,10 +18,8 @@ import (
 func labRetireVariants(q *Request, e db.Experiment, adopted string) ([]contract.DefinitionKey, error) {
 	var variants []json.RawMessage
 	_ = json.Unmarshal(e.Variants, &variants)
+	// The experiment's own pipeline is its baseline, never a variant: it stays.
 	keep, names := map[string]bool{}, map[string]bool{}
-	if e.PipelineID != "" {
-		names[e.PipelineID] = true
-	}
 	for _, raw := range variants {
 		var label struct {
 			Label string `json:"label"`
@@ -34,6 +32,14 @@ func labRetireVariants(q *Request, e db.Experiment, adopted string) ([]contract.
 		var v any
 		_ = json.Unmarshal(raw, &v)
 		stringsIn(v, into)
+	}
+	// A changed decision that adopts a variant an earlier decision deleted brings it back, revisions and all.
+	for id := range keep {
+		for _, kind := range []string{"agent", "pipeline"} {
+			if _, err := q.db().DefRestoreVariant(q.ctx(), db.DefRestoreVariantParams{Kind: kind, ID: id}); err != nil {
+				return nil, err
+			}
+		}
 	}
 	ids := []string{}
 	for id := range names {

@@ -78,6 +78,15 @@ func TestDecidedExperimentRetiresItsVariants(t *testing.T) {
 		var out map[string]any
 		e.opInto(t, "definition_create", map[string]any{"kind": "agent", "id": id, "content": map[string]any{"agent": p}, "message": "variant"}, e.ownerHeaders(), &out)
 	}
+	pipe, err := os.ReadFile(configDir() + "/pipelines/search-basic.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base map[string]any
+	json.Unmarshal(pipe, &base)
+	base["id"] = "lv-base"
+	var created map[string]any
+	e.opInto(t, "definition_create", map[string]any{"kind": "pipeline", "id": "lv-base", "content": map[string]any{"pipeline": base}, "message": "baseline"}, e.ownerHeaders(), &created)
 	exec := func(sql string) {
 		t.Helper()
 		if _, err := e.ownerStore.pool.Exec(e.ctx, sql); err != nil {
@@ -85,19 +94,31 @@ func TestDecidedExperimentRetiresItsVariants(t *testing.T) {
 		}
 	}
 	exec(`SELECT set_config('fleet.project_ids', '*', false)`)
-	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id, state, variants) VALUES ('lv-x', 'fleet', 'ab', 'search-basic', 'done',
+	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id, state, variants) VALUES ('lv-x', 'fleet', 'ab', 'lv-base', 'done',
 	 '[{"label":"a","overrides":{"profile":"lv-dropped"}},{"label":"b","overrides":{"profile":"lv-adopted"}},{"label":"c","overrides":{"profile":"lv-shared"}}]')`)
 	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id, state, variants) VALUES ('lv-y', 'fleet', 'single', 'search-basic', 'draft',
 	 '[{"label":"c","overrides":{"profile":"lv-shared"}}]')`)
+	status := func(kind, id string) int {
+		t.Helper()
+		code, _ := e.callJSON(t, "POST", "/api/ops/definition_get", map[string]any{"kind": kind, "id": id}, e.ownerHeaders())
+		return code
+	}
 	var decided map[string]any
-	e.opInto(t, "lab_experiment_decide", map[string]any{"experimentId": "lv-x", "decision": "adopt b"}, e.ownerHeaders(), &decided)
-	for id, want := range map[string]int{"lv-dropped": 404, "lv-adopted": 200, "lv-shared": 200} {
-		if code, _ := e.callJSON(t, "POST", "/api/ops/definition_get", map[string]any{"kind": "agent", "id": id}, e.ownerHeaders()); code != want {
-			t.Fatalf("%s after the decision: %d, want %d", id, code, want)
+	e.opInto(t, "lab_experiment_decide", map[string]any{"experimentId": "lv-x", "decision": "keep baseline"}, e.ownerHeaders(), &decided)
+	for id, want := range map[string]int{"lv-dropped": 404, "lv-adopted": 404, "lv-shared": 200} {
+		if code := status("agent", id); code != want {
+			t.Fatalf("%s after keep baseline: %d, want %d", id, code, want)
 		}
 	}
-	// The shipped pipeline the experiment ran is the repository's: never deleted.
-	if code, _ := e.callJSON(t, "POST", "/api/ops/definition_get", map[string]any{"kind": "pipeline", "id": "search-basic"}, e.ownerHeaders()); code != 200 {
-		t.Fatalf("shipped pipeline: %d", code)
+	// The experiment's own pipeline is its baseline, not a variant: it stays.
+	if code := status("pipeline", "lv-base"); code != 200 {
+		t.Fatalf("baseline pipeline: %d", code)
+	}
+	// A changed decision that adopts a deleted variant brings it back.
+	e.opInto(t, "lab_experiment_decide", map[string]any{"experimentId": "lv-x", "decision": "adopt b", "reason": "b wins on the held-out split"}, e.ownerHeaders(), &decided)
+	for id, want := range map[string]int{"lv-dropped": 404, "lv-adopted": 200, "lv-shared": 200} {
+		if code := status("agent", id); code != want {
+			t.Fatalf("%s after adopt b: %d, want %d", id, code, want)
+		}
 	}
 }
