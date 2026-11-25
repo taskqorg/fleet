@@ -256,7 +256,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // Edit puts the trigger's own command in the composer (composer.md#commands); the composer previews and applies it.
   const [fill, setFill] = createSignal<{ text: string; seq: number } | undefined>(undefined);
   const editTimer = async (id: string) => {
-    const r = await op('session_command', { sessionId: props.id, format: id });
+    const r = await op('session_command_preview', { sessionId: props.id, format: id });
     setEditing(r.trigger ? { id, revision: r.trigger.revision } : null);
     setFill(f => ({ text: r.text, seq: (f?.seq ?? 0) + 1 }));
   };
@@ -270,34 +270,38 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
       : op('trigger_delete', { id, baseRevision: t.revision });
     act.catch(e => setFailure({ text: errText(e) })).finally(() => { if (action !== 'edit') trigDoc.reload(); });
   };
-  // A composer text that starts with /trigger is a command: previewed (session_command apply false) a moment after typing
-  // stops, applied on send at the revision Edit opened, so a trigger changed meanwhile shows the conflict, not a save.
+  // A composer text that starts with /trigger is a command: previewed (session_command_preview) a moment after typing
+  // stops and again when a trigger changes, applied on send at the revision Edit opened, so a trigger changed meanwhile
+  // shows the conflict, not a save.
   const [draft, setDraft] = createSignal('');
-  const isCommand = createMemo(() => /^\s*\/trigger(\s|$)/.test(draft()));
-  const [preview, setPreview] = createSignal<{ kind: 'change'; reply: Ops['session_command']['reply'] } | { kind: 'conflict' | 'error'; message: string } | null>(null);
-  const base = () => { const e = untrack(editing); return e ? { baseRevision: e.revision } : {}; };
-  const commandError = (e: unknown) => setPreview(e instanceof OpError && e.status === 409 ? { kind: 'conflict', message: e.message } : { kind: 'error', message: errText(e) });
+  const isCommand = createMemo(() => commandText(draft()));
+  const [asked, setAsked] = createSignal<string | null>(null);
+  const [applyError, setApplyError] = createSignal<{ status: number | null; message: string } | null>(null);
+  const baseOf = (e: { id: string; revision: number } | null) => (e ? { triggerId: e.id, baseRevision: e.revision } : {});
   createEffect(() => (isCommand() ? draft() : null), text => {
-    if (text === null) { setPreview(null); setEditing(null); return; }
-    let live = true;
-    const t = setTimeout(() => {
-      op('session_command', { sessionId: props.id, text, ...base() }).then(reply => { if (live) setPreview({ kind: 'change', reply }); }, e => { if (live) commandError(e); });
-    }, 300);
-    return () => { live = false; clearTimeout(t); };
+    setApplyError(null);
+    if (text === null) { setAsked(null); setEditing(null); return; }
+    const t = setTimeout(() => setAsked(text), 300);
+    return () => clearTimeout(t);
   });
+  const previewDoc = useOp('session_command_preview', () => { const text = asked(); return text === null ? null : { sessionId: props.id, text, ...baseOf(editing()) }; });
+  const commandError = (e: unknown) => setApplyError({ status: e instanceof OpError ? e.status : null, message: errText(e) });
   const loadCurrent = () => { const e = untrack(editing); if (e) editTimer(e.id).catch(commandError); };
   const applyCommand = async (text: string) => {
     try {
-      await op('session_command', { sessionId: props.id, text, apply: true, ...base() });
+      await op('session_command', { sessionId: props.id, text, ...baseOf(untrack(editing)) });
     } catch (e) { commandError(e); throw e; }
-    setEditing(null); setPreview(null); trigDoc.reload();
+    setEditing(null); trigDoc.reload();
   };
   const commandAbove = createMemo(() => {
-    const p = preview();
-    if (!isCommand() || !p) return undefined;
-    if (p.kind !== 'change') return <CommandPreview kind={p.kind} message={p.message} onLoad={p.kind === 'conflict' && editing() ? loadCurrent : undefined} />;
-    const changes = p.reply.changes.map(c => ({ label: c.field, before: c.from, after: c.to }));
-    return <CommandPreview kind="change" icon="clock" title={p.reply.title ?? 'Command'} changes={changes} note={changes.length ? undefined : 'Nothing changes'} />;
+    if (!isCommand()) return undefined;
+    const fault = applyError() ?? (previewDoc.error ? { status: previewDoc.status, message: previewDoc.error } : null);
+    if (fault?.status === 409) return <CommandPreview kind="conflict" message={fault.message} onLoad={editing() ? loadCurrent : undefined} />;
+    if (fault) return <CommandPreview kind="error" message={fault.message} title={fault.status === 400 ? undefined : 'Cannot apply'} />;
+    const reply = previewDoc.data;
+    if (!reply) return undefined;
+    const changes = reply.changes.map(c => ({ label: c.field, before: c.from, after: c.to }));
+    return <CommandPreview kind="change" icon="clock" title={reply.title ?? 'Command'} changes={changes} note={changes.length ? undefined : 'Nothing changes'} />;
   });
   // In the sheet the panel has its own Hide; the column is toggled from the shell header only, like the navigation.
   const contextPanel = (where: 'column' | 'sheet', close: () => void) => (
@@ -496,7 +500,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
                 chips={chips()}
                 onStop={stop()}
                 stopReason={composerReason()}
-                onSend={text => (isCommand() ? applyCommand(text) : send(text))}
+                onSend={text => (commandText(text) ? applyCommand(text) : send(text))}
                 fill={fill()}
                 onInput={setDraft}
                 above={commandAbove()}
@@ -519,6 +523,9 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 }
 
 const every = (ms: number) => (ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`);
+
+/** A composer text that is a command (composer.md#commands), not a message. */
+const commandText = (text: string) => /^\s*\/trigger(\s|$)/.test(text);
 
 /** A trigger's schedule as the timer row shows it: Every 5m, Daily 09:00 UTC. */
 const scheduleOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string }) =>

@@ -200,7 +200,14 @@ func formatCommandDuration(ms int64) string {
 	return strconv.FormatInt((ms+999)/1000, 10) + "s"
 }
 
-func init() { op("session_command", sessionCommandOp) }
+func init() {
+	op("session_command", func(q *Request, r *contract.SessionCommandRequest) (contract.SessionCommandReply, error) {
+		return sessionCommand(q, contract.SessionCommandPreviewRequest{SessionId: r.SessionId, Text: &r.Text, TriggerId: r.TriggerId, BaseRevision: r.BaseRevision}, true)
+	})
+	op("session_command_preview", func(q *Request, r *contract.SessionCommandPreviewRequest) (contract.SessionCommandReply, error) {
+		return sessionCommand(q, *r, false)
+	})
+}
 
 // triggerSlug: how a command names a trigger, its name in lower case with spaces and other signs as '-'
 // ("Conversation check" is conversation-check).
@@ -354,9 +361,9 @@ func commandChanges(before *contract.TriggerSettings, after contract.TriggerSett
 	return out
 }
 
-// sessionCommandOp: one composer command, previewed (apply false) or run. The preview and the run read the command
-// with the same parser, so what the preview shows is what the run does.
-func sessionCommandOp(q *Request, r *contract.SessionCommandRequest) (contract.SessionCommandReply, error) {
+// sessionCommand: one composer command, previewed (session_command_preview, a read) or run (session_command). The
+// preview and the run read the command with the same parser, so what the preview shows is what the run does.
+func sessionCommand(q *Request, r contract.SessionCommandPreviewRequest, apply bool) (contract.SessionCommandReply, error) {
 	out := contract.SessionCommandReply{Changes: []contract.SessionCommandChange{}}
 	target, err := triggerTargetOf(q, r.SessionId, "")
 	if err != nil {
@@ -382,7 +389,6 @@ func sessionCommandOp(q *Request, r *contract.SessionCommandRequest) (contract.S
 		return out, fail(400, err.Error())
 	}
 	out.Text, out.Action = strings.TrimSpace(deref(r.Text)), c.Action
-	apply := r.Apply != nil && *r.Apply
 
 	if c.Action == "new" {
 		p, err := triggerPreset(c.Preset)
@@ -412,17 +418,19 @@ func sessionCommandOp(q *Request, r *contract.SessionCommandRequest) (contract.S
 		return out, nil
 	}
 
+	// The base is of one trigger (the one Edit opened); a command that names another is not checked against it.
+	based := r.BaseRevision != nil && r.TriggerId != nil
 	cur, err := commandTrigger(rows, c.Name)
 	if err != nil {
 		var he *HTTPError
-		if r.BaseRevision != nil && errors.As(err, &he) && he.Code == 404 {
+		if based && c.Name == *r.TriggerId && errors.As(err, &he) && he.Code == 404 {
 			return out, fail(409, "Trigger no longer exists")
 		}
 		return out, err
 	}
 	rec := triggerRecord(cur, now)
 	out.Trigger = &rec
-	if r.BaseRevision != nil && *r.BaseRevision != rec.Revision {
+	if based && cur.ID == *r.TriggerId && *r.BaseRevision != rec.Revision {
 		return out, fail(409, "Trigger changed since you opened it")
 	}
 	before := triggerSettingsOf(cur)

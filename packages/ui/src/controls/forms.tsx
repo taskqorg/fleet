@@ -136,18 +136,18 @@ export type CommandChange = { label: string; before?: string; after: string };
  * What a composer command will change, before it is sent (composer.md#commands): a title, one line per field with the
  * old value struck through and the new one beside it, and a note. A conflict (the item changed meanwhile, 409) shows
  * its message and Load current, which puts the item's current command in the box; an error (the command does not parse)
- * shows its message. Not a live region while typing; a conflict is announced once (role alert).
+ * shows its message under its title (Not a command by default). Not a live region while typing; a conflict is announced once (role alert).
  */
 export function CommandPreview(p:
   | { kind: 'change'; title: string; icon?: IconName; changes: CommandChange[]; note?: string }
   | { kind: 'conflict'; message: string; onLoad?: () => void }
-  | { kind: 'error'; message: string }) {
+  | { kind: 'error'; message: string; title?: string }) {
   return (
     <Show when={p.kind === 'change' ? p : null} keyed fallback={
       <div class={['cmd-preview', p.kind]} data-ui="command-preview" role={p.kind === 'conflict' ? 'alert' : undefined}>
         <span class="cmd-title">
           <Icon name="triangle-alert" />
-          <span>{p.kind === 'conflict' ? 'Changed meanwhile' : 'Not a command'}</span>
+          <span>{p.kind === 'conflict' ? 'Changed meanwhile' : (p as { title?: string }).title ?? 'Not a command'}</span>
           <span class="grow" />
           <Show when={p.kind === 'conflict' && p.onLoad} keyed>{load => <Button label="Load current" kind="quiet" onClick={load} />}</Show>
         </span>

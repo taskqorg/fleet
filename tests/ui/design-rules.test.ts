@@ -42,6 +42,7 @@ const uiDesignOwned: Record<string, RuleOwnership> = {
     'UI-OP': {
       thread_export: 'S9: user-triggered Cmd+C / Copy action starts the export promise synchronously inside the gesture handler for writeClip',
       thread_search: 'S9: user-triggered SearchField submit runs once and imperatively jumps the thread window to the first hit',
+      session_command_preview: 'S9: user-triggered timer Edit and Load current read the trigger command once and put it in the composer (format)',
     },
   },
   'app/src/views/lab-create.tsx': {

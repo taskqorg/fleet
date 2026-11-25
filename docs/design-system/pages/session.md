@@ -70,7 +70,7 @@ From top to bottom, then the context panel on the right:
 | Composer | `thread_composer`, `message_send`; Stop is `execution_stop` |
 | Fork | `session_fork` |
 | Context panel | `session_context {sessionId}`: `plan` (steps with `done`, from the session's work plan, else its task's), `timers`, `automations` (the session's bot), `swarm` (the other members of that board with their state), `tasks` (its own task, the plan's, the spawned ones and its bot's), each timer's `paused` and `canManage` |
-| Timer actions | Pause, Resume and Cancel: `trigger_save` (`enabled`) and `trigger_delete` with the revision shown; Edit fills the composer with the trigger's command, which `session_command` previews and applies ([composer commands](../controls/composer.md#commands)); 409 when the trigger changed meanwhile |
+| Timer actions | Pause, Resume and Cancel: `trigger_save` (`enabled`) and `trigger_delete` with the revision shown; Edit fills the composer with the trigger's command, which `session_command_preview` previews and `session_command` applies ([composer commands](../controls/composer.md#commands)); 409 when the trigger changed meanwhile |
 | Automation actions | `bot_automation_save` (enable, pause, edit) |
 | Details | `execution_totals`, scoped resource rollup |
 | Live updates | `changes_since` over the session, its messages, questions and executions |
