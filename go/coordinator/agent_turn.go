@@ -98,10 +98,10 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	}
 	// last: the host of the latest run that started. A run refused before it started (a preparation failure) ran
 	// nothing there, so it does not move the session's native session and worktree home.
-	last := ""
+	last, lastAccount := "", ""
 	for _, e := range es {
 		if h := deref(e.HostID); h != "" && jsonGiven(e.StartedAt) {
-			last = h
+			last, lastAccount = h, effectiveAccountID(e.EffectiveAccount)
 		}
 	}
 	if host == "" {
@@ -133,7 +133,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	id := newID()
 	e := agentExecution{ID: id, ExecutionID: id, SessionID: s.ID, State: "preparing", CreatedAt: nowMs(), DirectedBy: s.DirectedBy, Model: contract.HarnessDefaultModel(s.harness()), Effort: jsonBytes("low"),
 		Dispatch: &agentDispatch{Harness: s.harness(), ProjectID: agentOpt(s.ProjectID), WorkingDirectory: agentOpt(s.WorkingDirectory), WorkspaceKey: agentOpt(s.WorkspaceKey), Account: agentOpt(s.Account),
-			Access: agentOpt(s.Access), Branch: s.Branch, Host: agentOpt(host), Last: agentOpt(last), Input: input, Payload: payloadRaw}}
+			Access: agentOpt(s.Access), Branch: s.Branch, Host: agentOpt(host), Last: agentOpt(last), LastAccount: agentOpt(lastAccount), Input: input, Payload: payloadRaw}}
 	if hasProfile {
 		e.AgentConfig, e.ProfileSha256, e.Model, e.Effort = s.AgentConfig, frameHash(jsonValue(s.AgentConfig)), firstString(ac.Model, contract.HarnessDefaultModel(s.harness())), ac.Effort
 		ref, err := definitionRef(q, "agent", ac.ID, jsonValue(s.AgentConfig))
@@ -1034,4 +1034,15 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		Items []any  `json:"items"`
 	}{id, nowMs(), items})
 	return r, q.db().DispReconciliationPut(q.ctx(), db.DispReconciliationPutParams{ID: id, Items: jsonBytes(items)})
+}
+
+// effectiveAccountID: the subscription a run used ("" for none or a legacy binding without one).
+func effectiveAccountID(raw json.RawMessage) string {
+	var v struct {
+		AccountID string `json:"accountId"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return v.AccountID
 }

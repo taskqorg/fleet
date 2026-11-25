@@ -302,6 +302,7 @@ type agentDispatch struct {
 	Branch           *bool           `json:"branch"`
 	Host             *string         `json:"host"`
 	Last             *string         `json:"last"`
+	LastAccount      *string         `json:"lastAccount,omitempty"`
 	Input            string          `json:"input"`
 	Payload          json.RawMessage `json:"payload"`
 	rest             recordRest
@@ -326,6 +327,7 @@ type agentExecution struct {
 	ExecutionID           string                 `json:"executionId,omitempty"`
 	SessionID             string                 `json:"sessionId,omitempty"`
 	HostID                *string                `json:"hostId"`
+	EffectiveAccount      json.RawMessage        `json:"effectiveAccount,omitempty"`
 	State                 string                 `json:"state,omitempty"`
 	Observation           string                 `json:"observation,omitempty"`
 	CreatedAt             int64                  `json:"createdAt,omitempty"`
