@@ -109,7 +109,9 @@ export function Live(props: { wall: boolean }) {
       else by.set(k, { host, cause, text, n: 1, since: at, latest: at });
     };
     for (const r of runs()) {
-      if (r.state !== 'failed') continue;
+      // A tool call row sums a connection's calls: a refused key shows on System as the connection's problem, and an
+      // agent's bad call (unknown tool, invalid request) is its own turn's business, not Live's.
+      if (r.state !== 'failed' || r.kind === 'tool_run') continue;
       const at = r.endedAt ?? r.startedAt;
       if (at == null || t - at > RECENT || (r.hostId && (r.startedAt ?? at) <= (recovered.get(r.hostId) ?? 0))) continue;
       const f = causeOf(failures().get(r.id)?.failure, r.problem);
