@@ -247,6 +247,10 @@ SELECT DISTINCT ON (e.session_id) e.session_id::text AS session_id, coalesce(s.t
 FROM execution e JOIN session s ON s.id = e.session_id
 WHERE e.task_id = ANY(@task_ids::text[]) AND e.session_id <> @session_id AND e.state IN ('preparing', 'running', 'waiting')
   AND s.archived_at IS NULL
+  -- The work item's own workers are no overlap: sessions it started, directly or one level down.
+  AND coalesce(s.created_by_session_id, '') <> @session_id::text
+  AND coalesce(s.created_by_session_id, '') NOT IN (SELECT c.id FROM session c WHERE c.created_by_session_id = @session_id::text)
+  AND NOT EXISTS (SELECT 1 FROM session w WHERE w.id = @session_id::text AND w.created_by_session_id = e.session_id)
 ORDER BY e.session_id, e.seq DESC LIMIT 5;
 
 -- name: TelegramWorkJoin :execrows
