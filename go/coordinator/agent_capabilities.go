@@ -66,6 +66,9 @@ func hostGitConnections(q *Request) (map[string][]string, error) {
 	return out, nil
 }
 
+// sandboxInstruction: every agent's line about its native shell, so a sandbox error is not reported as a service's.
+const sandboxInstruction = "Your native shell is sandboxed and may have no network and no credentials: a DNS, connection, TLS, push or credential error there says nothing about GitLab, GitHub or any other service. Reach services through your Fleet tools: project-publishing for pushes and pull requests, connections for APIs."
+
 // capabilityInstruction: the section for director dir, its tool list ops, the API connections of this run and the git
 // connections of each host. Text only: no key, token or path leaves the coordinator.
 func capabilityInstruction(dir *Person, ops []agentOperation, conns []connSpec, gitConns map[string][]string) string {
@@ -127,7 +130,7 @@ func capabilityInstruction(dir *Person, ops []agentOperation, conns []connSpec, 
 		lines = append(lines, "- Git connections (deploy keys) on hosts: "+strings.Join(hs, "; ")+". A repo's connection works only on hosts that hold it, and a deploy key reads only the repositories it was added to.")
 	}
 	lines = append(lines,
-		"- Your native shell is sandboxed and may have no network: a DNS, connection or TLS error there says nothing about GitLab, GitHub or any other service. Check a repository with project_readiness (git ls-remote on each environment host with the repo's connection key; results in execution_status) and reach APIs through connections.",
+		"- "+sandboxInstruction+" Check a repository with project_readiness (git ls-remote on each environment host with the repo's connection key; results in execution_status).",
 		"- Ask a person only after your own tools: find (project_list remotes, search, connection tools, files), then check (project_readiness). The question names what you tried and what each returned, and asks only what no tool of yours can do: a decision, a secret, or a grant outside Fleet such as adding a deploy key to a GitLab project.")
 	return strings.Join(lines, "\n")
 }

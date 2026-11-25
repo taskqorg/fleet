@@ -1642,6 +1642,8 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 			return none, err
 		}
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\n" + capabilityInstruction(opsDirector, opsList, runConns, gitConns)))
+	} else if cfg != nil && e.PipelineRunID == nil && e.ExperimentID == nil { // pipeline and Lab runs keep their exact instructions
+		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\n" + sandboxInstruction))
 	}
 	command := dispatchStartCommand{
 		ID:          newID(),

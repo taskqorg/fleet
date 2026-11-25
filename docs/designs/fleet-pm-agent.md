@@ -218,11 +218,11 @@ An agent whose profile has `fleetOperations` gets one more instruction section a
 *   the key operations its tool list carries, by purpose (projects, work, access and settings, people); an operation the list lacks is not named;
 *   the person-only operations (`agent: no` in the contracts), with `connections_key_request` as the path to a missing API key;
 *   the API connections of the turn with their tools;
-*   the git connections (deploy keys) each live execution host reports;
+*   the git connections (deploy keys) each execution host that is not removed last reported;
 *   that the native shell is sandboxed, so its network errors are no evidence about external services, and that repository access is checked with `project_readiness` on the hosts;
 *   that a question to a person comes after the agent's own tools and names what it tried and what each returned.
 
-The section changes with grants, tools and hosts and is rebuilt on every turn. The PM profile also grants the `github` connection, whose `repos_search` and GitLab's `projects_search` find a repository by name ([connections](fleet-connections.md)); the `pm-fleet` skill gives the steps to connect a repository: find, `project_create`, `project_readiness`, then one question for what only a person can do.
+The section changes with grants, tools and hosts and is rebuilt on every turn. Every other agent run outside pipelines and Lab gets the sandbox line alone, naming `project-publishing` for pushes and pull requests; pipeline and Lab runs keep their exact instructions. The PM profile also grants the `github` connection, whose `repos_search` and GitLab's `projects_search` find a repository by name ([connections](fleet-connections.md)); the `pm-fleet` skill gives the steps to connect a repository: find, `project_create`, `project_readiness`, then one question for what only a person can do.
 
 ## Alternatives Considered
 

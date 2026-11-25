@@ -144,7 +144,7 @@ Configuration isolation shares the executor UID; it is not protection against ho
 `project_readiness` sends one read-only `readiness` command to each environment host (`go/executor/readiness.go`). Each check is `ok | failed` with a reason code; no raw stderr or secret leaves the host.
 
 - `checkout`: `checkoutPath/.git` exists.
-- `remote`: `git ls-remote --exit-code <remote> HEAD` with the connection's credential; reasons `ls-remote-{network-unreachable|repo-missing-or-denied|auth-denied|repo-missing|head-missing|unclassified}-exit-<code>`, `invalid-remote`, and the connection's own `connection-missing` (the host holds no key of that name) or `known-hosts-missing`. `repo-missing-or-denied` is GitLab's single answer for a project that does not exist and for a deploy key not added to it.
+- `remote`: `git ls-remote --exit-code <remote> HEAD` with the connection's credential; reasons `ls-remote-{network-unreachable|repo-missing-or-denied|auth-denied|repo-missing|head-missing|unclassified}-exit-<code>`, `invalid-remote`, `git-unavailable`, and the connection's own `connection-missing` (the host holds no key of that name), `connection-invalid`, `connection-path-invalid`, `connections-unconfigured` (no `FLEET_CONNECTIONS_DIR`) or `known-hosts-missing` (the shared `known_hosts` of the connections directory). `repo-missing-or-denied` is GitLab's single answer for a project that does not exist and for a deploy key not added to it.
 
 Readiness runs on the hosts, so it is the evidence for repository access. A network error in an agent's native shell is not: that shell is sandboxed and may have no network.
 - `setup`: a setup script given as a path exists in the checkout.
