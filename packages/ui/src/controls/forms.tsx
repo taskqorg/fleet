@@ -291,7 +291,7 @@ function ScopedComposer(p: ComposerProps) {
   const longPaste = () => p.longPaste ?? LONG_PASTE;
 
   const send = async () => {
-    const original = text(), value = original.trim(), adapter = p.draftPersistence, key = adapter?.key;
+    const original = text(), value = original.trim(), adapter = p.draftPersistence;
     if ((!value && !files()) || busy() || p.disabledReason || failed()) return;
     setBusy(true);
     try {
@@ -299,14 +299,15 @@ function ScopedComposer(p: ComposerProps) {
       await p.onSend(value);
       // The captured adapter fences old generations; compare original, untrimmed input.
       adapter?.clearIfUnchanged(original);
-      if (currentKey === key && currentText === original) {
+      // One mount is one target (Composer remounts on a target change), so a late-attached adapter is the same box.
+      if (currentText === original) {
         currentText = '';
         setText('');
       }
     } catch {
       /* caller shows send errors; authored text remains */
     } finally {
-      if (currentKey === key) setBusy(false);
+      setBusy(false);
     }
   };
 

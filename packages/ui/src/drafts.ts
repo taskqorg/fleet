@@ -34,6 +34,7 @@ function writeDraft(key: string, text: string) {
   inMemory.write(key, text);
   try { backend.write(key, text); } catch { /* kept in memory */ }
 }
+const EMPTIED = '\u0000';
 /** Forget a draft, after its text was sent or saved. */
 export function clearDraft(key: string) { writeDraft(key, ''); }
 
@@ -44,16 +45,17 @@ export function clearDraft(key: string) { writeDraft(key, ''); }
  */
 export function createDraft(key: string | Accessor<string | undefined>, initial = ''): [Accessor<string>, (text: string) => void, () => void] {
   const keyOf = typeof key === 'function' ? key : () => key;
-  const load = (k: string | undefined) => (k ? readDraft(k) || initial : initial);
+  // An emptied field with a default is stored as EMPTIED, so a reload does not bring the default back.
+  const load = (k: string | undefined) => { const v = k ? readDraft(k) : ''; return v === EMPTIED ? '' : v || initial; };
   const [text, setText] = createSignal(untrack(() => load(keyOf())), { ownedWrite: true });
   let current = untrack(keyOf);
   createEffect(() => [keyOf(), epoch()] as const, ([k]) => {
     if (k !== current) { current = k; setText(load(k)); return; }
     if (!k) return;
     const typed = untrack(text);
-    if (typed === initial) setText(load(k)); else writeDraft(k, typed);
+    if (typed === initial) setText(load(k)); else writeDraft(k, typed || EMPTIED);
   });
-  const set = (t: string) => { setText(t); const k = untrack(keyOf); if (k) writeDraft(k, t === initial ? '' : t); };
+  const set = (t: string) => { setText(t); const k = untrack(keyOf); if (k) writeDraft(k, t === initial ? '' : t || EMPTIED); };
   const clear = () => { setText(initial); const k = untrack(keyOf); if (k) clearDraft(k); };
   return [text, set, clear];
 }
