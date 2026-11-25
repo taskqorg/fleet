@@ -366,7 +366,7 @@ function KvNodeView(p: { node: KvNode }) {
     else runs.push([e]);
   }
   return (
-    <div class="kv">
+    <div class="kv-tree">
       <For each={runs}>{r => Array.isArray(r)
         ? <dl class="kv-pairs"><For each={r}>{e => <div class="kv-row"><dt>{e.key}</dt><dd><KvNodeView node={e.node} /></dd></div>}</For></dl>
         : (
@@ -386,24 +386,24 @@ function DiffView(p: { files: DiffFile[] }) {
   const cur = createMemo(() => p.files[Math.min(at(), p.files.length - 1)]);
   const name = (f: DiffFile) => f.path.split('/').pop() || f.path || 'diff';
   return (
-    <div class="diff" data-ui="diff-view">
-      <nav class="diff-files" aria-label="Files">
+    <div class="rd" data-ui="diff-view">
+      <nav class="rd-files" aria-label="Files">
         <For each={p.files}>{(f, i) => (
-          <button type="button" class={['diff-file', { on: i() === at() }]} aria-current={i() === at() ? 'true' : undefined} data-tip={f.path} onClick={() => setAt(i())}>
+          <button type="button" class={['rd-file', { on: i() === at() }]} aria-current={i() === at() ? 'true' : undefined} data-tip={f.path} onClick={() => setAt(i())}>
             <Icon name="file-text" /><span class="nm">{name(f)}</span>
             <span class="add">+{f.added}</span><span class="del">−{f.removed}</span>
           </button>
         )}</For>
       </nav>
-      <div class="diff-step">
+      <div class="rd-step">
         <Button label="Previous file" icon="arrow-left" iconOnly kind="quiet" disabledReason={at() > 0 ? undefined : 'first file'} onClick={() => setAt(a => a - 1)} />
         <span class="nm">{name(cur())}</span>
         <span class="muted type-sm">{at() + 1} of {p.files.length}</span>
         <Button label="Next file" icon="arrow-right" iconOnly kind="quiet" disabledReason={at() < p.files.length - 1 ? undefined : 'last file'} onClick={() => setAt(a => a + 1)} />
       </div>
-      <div class="diff-body" tabindex="0" role="region" aria-label={`Changes in ${cur().path || 'the diff'}`}>
-        <div class="diff-path muted type-sm">{cur().path}</div>
-        <table class="diff-lines">
+      <div class="rd-body" tabindex="0" role="region" aria-label={`Changes in ${cur().path || 'the diff'}`}>
+        <div class="rd-path muted type-sm">{cur().path}</div>
+        <table class="rd-lines">
           <For each={cur().hunks}>{h => (
             <tbody>
               <tr class="hunk"><td colspan="4">{h.head}</td></tr>

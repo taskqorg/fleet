@@ -86,15 +86,15 @@ try {
     await shot(p, `table-${tag}`);
     await open(p, 'diff');
     await p.locator('[data-ui=diff-view]').waitFor();
-    check(await p.locator('.diff-lines tr.add .sr-only', { hasText: 'added' }).count() === 1, `${tag}: an added line is named in words`);
+    check(await p.locator('.rd-lines tr.add .sr-only', { hasText: 'added' }).count() === 1, `${tag}: an added line is named in words`);
     if (width < 768) {
-      check(!(await p.locator('.diff-files').isVisible()) && (await p.locator('.diff-step').innerText()).includes('1 of 2'), `${tag}: the file list becomes a step through files`);
+      check(!(await p.locator('.rd-files').isVisible()) && (await p.locator('.rd-step').innerText()).includes('1 of 2'), `${tag}: the file list becomes a step through files`);
       await p.getByRole('button', { name: 'Next file' }).click();
-      await p.locator('.diff-path', { hasText: 'b.ts' }).waitFor();
+      await p.locator('.rd-path', { hasText: 'b.ts' }).waitFor();
     } else {
-      await p.locator('.diff-file', { hasText: 'b.ts' }).click();
-      await p.locator('.diff-path', { hasText: 'b.ts' }).waitFor();
-      check(await p.locator('.diff-lines td.ln').first().isVisible(), `${tag}: line numbers show`);
+      await p.locator('.rd-file', { hasText: 'b.ts' }).click();
+      await p.locator('.rd-path', { hasText: 'b.ts' }).waitFor();
+      check(await p.locator('.rd-lines td.ln').first().isVisible(), `${tag}: line numbers show`);
     }
     await shot(p, `diff-${tag}`);
     await open(p, 'zip');

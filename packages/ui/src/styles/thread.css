@@ -135,35 +135,35 @@
   .kv-branch > summary { display: flex; align-items: baseline; gap: var(--space-2); padding: var(--space-1) 0; cursor: pointer; }
   .kv-branch > summary::before { content: '▸'; width: var(--size-icon-sm); color: var(--fg-faint); }
   .kv-branch[open] > summary::before { content: '▾'; }
-  .kv-branch > .kv { padding-left: var(--space-5); }
+  .kv-branch > .kv-tree { padding-left: var(--space-5); }
   .kv-branch .kv-row:last-child, .kv-branch .kv-branch:last-child { border-bottom: 0; }
   /* Unified diff (result-viewer.md): signs and words, not colour alone */
-  .diff { display: grid; grid-template-columns: var(--size-search) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
-  .diff-files { display: flex; flex-direction: column; border-right: 1px solid var(--line); padding-right: var(--space-2); }
-  .diff-file { display: flex; align-items: center; gap: var(--space-2); height: var(--size-row-compact); padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md); background: none; color: var(--fg-muted); font-size: var(--font-size-sm); text-align: left; cursor: pointer; }
-  .diff-file:hover { background: var(--hover); }
-  .diff-file.on { background: var(--selected); color: var(--fg); }
-  .diff-file .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .diff-file .add, .diff-file .del { font-family: var(--font-mono); font-size: var(--font-size-xs); }
-  .diff-file .add { color: var(--success-fg); } .diff-file .del { color: var(--danger-fg); }
-  .diff-step { display: none; align-items: center; gap: var(--space-2); }
-  .diff-step .nm { font-weight: var(--font-weight-medium); }
-  .diff-body { min-width: 0; overflow-x: auto; }
-  .diff-path { padding-bottom: var(--space-2); font-family: var(--font-mono); }
-  .diff-lines { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: var(--font-size-sm); }
-  .diff-lines td { padding: 0 var(--space-2); white-space: pre; vertical-align: top; }
-  .diff-lines .ln { width: 1%; color: var(--fg-faint); text-align: right; user-select: none; }
-  .diff-lines .sg { width: 1%; font-weight: var(--font-weight-bold); }
-  .diff-lines tr.hunk td { background: var(--running-bg); color: var(--running-fg); }
-  .diff-lines tr.add { background: var(--success-bg); } .diff-lines tr.add .sg { color: var(--success-fg); }
-  .diff-lines tr.del { background: var(--danger-bg); } .diff-lines tr.del .sg { color: var(--danger-fg); }
+  .rd { display: grid; grid-template-columns: var(--size-search) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+  .rd-files { display: flex; flex-direction: column; border-right: 1px solid var(--line); padding-right: var(--space-2); }
+  .rd-file { display: flex; align-items: center; gap: var(--space-2); height: var(--size-row-compact); padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md); background: none; color: var(--fg-muted); font-size: var(--font-size-sm); text-align: left; cursor: pointer; }
+  .rd-file:hover { background: var(--hover); }
+  .rd-file.on { background: var(--selected); color: var(--fg); }
+  .rd-file .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rd-file .add, .rd-file .del { font-family: var(--font-mono); font-size: var(--font-size-xs); }
+  .rd-file .add { color: var(--success-fg); } .rd-file .del { color: var(--danger-fg); }
+  .rd-step { display: none; align-items: center; gap: var(--space-2); }
+  .rd-step .nm { font-weight: var(--font-weight-medium); }
+  .rd-body { min-width: 0; overflow-x: auto; }
+  .rd-path { padding-bottom: var(--space-2); font-family: var(--font-mono); }
+  .rd-lines { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: var(--font-size-sm); }
+  .rd-lines td { padding: 0 var(--space-2); white-space: pre; vertical-align: top; }
+  .rd-lines .ln { width: 1%; color: var(--fg-faint); text-align: right; user-select: none; }
+  .rd-lines .sg { width: 1%; font-weight: var(--font-weight-bold); }
+  .rd-lines tr.hunk td { background: var(--running-bg); color: var(--running-fg); }
+  .rd-lines tr.add { background: var(--success-bg); } .rd-lines tr.add .sg { color: var(--success-fg); }
+  .rd-lines tr.del { background: var(--danger-bg); } .rd-lines tr.del .sg { color: var(--danger-fg); }
   @container (max-width: 480px) {
-    .diff { grid-template-columns: minmax(0, 1fr); }
-    .diff-files { display: none; }
-    .diff-step { display: flex; }
-    .diff-lines .ln { display: none; }
+    .rd { grid-template-columns: minmax(0, 1fr); }
+    .rd-files { display: none; }
+    .rd-step { display: flex; }
+    .rd-lines .ln { display: none; }
     .kv-row { grid-template-columns: minmax(0, 40%) minmax(0, 1fr); }
-    .kv-branch > .kv { padding-left: var(--space-4); }
+    .kv-branch > .kv-tree { padding-left: var(--space-4); }
   }
 
   /* Composer, attachments, drop zone */
