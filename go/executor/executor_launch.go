@@ -129,7 +129,7 @@ func (e *executor) run(c M) error {
 			return err
 		}
 		if !ok {
-			if err := e.event(cmd, 1, contract.FleetEventTypeReadinessFailed, contract.ReadinessFailed{Reason: "readiness-check-failed"}); err != nil {
+			if err := e.event(cmd, 1, contract.FleetEventTypeReadinessFailed, contract.ReadinessFailed{Reason: readinessFailure(data)}); err != nil {
 				return err
 			}
 		}

@@ -30,6 +30,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
      * A busy slot shows the task title, code, project colour on the left edge and this run's elapsed time, then the [work facts](../controls/work-facts.md): the task's attempts (`×N`), the agent mark and its time in work, last ([OR-64](../owner-rules.md)).
      * A free slot is a dashed "idle" tile; past three free slots, one tile counts them (`23 idle`).
      * A failing slot is outlined in the danger tone and says what fails, how many times (`×N`), how long ago the latest failed start was, and when it retries.
+     * A failed start is a current problem only until the host starts a run that does not fail: after that it stays in the strip and the Failed starts figure, and the band is no longer red. Failed starts count runs on hosts only, never tool calls.
    * A 24-hour strip of runs, one tick per run window, with failures in the danger tone; marks at −24 h, −18 h, −12 h, −6 h and now.
 4. **Side column.**
    * Projects now: running, queued and done counts per project, with a sparkline.

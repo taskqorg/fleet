@@ -15,7 +15,7 @@ import {
 import { useOp } from '../store.ts';
 import { prefs, scopeIds, noProject } from '../prefs.ts';
 import { useClockOffset } from './hosts.tsx';
-import { firstSentence } from './system-idle.tsx';
+import { firstSentence, hostRecoveredAt } from './system-idle.tsx';
 import { CHIP_STAGE } from './delivery-model.tsx';
 import type { CostFigure, DeliveryStage, HostRow } from '../../../contracts/generated/ops.ts';
 
@@ -99,9 +99,10 @@ export function Live(props: { wall: boolean }) {
   };
 
   // Failures in the last hour by host and cause (OR-58): from the runs, with the cause in plain words where the
-  // execution row carries it.
+  // execution row carries it. A host failure counts only after the host's latest good start: once the host has started
+  // work again it is history, not a current problem.
   const problems = createMemo<Problem[]>(() => {
-    const t = now(), by = new Map<string, Problem>();
+    const t = now(), by = new Map<string, Problem>(), recovered = hostRecoveredAt(runs());
     const add = (host: string | null, cause: string, text: string, at: number) => {
       const k = `${host}\0${cause}`, p = by.get(k);
       if (p) { p.n++; p.since = Math.min(p.since, at); p.latest = Math.max(p.latest, at); }
@@ -110,7 +111,7 @@ export function Live(props: { wall: boolean }) {
     for (const r of runs()) {
       if (r.state !== 'failed') continue;
       const at = r.endedAt ?? r.startedAt;
-      if (at == null || t - at > RECENT) continue;
+      if (at == null || t - at > RECENT || (r.hostId && (r.startedAt ?? at) <= (recovered.get(r.hostId) ?? 0))) continue;
       const f = causeOf(failures().get(r.id)?.failure, r.problem);
       add(r.hostId, f?.id ?? 'other', f?.text ?? 'The run failed.', at);
     }
@@ -169,7 +170,7 @@ export function Live(props: { wall: boolean }) {
       const active = sum(day.map(r => r.wallMs ?? 0)) / 1000;
       const facts = [h.platform, load?.diskFree != null ? `${bytes(load.diskFree).text} free` : null].filter(Boolean).join(' · ');
       const trouble = offline ? `${h.id} is offline` : hostProblem ? `${h.id}: ${hostProblem}` : f ? `${h.id}: ${f.text}${f.n > 1 ? ` ×${f.n}` : ''}` : null;
-      const still = busy > 0 ? `${busy} run${busy === 1 ? '' : 's'} still working.` : 'Nothing else is running here.';
+      const still = busy > 0 ? `${busy} run${busy === 1 ? '' : 's'} still working.` : 'The host is online with no runs now.';
       const at = (t: number) => clock(t - offset()).slice(0, 5);
       const problemLine = hostProblem ?? (f ? `${f.n > 1 ? `${f.n} failed starts since ${at(f.since)}` : `Failed start at ${at(f.since)}`}: ${f.text.replace(/\.?$/, '.')} ${still}` : undefined);
       return {
@@ -204,7 +205,8 @@ export function Live(props: { wall: boolean }) {
   const tokensOf = (rows: typeof today extends () => infer R ? R : never) => rows.some(s => s.tokens != null) ? sum(rows.map(s => s.tokens ?? 0)) : null;
   const agentRuns = createMemo(() => runs().filter(r => r.kind === 'agent_run' || r.kind === 'child_agent'));
   const done = createMemo(() => { const from = startOfDay(now() - offset()); return (doneTasks.data?.tasks ?? []).filter(x => ms(x.stateAt) >= from); });
-  const failedStarts = createMemo(() => runs().filter(r => r.state === 'failed' && (r.startedAt ?? r.endedAt ?? 0) > now() - 6 * HOUR));
+  // Starts on hosts (agent runs and host jobs), not tool calls: a provider refusing a call is not a failed start.
+  const failedStarts = createMemo(() => runs().filter(r => r.state === 'failed' && !!r.hostId && (r.startedAt ?? r.endedAt ?? 0) > now() - 6 * HOUR));
   const figures = createMemo(() => {
     const t = now(), b = bands();
     const busy = sum(b.map(x => x.busy)), slots = sum(b.map(x => x.slots));
@@ -212,7 +214,7 @@ export function Live(props: { wall: boolean }) {
     const hostJobs = kindRuns('host_job'), toolCalls = kindRuns('tool_run');
     const tokToday = tokensOf(today()), tokMonth = tokensOf(month());
     const usdToday = usdOf(today().flatMap(s => s.cost)), usdMonth = usdOf(month().flatMap(s => s.cost));
-    const fs = failedStarts(), cause = problems()[0];
+    const fs = failedStarts(), cause = problems().find(p => p.host);
     // Concurrency per bucket: runs active at the bucket's end.
     const working = Array.from({ length: 12 }, (_, i) => { const at = t - (11 - i) * 2 * HOUR; return agentRuns().filter(r => r.startedAt != null && r.startedAt <= at && (ACTIVE.has(r.state) || (r.endedAt ?? 0) >= at)).length; });
     return [
@@ -221,7 +223,7 @@ export function Live(props: { wall: boolean }) {
       { key: 'done', label: 'Tasks done today', value: m(done().length), sub: lead != null ? `lead time P50 ${duration(lead / 1000).text}` : undefined, trend: buckets(doneTasks.data?.tasks ?? [], x => ms(x.stateAt), t), trendLabel: 'tasks done, last 24 hours' },
       { key: 'tokens', label: 'Tokens today', value: m(tokToday), sub: tokMonth != null ? `month ${count(tokMonth).text}` : undefined, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => r.tokens ?? 0), trendLabel: 'tokens, last 24 hours' },
       { key: 'spend', label: 'Spend today', value: m(usdToday, { currency: 'USD' }), kind: 'money' as const, sub: `month ${money(usdMonth).text}`, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => usdOf(r.cost)), trendLabel: 'spend at list price, last 24 hours' },
-      { key: 'failed', label: 'Failed starts 6h', value: m(fs.length), alert: fs.length > 0, sub: cause?.text, trend: buckets(fs, r => r.startedAt ?? r.endedAt, t, 12, 30 * MIN), trendLabel: 'failed starts, last 6 hours' },
+      { key: 'failed', label: 'Failed starts 6h', value: m(fs.length), alert: !!cause, sub: cause?.text, trend: buckets(fs, r => r.startedAt ?? r.endedAt, t, 12, 30 * MIN), trendLabel: 'failed starts, last 6 hours' },
     ];
   });
 

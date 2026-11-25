@@ -21,6 +21,27 @@ func check(name, target string, failed string) contract.ReadinessCheck {
 	return contract.ReadinessCheck{Check: name, Target: target, Status: contract.CheckStatusFailed, Reason: &failed}
 }
 
+// readinessFailure: the reason a failed readiness records, naming each failed check and its reason
+// ("readiness-check-failed: checkout checkout-missing, remote connection-missing"), so the run's cause says which check
+// failed and the plain sentence can be specific (contracts/vocabulary.json causes).
+func readinessFailure(r contract.Readiness) string {
+	var failed []string
+	for _, c := range r.Checks {
+		if c.Status != contract.CheckStatusFailed {
+			continue
+		}
+		f := c.Check
+		if c.Reason != nil && *c.Reason != "" {
+			f += " " + *c.Reason
+		}
+		failed = append(failed, f)
+	}
+	if len(failed) == 0 {
+		return "readiness-check-failed"
+	}
+	return "readiness-check-failed: " + strings.Join(failed, ", ")
+}
+
 func validRemote(r string) bool {
 	if strings.HasPrefix(r, "-") {
 		return false

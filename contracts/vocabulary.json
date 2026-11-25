@@ -13,6 +13,8 @@
     {"id": "download-cut", "match": ["step:download-cut"], "text": "A file download was cut off. Run again."},
     {"id": "secret", "match": ["step:secret-found"], "text": "The output contained a secret, so Fleet stopped the step. Remove the secret from the inputs or instructions, then run again."},
     {"id": "reference", "match": ["ref:"], "text": "A step input refers to something that does not exist. Fix the reference in the pipeline, then run again."},
+    {"id": "host-checkout", "match": ["preparation failed: readiness-check-failed: checkout"], "text": "The project's checkout is missing on the host. Clone the repository to the path in the project's environments, then run again."},
+    {"id": "host-remote", "match": ["preparation failed: readiness-check-failed: remote"], "text": "The host could not read the project's repository: its connection key is missing or refused. Fix the connection on that host, then run again."},
     {"id": "host-not-ready", "match": ["preparation failed: coding-tool-unready", "preparation failed: readiness-check-failed", "preparation failed: project-forge-unready"], "text": "The host was not ready to start the agent: a tool or check it needs failed. Look at the host's problems on Hosts, then run again."},
     {"id": "host-files", "match": ["preparation failed: git"], "text": "The host could not prepare the project's files. Check the host's copy of the repository, then run again."},
     {"id": "host-login", "match": ["preparation failed: native account"], "text": "The agent's subscription login on the host does not match the run. Sign the host in again under Accounts, then run again."},
