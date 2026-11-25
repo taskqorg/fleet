@@ -42,7 +42,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
   const question = {id: 'current', kind: 'operator_decision', state: 'open', text: 'Retry installation? Retry starts another execution; fail ends this task.', options: ['retry', 'fail']};
   const cases = [
     {state: 'waiting', waitReason: 'Access unavailable; supply access to continue', questions: [question], executions: []},
-    {state: 'waiting', waitReason: 'question', questions: [{id: 'old', kind: 'acceptance', state: 'withdrawn', text: 'Accept obsolete result?', options: ['accepted', 'rejected']}, question], executions: [{id: 'run', state: 'succeeded', report: {outcome: 'failed', summary: 'Patch created. Android installation not verified or published.', at: 1}}, {id: 'new-run', state: 'failed', problem: 'Native session home mismatch; preparation stopped.'}]},
+    {state: 'waiting', waitReason: 'question', questions: [{id: 'old', kind: 'acceptance', state: 'withdrawn', text: 'Accept obsolete result?', options: ['accepted', 'rejected']}, question], executions: [{id: 'run', state: 'succeeded', report: {outcome: 'failed', summary: 'Patch created. Android installation not verified or published.', at: 1}}, {id: 'new-run', state: 'failed', problem: 'preparation failed: native account/session binding mismatch'}]},
     {state: 'completed', questions: [], executions: [{id: 'run', state: 'succeeded', report: {outcome: 'succeeded', summary: 'Installed and verified on Android; published result.', at: 2}}]},
   ];
   try {
@@ -60,10 +60,14 @@ export async function checkTaskStory(browser: Browser, origin: string) {
       }
       if (fixture.executions.length) await detail.getByText(fixture.executions[0].report!.summary, {exact: true}).waitFor();
       if (i === 1) {
-        await detail.getByText('Native session home mismatch; preparation stopped.', {exact: true}).waitFor();
-        assert(await detail.locator('[role=alert]').evaluate(el => el.getBoundingClientRect().top < document.querySelector('[data-ui=outcome-block]')!.getBoundingClientRect().top));
+        // The stored cause code reads as its plain sentence; the code is only the title's tooltip (formats.md, Failure cause).
+        const problem = detail.locator('[data-ui=problem-row]', {hasText: "The agent's subscription login on the host does not match the run."});
+        await problem.waitFor();
+        assert.equal(await problem.locator('b').getAttribute('data-tip'), 'preparation failed: native account/session binding mismatch');
+        assert.equal(await detail.getByText('preparation failed', {exact: false}).count(), 0, 'no raw cause code as text');
+        assert(await problem.evaluate(el => el.getBoundingClientRect().top < document.querySelector('[data-ui=outcome-block]')!.getBoundingClientRect().top));
         assert.equal(await detail.getByRole('button', {name: /accepted|rejected/}).count(), 0);
-        assert.equal(await detail.locator('[role=alert]').getByRole('button', {name: 'Retry'}).count(), 0);
+        assert.equal(await problem.getByRole('button', {name: 'Retry'}).count(), 0);
       }
       await detail.getByText('device: Verify on Android', { exact: true }).waitFor();
       assert.equal(await detail.locator('.outcome-meta').count(), 0, 'unverified requirements have no completion counter');
