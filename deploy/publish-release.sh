@@ -30,7 +30,7 @@ note() { echo "$*"; [ -z "${GITHUB_STEP_SUMMARY:-}" ] || echo "$*" >> "$GITHUB_S
 # message stays in $err), 3 for anything worth retrying (5xx, 429, network).
 once() {
   if gh api --method "$1" "$2" "${@:3}" > "$out" 2> "$err"; then cat "$out"; return 0; fi
-  grep -q "HTTP 404" "$err" || cat "$err" >&2
+  [ "${quiet404:-}" = 1 ] && grep -q "HTTP 404" "$err" || cat "$err" >&2
   if grep -Eq 'HTTP 4[0-9][0-9]' "$err" && ! grep -q 'HTTP 429' "$err"; then return 2; fi
   return 3
 }
@@ -67,7 +67,7 @@ superseded() {
 }
 
 # A published release of this tag.
-if rel=$(call GET "$api/releases/tags/$tag"); then
+if rel=$(quiet404=1 call GET "$api/releases/tags/$tag"); then
   commit=$(jq -r .target_commitish <<< "$rel")
   [ "$commit" = "$SHA" ] || { echo "::error::$tag is already published for $commit, not $SHA"; exit 1; }
   published=true
@@ -117,6 +117,10 @@ else
       break
     else
       rc=$?
+    fi
+    if [ "$rc" = 2 ] && superseded; then
+      note "superseded: main changed workflows since $SHA; the next release run publishes it"
+      exit 0
     fi
     [ "$rc" = 3 ] || exit 1
     backoff "$i"

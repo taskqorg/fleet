@@ -197,6 +197,8 @@ check "published for another commit: fails" '[ $code != 0 ] && grep -q "already 
 
 MOVED=1 run superseded '[]' 'PATCH ^/releases/ 403' GITHUB_EVENT_NAME=push
 check "a 403 on publish after main moved workflows: draft deleted, green" '[ $code = 0 ] && [ "$(db length)" = 0 ]'
+MOVED=1 run superseded-at-create '[]' 'POST ^/releases$ 403' GITHUB_EVENT_NAME=push
+check "a 403 on create after main moved workflows: green, nothing left" '[ $code = 0 ] && [ "$(db length)" = 0 ]'
 run forbidden '[]' 'PATCH ^/releases/ 403' GITHUB_EVENT_NAME=push
 check "a 403 when workflows did not move: fails" '[ $code != 0 ]'
 
