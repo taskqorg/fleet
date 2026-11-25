@@ -5,7 +5,7 @@ import type { JSX } from '@solidjs/web';
 import {
   StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, DetailHead, DiffRow, InheritedRows, MatrixCell,
   CatalogueTree, FilterBar, StateCounters, Presets, SearchBox, GroupControl, SortControl, DetailSection, KvRow, TabBar,
-  DataTable, TableRow, TableName, StateBadge, ShareBar, ProblemRow, Button, SplitButton,
+  DataTable, TableRow, TableName, StateBadge, ShareBar, ProblemRow, Button, SplitButton, WorkFacts, peerFence,
   type StripRun, type GaugeProps, type WorkerSlotProps, type CatalogueTreeNode, type StateOf,
 } from '../src/index.ts';
 import { NOW, min, hr } from './fixtures.ts';
@@ -31,6 +31,9 @@ const gauges = (cpu: number, mem: number, disk: number): GaugeProps[] => [
 const busy = (slot: number, title: string, code: string, project: string, harness: string, started: number, tokens: number, color: 'd1' | 'd4' = 'd4'): WorkerSlotProps =>
   ({ slot, state: 'busy', title, code, project, harness, started, tokens: m(tokens), color, now: NOW, onOpen: () => {} });
 const failing: WorkerSlotProps = { slot: 3, state: 'failing', title: 'Codex start failed ×22', code: 'Lab FLT-6', project: 'lab', harness: 'codex', retryAt: NOW + 40_000, cause: 'browser tool missing', now: NOW, onOpen: () => {} };
+/** Attempts and hours in work of six open tasks: the 500-attempt one stands out against the rest (peerFence). */
+const PEER_ATTEMPTS = [1, 1, 2, 1, 3, 500], PEER_HOURS = [1, 2, 3, 2, 1, 40];
+const attemptsFence = peerFence(PEER_ATTEMPTS), workFence = peerFence(PEER_HOURS.map(h => h * 3600));
 
 function Label(p: { children: JSX.Element }) { return <div class="frame-label">{p.children}</div>; }
 
@@ -66,7 +69,19 @@ function SlotDemo() {
     <WorkerSlot slot={2} state="idle" />
     <WorkerSlot {...failing} />
     <WorkerSlot {...busy(4, 'Remaining parent accounting with a much longer title that has to truncate', 'T-CXX-39', 'cyprus.bz', 'claude', NOW - 34 * min, 1_200_000, 'd1')} />
+    <WorkerSlot {...busy(5, 'Retry receipts import', 'T-FLT-58', 'fleet', 'codex', NOW - 3 * min, 0)} tokens={undefined} harness={undefined}
+      work={{ attempts: 500, attemptsFence, workAt: NOW - 40 * hr, workFence, agent: 'codex' }} />
+    <WorkerSlot slot={6} state="failing" title="Codex start failed" cause="browser tool missing" now={NOW} onOpen={() => {}}
+      work={{ attempts: 22, lastAt: NOW - 2 * min, lastLabel: 'Latest failed start' }} />
   </div>;
+}
+
+function WorkFactsDemo() {
+  return <ul class="pane" style={{ margin: 0, padding: 0 }}>
+    <LiveRow kind="task" state="working" code="T-FLT-60" title="One attempt: time in work only, the agent" facts={<WorkFacts attempts={1} lastAt={NOW - 25 * min} workAt={NOW - 25 * min} state={{ label: 'In progress', at: NOW - 25 * min }} agent="claude" />} />
+    <LiveRow kind="task" state="waiting" code="T-FLT-61" title="Three attempts, waiting since the last" facts={<WorkFacts attempts={3} attemptsFence={attemptsFence} lastAt={NOW - 40 * min} workAt={NOW - 3 * hr} workFence={workFence} state={{ label: 'Waiting', at: NOW - 35 * min }} agent="codex" />} />
+    <LiveRow kind="task" state="queued" code="T-FLT-58" title="500 attempts and 40 hours: both stand out against the peers" facts={<WorkFacts attempts={500} attemptsFence={attemptsFence} lastAt={NOW - 3 * min} workAt={NOW - 40 * hr} workFence={workFence} state={{ label: 'Queued', at: NOW - 30 * 1000 }} agent="claude" />} />
+  </ul>;
 }
 
 function HostDemo() {
@@ -87,9 +102,15 @@ function HostDemo() {
 function LiveRowDemo() {
   return <ul class="pane" style={{ margin: 0, padding: 0 }}>
     <LiveRow kind="project" name="fleet" running={3} queued={4} done={23} trend={trend} trendLabel="runs, last 24 hours" onOpen={() => {}} />
-    <LiveRow kind="delivery" tone="running" code={`#${827}`} title="retain initiating person" stage="merging" onOpen={() => {}} />
+    <LiveRow kind="task" state="working" code="T-FLT-51" title="Fix receipt factory" onOpen={() => {}}
+      facts={<WorkFacts attempts={2} attemptsFence={attemptsFence} lastAt={NOW - 12 * min} workAt={NOW - 2 * hr} workFence={workFence} state={{ label: 'In progress', at: NOW - 2 * hr }} agent="codex" />} />
+    <LiveRow kind="task" state="queued" code="T-FLT-58" title="Retry receipts import" onOpen={() => {}}
+      facts={<WorkFacts attempts={500} attemptsFence={attemptsFence} lastAt={NOW - 3 * min} workAt={NOW - 40 * hr} workFence={workFence} state={{ label: 'Queued', at: NOW - 30 * 1000 }} agent="claude" />} />
+    <LiveRow kind="delivery" tone="running" code={`#${827}`} title="retain initiating person" stage="merging" onOpen={() => {}}
+      facts={<WorkFacts workAt={NOW - 50 * min} state={{ label: 'Merging', at: NOW - 6 * min }} />} />
     <LiveRow kind="runner" name="ubuntu-latest" fact="3 jobs · 142 min today" onOpen={() => {}} />
     <LiveRow kind="event" at={NOW - min} state="done" text={`T-FLT-43 merged · #${828} rolling out`} onOpen={() => {}} />
+    <LiveRow kind="event" at={NOW - 2 * min} state="done" text="Nightly digest finished" onOpen={() => {}} facts={<WorkFacts attempts={207} agent="codex" />} />
     <LiveRow kind="runner" name="self-hosted pds18" fact="offline 12m" trouble onOpen={() => {}} />
     <LiveRow kind="event" at={NOW - 9 * min} state="done" text="Stale row: last read 9m ago" stale />
   </ul>;
@@ -204,9 +225,10 @@ export const BLOCK_SECTIONS: Entry[] = [
   ['figure-tile', 'Live: figure tile with sparkline', 'figure-tile', () => <FigureDemo />, () => <>Normal, alert (the value and the latest bars turn danger, the sub-line names the cause), unknown (?, never 0), stale (dimmed, opens nothing). A dot on the base is a bar with no reading.</>],
   ['gauge', 'Live: gauge', 'fill-bar', () => <GaugeDemo />, () => <>The fill bar's one-value form. Attention past the host's warning threshold, danger past its critical one; both are host settings. Unknown is ?.</>],
   ['run-strip', 'Live: run strip', 'time-strip', () => <RunStripDemo />, () => <>One host's last 24 hours: a tick per run in the running tone, failures in danger.</>],
-  ['worker-slot', 'Live: worker slot', 'worker-slot', () => <SlotDemo />, () => <>Busy (pulsing dot, elapsed time, project colour bar), idle (dashed, opens nothing), failing (what fails ×N, retry countdown, cause). The title takes the width and truncates.</>],
+  ['worker-slot', 'Live: worker slot', 'worker-slot', () => <SlotDemo />, () => <>Busy (pulsing dot, elapsed time, project colour bar), idle (dashed, opens nothing), failing (what fails ×N, retry countdown, cause). The title takes the width and truncates. With work facts the second line shows code · project, then ×N, time in work and the agent mark; a failing slot shows its cause, ×N and the time since the latest failed start.</>],
   ['host-band', 'Live: host band', 'host-band', () => <HostDemo />, () => <>Normal, problem (danger border and glow, one problem line), offline (last values dimmed with the age), loading. Narrow bands stack the slots and move the gauges under the name (container query).</>],
-  ['live-row', 'Live: live rows', 'live-row', () => <LiveRowDemo />, () => <>Project, delivery, runner, event; trouble turns the dot and the fact red; stale rows are dimmed and open nothing.</>],
+  ['live-row', 'Live: live rows', 'live-row', () => <LiveRowDemo />, () => <>Project, task in work, delivery, runner, event; work rows carry the work facts; repeats are one event with ×N; trouble turns the dot and the fact red; stale rows are dimmed and open nothing.</>],
+  ['work-facts', 'Rows: work facts', 'work-facts', () => <WorkFactsDemo />, () => <>×N attempts from two, time since the latest attempt, time in work, time in the state, agent mark; a time equal to another shows once. Peers: attempts 1, 1, 2, 1, 3, 500 and hours 1, 2, 3, 2, 1, 40, so ×500 and 40h take the attention tone (ten times the median or more).</>],
   ['catalogue-row', 'Sections: catalogue rows and list groups', 'catalogue-tree', () => <CatalogueDemo />, () => <>The catalogue row is CatalogueTree's leaf: state icon, title and code, facts on the right; selected with the accent bar; pinned with the pin first. Groups fold with their count.</>],
   ['filter-blocks', 'Sections: search, view chip, filter bar', 'filter-bar', () => <FilterDemo />, () => <>Search as an icon, then open with a query; saved views as chips; the count only while a filter narrows; state counters; group and sort as icons. No Filter button.</>],
   ['detail-head', 'Sections: detail head, tab bar, detail section and key rows', 'detail-section', () => <DetailDemo />, () => <>Close, project · code, the primary action as a split button and Share; the title and the state line. Facets in the tab bar; stacked areas in detail sections.</>],

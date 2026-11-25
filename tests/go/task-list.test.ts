@@ -14,7 +14,7 @@ test('TL1 task_page sorts recently changed first, reads key:value search terms a
   };
   const a = (await op('task_create', {title: 'Sort alpha'})).id, b = (await op('task_create', {title: 'Sort beta'})).id;
   await op('task_update', {taskId: a, title: 'Sort alpha'}); // a is now the most recently changed
-  c.sql(`INSERT INTO execution(id,kind,state,task_id,harness,host_id,started_at) VALUES ('tl-1','agent_run','failed','${a}','codex','mac-mini',now()), ('tl-2','agent_run','running','${a}','claude','mac-mini',now());`);
+  c.sql(`INSERT INTO execution(id,kind,state,task_id,harness,host_id,started_at) VALUES ('tl-1','agent_run','failed','${a}','codex','mac-mini',now()-interval '1 hour'), ('tl-2','agent_run','running','${a}','claude','mac-mini',now());`);
   const ids = async (body: object) => (await op('task_page', {group: 'none', filter: {search: 'Sort'}, ...body})).tasks.map((x: any) => x.id);
   assert.deepEqual(await ids({}), [a, b], 'default: recently changed first');
   assert.deepEqual(await ids({sort: 'changed'}), [b, a]);
@@ -25,8 +25,10 @@ test('TL1 task_page sorts recently changed first, reads key:value search terms a
   assert.deepEqual(await ids({filter: {search: 'beta state:queued'}}), [b]);
   const row = (await op('task_page', {group: 'none', filter: {search: 'alpha'}})).tasks[0];
   assert.equal(row.executions, 2); assert.equal(row.lastAgent, 'claude'); assert.equal(row.host, 'mac-mini'); assert.ok(row.stateAt);
+  assert.ok(Date.parse(row.lastStartedAt) > Date.parse(row.startedAt), 'lastStartedAt is the latest attempt, startedAt the first');
   assert.equal(row.activeState, 'running'); assert.ok(row.activeStartedAt); assert.equal(row.activeObservation, 'confirmed'); assert.equal(row.activeStalled, false);
   const idleRow = (await op('task_page', {group: 'none', filter: {search: 'beta'}})).tasks[0];
+  assert.equal(idleRow.lastStartedAt ?? null, null);
   assert.equal(idleRow.activeState ?? null, null); assert.equal(idleRow.activeStartedAt ?? null, null); assert.equal(idleRow.activeStalled, false);
   c.sql(`INSERT INTO question(id,kind,task_id,text,options,asked_by,state,cause) VALUES ('q-stuck-tl2','operator_decision','${a}','Execution stuck','["investigate","dismiss"]'::jsonb,'fleet','open','problem:execution:tl-2:stuck')`);
   const stalledRow = (await op('task_page', {group: 'none', filter: {search: 'alpha'}})).tasks[0];

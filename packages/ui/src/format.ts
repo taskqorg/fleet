@@ -300,3 +300,16 @@ export function causeOf(failure: FailureLike | null | undefined, code?: string |
   if (failure) return { id: failure.cause, text: failure.text, long: failure.code };
   return code ? cause(code) : undefined;
 }
+
+/**
+ * The outlier fence of a set of peer values: an order of magnitude (ten times) above their median, or undefined below
+ * three values. Work counts and times are multiplicative (one attempt or three is ordinary work, two hundred is not), so
+ * the fence is a decimal order over the typical row, not a spread statistic: with most rows at one attempt, a spread
+ * (Tukey, MAD) is zero and would mark every second attempt. A list passes its rows' attempts or times in work.
+ */
+export function peerFence(values: readonly number[]): number | undefined {
+  const s = values.filter(v => Number.isFinite(v) && v > 0).toSorted((a, b) => a - b);
+  if (s.length < 3) return undefined;
+  const i = s.length >> 1;
+  return 10 * (s.length % 2 ? s[i] : (s[i - 1] + s[i]) / 2);
+}

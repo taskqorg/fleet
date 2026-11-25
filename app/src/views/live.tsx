@@ -3,11 +3,12 @@
 // runners, just now). Wall mode (`/live?wall`) shows the same page with nothing to open. Reads: hosts_list (bands,
 // gauges, slots in start order), executions_runners (strips, figures, slot details), executions_list (failures in
 // plain words), task_page (task codes and projects, done today), delivery_status, executions_ci, project_list.
-import { createMemo, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, bytes, causeOf, clock, count, duration, money, states, useTick,
-  type DataTone, type GaugeProps, type HostBandProps, type Measured, type Stage, type Tone, type WorkerSlotProps,
+  Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, WorkFacts, bytes, causeOf, clock, count, duration, lifeOf, money, states, peerFence, useTick,
+  type DataTone, type Life, type GaugeProps, type HostBandProps, type Measured, type Stage, type Tone, type WorkerSlotProps,
   statesOf, openStates,
   timeOf, usdOf,
 } from '../../../packages/ui/src/index.ts';
@@ -30,6 +31,10 @@ const TONES: DataTone[] = ['d1', 'd2', 'd3', 'd4'];
 const KINDS: Record<string, string> = { agent_run: 'run', child_agent: 'child run', host_job: 'host job' };
 const ACTIVE = new Set<string>(statesOf('execution', ['working', 'waiting']));
 const OPEN_TASK = openStates('task');
+/** In work: working first, then waiting, then queued (attention order of the one vocabulary). */
+const WORK_ORDER: Record<string, number> = { in_progress: 0, waiting: 1, held: 1, queued: 2 };
+/** Two starts closer than this are one moment (WorkFacts shows such a fact once). */
+const SAME_MOMENT = MIN;
 
 const m = (value: number | null | undefined, extra: Partial<Measured> = {}): Measured => ({ value: value ?? null, basis: value == null ? 'unavailable' : 'measured', ...extra });
 const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
@@ -37,6 +42,10 @@ const median = (xs: number[]) => { if (!xs.length) return null; const s = xs.toS
 const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 /** Times for sorting and comparing: a missing time is the oldest. */
 const ms = (s: string | null | undefined) => timeOf(s, 0);
+/** Times for work facts: a missing time is unknown (NaN), never the oldest. */
+const timeAt = (s: string | null | undefined) => timeOf(s, NaN);
+const fin = (t: number | undefined | null): t is number => t != null && Number.isFinite(t);
+const lifeOfTask = (state: string): Life => (lifeOf.task as Record<string, Life>)[state] ?? 'queued';
 /** Bars of a trend: `n` buckets of `size` ms ending now, each the sum of `value` over the items whose time falls in it. */
 function buckets<T>(items: readonly T[], at: (x: T) => number | null, now: number, n = 12, size = 2 * HOUR, value: (x: T) => number = () => 1): number[] {
   const out = new Array<number>(n).fill(0), from = now - n * size;
@@ -77,6 +86,10 @@ export function Live(props: { wall: boolean }) {
   const runById = createMemo(() => new Map(runs().map(r => [r.id, r])));
   const failures = createMemo(() => new Map((failuresOp.data?.executions ?? []).filter(e => e.failure).map(e => [e.id, e])));
   const taskById = createMemo(() => new Map([...(openTasks.data?.tasks ?? []), ...(doneTasks.data?.tasks ?? [])].map(t => [t.id, t])));
+  // Peers for outliers (work-facts.md): the open tasks' attempts and times in work, so a task far past the rest stands out.
+  const openList = createMemo(() => openTasks.data?.tasks ?? []);
+  const attemptsFence = createMemo(() => peerFence(openList().map(x => x.executions)));
+  const workFence = createMemo(() => peerFence(openList().map(x => (now() - timeAt(x.startedAt)) / 1000).filter(Number.isFinite)));
   const projectName = createMemo(() => new Map((projectsOp.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)])));
   const projectTone = (id: string | null | undefined): DataTone | undefined => {
     if (!id) return undefined;
@@ -118,10 +131,14 @@ export function Live(props: { wall: boolean }) {
         const r = runById().get(hr.id), task = r?.taskId ? taskById().get(r.taskId) : undefined;
         const started = r?.startedAt ?? (hr.startedAt ? ms(hr.startedAt) : undefined);
         const target = r?.taskId ? `/tasks/${r.taskId}` : r?.sessionId ? `/conversations/${r.sessionId}` : null;
+        // The tile's own time is this attempt; the facts add the attempts and the time in work since the first one.
+        const work = task ? timeAt(task.startedAt) - offset() : NaN, runStart = started != null ? started - offset() : NaN;
         return {
-          slot: i + 1, state: 'busy', title: task?.title ?? r?.taskTitle ?? 'Starting…', code: task?.code ?? undefined,
-          project: task?.projectId ? projectName().get(task.projectId) ?? task.projectId : undefined, harness: r?.harness ?? undefined,
+          slot: i + 1, state: 'busy', title: task?.title ?? r?.taskTitle ?? r?.sessionTitle ?? 'Starting…', code: task?.code ?? undefined,
+          project: task?.projectId ? projectName().get(task.projectId) ?? task.projectId : undefined,
           color: projectTone(task?.projectId), tokens: r?.tokens != null ? m(r.tokens) : undefined,
+          work: { attempts: task?.executions, attemptsFence: attemptsFence(), agent: r?.harness ?? task?.agent,
+            workAt: fin(work) && !(fin(runStart) && Math.abs(work - runStart) < SAME_MOMENT) ? work : undefined, workFence: workFence() },
           started: started != null && Number.isFinite(started) ? started - offset() : undefined, now: stale() ? t - offset() : undefined,
           onOpen: target ? open(target) : undefined,
         };
@@ -133,7 +150,9 @@ export function Live(props: { wall: boolean }) {
       const f = failing[0];
       if (f) {
         const i = slots.findIndex(s => s.state === 'idle');
-        const tile: WorkerSlotProps = { slot: i < 0 ? slots.length + 1 : slots[i].slot, state: 'failing', title: firstSentence(f.text)[0] + (f.n > 1 ? ` ×${f.n}` : ''), cause: firstSentence(f.text)[1] || undefined, onOpen: open(`/hosts/${encodeURIComponent(h.id)}`) };
+        const tile: WorkerSlotProps = { slot: i < 0 ? slots.length + 1 : slots[i].slot, state: 'failing', title: firstSentence(f.text)[0], cause: firstSentence(f.text)[1] || undefined,
+          work: { attempts: f.n, lastAt: f.latest - offset(), lastLabel: 'Latest failed start' },
+          onOpen: open(`/hosts/${encodeURIComponent(h.id)}`) };
         if (i < 0) slots.push(tile);
         else if ((slots[i].free ?? 1) > 1) slots.splice(i, 1, tile, { ...slots[i], slot: slots[i].slot + 1, free: slots[i].free! - 1 });
         else slots[i] = tile;
@@ -221,6 +240,10 @@ export function Live(props: { wall: boolean }) {
     }
     return rows.filter(r => r.running + r.queued + r.done > 0).toSorted((a, b) => b.running - a.running || b.queued - a.queued || a.name.localeCompare(b.name));
   });
+  // In work: every open task with its work facts, working first, then the longest in work (a task stuck in retries is
+  // here between its attempts, when no slot shows it).
+  const work = createMemo(() => openList().toSorted((a, b) => (WORK_ORDER[a.state] ?? 3) - (WORK_ORDER[b.state] ?? 3)
+    || (timeAt(a.startedAt) || Infinity) - (timeAt(b.startedAt) || Infinity) || a.title.localeCompare(b.title)));
   const delivery = createMemo(() => (deliveryOp.data?.items ?? []).filter(i => IN_FLIGHT.has(i.stage)).toSorted((a, b) => ms(b.since) - ms(a.since)));
   const ci = createMemo(() => {
     const d = ciOp.data;
@@ -232,16 +255,37 @@ export function Live(props: { wall: boolean }) {
     for (const r of d.runners ?? []) rows.push({ key: 's:' + r.name, name: `self-hosted ${r.name}`, fact: r.status === 'online' ? (r.busy ? 'online · busy' : 'online') : r.status, trouble: r.status !== 'online' });
     return rows;
   });
-  // Just now: the latest runs that started, finished or failed, newest first.
-  const events = createMemo(() => runs().filter(r => r.kind !== 'tool_run' && (r.endedAt ?? r.startedAt) != null)
-    .map(r => {
-      const at = (ACTIVE.has(r.state) ? r.startedAt : r.endedAt ?? r.startedAt)!;
+  // Just now: runs that started, finished or failed, newest first. Repeats of one subject (a task, else a session) in one
+  // state are one event with ×N and the newest time (OR-58): a bot that runs every five minutes is one row, not five.
+  type Event = { id: string; at: number; n: number; text: string; state: Life; agent: string | null; to: string | null };
+  const events = createMemo(() => {
+    const by = new Map<string, Event>();
+    for (const r of runs()) {
+      if (r.kind === 'tool_run' || (r.endedAt ?? r.startedAt) == null) continue;
+      const at = (ACTIVE.has(r.state) ? r.startedAt : r.endedAt ?? r.startedAt)! - offset();
       const task = r.taskId ? taskById().get(r.taskId) : undefined;
-      const what = task?.code ?? r.taskTitle ?? `${r.harness ? r.harness + ' ' : ''}${KINDS[r.kind] ?? 'run'}`;
-      const verb = ACTIVE.has(r.state) ? `started on ${r.hostId ?? 'coordinator'}${r.harness ? ` (${r.harness})` : ''}` : r.state === 'failed' ? `failed on ${r.hostId ?? 'coordinator'}` : r.state === 'cancelled' ? 'stopped' : 'finished';
-      const life = ACTIVE.has(r.state) ? 'working' as const : r.state === 'failed' ? 'failed' as const : r.state === 'cancelled' ? 'stopped' as const : 'done' as const;
-      return { id: r.id, at: at - offset(), text: `${what} ${verb}`, state: life, to: r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null };
-    }).toSorted((a, b) => b.at - a.at).slice(0, FEED));
+      const what = task ? `${task.code ? task.code + ' ' : ''}${task.title}` : r.taskTitle ?? r.sessionTitle ?? `${r.harness ? r.harness + ' ' : ''}${KINDS[r.kind] ?? 'run'}`;
+      const where = r.hostId ?? 'coordinator';
+      const verb = ACTIVE.has(r.state) ? `started on ${where}` : r.state === 'failed' ? `failed on ${where}` : r.state === 'cancelled' ? 'stopped' : 'finished';
+      const life: Life = ACTIVE.has(r.state) ? 'working' : r.state === 'failed' ? 'failed' : r.state === 'cancelled' ? 'stopped' : 'done';
+      const key = `${r.taskId ?? r.sessionId ?? r.id}\0${life}\0${ACTIVE.has(r.state) || r.state === 'failed' ? where : ''}`;
+      const e = by.get(key);
+      if (e) { e.n++; if (at > e.at) Object.assign(e, { at, agent: r.harness ?? e.agent }); continue; }
+      by.set(key, { id: key, at, n: 1, text: `${what} ${verb}`, state: life, agent: r.harness, to: r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null });
+    }
+    return [...by.values()].toSorted((a, b) => b.at - a.at);
+  });
+  const eventFence = createMemo(() => peerFence(events().map(e => e.n)));
+  // Feeds show their latest FEED, then +K (OR-30); +K opens the rest in place. In wall mode nothing opens.
+  const [all, setAll] = createSignal<ReadonlySet<string>>(new Set());
+  const feed = <T,>(id: string, xs: readonly T[]) => (all().has(id) ? xs : xs.slice(0, FEED));
+  const more = (id: string, total: number): JSX.Element => (
+    <Show when={total > FEED && !all().has(id)}>
+      <Show when={!props.wall} fallback={<p class="live-more muted">+{total - FEED}</p>}>
+        <Button label={`+${total - FEED} more`} kind="quiet" onClick={() => setAll(s => new Set([...s, id]))} />
+      </Show>
+    </Show>
+  );
 
   const focus = createMemo(() => {
     const f = prefs.value.focus.filter(p => !prefs.value.ignored.includes(p));
@@ -281,18 +325,33 @@ export function Live(props: { wall: boolean }) {
             <section aria-label="Projects now">
               <h2 class="live-h">Projects · now <span class="mono">{projectRows().length}</span></h2>
               <ul class="live-list">
-                <For each={projectRows().slice(0, FEED)}>{p => <LiveRow kind="project" name={p.name} running={p.running} queued={p.queued} done={p.done} trend={p.trend} trendLabel="tasks done, last 24 hours" stale={stale()} onOpen={p.id ? open(`/projects/${encodeURIComponent(p.id)}`) : undefined} />}</For>
+                <For each={feed('projects', projectRows())}>{p => <LiveRow kind="project" name={p.name} running={p.running} queued={p.queued} done={p.done} trend={p.trend} trendLabel="tasks done, last 24 hours" stale={stale()} onOpen={p.id ? open(`/projects/${encodeURIComponent(p.id)}`) : undefined} />}</For>
               </ul>
-              <Show when={projectRows().length > FEED}><p class="live-more muted">+{projectRows().length - FEED}</p></Show>
+              {more('projects', projectRows().length)}
+            </section>
+          </Show>
+          <Show when={work().length}>
+            <section aria-label="In work">
+              <h2 class="live-h">In work <span class="mono">{work().length}</span></h2>
+              <ul class="live-list">
+                <For each={feed('work', work())} keyed={t => t.id}>{t => (
+                  <LiveRow kind="task" state={lifeOfTask(t().state)} code={t().code ?? undefined} title={t().title} stale={stale()} onOpen={open(`/tasks/${t().code ?? t().id}`)}
+                    facts={<WorkFacts attempts={t().executions} attemptsFence={attemptsFence()} lastAt={timeAt(t().lastStartedAt ?? t().activeStartedAt) - offset()}
+                      workAt={timeAt(t().startedAt) - offset()} workFence={workFence()} agent={t().agent ?? t().lastAgent}
+                      state={{ label: states.task[t().state as keyof typeof states.task]?.label ?? t().state, at: timeAt(t().stateAt) - offset() }} />} />
+                )}</For>
+              </ul>
+              {more('work', work().length)}
             </section>
           </Show>
           <Show when={delivery().length}>
             <section aria-label="Delivery">
               <h2 class="live-h">Delivery <span class="mono">{delivery().length}</span></h2>
               <ul class="live-list">
-                <For each={delivery().slice(0, FEED)}>{d => <LiveRow kind="delivery" tone={(states.delivery[d.stage]?.tone ?? 'neutral') as Tone} code={`#${d.number}`} title={d.title} stage={STAGE[d.stage] ?? 'pr_open'} trouble={d.stage.endsWith('failed')} stale={stale()} onOpen={open(`/delivery/${encodeURIComponent(`${d.repo.replace('/', '~')}~${d.number}`)}`)} />}</For>
+                <For each={feed('delivery', delivery())} keyed={d => `${d.repo}#${d.number}`}>{dd => { const d = dd(); return <LiveRow kind="delivery" tone={(states.delivery[d.stage]?.tone ?? 'neutral') as Tone} code={`#${d.number}`} title={d.title} stage={STAGE[d.stage] ?? 'pr_open'} trouble={d.stage.endsWith('failed')} stale={stale()} onOpen={open(`/delivery/${encodeURIComponent(`${d.repo.replace('/', '~')}~${d.number}`)}`)}
+                  facts={<WorkFacts workAt={timeAt(d.opened) - offset()} state={{ label: states.delivery[d.stage]?.label ?? d.stage, at: timeAt(d.since) - offset() }} />} />; }}</For>
               </ul>
-              <Show when={delivery().length > FEED}><p class="live-more muted">+{delivery().length - FEED}</p></Show>
+              {more('delivery', delivery().length)}
             </section>
           </Show>
           <Show when={ci().length}>
@@ -307,8 +366,10 @@ export function Live(props: { wall: boolean }) {
             <section aria-label="Just now">
               <h2 class="live-h">Just now <span class="mono">{events().length}</span></h2>
               <ul class="live-list">
-                <For each={events()}>{e => <LiveRow kind="event" at={e.at} state={e.state} text={e.text} stale={stale()} onOpen={e.to ? open(e.to) : undefined} />}</For>
+                <For each={feed('events', events())} keyed={e => e.id}>{ee => { const e = ee(); return <LiveRow kind="event" at={e.at} state={e.state} text={e.text} stale={stale()} onOpen={e.to ? open(e.to) : undefined}
+                  facts={<WorkFacts attempts={e.n} attemptsFence={eventFence()} agent={e.agent} />} />; }}</For>
               </ul>
+              {more('events', events().length)}
             </section>
           </Show>
         </aside>

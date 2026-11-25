@@ -4,6 +4,7 @@ import { type Measured, duration, countdown } from '../format.ts';
 import { type DataTone } from '../charts.tsx';
 import { Num, useTick } from './primitives.tsx';
 import { StateDot } from './state-dot.tsx';
+import { WorkFacts, type WorkFactsProps } from './lists.tsx';
 
 export type WorkerSlotProps = {
   /** Slot number on its host, from 1. */
@@ -18,6 +19,10 @@ export type WorkerSlotProps = {
   /** The project's colour for the left bar. */
   color?: DataTone;
   tokens?: Measured;
+  /** The shared work facts (WorkFacts: attempts, time in work, agent mark) on the second line, in place of tokens and the
+   *  harness name. Data, not an element, so a caller that rebuilds its props every tick keeps the same nodes (OR-6).
+   *  A failing slot puts its cause first on that line. */
+  work?: WorkFactsProps;
   /** Busy: when the run started (the elapsed time ticks). */
   started?: number;
   /** Failing: when it retries, and the cause in words. */
@@ -46,9 +51,14 @@ export function WorkerSlot(p: WorkerSlotProps) {
         </Show>
       </span>
       <span class="ws-l2">
-        <span class="ws-meta">{meta()}</span>
-        <Show when={p.state === 'busy'} fallback={<span class="ws-r">{p.cause}</span>}>
-          <Show when={p.tokens} keyed>{t => <span class="ws-r"><Num m={t} kind="count" /> tok</span>}</Show>
+        <Show when={p.work} fallback={<>
+          <span class="ws-meta">{meta()}</span>
+          <Show when={p.state === 'busy'} fallback={<span class="ws-r">{p.cause}</span>}>
+            <Show when={p.tokens} keyed>{t => <span class="ws-r"><Num m={t} kind="count" /> tok</span>}</Show>
+          </Show>
+        </>}>
+          <span class="ws-meta">{p.state === 'failing' ? p.cause : meta()}</span>
+          <span class="ws-r"><WorkFacts {...p.work!} /></span>
         </Show>
       </span>
     </Show>

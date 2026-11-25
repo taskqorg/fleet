@@ -52,6 +52,7 @@
   .ws-title, .ws-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ws-title { font-weight: var(--font-weight-medium); }
   .ws-r { flex: none; font-variant-numeric: tabular-nums; }
+  .ws-l2 .row-facts { font-size: var(--font-size-xs); }
   .ws-l1 .ws-r { font-size: var(--font-size-sm); }
   .wslot[data-state=idle] { border: 1px dashed var(--line); background: none; box-shadow: none; }
   .wslot[data-state=idle] .ws-in { align-items: center; }
@@ -78,8 +79,11 @@
   }
 
   .lrow { list-style: none; min-width: 0; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
-  .lr-in { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--size-row); padding: var(--space-1) var(--space-4); }
+  .lr-in { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-3); width: 100%; min-height: var(--size-row); padding: var(--space-1) var(--space-4); }
   .lr-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* With work facts the title keeps at least 60% of the row; facts that do not fit beside it wrap under it, right-aligned (OR-60). */
+  .lr-in:has(> .row-facts) > .lr-main { flex: 1 1 60%; }
+  .lr-in > .row-facts { margin-left: auto; }
   .lr-two { display: flex; flex-direction: column; }
   .lr-two .lr-text { overflow: hidden; text-overflow: ellipsis; }
   .lr-counts { display: flex; gap: var(--space-3); font-size: var(--font-size-xs); }

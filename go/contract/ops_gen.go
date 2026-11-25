@@ -733,6 +733,7 @@ type TaskRow struct {
 	Host              *string       `json:"host"`
 	Id                string        `json:"id"`
 	LastAgent         *string       `json:"lastAgent"`
+	LastStartedAt     *string       `json:"lastStartedAt,omitempty"`
 	OpenQuestions     int64         `json:"openQuestions"`
 	PauseReason       *string       `json:"pauseReason"`
 	Priority          string        `json:"priority"`

@@ -4,14 +4,16 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
 
-test('R1 executions_runners lists active and recent runs with their totals, leaves out pipeline containers and old runs, and sums spend per host, kind and UTC period (requirement: Runners screen, fleet.md R2; risk: the screen shows stale or double-counted work)', async () => {
+test('R1 executions_runners lists active and recent runs with their totals and session title, leaves out pipeline containers and old runs, and sums spend per host, kind and UTC period (requirement: Runners screen, fleet.md R2, Live events name their conversation; risk: the screen shows stale or double-counted work, or an event reads only "codex run finished")', async () => {
   const c = await startCoordinator({name: 'runners1'});
   try {
-    c.sql(`INSERT INTO execution(id,kind,state,host_id,harness,model,started_at,ended_at) VALUES
+    c.sql(`INSERT INTO session(id,title,payload) VALUES ('s-titled','Nightly digest','{}'::jsonb);
+      INSERT INTO execution(id,kind,state,host_id,harness,model,started_at,ended_at) VALUES
       ('r-live','agent_run','running','h1','claude','m1',now()-interval '30 seconds',NULL),
       ('r-done','agent_run','succeeded','h1','claude','m1',now()-interval '2 minutes',now()-interval '1 minute'),
       ('r-old','agent_run','succeeded','h1','claude','m1',now()-interval '40 days',now()-interval '40 days'),
       ('r-pipe','pipeline_run','running',NULL,NULL,NULL,now(),NULL);
+      UPDATE execution SET session_id='s-titled' WHERE id='r-done';
       INSERT INTO execution_totals(execution_id,tokens_input,tokens_output,wall_ms,cpu_ms) VALUES ('r-done',100,50,3600000,1200),('r-live',10,0,NULL,NULL);
       INSERT INTO execution(id,kind,state,host_id,parent_execution_id,started_at,ended_at) VALUES ('r-call','tool_run','succeeded','h1','github-read:1',now()-interval '1 minute',now()),
        ('r-call2','tool_run','succeeded','h1','github-read:2',now()-interval '1 minute',now());
@@ -23,7 +25,8 @@ test('R1 executions_runners lists active and recent runs with their totals, leav
     const calls = b.runs.find((x: any) => x.id === 'calls:h1/conn:');
     assert.deepEqual([calls.calls, calls.failedCalls, calls.state, calls.wallMs], [2, 0, 'succeeded', 40], 'a parent id that is no run is no caller; tool calls summed per caller, not a row each');
     const done = b.runs.find((x: any) => x.id === 'r-done');
-    assert.deepEqual([done.hostId, done.tokens, done.wallMs, done.cpuMs], ['h1', 150, 3600000, 1200]);
+    assert.deepEqual([done.hostId, done.tokens, done.wallMs, done.cpuMs, done.sessionTitle], ['h1', 150, 3600000, 1200, 'Nightly digest']);
+    assert.equal(b.runs.find((x: any) => x.id === 'r-live').sessionTitle ?? null, null, 'a run without a session has no title');
     assert.ok(done.endedAt > done.startedAt);
     const month = b.spend.find((s: any) => s.hostId === 'h1' && s.kind === 'agent_run' && s.period === 'month');
     assert.equal(month.tokens, 160);

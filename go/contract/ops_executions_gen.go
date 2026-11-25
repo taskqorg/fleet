@@ -2784,6 +2784,7 @@ type RunnerRun struct {
 	PeakMemoryBytes   *float64       `json:"peakMemoryBytes"`
 	Problem           *string        `json:"problem"`
 	SessionId         *string        `json:"sessionId"`
+	SessionTitle      *string        `json:"sessionTitle,omitempty"`
 	StartedAt         *float64       `json:"startedAt"`
 	State             ExecutionState `json:"state"`
 	TaskId            *string        `json:"taskId"`

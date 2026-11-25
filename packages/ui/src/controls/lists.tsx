@@ -2,9 +2,10 @@
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { Input, Menu, MenuContent, MenuGroupLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid';
-import { type IconName, type Family, type StateOf, type StateDef, type Tone, states, actions } from '../registry.ts';
+import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, states, actions, harnesses } from '../registry.ts';
 import { isSubmitEnter } from '../keys.ts';
-import { Icon, Button, SearchBox, focusOnMount } from './primitives.tsx';
+
+import { Icon, Button, SearchBox, focusOnMount, AgeChip, HarnessMark } from './primitives.tsx';
 import { ContextMenu, type MenuItem } from './overlays.tsx';
 
 /* ---------- Filter bar: search with query syntax, applied-filter chips and the list's controls (§4, OR-31, OR-36) ---------- */
@@ -380,6 +381,68 @@ export function Fact(p: { icon?: IconName; text?: string; tip: string; label?: s
       {p.text}
       {p.children}
     </span>
+  );
+}
+
+/* ---------- Work facts: the shared row anatomy of work in progress (controls/work-facts.md, OR-37, OR-63) ---------- */
+
+/** Starts closer than this are one moment: the same fact is shown once. */
+const SAME_MOMENT_MS = 60_000;
+
+export type WorkFactsProps = {
+  /** Attempts so far (executions of a task, starts of a failing cause). `×N` from two: one attempt says nothing. */
+  attempts?: number;
+  /** The peers' fence for attempts (peerFence in format.ts): at or above it `×N` takes the attention tone. */
+  attemptsFence?: number;
+  /** Start of the latest attempt: the time since it. Shown only when it differs from the start of work. */
+  lastAt?: number;
+  /** What the latest attempt is called in the tooltip: "Latest attempt" by default, "Running" for a run in a slot. */
+  lastLabel?: string;
+  /** Start of the first attempt: the total time in work, always shown when known. */
+  workAt?: number;
+  /** The peers' fence for the time in work, in seconds (peerFence): at or above it the time takes the attention tone. */
+  workFence?: number;
+  /** The current state and since when: the time in it, `<State> for` in the tooltip. Shown when it differs from both starts. */
+  state?: { label: string; at: number };
+  /** The agent: its mark, the name in the tooltip. */
+  agent?: Harness | null;
+  /** Server clock minus local clock, for ages read from the server. */
+  clockOffsetMs?: number;
+};
+
+/**
+ * Work facts in the row's right zone, always in this order: `×N` attempts, time since the latest attempt (repeat icon),
+ * time in work (clock), time in the current state (history), agent mark. Each time has its own icon, so two neighbours
+ * never read as one duration (`3h 35m`). Each part shows by meaning: `×N` from two attempts, a time only when it is a new
+ * moment (two starts within a minute are one fact), the agent when known. Outliers stand out against their peers, never
+ * against a fixed number (peerFence).
+ */
+export function WorkFacts(p: WorkFactsProps) {
+  const fin = (t: number | undefined): t is number => t !== undefined && Number.isFinite(t);
+  const same = (a: number | undefined, b: number | undefined) => fin(a) && fin(b) && Math.abs(a - b) < SAME_MOMENT_MS;
+  const n = () => p.attempts ?? 0;
+  const showLast = () => fin(p.lastAt) && !same(p.lastAt, p.workAt);
+  const showState = () => !!p.state && fin(p.state.at) && !same(p.state.at, p.workAt) && !(showLast() && same(p.state.at, p.lastAt));
+  const nOut = () => p.attemptsFence !== undefined && n() > 1 && n() >= p.attemptsFence;
+  return (
+    <RowFacts>
+      <Show when={n() > 1}>
+        <span class={['fact', 'attempts', nOut() ? 't-attention alert' : '']} data-tip={`${n().toLocaleString('en')} attempts${nOut() ? ', ten times the usual row or more' : ''}`}
+          aria-label={`${n().toLocaleString('en')} attempts`}>×{n().toLocaleString('en')}</span>
+      </Show>
+      <Show when={showLast()}>
+        <Fact icon={actions.runs} tip={p.lastLabel ?? 'Latest attempt'}><AgeChip t={p.lastAt!} clockOffsetMs={p.clockOffsetMs} /></Fact>
+      </Show>
+      <Show when={fin(p.workAt)}>
+        <Fact icon="clock" tip="In work since the first attempt">
+          <AgeChip t={p.workAt!} clockOffsetMs={p.clockOffsetMs} alertAfter={p.workFence} tone="attention" alertLabel="ten times longer in work than the usual row or more" />
+        </Fact>
+      </Show>
+      <Show when={showState()}>
+        <Fact icon="history" tip={`${p.state!.label} for`}><AgeChip t={p.state!.at} clockOffsetMs={p.clockOffsetMs} /></Fact>
+      </Show>
+      <Show when={p.agent && p.agent in harnesses}><HarnessMark h={p.agent!} /></Show>
+    </RowFacts>
   );
 }
 

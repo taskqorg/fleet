@@ -27,15 +27,17 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * Gauges for CPU, memory and disk.
    * The day's runs and active time.
    * One tile per worker slot:
-     * A busy slot shows the task title, code, project colour on the left edge, harness, elapsed time and tokens.
+     * A busy slot shows the task title, code, project colour on the left edge and this run's elapsed time, then the [work facts](../controls/work-facts.md): the task's attempts (`×N`), its time in work and the agent mark.
      * A free slot is a dashed "idle" tile; past three free slots, one tile counts them (`23 idle`).
-     * A failing slot is outlined in the danger tone and says what fails and when it retries.
+     * A failing slot is outlined in the danger tone and says what fails, how many times (`×N`), how long ago the latest failed start was, and when it retries.
    * A 24-hour strip of runs, one tick per run window, with failures in the danger tone; marks at −24 h, −18 h, −12 h, −6 h and now.
 4. **Side column.**
    * Projects now: running, queued and done counts per project, with a sparkline.
-   * Delivery: pull requests moving through checks, merge, release and install, each with its stage chip.
+   * In work: every open task (working, then waiting, then queued; longest in work first) with its work facts: attempts, time since the latest attempt, time in work, time in its state, agent. A task stuck in retries shows here between its attempts, when no slot shows it.
+   * Delivery: pull requests moving through checks, merge, release and install, each with its time since opened, time in the stage and its stage chip.
    * CI runners: jobs running and minutes today; self-hosted runner state.
-   * Just now: the latest five events, each with age and a state dot.
+   * Just now: the latest events, each with age, a state dot, the task or conversation it belongs to and the agent; repeats are one event with `×N` (OR-58).
+   * Each side list shows its latest five, then `+K more`, which opens the rest in place (OR-30).
 
 Every element opens its detail in the app: a host in System, a slot or event in its session, a pull request in its project's delivery facet, a project in Projects. In wall mode nothing opens; the screen only shows.
 
@@ -91,20 +93,23 @@ Each line says why in words: who set it, when, until, what it moved. A subscript
 |---|---|
 | Host bands | `hosts_list`: `slotLimit`, `running`, `runningByHarness`, `queued`, `problems`, `pollError`, `lastSeenAt` |
 | Gauges | `hosts_list` `load`: CPU (`100 * load1 / cpus`), memory (`memFree` of `memTotal`) and free disk (`diskFree`), while the host polls and the reading is under 2 minutes old |
-| Slot tiles | `hosts_list` `runs` in slot order: tile *i* shows `runs[i]` (title, harness and tokens from `executions_runners`, code and project from `task_page`); a band covers `max(slotLimit, running)` slots |
+| Slot tiles | `hosts_list` `runs` in slot order: tile *i* shows `runs[i]` (title and harness from `executions_runners`; code, project, `executions` and `startedAt` from `task_page`); a band covers `max(slotLimit, running)` slots |
+| In work | `task_page` open tasks: `executions` (attempts), `lastStartedAt` (latest attempt), `startedAt` (first attempt), `state` and `stateAt`, `agent` else `lastAgent`; outliers against the same rows (`peerFence`) |
 | Failures | `failure` on `executions_list` rows and `bot_runs` records: `text` in plain words, `code` under Details, `cause` to group by |
 | Strips | `executions_runners` (the newest runs, per host, with time strips) |
 | Figures | `execution_totals` (via `executions_runners`: runs, tokens and list-price spend today and this month), `task_page` (tasks done today and their lead time) |
 | Projects now | `task_page` grouped by project with state counts; done today from the completed tasks |
-| Delivery | `delivery_status` |
+| Delivery | `delivery_status`: `stage`, `since` (time in the stage), `opened` |
 | CI | `executions_ci` |
-| Events | the newest runs of `executions_runners` (started, finished, failed) |
+| Events | the runs of `executions_runners` (started, finished, failed), grouped by task, else session, and state; named by `taskTitle`, else `sessionTitle` |
 | Live updates | `changes_since` and timers: `hosts_list` every 5 s, `executions_runners` every 15 s |
 
 ## Open
 
 * **Failing slot retry:** no read names when a failed start retries, so the failing tile shows the cause without a countdown.
 * **Disk gauge fill:** hosts report free disk only; a fill needs the disk's size in the heartbeat (a host-protocol change).
+* **Delivery attempts:** `delivery_status` has no rerun or queue-removal count per pull request (`delivery_history` has `queueRuns` and `queueRemovals`), so a Delivery row shows no `×N` yet.
+* **Canvas:** [screens/live.bl](../board/screens/live.bl) predates the In work list and the work facts (25 Nov); the board session redraws it from the book.
 
 Settled on 25 Nov ([FLT-47](https://youtrack.ufobe.com/issue/FLT-47)): CPU load and slot identity come from `hosts_list`, and wall mode uses a viewer grant ([people access, Wall viewer](../../designs/fleet-people-access.md#wall-viewer)). Slot identity is the start order, not a stored slot number: executors run a host's work as one pool with a count limit and number no slots, so a stored number would be a second fact that could disagree with the pool.
 
@@ -117,7 +122,8 @@ Settled on 25 Nov ([FLT-47](https://youtrack.ufobe.com/issue/FLT-47)): CPU load 
 * [Gauge](../controls/fill-bar.md#gauge): CPU, memory and disk in a band head.
 * [Worker slot](../controls/worker-slot.md): one tile per slot in a band.
 * [Run strip](../controls/time-strip.md#run-strip): the 24-hour strip of a band.
-* [Live row](../controls/live-row.md): projects, delivery, CI runners and events in the side column.
+* [Live row](../controls/live-row.md): projects, tasks in work, delivery, CI runners and events in the side column.
+* [Work facts](../controls/work-facts.md): attempts, latest attempt, time in work and in state, agent, in slots and work rows.
 * [State dot and word](../controls/state-badge.md#dot-and-word): states in slots and rows.
 
 ## Design board
