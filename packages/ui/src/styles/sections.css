@@ -112,5 +112,9 @@
   .pins-sub { display: block; font-size: var(--font-size-sm); color: var(--tone-fg, var(--fg-muted)); }
   .pins-tone { color: var(--tone-fg); }
   .pins-off :is(th, td) { color: var(--fg-muted); }
+  .pins-summary { min-width: 0; overflow-wrap: anywhere; }
+  /* A host's compact version lines (pages/hosts.md, frame 2A): name and version pairs that wrap, never scroll. */
+  .host-versions { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); margin: 0; }
+  .hv { white-space: nowrap; }
   @media (pointer: coarse) { .pins-cell { min-height: var(--size-row-phone); } }
 }

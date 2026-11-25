@@ -1811,6 +1811,7 @@ type PollRequest struct {
 	Problems         []EdgeProblem    `json:"problems"`
 	ProjectRoots     []string         `json:"projectRoots"`
 	Stores           []StoreReport    `json:"stores"`
+	ToolVersions     []ToolVersion    `json:"toolVersions,omitempty"`
 	Update           *UpdateResult    `json:"update,omitempty"`
 	UtcOffsetMinutes *int64           `json:"utcOffsetMinutes,omitempty"`
 	Version          *string          `json:"version,omitempty"`
@@ -1861,6 +1862,11 @@ func (v *PollRequest) Validate() error {
 	}
 	for i := range v.Stores {
 		if err := Check(&v.Stores[i], "stores"); err != nil {
+			return err
+		}
+	}
+	for i := range v.ToolVersions {
+		if err := Check(&v.ToolVersions[i], "toolVersions"); err != nil {
 			return err
 		}
 	}
@@ -3166,6 +3172,17 @@ type ToolCallCounter struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ToolCallCounter) Validate() error {
+	return nil
+}
+
+type ToolVersion struct {
+	Expected *string `json:"expected,omitempty"`
+	Observed *string `json:"observed"`
+	Tool     string  `json:"tool"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ToolVersion) Validate() error {
 	return nil
 }
 

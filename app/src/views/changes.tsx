@@ -2,15 +2,16 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  Button, CopyButton, DataTable, DetailSection, DiffText, Empty, EntityCode, ErrorBanner, KvRow, Num, OfflineMarker,
+  Button, DataTable, DetailSection, DiffText, Empty, EntityCode, ErrorBanner, Num, OfflineMarker,
   Icon, LiveRow, ProblemRow, ShellStatus, StateBadge, timeOf, type IconName, type Life, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useOp } from '../store.ts';
 import type {
   ComponentKind, DefinitionKey, DefinitionState, PinsStage, SystemChangeComponent, SystemChangeComponentHost, SystemChangeDefinition,
-  SystemChangeKind, SystemPinsProposal,
+  SystemChangeKind, SystemPinsProposal, SystemVersionsReply,
 } from '../../../contracts/generated/ops.ts';
+import type { UpdateResult } from '../../../contracts/generated/host-protocol.ts';
 
 const defRoute = (d: SystemChangeDefinition) =>
   `/library/${d.kind === 'agent' ? 'agents' : d.kind === 'pipeline' ? 'pipelines' : 'methods'}/${encodeURIComponent(d.id)}`;
@@ -69,17 +70,23 @@ export function Changes(props: { onClose?: () => void } = {}) {
   const behindHosts = createMemo(() => changesOp.data?.versions.hosts.filter(h => h.behind) ?? []);
   const behindHarnesses = createMemo(() => changesOp.data?.harnessDrift.filter(h => h.behind) ?? []);
   const failedProposals = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'failed').length ?? 0);
-  const driftParts = createMemo(() => {
+  const installing = createMemo(() => (changesOp.data?.versions.hosts ?? []).filter(h => updateOf(h.update)?.state === 'pending'));
+  const reverting = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'reverting').length ?? 0);
+  // The summary line of frame 1A: what moves or is stuck first, in its tone; the definitions last, quiet.
+  const driftParts = createMemo<{ text: string; tone: string }[]>(() => {
     const data = changesOp.data;
     if (!data) return [];
+    const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+    const made = data.storeOnly.length + data.ahead.length;
     return [
-      data.repositoryChanged.length > 0 && `${data.repositoryChanged.length} repo changed`,
-      data.storeOnly.length > 0 && `${data.storeOnly.length} store-only`,
-      data.ahead.length > 0 && `${data.ahead.length} ahead`,
-      behindHosts().length > 0 && `${behindHosts().length} hosts behind`,
-      behindHarnesses().length > 0 && `${behindHarnesses().length} harness pins drifting`,
-      failedProposals() > 0 && `${failedProposals()} qualification failed`,
-    ].filter((x): x is string => !!x);
+      installing().length > 0 && { text: `${plural(installing().length, 'host', 'hosts')} installing`, tone: 't-running' },
+      behindHosts().length > 0 && { text: `${plural(behindHosts().length, 'host', 'hosts')} behind`, tone: 't-attention' },
+      failedProposals() > 0 && { text: `${failedProposals()} qualification failed`, tone: 't-danger' },
+      reverting() > 0 && { text: `${plural(reverting(), 'revert', 'reverts')} in flight`, tone: 't-attention' },
+      behindHarnesses().length > 0 && { text: `${behindHarnesses().length} harness pins drifting`, tone: 't-attention' },
+      data.repositoryChanged.length > 0 && { text: `${plural(data.repositoryChanged.length, 'definition waits', 'definitions wait')} for the repository`, tone: 'muted' },
+      made > 0 && { text: `${made} made in Fleet`, tone: 'muted' },
+    ].filter((x): x is { text: string; tone: string } => !!x);
   });
 
   return (
@@ -87,7 +94,11 @@ export function Changes(props: { onClose?: () => void } = {}) {
       <ShellStatus><OfflineMarker state={changesOp.state} now={Date.now()} /></ShellStatus>
       <header class="detail-h">
         <Show when={props.onClose}>{onClose => <Button label="Close" icon="x" iconOnly onClick={onClose()} />}</Show>
-        <span class="muted">{changesOp.data ? (driftParts().length ? driftParts().join(' · ') : 'All aligned') : 'Checking repository and host drift…'}</span>
+        <span class="pins-summary">{changesOp.data
+          ? (driftParts().length
+            ? <For each={driftParts()}>{(p, i) => <><Show when={i() > 0}><span class="muted"> · </span></Show><span class={['pins-tone', p.tone]}>{p.text}</span></>}</For>
+            : <span class="muted">All aligned</span>)
+          : <span class="muted">Checking repository and host drift…</span>}</span>
         <span class="grow" />
         <Button label="Refresh" icon="rotate-ccw" iconOnly kind="quiet" onClick={changesOp.reload} />
       </header>
@@ -107,6 +118,11 @@ export function Changes(props: { onClose?: () => void } = {}) {
                 : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
             />
           )}</Show>
+
+
+          <ReleaseRow versions={data().versions} onHost={go} />
+
+          <For each={data().components}>{k => <ComponentGroup group={k} onHost={go} />}</For>
 
           <section class="panel">
             <header class="panel-h">
@@ -147,28 +163,6 @@ export function Changes(props: { onClose?: () => void } = {}) {
               </DataTable>
             </Show>
           </section>
-
-          <DetailSection title="Release versions">
-            <KvRow icon="panels-top-left" label="Coordinator" meta="running"
-              value={<span class="acts">
-                <span class="mono">{data().versions.coordinator.version}{data().versions.coordinator.offered ? ` (offered ${data().versions.coordinator.offered})` : ''}</span>
-                <Show when={data().versions.coordinator.commit}>{commit => <CopyButton label={`Copy commit ${commit()}`} value={commit()} iconOnly />}</Show>
-              </span>} />
-            <KvRow icon="panels-top-left" label="Web UI" meta={`backend ${data().versions.ui.backendVersion}`}
-              value={<span class="mono">{data().versions.ui.version} ({data().versions.ui.kind})</span>} />
-            <Show when={data().versions.gateway}>{gw => (
-              <KvRow icon="network" label="Gateway" meta={gw().state ?? 'running'}
-                value={<span class="mono">{gw().version ?? '—'}</span>} />
-            )}</Show>
-            <For each={data().versions.hosts}>{h => (
-              <KvRow icon="panels-top-left" label="Host"
-                meta={<span class="acts"><EntityCode code={h.id} id={h.id} kind="host" cls="inline" /><span>{h.pollError ? h.pollError.message : (h.behind ? 'behind offered release' : 'aligned')}</span></span>}
-                value={<span class="acts"><span class="mono">{h.version ?? '—'}</span>
-                  <StateBadge family="host" state={h.pollError ? 'failing' : h.behind ? 'offline' : 'online'} compact /></span>} />
-            )}</For>
-          </DetailSection>
-
-          <For each={data().components}>{k => <ComponentGroup group={k} onHost={go} />}</For>
 
           <section class="panel">
             <header class="panel-h">
@@ -264,7 +258,7 @@ function HostCell(p: { cell: SystemChangeComponentHost; href: string; onOpen: ()
       case 'installing': return `installing ${p.cell.pinned ?? ''}`;
       case 'refused': return `refused ${(c.reason ?? '').split(':')[0]}`;
       case 'failing': return `${c.failed} of ${c.total} runs failed`;
-      case 'own': return 'own';
+      case 'own': return c.observed ? `own ${c.observed}` : 'own';
       case 'unknown': return '—';
     }
   };
@@ -310,4 +304,31 @@ function ComponentGroup(p: { group: SystemChangeKind; onHost: (path: string) => 
       )}</For>
     </DataTable>
   </section>;
+}
+
+/** A host's reported update result (HostVersion.update is open JSON). */
+const updateOf = (u: unknown): UpdateResult | undefined =>
+  u && typeof u === 'object' && typeof (u as UpdateResult).state === 'string' ? u as UpdateResult : undefined;
+
+const names = (ids: string[]) => ids.length <= 2 ? ids.join(' and ') : `${ids.slice(0, -1).join(', ')} and ${ids.at(-1)}`;
+
+/** The Release row of frame 1A: the release hosts take, and where it stands on them; it opens the first host it waits on. */
+function ReleaseRow(p: { versions: SystemVersionsReply; onHost: (path: string) => void }) {
+  const release = () => p.versions.coordinator.offered ?? p.versions.coordinator.version;
+  const pending = () => p.versions.hosts.filter(h => updateOf(h.update)?.state === 'pending');
+  const failing = () => p.versions.hosts.filter(h => ['refused', 'failed'].includes(updateOf(h.update)?.state ?? '') && updateOf(h.update)?.version === release());
+  const behind = () => p.versions.hosts.filter(h => h.behind && !pending().includes(h));
+  const row = () => {
+    const f = failing(), w = pending(), b = behind();
+    if (f.length) return { life: 'failed' as Life, tone: 't-danger', text: `${names(f.map(h => h.id))} refused · ${updateOf(f[0].update)?.error ?? ''}`, host: f[0], at: updateOf(f[0].update)?.at };
+    if (w.length) return { life: 'working' as Life, tone: 't-running', text: `${names(w.map(h => h.id))} installing${updateOf(w[0].update)?.error ? ` · ${updateOf(w[0].update)!.error}` : ''}`, host: w[0], at: updateOf(w[0].update)?.at };
+    if (b.length) return { life: 'waiting' as Life, tone: 't-attention', text: `${names(b.map(h => h.id))} behind`, host: b[0], at: undefined };
+    return { life: 'done' as Life, tone: 'muted', text: 'every host runs it', host: undefined, at: undefined };
+  };
+  return <ul class="live-list" aria-label="Release">
+    <LiveRow kind="event" state={row().life} at={timeOf(row().at ?? p.versions.coordinator.started, Date.now())}
+      text={`Release ${release()}`}
+      facts={<span class={['lr-fact', 'pins-tone', row().tone]}>{row().text}</span>}
+      onOpen={row().host ? () => p.onHost(hostPath(row().host!.id)) : undefined} />
+  </ul>;
 }

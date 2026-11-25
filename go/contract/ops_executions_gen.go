@@ -1432,6 +1432,7 @@ type HostRow struct {
 	Slots            json.RawMessage      `json:"slots"`
 	Stores           string               `json:"stores"`
 	StoresReason     *string              `json:"storesReason,omitempty"`
+	ToolVersions     []ToolVersion        `json:"toolVersions,omitempty"`
 	Update           json.RawMessage      `json:"update"`
 	Version          *string              `json:"version"`
 }
@@ -1482,6 +1483,11 @@ func (v *HostRow) Validate() error {
 	}
 	if v.Slots == nil {
 		return Missing("slots")
+	}
+	for i := range v.ToolVersions {
+		if err := Check(&v.ToolVersions[i], "toolVersions"); err != nil {
+			return err
+		}
 	}
 	if v.Update == nil {
 		return Missing("update")

@@ -334,14 +334,14 @@ func systemComponents(hosts []contract.HostRow) []contract.SystemChangeKind {
 // componentHost: one host's cell of a component row.
 func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned string, h contract.HostRow, flagged pinsRegression) contract.SystemChangeComponentHost {
 	cell := contract.SystemChangeComponentHost{HostId: h.Id, State: contract.ComponentHostStateUnknown}
-	if !enabled {
-		cell.State = contract.ComponentHostStateOwn
-		return cell
+	// The version the host reports: its CLI report, its host tools report (also while the kind's pins are off).
+	if k.Name == harnessrelease.Tools.Name {
+		for _, tv := range h.ToolVersions {
+			if tv.Tool == name && tv.Observed != nil {
+				cell.Observed = tv.Observed
+			}
+		}
 	}
-	if pinned == "" { // nothing pinned for this host's target: no drift to show
-		return cell
-	}
-	cell.Pinned = &pinned
 	if k.Name == harnessrelease.CLIs.Name {
 		for _, hv := range h.HarnessVersions {
 			if hv.Harness == name && hv.Observed != nil {
@@ -353,6 +353,14 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 			}
 		}
 	}
+	if !enabled {
+		cell.State = contract.ComponentHostStateOwn
+		return cell
+	}
+	if pinned == "" { // nothing pinned for this host's target: no drift to show
+		return cell
+	}
+	cell.Pinned = &pinned
 	upd, hasUpd := decodeUpdate(rawAny(h.Update))
 	switch {
 	case flagged.Total > 0 && flagged.Version == pinned:

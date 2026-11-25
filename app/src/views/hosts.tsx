@@ -7,7 +7,7 @@
 import { createMemo, createSignal, For, Match, onSettled, Show, Switch, type Accessor } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  AgeChip, Button, CatalogueTree, ContextMenu, DataTable, DetailHead, DetailSection, Empty, EntityCode, ErrorBanner, Fact, HostBand,
+  AgeChip, Button, CatalogueTree, ContextMenu, DetailHead, DetailSection, Empty, EntityCode, ErrorBanner, Fact, HostBand,
   KvRow, ListDetail, Num, OfflineMarker, ProblemRow, QuestionCard, RowFacts, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, bytes, copyText, duration, harnesses, matchSearch, money,
   type CatalogueTreeNode, type CostFigureLike, type GaugeProps, type WorkerSlotProps,
@@ -483,17 +483,19 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
       day={runners.data ? `${dayRuns().length} runs · ${duration(active() / 1000).text}` : undefined}
       slots={hostSlots(h(), dayRuns(), props.onOpen)}
       strip={runners.data ? { now: props.now, runs: dayRuns().filter(r => r.startedAt != null && props.now - r.startedAt < DAY).map(r => ({ start: r.startedAt!, end: r.endedAt, failed: r.state === 'failed' })) } : undefined} />
+    {/* Frame 2A: one line per kind, name and version; a version off its pin in attention with the pin beside it. */}
     <Show when={h().harnessVersions?.length}>
-      <DetailSection title="Agent CLIs">
-        <DataTable label="Agent CLIs" head={<tr><th scope="col">CLI</th><th scope="col" class="num">Seen</th><th scope="col" class="num">Expected</th></tr>}>
-          <For each={h().harnessVersions}>{cli => (
-            <tr>
-              <th scope="row">{cli.harness}</th>
-              <td class={['num mono', { 't-attention': props.live && !!cli.observed && cli.observed !== cli.expected }]} data-tip={props.live && cli.observed ? undefined : 'Observation unavailable or stale'}>{props.live && cli.observed || '—'}</td>
-              <td class="num mono">{cli.expected}</td>
-            </tr>
-          )}</For>
-        </DataTable>
+      <DetailSection title="Agent CLIs" count={h().harnessVersions!.length}>
+        <p class="host-versions">
+          <For each={h().harnessVersions}>{cli => <ComponentVersion name={cli.harness} observed={props.live ? cli.observed : null} expected={cli.expected} />}</For>
+        </p>
+      </DetailSection>
+    </Show>
+    <Show when={h().toolVersions?.length}>
+      <DetailSection title="Host tools" count={h().toolVersions!.length}>
+        <p class="host-versions">
+          <For each={h().toolVersions}>{t => <ComponentVersion name={t.tool} observed={props.live ? t.observed : null} expected={t.expected} />}</For>
+        </p>
       </DetailSection>
     </Show>
     <HostUpdates hostId={h().id} />
@@ -554,4 +556,13 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
         choices={[{ label: 'Remove', primary: true }, { label: 'Keep' }]} onAnswer={answer} />
     )}</Show>
   </article>;
+}
+
+/** One component of a host's compact version line: "claude 2.1.322 pinned 2.1.326" when it is off its pin, "—" unseen. */
+function ComponentVersion(p: { name: string; observed?: string | null; expected?: string }) {
+  const off = () => !!p.expected && !!p.observed && p.observed !== p.expected;
+  return <span class="hv" data-tip={p.observed ? undefined : 'Observation unavailable or stale'}>
+    {p.name} <span class={['mono', 'pins-tone', { 't-attention': off() }]}>{p.observed ?? '—'}</span>
+    <Show when={off()}> <span class="pins-tone t-attention">pinned {p.expected}</span></Show>
+  </span>;
 }

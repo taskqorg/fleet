@@ -513,6 +513,7 @@ type hostObservationPayload struct {
 	Version         *string                       `json:"version"`
 	Capabilities    []string                      `json:"capabilities"`
 	HarnessVersions []contract.HostHarnessVersion `json:"harnessVersions"`
+	ToolVersions    []contract.ToolVersion        `json:"toolVersions"`
 	Problems        []contract.HostProblem        `json:"problems"`
 	PollError       *contract.HostPollError       `json:"pollError"`
 	Stores          json.RawMessage               `json:"stores"`
@@ -544,6 +545,18 @@ func hostObservations(q *Request) ([]hostObservation, error) {
 		out = append(out, o)
 	}
 	return out, nil
+}
+
+// hostToolVersions: the host tools the host last reported; a stale host's observed versions are unknown.
+func hostToolVersions(o hostObservation, live bool) []contract.ToolVersion {
+	if live || len(o.ToolVersions) == 0 {
+		return o.ToolVersions
+	}
+	out := make([]contract.ToolVersion, len(o.ToolVersions))
+	for i, v := range o.ToolVersions {
+		out[i] = contract.ToolVersion{Tool: v.Tool, Expected: v.Expected}
+	}
+	return out
 }
 
 func hostHarnessVersions(o hostObservation, live bool) []contract.HostHarnessVersion {
@@ -687,6 +700,7 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 			// The last failed poll, until a successful one (host_poll_health.go); like problems, only while the host
 			// polls: a host that stopped is offline, and an old failure would hide that.
 			h.HarnessVersions = hostHarnessVersions(*o, polling && o.PollError == nil)
+			h.ToolVersions = hostToolVersions(*o, polling && o.PollError == nil)
 			if polling && o.PollError != nil {
 				h.PollError = o.PollError
 			}
