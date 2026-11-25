@@ -1231,17 +1231,38 @@ func telegramRoomSet(q *Request, r *contract.TelegramRoomSetRequest) (contract.T
 	if r.ProjectHint != "" && projectSettingsOf(q, r.ProjectHint) == nil {
 		return contract.TelegramRoomSetReply{}, fail(400, "unknown project "+r.ProjectHint)
 	}
-	prev, err := q.db().TelegramRoomGet(q.ctx(), r.RoomId)
+	if r.RoomId == nil && r.ChatId == nil {
+		return contract.TelegramRoomSetReply{}, fail(400, "Expected roomId or chatId")
+	}
+	if r.RoomId == nil {
+		kind, thread := deref(r.Kind), int64(0)
+		if r.ThreadId != nil {
+			thread = *r.ThreadId
+		}
+		if kind == "" {
+			kind = "private"
+			if *r.ChatId < 0 {
+				kind = "supergroup"
+			}
+		}
+		room, err := q.db().TelegramRoomUpsert(q.ctx(), db.TelegramRoomUpsertParams{ID: telegramRoomID(*r.ChatId, thread), ChatID: *r.ChatId,
+			ThreadID: thread, Kind: kind, Title: deref(r.Title)})
+		if err != nil {
+			return contract.TelegramRoomSetReply{}, err
+		}
+		r.RoomId = &room.ID
+	}
+	prev, err := q.db().TelegramRoomGet(q.ctx(), *r.RoomId)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contract.TelegramRoomSetReply{}, errNotFound
 	}
 	if err != nil {
 		return contract.TelegramRoomSetReply{}, err
 	}
-	if _, err := q.db().TelegramRoomSetHint(q.ctx(), db.TelegramRoomSetHintParams{ID: r.RoomId, ProjectHint: r.ProjectHint}); err != nil {
+	if _, err := q.db().TelegramRoomSetHint(q.ctx(), db.TelegramRoomSetHintParams{ID: *r.RoomId, ProjectHint: r.ProjectHint}); err != nil {
 		return contract.TelegramRoomSetReply{}, err
 	}
-	if err := audit(q, "telegram-room:"+r.RoomId, "projectHint", prev.ProjectHint, r.ProjectHint, auditExtra{}); err != nil {
+	if err := audit(q, "telegram-room:"+*r.RoomId, "projectHint", prev.ProjectHint, r.ProjectHint, auditExtra{}); err != nil {
 		return contract.TelegramRoomSetReply{}, err
 	}
 	prev.ProjectHint = r.ProjectHint

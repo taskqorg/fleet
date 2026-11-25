@@ -151,8 +151,12 @@ func (v *TelegramRoomSetReply) Validate() error {
 }
 
 type TelegramRoomSetRequest struct {
-	ProjectHint string `json:"projectHint"`
-	RoomId      string `json:"roomId"`
+	ChatId      *int64  `json:"chatId,omitempty"`
+	Kind        *string `json:"kind,omitempty"`
+	ProjectHint string  `json:"projectHint"`
+	RoomId      *string `json:"roomId,omitempty"`
+	ThreadId    *int64  `json:"threadId,omitempty"`
+	Title       *string `json:"title,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -251,7 +255,7 @@ func init() {
 		"telegram_link_code":  {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "no", Description: "Make a one-time code (valid one day) that links the caller's Fleet person to the Telegram user who sends /start <code> to the bot; url opens that chat directly when the bot is known. A person's act: agents cannot call it, so no agent can hand out a link to someone's Fleet identity.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"telegram_people":     {Read: true, Long: false, Errors: []int{}, Auth: "owner", Agent: "tool", Description: "Linked people (Telegram user id, username, language, home conversation) and the Telegram users who wrote without a link, newest first, to link with telegram_person_set.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"telegram_person_set": {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "no", Description: "Set a person's Telegram language (en, ru, ...; Fleet's own notices use it), or unlink them. Linking a person to a Telegram user id directly, or changing another person, is the owner's.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"type\":\"string\"},\"language\":{\"type\":\"string\"},\"telegramUserId\":{\"type\":\"integer\"},\"unlink\":{\"type\":\"boolean\"},\"username\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telegram_room_set":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "owner", Agent: "tool", Description: "Set a room's project hint: new work items of the room start in that project (empty: conversations outside projects).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectHint\":{\"type\":\"string\"},\"roomId\":{\"type\":\"string\"}},\"required\":[\"roomId\",\"projectHint\"],\"type\":\"object\"}")},
+		"telegram_room_set":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "owner", Agent: "tool", Description: "Set a room's project hint: new work items of the room start in that project (empty: conversations outside projects). With chatId (and threadId for a forum topic) instead of roomId it creates the room before the bot has seen it, so a room is set up ahead of its first message.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"chatId\":{\"type\":\"integer\"},\"kind\":{\"$comment\":\"private, group or supergroup; default supergroup for a negative chat id, else private\",\"type\":\"string\"},\"projectHint\":{\"type\":\"string\"},\"roomId\":{\"type\":\"string\"},\"threadId\":{\"type\":\"integer\"},\"title\":{\"type\":\"string\"}},\"required\":[\"projectHint\"],\"type\":\"object\"}")},
 		"telegram_rooms":      {Read: true, Long: false, Errors: []int{}, Auth: "owner", Agent: "tool", Description: "Every Telegram chat and forum topic the bot has seen (a room), its project hint and its open work items (each a Fleet conversation).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"telegram_status":     {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "The Telegram channel: whether the bot token works (bot username), the last poll and its error, the work waiting (intake, replies, outbox), and the caller's own Telegram link and language.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"telegram_work_close": {Read: false, Long: false, Errors: []int{404}, Auth: "owner", Agent: "tool", Description: "Close a room's work item: the conductor no longer attaches messages to it; its conversation stays.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"workId\":{\"type\":\"string\"}},\"required\":[\"workId\"],\"type\":\"object\"}")},

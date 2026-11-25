@@ -50,7 +50,7 @@
       ],
       "auth": "owner",
       "agent": "tool",
-      "description": "Set a room's project hint: new work items of the room start in that project (empty: conversations outside projects)."
+      "description": "Set a room's project hint: new work items of the room start in that project (empty: conversations outside projects). With chatId (and threadId for a forum topic) instead of roomId it creates the room before the bot has seen it, so a room is set up ahead of its first message."
     },
     "telegram_work_close": {
       "read": false,
@@ -372,10 +372,22 @@
         },
         "projectHint": {
           "type": "string"
+        },
+        "chatId": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string",
+          "$comment": "private, group or supergroup; default supergroup for a negative chat id, else private"
+        },
+        "title": {
+          "type": "string"
         }
       },
       "required": [
-        "roomId",
         "projectHint"
       ]
     },

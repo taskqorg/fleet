@@ -242,3 +242,13 @@ func TestTelegramChunksKeepEveryRune(t *testing.T) {
 		t.Fatal("runes lost")
 	}
 }
+
+// The owner sets a room up before the bot has seen it: telegram_room_set with chatId creates it.
+func TestTelegramRoomSeededAhead(t *testing.T) {
+	e, _ := telegramTestEnv(t)
+	var out contract.TelegramRoomSetReply
+	e.opInto(t, "telegram_room_set", map[string]any{"chatId": -100, "threadId": 3, "projectHint": "", "title": "pilot"}, e.ownerHeaders(), &out)
+	if out.Room.Id != "-100:3" || out.Room.Kind != "supergroup" || out.Room.Title != "pilot" {
+		t.Fatalf("seeded room: %+v", out.Room)
+	}
+}
