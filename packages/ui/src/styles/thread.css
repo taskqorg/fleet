@@ -35,14 +35,19 @@
   .th-boundary { align-items: center; border-top: 1px solid var(--line); font-size: var(--font-size-sm); color: var(--fg-muted); }
   .th-result { grid-template-columns: auto minmax(0, 1fr); column-gap: var(--space-2); }
   .th-result .th-svc:empty { display: none; }
-  .th-result .th-links { grid-column: 2; }
-  .th-result .th-svc:empty + .th-links { grid-column: 1 / -1; }
-  .th-links { display: grid; gap: var(--space-1); min-width: 0; margin: 0; padding: 0; list-style: none; }
-  .th-file, .th-boundary-info { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-  .th-file { max-width: 100%; }
+  .th-result .th-results { grid-column: 2; }
+  .th-result .th-svc:empty + .th-results { grid-column: 1 / -1; }
+  .th-results { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); min-width: 0; margin: 0; padding: 0; list-style: none; }
+  .res { display: flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; }
+  .res > a { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; max-width: 100%; color: var(--fg); text-decoration: none; }
+  .res > a:hover .att, .res > a:hover .res-pic { border-color: var(--accent); }
+  .res-pic { position: relative; display: flex; align-items: center; justify-content: center; width: calc(var(--size-fill) * 1.5); max-width: 100%; aspect-ratio: 3 / 2; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-sunken); overflow: hidden; }
+  .res-pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .res-pic .icon { position: absolute; width: var(--size-icon); height: var(--size-icon); padding: var(--space-3); border-radius: var(--radius-pill); background: var(--float); color: var(--fg); box-sizing: content-box; }
+  .res-cap { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; font-size: var(--font-size-sm); }
+  .th-boundary-info { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .th-file-index { flex: none; font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; }
   .th-boundary-info, .th-boundary .th-svc { flex-wrap: wrap; }
-  .th-links a { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .th-copy, .th-row .md .code-copy { opacity: 0; }
   .th-row:hover .th-copy, .th-copy:focus-within, .th-row .md .code:hover .code-copy, .th-row .code-copy:focus-within { opacity: 1; }
   @media (any-pointer: coarse) {

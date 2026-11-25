@@ -435,6 +435,14 @@ func artRows(rs []db.Artifact) []Artifact {
 	return out
 }
 
+// diagnosticFile: a file the executor writes about its own run (the MCP lifecycle receipts, mcp_stdio.go), stored with
+// role diagnostic: never a result, deleted after diagnosticDays (placement.go).
+func diagnosticFile(name string) bool {
+	return strings.HasPrefix(filepath.Base(name), "mcp-lifecycle-")
+}
+
+const diagnosticDays = 7
+
 // storedArtifactRows: every stored artifact, for placement.go.
 func storedArtifactRows(ctx context.Context, a *App) ([]Artifact, error) {
 	rs, err := connDB(ctx, a).ArtStoredAll(ctx)
@@ -744,6 +752,9 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 	role := deref(b.Role)
 	if role != "thumbnail" && role != "poster" {
 		role = "original"
+	}
+	if diagnosticFile(file) {
+		role = "diagnostic"
 	}
 	insert := func(tx pgx.Tx, state string) error {
 		return db.New(tx).ArtInsert(ctx, db.ArtInsertParams{ID: id, ProjectID: e.ProjectID, Scope: scope, ContentHash: hash, Size: size, MediaType: media, Name: file,
@@ -1677,7 +1688,7 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 	for _, r := range rows {
 		have[r.Name] = true
 	}
-	isDiagnostic := func(name string) bool { return strings.HasPrefix(name, "mcp-lifecycle-") }
+	isDiagnostic := diagnosticFile
 	out := &ArtifactRequirement{Pending: []string{}, Failed: []artifactFailure{}, Missing: []string{}}
 	for _, r := range rows {
 		if r.Required || contains(named, r.Name) || match(r.Name) {

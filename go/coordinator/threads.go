@@ -429,7 +429,7 @@ func threadResult(q *Request, eid, key string, stage *contract.ThreadDeliverySta
 	r := contract.ResultBlock{Kind: "result", Key: key, ExecutionId: &eid, ArtifactIds: []string{}, Artifacts: []contract.ResultArtifact{}, DeliveryStage: stage}
 	for _, a := range arts {
 		r.ArtifactIds = append(r.ArtifactIds, a.ID)
-		r.Artifacts = append(r.Artifacts, contract.ResultArtifact{Id: a.ID, Name: a.Name, MediaType: a.MediaType, Size: a.Size})
+		r.Artifacts = append(r.Artifacts, contract.ResultArtifact{Id: a.ID, Name: a.Name, MediaType: a.MediaType, Size: a.Size, PreviewId: optStr(a.PreviewID)})
 	}
 	return blockOf(r), nil
 }

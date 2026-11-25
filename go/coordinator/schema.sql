@@ -5001,3 +5001,12 @@ CREATE TABLE telegram_outbox (
 );
 CREATE INDEX telegram_outbox_due ON telegram_outbox(chat_id, created_at, id) WHERE state = 'pending';
 CREATE INDEX telegram_outbox_message ON telegram_outbox(chat_id, telegram_message_id) WHERE telegram_message_id IS NOT NULL;
+
+-- migration 108: diagnostic artifacts (docs/designs/fleet-data-foundation.md, table artifact). The executor's MCP lifecycle
+-- receipts (mcp-lifecycle-*) were stored as originals and listed as results of every turn. They take role 'diagnostic':
+-- no thread result, no Results row, no R code; placement deletes them 7 days after they were stored.
+ALTER TABLE artifact DROP CONSTRAINT artifact_role_check;
+ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('original', 'thumbnail', 'poster', 'example', 'example-file', 'attachment', 'diagnostic'));
+SELECT set_config('fleet.project_ids', '*', true);
+SELECT set_config('fleet.deleted', 'on', true);
+UPDATE artifact SET role = 'diagnostic' WHERE role = 'original' AND name LIKE 'mcp-lifecycle-%';

@@ -406,6 +406,7 @@ The rules below were revised after the Phase 3 review (`docs/designs/fleet-data-
     *   `execution_id`, `task_id`;
     *   `required`, `previous_artifact_id`;
     *   `derived_from_artifact_id` and `role` (`original`, `thumbnail` or `poster`). A preview is an ordinary artifact that points to its original;
+    *   role `diagnostic` (migration 108): a file the executor writes about its own run, today the MCP lifecycle receipts `mcp-lifecycle-*`. The coordinator gives it that role by name at upload. It is never a result: thread result blocks, `artifact_list` and task acceptance leave it out, it gets no code, and placement deletes it 7 days after it was stored;
     *   `state`: `pending`, `stored`, `failed` or `deleted` (who sets each: Write protocol and Forced purge below);
     *   `lease_expires_at` while `pending`;
     *   `deleted_at` and `deleted_by`, which form the tombstone;

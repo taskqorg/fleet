@@ -560,6 +560,7 @@ WHERE tombstoned_at IS NULL
  AND ($14::text IS NULL OR state=$14::text)
  AND NOT $15::boolean
  AND (NOT $16::boolean OR role<>'example')
+ AND role<>'diagnostic'
  AND ($17::bigint IS NULL OR seq<$17::bigint)
 ORDER BY seq DESC
 LIMIT $18::bigint
@@ -939,6 +940,7 @@ WHERE tombstoned_at IS NULL
  AND ($13::text IS NULL OR state=$13::text)
  AND NOT $14::boolean
  AND (NOT $15::boolean OR role<>'example')
+ AND role<>'diagnostic'
 GROUP BY state
 `
 

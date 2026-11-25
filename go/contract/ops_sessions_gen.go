@@ -430,10 +430,11 @@ func (v *ReplyRequest) Validate() error {
 }
 
 type ResultArtifact struct {
-	Id        string `json:"id"`
-	MediaType string `json:"mediaType"`
-	Name      string `json:"name"`
-	Size      int64  `json:"size"`
+	Id        string  `json:"id"`
+	MediaType string  `json:"mediaType"`
+	Name      string  `json:"name"`
+	PreviewId *string `json:"previewId,omitempty"`
+	Size      int64   `json:"size"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

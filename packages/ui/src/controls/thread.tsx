@@ -717,10 +717,20 @@ export function QuestionRow(p: {
     </div>
   );
 }
-/** Results are listed one per line. Disambiguate matching short names without exposing full paths. */
-export function ResultRow(p: { artifacts: ArtifactMeta[]; deliveryStage?: ThreadDeliveryStage; onOpen?: (id: string) => void }) {
+/**
+ * The results of one run: pictures and videos as tiles showing their preview (a video's poster, an image's thumbnail or
+ * itself), every other file as a chip. Previews and diagnostic files never reach here (the coordinator leaves them out).
+ */
+export function ResultRow(p: { artifacts: (ArtifactMeta & { previewId?: string })[]; deliveryStage?: ThreadDeliveryStage; onOpen?: (id: string) => void; src?: (id: string) => string }) {
   const items = createMemo(() => namedFiles(p.artifacts, 'Result'));
   const stage = () => p.deliveryStage === 'unknown' ? undefined : p.deliveryStage;
+  const open = (id: string) => (e: MouseEvent) => { if (p.onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); p.onOpen(id); } };
+  const picture = (a: ArtifactMeta & { previewId?: string }) => {
+    const kind = viewOf(a.mediaType);
+    if (!p.src || (kind !== 'image' && kind !== 'video')) return null;
+    const id = a.previewId ?? (kind === 'image' ? a.id : null);
+    return id ? { src: p.src(id), video: kind === 'video' } : null;
+  };
   return (
     <div class="th-row th-result" data-ui="thread-row">
       <span class="th-svc" aria-live="polite">
@@ -728,23 +738,31 @@ export function ResultRow(p: { artifacts: ArtifactMeta[]; deliveryStage?: Thread
         <Show when={p.deliveryStage === 'unknown'}>Delivery stage unknown</Show>
       </span>
       <Show when={items().length > 0}>
-        <ul class="th-links" aria-label="Results">
+        <ul class="th-results" aria-label="Results">
           <For each={items()}>
-            {({ file: artifact, name, position, total }) => (
-              <li class="th-file">
-                <EntityCode id={artifact.id} kind="result" />
-                <a
-                  href={`/results/${encodeURIComponent(artifact.id)}`}
-                  data-tip={`${artifact.name} · ${artifact.mediaType} · ${bytes(artifact.size).text}`}
-                  onClick={e => { if (p.onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); p.onOpen(artifact.id); } }}
-                >
-                  {name}
-                </a>
-                <Show when={total > 1}>
-                  <span class="th-file-index muted" aria-label={`File ${position} of ${total}`}>{position}</span>
-                </Show>
-              </li>
-            )}
+            {({ file: a, name, position, total }) => {
+              const pic = createMemo(() => picture(a));
+              return (
+                <li class={['res', { media: !!pic() }]}>
+                  <a href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.name} · ${a.mediaType} · ${bytes(a.size).text}`} onClick={open(a.id)}>
+                    <Show
+                      when={pic()}
+                      fallback={<span class="att"><span class="att-thumb"><Icon name="file-text" /></span><span class="att-name">{name}</span><span class="att-size">{bytes(a.size).text}</span></span>}
+                    >
+                      {v => (
+                        <>
+                          <span class="res-pic"><img src={v().src} alt={a.name} loading="lazy" /><Show when={v().video}><Icon name="play" /></Show></span>
+                          <span class="res-cap"><span class="att-name">{name}</span><span class="att-size">{bytes(a.size).text}</span></span>
+                        </>
+                      )}
+                    </Show>
+                  </a>
+                  <Show when={total > 1}>
+                    <span class="th-file-index muted" aria-label={`File ${position} of ${total}`}>{position}</span>
+                  </Show>
+                </li>
+              );
+            }}
           </For>
         </ul>
       </Show>
@@ -957,7 +975,7 @@ export function Thread(p: {
           />
         );
       }
-      case 'result': return <ResultRow artifacts={b.artifacts} deliveryStage={b.deliveryStage} onOpen={p.onOpenResult} />;
+      case 'result': return <ResultRow artifacts={b.artifacts} deliveryStage={b.deliveryStage} onOpen={p.onOpenResult} src={p.resultSrc} />;
       case 'boundary': return (
         <BoundaryRow
           session={p.showSession ? b.sessionId ?? undefined : undefined}

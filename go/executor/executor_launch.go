@@ -477,7 +477,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		if sp.ProjectId != nil {
 			projectID = *sp.ProjectId
 		}
-		context := M{"hostId": e.host, "commandId": cid, "executionId": execution, "profiles": profiles, "projectId": projectID, "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
+		context := M{"hostId": e.host, "commandId": cid, "executionId": execution, "profiles": profiles, "projectId": projectID, "workdir": work, "tempDir": runTempDir(e.root, execution), "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
 		journal := filepath.Join(e.root, "journal.sqlite")
 		if err := os.MkdirAll(filepath.Join(e.root, "runs"), 0o700); err != nil {
 			return err

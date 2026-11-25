@@ -44,6 +44,7 @@ type delegationContext struct {
 	ExecutionId jsonValue        `json:"executionId"` // a string names the execution; requests carry the value as written
 	ProjectId   *string          `json:"projectId"`
 	Workdir     *string          `json:"workdir"`
+	TempDir     *string          `json:"tempDir"` // the run's TMPDIR (runTempDir): artifact_save takes files from it too
 	InputDir    jsonValue        `json:"inputDir"`
 	Spool       *string          `json:"spool"`
 	Profiles    jsonValue        `json:"profiles"` // read through profiles()

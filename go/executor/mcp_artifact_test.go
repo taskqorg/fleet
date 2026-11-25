@@ -100,6 +100,27 @@ func TestArtifactSaveAbsolutePath(t *testing.T) {
 	if name != "output/report.md" {
 		t.Fatalf("an absolute path saves under its name in the working area, got %q", name)
 	}
+	// The run's temporary directory: a file the agent made there is saved under its name below it (HAL0 2026-11-25:
+	// two refusals and a copy into the worktree before the save worked).
+	tmp := filepath.Join(base, "run-tmp", "e")
+	noErr(t, os.MkdirAll(tmp, 0o755))
+	noErr(t, os.WriteFile(filepath.Join(tmp, "square.png"), []byte("png"), 0o644))
+	noErr(t, os.Symlink(base, filepath.Join(tmp, "up")))
+	for _, c := range []struct {
+		path string
+		ok   bool
+	}{{filepath.Join(tmp, "square.png"), true}, {filepath.Join(tmp, "up", "secret.txt"), false}, {tmp + "/../../secret.txt", false}} {
+		ctx := M{"hostId": "h", "executionId": "e", "workdir": work, "tempDir": tmp, "spool": filepath.Join(base, "spool")}
+		r, err := artifactCall(ctx, "artifact_save", M{"path": c.path}, dbExec{db})
+		noErr(t, err)
+		if refused(r) == c.ok {
+			t.Fatalf("%s: want ok=%v, got %v", c.path, c.ok, r)
+		}
+	}
+	noErr(t, db.QueryRow("SELECT json_extract(body,'$.name') FROM transfers WHERE kind='upload' ORDER BY rowid DESC LIMIT 1").Scan(&name))
+	if name != "square.png" {
+		t.Fatalf("a temporary file saves under its name below the directory, got %q", name)
+	}
 }
 
 // Risk: artifact_list without arguments returns every artifact of the project in one reply (Lab trial 2026-11-17:

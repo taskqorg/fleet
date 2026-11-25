@@ -709,7 +709,10 @@ func (q *Queries) ThreadSessionTask(ctx context.Context, id string) ([]*string, 
 }
 
 const threadStoredArtifacts = `-- name: ThreadStoredArtifacts :many
-SELECT coalesce(legacy_id,id)::text AS id, name, media_type, size FROM artifact WHERE execution_id=$1 AND state='stored' ORDER BY seq
+SELECT coalesce(a.legacy_id,a.id)::text AS id, a.name, a.media_type, a.size,
+ coalesce((SELECT p.id FROM artifact p WHERE p.execution_id=a.execution_id AND p.derived_from_artifact_id=a.id AND p.state='stored' AND p.role IN ('thumbnail','poster')
+  ORDER BY p.role='thumbnail' DESC, p.seq DESC LIMIT 1),'')::text AS preview_id
+FROM artifact a WHERE a.execution_id=$1 AND a.state='stored' AND a.role NOT IN ('thumbnail','poster','diagnostic') ORDER BY a.seq
 `
 
 type ThreadStoredArtifactsRow struct {
@@ -717,8 +720,11 @@ type ThreadStoredArtifactsRow struct {
 	Name      string
 	MediaType string
 	Size      int64
+	PreviewID string
 }
 
+// An execution's results: its stored files but previews and diagnostic files; preview_id is the newest stored preview
+// of each (its thumbnail, else a video's poster), the picture the thread shows inline.
 func (q *Queries) ThreadStoredArtifacts(ctx context.Context, executionID *string) ([]ThreadStoredArtifactsRow, error) {
 	rows, err := q.db.Query(ctx, threadStoredArtifacts, executionID)
 	if err != nil {
@@ -733,6 +739,7 @@ func (q *Queries) ThreadStoredArtifacts(ctx context.Context, executionID *string
 			&i.Name,
 			&i.MediaType,
 			&i.Size,
+			&i.PreviewID,
 		); err != nil {
 			return nil, err
 		}
