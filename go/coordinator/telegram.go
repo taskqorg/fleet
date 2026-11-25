@@ -493,7 +493,8 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 					if err := pq.db().TelegramWorkAdd(pq.ctx(), db.TelegramWorkAddParams{ID: t.workID, RoomID: room.ID, SessionID: sid, Title: t.newWork, CreatedBy: tp.Email}); err != nil {
 						return err
 					}
-					if err := telegramNotice(pq, room, 0, "newwork:"+rid, tp.Language, "newWork", t.newWork); err != nil {
+					if err := telegramOutbox(pq, db.TelegramOutboxAddParams{ID: "notice:newwork:" + rid, ChatID: room.ChatID, ThreadID: room.ThreadID,
+						Kind: "text", Text: say(tp.Language, "newWork", t.newWork), WorkID: &t.workID}); err != nil {
 						return err
 					}
 				}
@@ -881,10 +882,15 @@ func chunks(text string, n int) []string {
 				break
 			}
 		}
-		out = append(out, strings.TrimSpace(string(r[:cut])))
+		if part := strings.TrimSpace(string(r[:cut])); part != "" {
+			out = append(out, part)
+		}
 		r = r[cut:]
 	}
-	return append(out, strings.TrimSpace(string(r)))
+	if part := strings.TrimSpace(string(r)); part != "" || len(out) == 0 {
+		out = append(out, part)
+	}
+	return out
 }
 
 // --- outbox ---

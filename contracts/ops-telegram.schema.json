@@ -14,8 +14,8 @@
         409
       ],
       "auth": "person",
-      "agent": "tool",
-      "description": "Make a one-time code (valid one day) that links the caller's Fleet person to the Telegram user who sends /start <code> to the bot; url opens that chat directly when the bot is known."
+      "agent": "no",
+      "description": "Make a one-time code (valid one day) that links the caller's Fleet person to the Telegram user who sends /start <code> to the bot; url opens that chat directly when the bot is known. A person's act: agents cannot call it, so no agent can hand out a link to someone's Fleet identity."
     },
     "telegram_person_set": {
       "read": false,
@@ -25,7 +25,7 @@
         404
       ],
       "auth": "person",
-      "agent": "tool",
+      "agent": "no",
       "description": "Set a person's Telegram language (en, ru, ...; Fleet's own notices use it), or unlink them. Linking a person to a Telegram user id directly, or changing another person, is the owner's."
     },
     "telegram_people": {

@@ -31,7 +31,7 @@ Telegram ⇄ fleet-gateway (telegram connection, key in the URL path /bot<key>)
 
 ### Gateway
 
-The `telegram` catalogue entry (`go/coordinator/providers.go`) sets `keyPath: "/bot"`: the gateway builds `baseUrl + /bot + key + path` and sends no key header (`contracts/gateway.schema.json` `GatewayProvider.keyPath`). Tools: `get_me`, `get_updates`, `send_message`, `edit_message_text`, `set_message_reaction`, `send_chat_action`, `answer_callback_query`. Every call is a `tool_run` of the coordinator's read token (system activity, excluded from analytics by default). The key never reaches a log: provider replies are redacted as for every connection, and transport errors are not logged.
+The `telegram` catalogue entry (`go/coordinator/providers.go`) sets `keyPath: "/bot"`: the gateway builds `baseUrl + /bot + key + path` and sends no key header (`contracts/gateway.schema.json` `GatewayProvider.keyPath`). Tools: `get_me`, `get_updates`, `send_message`, `edit_message_text`, `set_message_reaction`, `send_chat_action`, `answer_callback_query`. Every call is a `tool_run` of the coordinator's read token (system activity, excluded from analytics by default). Send tools mark 403 (a user blocked the bot) as a call result, not a key problem. The key never reaches a log: provider replies are redacted as for every connection, and transport errors are not logged.
 
 ### Intake
 
@@ -68,8 +68,8 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 | Operation | Who | Does |
 |---|---|---|
 | `telegram_status` | person | bot username, last poll and its error, waiting intake, replies and outbox, the caller's link |
-| `telegram_link_code` | person | one-time `/start` code and a `t.me` link that opens it |
-| `telegram_person_set` | person; owner for others | language, unlink; the owner links a Telegram user id directly |
+| `telegram_link_code` | person, not agents | one-time `/start` code and a `t.me` link that opens it |
+| `telegram_person_set` | person, not agents; owner for others | language, unlink; the owner links a Telegram user id directly |
 | `telegram_people` | owner | linked people and the Telegram users who wrote without a link |
 | `telegram_rooms` | owner | rooms, project hints, open work items |
 | `telegram_room_set` | owner | a room's project hint |
