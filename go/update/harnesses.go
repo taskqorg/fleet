@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"errors"
@@ -12,8 +13,10 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var managedHarnesses = []string{"codex", "claude", "antigravity"}
@@ -102,6 +105,14 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 	if st, err := os.Stat(filepath.Join(files, entry)); err != nil || !executable(st) {
 		return fmt.Errorf("%w: executable %s is missing", refusal("harness-archive"), entry)
 	}
+	// Run the new CLI here before any switch: a payload this host cannot run (its libc, its macOS) or that reports
+	// another version refuses the release, and the host stays on its current one. Root (PDS18) does not run vendor
+	// code; that target is the one CI qualifies on (deploy/qualify-harness-pins.mjs).
+	if os.Geteuid() != 0 {
+		if err := harnessVersionRuns(filepath.Join(files, entry), stage, a.Version); err != nil {
+			return err
+		}
+	}
 
 	tmp := dir + ".tmp"
 	if err := p.r.RemoveAll(tmp); err != nil {
@@ -138,6 +149,36 @@ func (u *updater) downloadHarness(a harnessrelease.Asset, path string, newHash f
 		}
 	}
 }
+
+// harnessVersionRuns: `<exe> --version` with a private home and no account names version. A wrong answer or a failed
+// start refuses; a timeout is transient (a busy host), so the next run tries again.
+func harnessVersionRuns(exe, stage, version string) error {
+	home, err := os.MkdirTemp(stage, "home-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(home)
+	ctx, cancel := context.WithTimeout(context.Background(), harnessVersionWait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "--version")
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + home, "DISABLE_AUTOUPDATER=1"}
+	cmd.Dir = home
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s --version did not answer within %s", filepath.Base(exe), harnessVersionWait)
+	}
+	if err != nil || !strings.Contains(string(out), version) {
+		answer := strings.TrimSpace(string(out))
+		if len(answer) > 200 {
+			answer = answer[:200]
+		}
+		return fmt.Errorf("%w: %s --version: %v %q", refusal("harness-version"), filepath.Base(exe), err, answer)
+	}
+	return nil
+}
+
+var harnessVersionWait = 30 * time.Second
 
 func executable(st fs.FileInfo) bool {
 	return st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0

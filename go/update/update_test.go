@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -359,5 +360,35 @@ func TestDumpOnlyForMigrations(t *testing.T) {
 		if r := f.run("1.261111.0"); r.State != "ok" || dumps != c.dumps {
 			t.Fatalf("case %d: %+v, %d dumps", i, r, dumps)
 		}
+	}
+}
+
+// TestManagedCLIRuns: a release whose pinned CLI does not run here (another version, a failed start) is refused and the
+// host stays on its release; one that answers its version installs.
+func TestManagedCLIRuns(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root does not run vendor CLIs")
+	}
+	for _, c := range []struct {
+		name, script, state string
+	}{
+		{"answers", "#!/bin/sh\necho 'cli 1.2.3'\n", "ok"},
+		{"other version", "#!/bin/sh\necho 'cli 1.2.2'\n", "refused"},
+		{"fails", "#!/bin/sh\nexit 3\n", "refused"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(c.script)) }))
+			t.Cleanup(tls.Close)
+			f.u.client = tls.Client()
+			sum := sha256.Sum256([]byte(c.script))
+			asset := `{"version":"1.2.3","url":"` + tls.URL + `/cli","sha256":"` + hex.EncodeToString(sum[:]) + `"}`
+			pins := `{"enabled":true,"targets":{"linux-amd64":{"codex":` + asset + `,"claude":` + asset + `,"antigravity":` + asset + `}}}`
+			f.release("1.261111.0", 0, []byte(pins))
+			r := f.run("1.261111.0")
+			if r == nil || string(r.State) != c.state || c.state == "refused" && (!strings.Contains(str(r.Error), "harness-version") || f.current() != "") {
+				t.Fatalf("%+v current %q", r, f.current())
+			}
+		})
 	}
 }

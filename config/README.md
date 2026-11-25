@@ -2,7 +2,7 @@
 
 Checked-in configuration the coordinator loads at start.
 
-* `harness-pins.json`: version, vendor URL and digest of every release-managed CLI target. Activation follows [self-update](../docs/designs/fleet-self-update.md#managed-agent-clis).
+* `harness-pins.json`: version, vendor URL and digest of every release-managed CLI target. Activation follows [self-update](../docs/designs/fleet-self-update.md#managed-agent-clis); the daily workflow updates and qualifies it by itself ([automatic CLI updates](../docs/designs/fleet-self-update.md#automatic-cli-updates)).
 * `catalogue.json`: the capability catalogue: methods for a capability (for example `web-research`) and the pipeline file each one runs.
 * `agents/*.json`: agent profiles (model, effort, instructions, MCP servers).
 * `pipelines/*.json`: pipeline definitions run by the coordinator's pipeline runner (`go/coordinator/pipelines.go`).

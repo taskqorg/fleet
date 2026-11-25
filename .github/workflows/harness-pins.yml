@@ -1,46 +1,224 @@
+# Managed agent CLI updates without a person (docs/designs/fleet-self-update.md#managed-agent-clis): propose the
+# vendors' newest releases as the pull request automation/harness-pins, qualify them against the current pins on both
+# targets, then merge through the merge queue like any pull request. A failed qualification keeps the pull request open
+# with the failure in its body; the coordinator's delivery pass turns that into one Fleet question for the owner.
+#
+# Every write uses this run's GITHUB_TOKEN. Events it causes start no workflow, so the run itself dispatches ci on the
+# pull request's head and, if the queue's merge_group run does not start, ci and review-gate on the queue's branch.
 name: Managed agent CLI releases
 on:
   schedule:
     - cron: '43 3 * * *'
   workflow_dispatch:
+    inputs:
+      requalify:
+        description: Qualify the open pull request's head again
+        type: boolean
+        default: false
 permissions: {}
 concurrency:
   group: harness-pins
   cancel-in-progress: false
+env:
+  BRANCH: automation/harness-pins
 jobs:
-  discover:
+  propose:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
+      statuses: read
+    outputs:
+      pr: ${{ steps.propose.outputs.pr }}
+      sha: ${{ steps.propose.outputs.sha }}
+      qualify: ${{ steps.propose.outputs.qualify }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Propose verified release metadata updates
+      - id: propose
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUALIFY: ${{ inputs.requalify }}
         run: |
           set -euo pipefail
-          branch=automation/harness-pins
-          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')" ]; then
+          node deploy/refresh-harness-pins.mjs
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if git diff --quiet -- config/harness-pins.json; then
+            [ -z "$pr" ] || gh pr close "$pr" --delete-branch --comment 'main already pins these releases.'
+            echo "qualify=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          node deploy/refresh-harness-pins.mjs
-          git diff --quiet -- config/harness-pins.json && exit 0
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$branch"
-          git add config/harness-pins.json
-          git commit -m 'chore(deploy): update managed agent CLI pins'
-          previous=$(git ls-remote --heads origin "refs/heads/$branch" | cut -f1)
-          git push --force-with-lease="refs/heads/$branch:$previous" -u origin "$branch"
-          gh pr create --head "$branch" --base main --title 'Update managed agent CLI pins' --body-file - <<'BODY'
-          Update pinned native executables from vendor release metadata. Fleet verifies the pinned payloads before switching releases.
+          remote=$(git ls-remote --heads origin "refs/heads/$BRANCH" | cut -f1)
+          same=false
+          if [ -n "$pr" ] && [ -n "$remote" ]; then
+            git fetch origin "$remote"
+            git diff --quiet "$remote" -- config/harness-pins.json && git merge-base --is-ancestor "$remote^" origin/main && same=true
+          fi
+          if [ "$same" = true ]; then
+            sha=$remote
+            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" --jq '[.statuses[] | select(.context == "harness-qualify")][0].state // ""')
+            qualify=$([ -z "$state" ] || [ "$state" = pending ] || [ "$REQUALIFY" = true ] && echo true || echo false)
+          else
+            # A new proposal starts from the current main: one commit, never a merge.
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git switch -c "$BRANCH"
+            git add config/harness-pins.json
+            git commit -m 'chore(deploy): update managed agent CLI pins'
+            git push --force-with-lease="refs/heads/$BRANCH:$remote" origin "$BRANCH"
+            sha=$(git rev-parse HEAD)
+            if [ -z "$pr" ]; then
+              gh pr create --head "$BRANCH" --base main --title 'Update managed agent CLI pins' \
+                --body 'Qualification is running: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+              pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+            fi
+            qualify=true
+          fi
+          { echo "pr=$pr"; echo "sha=$sha"; echo "qualify=$qualify"; } >> "$GITHUB_OUTPUT"
 
-          Let GitHub run CI. Approve the workflow run from the Checks tab if GitHub requests approval for this bot PR.
-          Review the vendor release changes and qualify the configured models before enqueueing.
-          BODY
+  qualify:
+    needs: propose
+    if: needs.propose.outputs.qualify == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, target: linux-amd64 }
+          - { runner: macos-15, target: darwin-arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # The qualifier and its models come from this workflow's commit; only the two pin files come from the proposal.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - env:
+          SHA: ${{ needs.propose.outputs.sha }}
+        run: |
+          git fetch --depth=2 origin "$SHA"
+          git show "$SHA^:config/harness-pins.json" > "$RUNNER_TEMP/current.json"
+          git show "$SHA:config/harness-pins.json" > "$RUNNER_TEMP/candidate.json"
+          node deploy/qualify-harness-pins.mjs "$RUNNER_TEMP/current.json" "$RUNNER_TEMP/candidate.json" ${{ matrix.target }} "$RUNNER_TEMP/${{ matrix.target }}.json"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-${{ matrix.target }}
+          path: ${{ runner.temp }}/${{ matrix.target }}.json
+          if-no-files-found: ignore
+
+  decide:
+    needs: [propose, qualify]
+    if: always() && needs.qualify.result != 'skipped' && needs.propose.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      pull-requests: write
+      statuses: write
+    outputs:
+      ok: ${{ steps.decide.outputs.ok }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qualification-*
+          merge-multiple: true
+          path: results
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.propose.outputs.pr }}
+          SHA: ${{ needs.propose.outputs.sha }}
+          RUN: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'JS' > body.md
+          import { readFileSync, readdirSync, appendFileSync } from 'node:fs';
+          const targets = ['linux-amd64', 'darwin-arm64'];
+          const results = Object.fromEntries(readdirSync('results').map(f => [f.replace(/\.json$/, ''), JSON.parse(readFileSync(`results/${f}`))]));
+          const failed = [];
+          for (const t of targets) {
+            const r = results[t];
+            if (!r) { failed.push(`${t}: qualification did not finish (see the run)`); continue; }
+            for (const [name, h] of Object.entries(r.harnesses)) for (const f of h.failures) failed.push(`${name} ${h.to} on ${t}: ${f}`);
+          }
+          const any = Object.values(results)[0]?.harnesses ?? {};
+          const changelog = {
+            codex: v => `https://github.com/openai/codex/releases/tag/rust-v${v}`,
+            claude: () => 'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md',
+            antigravity: () => 'no public changelog; release metadata only',
+          };
+          const lines = [];
+          lines.push(failed.length ? '<!-- fleet-harness-qualification:failed -->' : '<!-- fleet-harness-qualification:passed -->');
+          lines.push('Update the release-managed agent CLIs from vendor release metadata. Fleet verifies each pinned payload before switching releases; a host whose payload fails verification keeps its current release.', '');
+          lines.push('| CLI | From | To | Changes |', '|---|---|---|---|');
+          for (const [name, h] of Object.entries(any)) if (h.from !== h.to) lines.push(`| ${name} | ${h.from} | ${h.to} | ${changelog[name](h.to)} |`);
+          lines.push('');
+          if (failed.length) {
+            lines.push('**Qualification failed.** The pull request stays open; the next vendor release is proposed and qualified again by itself.', '');
+            lines.push('<!-- fleet-harness-qualification-summary -->');
+            for (const f of failed) lines.push(`- ${f}`);
+            lines.push('<!-- /fleet-harness-qualification-summary -->', '');
+          } else {
+            lines.push('**Qualified** against the current pins on linux-amd64 and darwin-arm64: install and digest, version, protocol handshake with Fleet\'s flags, a session with a required MCP server, and the structured output stream for every configured model. Merges through the merge queue by itself.', '');
+          }
+          lines.push(`Run: ${process.env.RUN}`, '');
+          lines.push('Checks that need a signed-in account fail the same way for both pin sets in CI and do not count; hosts run the configured models after the release.');
+          console.log(lines.join('\n'));
+          appendFileSync(process.env.GITHUB_OUTPUT, `ok=${failed.length ? 'false' : 'true'}\n`);
+          JS
+          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --body-file body.md
+          ok=$(grep -c 'fleet-harness-qualification:passed' body.md || true)
+          if [ "$ok" = 1 ]; then
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=harness-qualify -f target_url="$RUN" -f description='Qualified against the current pins'
+            # The ruleset's code-review status: this pull request's review is the qualification above.
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=code-review -f target_url="$RUN" -f description='harness qualification, 0 findings'
+            gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH"
+            gh pr merge "$PR" -R "$GITHUB_REPOSITORY" --auto
+          else
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=failure -f context=harness-qualify -f target_url="$RUN" -f description="$(sed -n 's/^- //p' body.md | head -1 | cut -c1-130)"
+          fi
+
+  land:
+    needs: [propose, decide]
+    if: needs.decide.outputs.ok == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.propose.outputs.pr }}
+        run: |
+          set -euo pipefail
+          declare -A dispatched=()
+          for _ in $(seq 170); do
+            state=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json state --jq .state)
+            [ "$state" = MERGED ] && exit 0
+            [ "$state" = CLOSED ] && { echo "pull request closed"; exit 1; }
+            # The queue's group branch: when its merge_group run did not start (the PR was enqueued by this token),
+            # dispatch the queue's required checks on it.
+            while read -r sha ref; do
+              [ -n "$ref" ] && [ -z "${dispatched[$sha]:-}" ] || continue
+              sleep 60
+              if [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha" --jq '.total_count')" = 0 ]; then
+                gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "${ref#refs/heads/}"
+                gh workflow run review-gate.yml -R "$GITHUB_REPOSITORY" --ref "${ref#refs/heads/}"
+              fi
+              dispatched[$sha]=1
+            done < <(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/heads/gh-readonly-queue/main/pr-$PR-*")
+            sleep 30
+          done
+          echo "not merged within the wait; the coordinator's landing watch reports it"
+          exit 1

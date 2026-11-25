@@ -17,7 +17,7 @@
 
 - Exactly one updater run holds the local lock ([update.go: `lock`](update.go)).
 - A release requires a signed `SHA256SUMS`, a matching artifact digest, the requested version in `release.json`, and successful binary selftests before installation ([update.go: `fetch`](update.go)).
-- Before switching executors, [`harnesses.go`](harnesses.go) installs pinned CLI payloads after digest verification and keeps the current and previous releases' payloads for rollback.
+- Before switching executors, [`harnesses.go`](harnesses.go) installs pinned CLI payloads after digest verification, runs each new CLI's `--version` (a CLI that does not start or names another version refuses the release), and keeps the current and previous releases' payloads for rollback.
 - Archive extraction permits only local regular-file and directory entries. Installed files become read-only, and release links are changed through temporary symlinks ([update.go: `unpack`, `install`, `relink`](update.go)).
 - A release must become healthy after restart; after three unhealthy starts the updater restores `previous`, records the refusal, and retains the pre-deploy database dump where applicable ([update.go: `settle`, `pruneDumps`](update.go)).
 - After installing a coordinator or UI release and before its restart, the app's source maps go to Bugsink when `/etc/fleet/bugsink/` holds `ci-token` and `ingest-url` (PDS18); a failed upload is only a warning ([sourcemaps.go: `uploadSourcemaps`](sourcemaps.go), [error tracking](../../docs/designs/fleet-error-tracking.md#6-source-maps)).
