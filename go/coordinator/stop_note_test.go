@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // Risk: a stopped request stays in the native session unanswered, and the next turn resumes it and does it anyway
@@ -43,7 +44,7 @@ func TestNextTurnSeesStoppedRequest(t *testing.T) {
 		put(q, "e2", "cancelled", true, "", "Перечисли все завершённые задачи за ноябрь")
 		put(q, "e3", "preparing", false, "", "Что в Needs you?")
 		got := note(q, "e3")
-		if !strings.HasPrefix(got, "[Fleet: the person stopped the previous request") || !strings.Contains(got, "Перечисли все завершённые задачи за ноябрь") ||
+		if !strings.HasPrefix(got, "[Fleet: the previous request was stopped") || !strings.Contains(got, "Перечисли все завершённые задачи за ноябрь") ||
 			!strings.HasSuffix(got, "\n\nЧто в Needs you?") {
 			t.Fatalf("the turn after a stop names the stopped request first, got %q", got)
 		}
@@ -60,6 +61,51 @@ func TestNextTurnSeesStoppedRequest(t *testing.T) {
 		put(q, "e8", "preparing", false, "task:t1", "снова t1")
 		if got := note(q, "e8"); !strings.Contains(got, "работа t1") {
 			t.Fatalf("the thread's own next turn sees its stop, got %q", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Risk: a steer the stopped run never took is requeued and runs as the next turn, so the stopped request comes back.
+func TestStopCancelsUntakenSteer(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		s := agentSession{ID: "steer-session", AgentConfig: []byte(`{"harness":"codex"}`)}
+		if err := sessionPut(q, &s); err != nil {
+			return err
+		}
+		for _, stopped := range []bool{true, false} {
+			id := "run-" + map[bool]string{true: "stopped", false: "ended"}[stopped]
+			x := agentExecution{ID: id, ExecutionID: id, SessionID: s.ID, State: "cancelled", CreatedAt: nowMs()}
+			if stopped {
+				x.StopRequested = ptr(true)
+			} else {
+				x.State = "succeeded"
+			}
+			if err := executionPut(q, &x); err != nil {
+				return err
+			}
+			c := agentCommand{ID: "steer-" + id, ExecutionID: id, SessionID: s.ID, Kind: "steer", Payload: []byte(`{}`), Status: "failed"}
+			if err := commandPut(q, &c); err != nil {
+				return err
+			}
+			m := agentQueued{ID: "q-" + id, SessionID: s.ID, RequestID: "r-" + id, Text: "и ещё", State: "steering", SteerCommandID: c.ID, ExecutionID: id, CreatedAt: nowMs()}
+			if err := queuedMessagePut(q, &m); err != nil {
+				return err
+			}
+			if err := agentCommandReceipt(q, &c, &x, "failed"); err != nil {
+				return err
+			}
+			got, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &s.ID, RequestID: &m.RequestID})
+			if err != nil {
+				return err
+			}
+			want := map[bool]string{true: "cancelled", false: "queued"}[stopped]
+			if len(got) != 1 || got[0].State != want {
+				t.Fatalf("stopped=%v: steer state %+v, want %s", stopped, got, want)
+			}
 		}
 		return nil
 	}); err != nil {
