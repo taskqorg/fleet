@@ -1,23 +1,55 @@
 // The Go coordinator under test (go/bin/fleet-coordinator, or FLEET_TRIAL_SERVER): a fresh Postgres database with the PDS18
-// roles on one shared local server (tests/go/run-files.ts gives each of its parallel slots a server of its own), the
-// binary started against it on a free port. Used by tests/trial/run.ts and the app checks in tests/ui. Node standard library and the PostgreSQL client programs only; seed data goes in through sql().
+// roles on the machine's one test PostgreSQL, which the Go tests share (docs/designs/fleet-host-cleanup.md#8-test-postgresql;
+// tests/go/run-files.ts gives each parallel file its own database on it), the binary started against it on a free port.
+// Used by tests/trial/run.ts and the app checks in tests/ui. Node standard library and the PostgreSQL client programs only;
+// seed data goes in through sql().
 //
-// Environment (all optional): FLEET_TRIAL_SERVER (shell command, default go/bin/fleet-coordinator), FLEET_TRIAL_PGDATA
-// (default ~/.cache/fleet-trial/pg; created with initdb and started on first use), FLEET_TRIAL_PGPORT (default 54329).
+// Environment (all optional): FLEET_TRIAL_SERVER (shell command, default go/bin/fleet-coordinator), FLEET_TEST_PGDATA
+// (default ~/.cache/fleet-test/pg; created with initdb and started on first use, left running), FLEET_TEST_PGPORT (default
+// 54339). FLEET_TRIAL_PGDATA and FLEET_TRIAL_PGPORT, the older names, override them for one run (tests/performance/interface.ts
+// runs its own server); both pairs are set to the values in use, for tests and their children that read them.
 import {execFileSync, spawn} from 'node:child_process';
 import {createHash, randomBytes} from 'node:crypto';
-import {copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {homedir, tmpdir} from 'node:os';
-import {basename, join} from 'node:path';
+import {basename, dirname, join} from 'node:path';
 
 export const root = new URL('../', import.meta.url).pathname;
-export const pgdata = process.env.FLEET_TRIAL_PGDATA || join(homedir(), '.cache/fleet-trial/pg');
-export const pgport = process.env.FLEET_TRIAL_PGPORT || '54329';
+export const pgdata = process.env.FLEET_TRIAL_PGDATA || process.env.FLEET_TEST_PGDATA || join(homedir(), '.cache/fleet-test/pg');
+export const pgport = process.env.FLEET_TRIAL_PGPORT || process.env.FLEET_TEST_PGPORT || '54339';
+Object.assign(process.env, {FLEET_TEST_PGDATA: pgdata, FLEET_TEST_PGPORT: pgport, FLEET_TRIAL_PGDATA: pgdata, FLEET_TRIAL_PGPORT: pgport});
 const pgArgs = ['-h', pgdata, '-p', pgport, '-U', 'postgres'];
 // The PostgreSQL programs get a UTF-8 locale: initdb refuses a missing one ("invalid locale settings"), the macOS default without LANG.
 const sh = (cmd: string, args: string[], input?: string) => execFileSync(cmd, args, {input, encoding: 'utf8', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: {...process.env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8'}});
 const ready = () => { try { sh('pg_isready', pgArgs); return true; } catch { return false; } };
+// startPostgres: the server ready, as the Go tests' startTestCluster (go/coordinator/pg_fixture_test.go) does it, with the
+// same options. Durability is off (testPGConf), written at initdb, so a server in another directory (such as
+// tests/performance/interface.ts's) keeps its own settings. initdb runs only without PG_VERSION, into a private directory
+// renamed into place: of two racing starters the loser uses the winner's. pg_ctl start runs only when the server does not
+// answer, and a lost start race waits for the winner's server. The server runs without the executor's run marker
+// (FLEET_EXECUTION_ID): it outlives the run that started it.
+// ponytail: max_connections 400 fits about 4 worktrees' coordinators and Go test processes at once; raise it for more.
+const testPGConf = '\nfsync = off\nsynchronous_commit = off\nfull_page_writes = off\n';
+function startPostgres() {
+  if (ready()) return;
+  if (!existsSync(join(pgdata, 'PG_VERSION'))) {
+    mkdirSync(dirname(pgdata), {recursive: true});
+    const tmp = `${pgdata}.init-${process.pid}`;
+    rmSync(tmp, {recursive: true, force: true});
+    sh('initdb', ['-D', tmp, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions', '--no-sync']);
+    appendFileSync(join(tmp, 'postgresql.auto.conf'), testPGConf);
+    try { renameSync(tmp, pgdata); } catch (e) { rmSync(tmp, {recursive: true, force: true}); if (!existsSync(join(pgdata, 'PG_VERSION'))) throw e; }
+  }
+  const {FLEET_EXECUTION_ID: _, ...env} = process.env;
+  try {
+    execFileSync('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-t', '60', '-o', `-k ${pgdata} -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start'],
+      {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: {...env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8'}});
+  } catch (e) {
+    for (const until = Date.now() + 60_000; Date.now() < until; execFileSync('sleep', ['0.2'])) if (ready()) return;
+    throw e;
+  }
+}
 export const freePort = () => new Promise<number>(r => { const s = createServer().listen(0, '127.0.0.1', () => { const p = (s.address() as any).port; s.close(() => r(p)); }); });
 
 // testConfig: the shipped config/ (but its Lab assets, read from config/lab) plus the fixture projects of
@@ -37,13 +69,12 @@ export type Coordinator = {base: string, secret: string, pid: number, sql: (text
 
 // name: a database name suffix, so parallel users in one worktree do not share a database.
 export async function startCoordinator(o: {name?: string, env?: Record<string, string>, people?: string} = {}): Promise<Coordinator> {
-  if (!ready()) {
-    if (!existsSync(join(pgdata, 'PG_VERSION'))) { mkdirSync(pgdata, {recursive: true}); sh('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions']); }
-    // ponytail: max_connections 400 fits N=4 worktrees with one pool each; raise it for more parallel worktrees.
-    sh('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-o', `-k ${pgdata} -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start']);
-  }
+  startPostgres();
   // deploy/infrastructure/fleet-postgres.sql itself, with only the database name changed (roles are per server).
-  const db = 'fleet_trial_' + basename(root.replace(/\/$/, '')).replace(/\W/g, '_').toLowerCase().slice(0, 24) + '_' + createHash('sha256').update(root + (o.name ?? '')).digest('hex').slice(0, 6) + (o.name ? '_' + o.name.replace(/\W/g, '_').slice(0, 10) : '');
+  // scope: the file's run (FLEET_TRIAL_NAME, tests/go/run-files.ts), so files run at once on the one server never share a
+  // database, also for their unnamed or same-named coordinators.
+  const scope = process.env.FLEET_TRIAL_NAME ? process.env.FLEET_TRIAL_NAME + '/' : '';
+  const db = 'fleet_trial_' + basename(root.replace(/\/$/, '')).replace(/\W/g, '_').toLowerCase().slice(0, 24) + '_' + createHash('sha256').update(root + scope + (o.name ?? '')).digest('hex').slice(0, 6) + (o.name ? '_' + o.name.replace(/\W/g, '_').slice(0, 10) : '');
   const psql = (args: string[], input?: string) => sh('psql', [...pgArgs, '-v', 'ON_ERROR_STOP=1', '-q', ...args], input);
   const dropDb = () => psql(['-d', 'postgres', '-c', `DROP DATABASE IF EXISTS ${db} WITH (FORCE)`]);
   dropDb();

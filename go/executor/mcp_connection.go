@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/errtrack"
 	"fleet/mcpserve"
 )
 
@@ -270,6 +271,7 @@ func callText(line contract.CallLine) (string, bool) {
 }
 
 func connectionMCP(connection string, specValue any, in io.Reader, w io.Writer) error {
+	exitWithOwner()
 	spec := typed[connectionSpec](specValue)
 	connectionLimits[connection] = spec.Limits.V
 	byName, listed := map[string]any{}, []any{}
@@ -383,4 +385,22 @@ func connectionCommand(args []string, stdin io.Reader, stdout io.Writer) (bool, 
 	line := connectionCall(connection, tool, arguments)
 	fmt.Fprintln(stdout, enc(line))
 	return line.Outcome == contract.CallOutcomeOk, nil
+}
+
+// exitWithOwner: a connection server outlives nothing it serves. Once a minute it exits when its parent changed (the
+// harness that started it is gone and it was reparented) or its executable was removed (its release was replaced)
+// (docs/designs/fleet-host-cleanup.md#4-mcp-connection-lifetime).
+func exitWithOwner() {
+	parent, path := os.Getppid(), exe()
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real // through releases/current: the release this server runs from
+	}
+	errtrack.Go("connection.owner", func() {
+		for {
+			time.Sleep(time.Minute)
+			if _, err := os.Stat(path); os.Getppid() != parent || err != nil {
+				os.Exit(0)
+			}
+		}
+	})
 }

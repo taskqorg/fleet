@@ -6,9 +6,10 @@
 //
 // Environment (all optional):
 //   FLEET_TRIAL_SERVER   shell command that starts the coordinator; default go/bin/fleet-coordinator (tests/harness.ts).
-//   FLEET_TRIAL_PGDATA   data directory of the shared local server; default ~/.cache/fleet-trial/pg. Created with initdb
-//                        (trust authentication, Unix socket only) and started on first use; left running for other worktrees.
-//   FLEET_TRIAL_PGPORT   its port number on the socket; default 54329.
+//   FLEET_TEST_PGDATA    data directory of the machine's one test server, shared with the Go tests; default
+//                        ~/.cache/fleet-test/pg. Created with initdb (trust authentication, Unix socket only) and started on
+//                        first use; left running for other worktrees. FLEET_TRIAL_PGDATA, the older name, overrides it.
+//   FLEET_TEST_PGPORT    its port number on the socket; default 54339 (FLEET_TRIAL_PGPORT overrides it).
 //   FLEET_TRIAL_TESTS    test files; default tests/trial/*.test.ts.
 //   FLEET_TRIAL_NAME     database name suffix (startCoordinator name); default none, one database per checkout.
 // Prints one line `trial-run setup_ms=… tests_ms=… teardown_ms=… total_ms=… server_peak_rss_kb=… result=pass|fail`;

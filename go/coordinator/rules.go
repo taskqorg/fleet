@@ -30,6 +30,7 @@ var (
 	ruleSpikeWindow     = 5 * time.Minute
 	ruleSaturationBeats = 5
 	ruleMemFreeShare    = 0.05
+	ruleSwapUsedShare   = 0.8
 	telemetryStale      = 3 * time.Minute
 	ruleDroppedFor      = 10 * time.Minute
 	problemCleanRuns    = 2 // problems.cleanRuns
@@ -230,30 +231,50 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 		text(&f, fmt.Sprintf("%s %s%s: %d of %d calls failed in the last %d minutes.", s.Service, name, where, s.Errors, s.Calls, int(ruleSpikeWindow.Minutes())))
 		out = append(out, f)
 	}
-	// host-saturation: the last ruleSaturationBeats heartbeats all have load1 above the CPU count or memory free below
-	// ruleMemFreeShare of the total.
+	// host-saturation: the last ruleSaturationBeats heartbeats all have load1 above the CPU count, swap use above
+	// ruleSwapUsedShare of swap total, or memory free below ruleMemFreeShare of the total
+	// (docs/designs/fleet-host-cleanup.md#6-host-saturation). The text names the latest beat's swap and its top three
+	// consumers (fleet.top), as hostOverloadReason does for dispatch.
 	var sat []struct {
-		HostID   string
-		Beats    uint64
-		Hot      uint64
-		MaxLoad  float64
-		Exemplar string
+		HostID              string
+		Beats               uint64
+		Hot                 uint64
+		MaxLoad             float64
+		Exemplar            string
+		SwapUsed, SwapTotal float64
+		Top                 string
 	}
 	if err := spanStore.Query(ctx, `SELECT host_id AS HostID, count() AS Beats,
-	countIf(load1 > toFloat64OrZero(attrs['fleet.cpus']) OR mem_free < {m:Float64} * toFloat64OrZero(attrs['fleet.mem_total'])) AS Hot,
-	max(ifNull(load1, 0)) AS MaxLoad, any(trace_id) AS Exemplar
+	countIf(load1 > toFloat64OrZero(attrs['fleet.cpus']) OR mem_free < {m:Float64} * toFloat64OrZero(attrs['fleet.mem_total'])
+		OR toFloat64OrZero(attrs['fleet.swap_used']) > {s:Float64} * toFloat64OrZero(attrs['fleet.swap_total']) AND toFloat64OrZero(attrs['fleet.swap_total']) > 0) AS Hot,
+	max(ifNull(load1, 0)) AS MaxLoad, any(trace_id) AS Exemplar,
+	argMax(toFloat64OrZero(attrs['fleet.swap_used']), start) AS SwapUsed, argMax(toFloat64OrZero(attrs['fleet.swap_total']), start) AS SwapTotal,
+	argMax(attrs['fleet.top'], start) AS Top
 	FROM (SELECT * FROM span WHERE name = 'host.heartbeat' AND start >= now64() - toIntervalMinute(30) ORDER BY start DESC LIMIT {b:UInt32} BY host_id)
-	GROUP BY host_id`, map[string]string{"m": strconv.FormatFloat(ruleMemFreeShare, 'f', -1, 64), "b": strconv.Itoa(ruleSaturationBeats)}, &sat); err != nil {
+	GROUP BY host_id`, map[string]string{"m": strconv.FormatFloat(ruleMemFreeShare, 'f', -1, 64), "s": strconv.FormatFloat(ruleSwapUsedShare, 'f', -1, 64), "b": strconv.Itoa(ruleSaturationBeats)}, &sat); err != nil {
 		return nil, err
 	}
 	for _, s := range sat {
 		if s.Beats >= uint64(ruleSaturationBeats) && s.Hot == s.Beats {
 			f := contract.Finding{Rule: "host-saturation", Subject: s.HostID, Value: s.MaxLoad, Cause: "problem:host:" + s.HostID + ":saturated", HostId: ptr(s.HostID), Exemplars: []string{s.Exemplar}}
-			text(&f, fmt.Sprintf("Host %s is saturated: CPU load above its cores or memory below %d%% for %d heartbeats.", s.HostID, int(ruleMemFreeShare*100), ruleSaturationBeats))
+			text(&f, saturationText(s.HostID, s.SwapUsed, s.SwapTotal, s.Top))
 			out = append(out, f)
 		}
 	}
 	return out, nil
+}
+
+// saturationText: the host-saturation finding, with swap when above ruleSwapUsedShare and the top three consumers of
+// the heartbeat's fleet.top.
+func saturationText(hostID string, swapUsed, swapTotal float64, top string) string {
+	t := fmt.Sprintf("Host %s is saturated: CPU load above its cores, swap above %d%% or memory below %d%% for %d heartbeats", hostID, int(ruleSwapUsedShare*100), int(ruleMemFreeShare*100), ruleSaturationBeats)
+	if swapTotal > 0 && swapUsed > ruleSwapUsedShare*swapTotal {
+		t += fmt.Sprintf("; swap %s/%s GB", gb(swapUsed), gb(swapTotal))
+	}
+	if c := topConsumers(parseHostTop(top), 3); c != "" {
+		t += "; top: " + c
+	}
+	return t + "."
 }
 
 // stateRules: rules over Postgres state (store-fill, absence-store, stuck, unknown) and the host filter of the span rules.

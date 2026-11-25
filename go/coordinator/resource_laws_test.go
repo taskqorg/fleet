@@ -74,27 +74,28 @@ var lawTemplate struct {
 	port      int
 }
 
-// lawTemplateDB migrates one database per test process; every seed clones it.
+// lawTemplateDB: one database per test process, a copy of the migrated test template plus the law fixture; every seed
+// clones it. TestMain drops it.
 func lawTemplateDB(t *testing.T) string {
 	t.Helper()
 	sock, port, bin := ensureTestPostgres(t)
+	base := testTemplateDB(t)
 	lawTemplate.once.Do(func() {
 		lawTemplate.sock, lawTemplate.port, lawTemplate.bin = sock, port, bin
 		name := fmt.Sprintf("fleet_law_tmpl_%d", os.Getpid())
-		raw, err := os.ReadFile("../../deploy/infrastructure/fleet-postgres.sql")
+		ctx := context.Background()
+		admin, err := pgx.Connect(ctx, lawURL("postgres", "postgres"))
 		if err != nil {
 			lawTemplate.err = err.Error()
 			return
 		}
-		runTestPSQL(t, bin, sock, port, "postgres", "postgres", strings.NewReplacer("DATABASE fleet", "DATABASE "+name,
-			"datname = 'fleet'", "datname = '"+name+"'", "\\connect fleet", "\\connect "+name).Replace(string(raw)))
-		ctx := context.Background()
-		url := lawURL("fleet", name)
-		if err := migrate(ctx, url); err != nil {
-			lawTemplate.err = "migrate: " + err.Error()
+		defer admin.Close(ctx)
+		if _, err := admin.Exec(ctx, `CREATE DATABASE `+name+` TEMPLATE `+base+` OWNER fleet STRATEGY FILE_COPY`); err != nil {
+			lawTemplate.err = err.Error()
 			return
 		}
-		conn, err := pgx.Connect(ctx, url)
+		lawTemplate.name = name // from here on TestMain drops it
+		conn, err := pgx.Connect(ctx, lawURL("fleet", name))
 		if err != nil {
 			lawTemplate.err = err.Error()
 			return
@@ -104,7 +105,6 @@ func lawTemplateDB(t *testing.T) string {
 			lawTemplate.err = "law fixture: " + err.Error()
 			return
 		}
-		lawTemplate.name = name
 	})
 	if lawTemplate.err != "" {
 		t.Fatal(lawTemplate.err)
@@ -1023,6 +1023,7 @@ func TestLawMutants(t *testing.T) {
 		}(i, m)
 	}
 	wg.Wait()
+	sweepTestDBs(t) // a mutant child can die before its cleanups; its databases go with it
 	for _, r := range results {
 		if r != "" {
 			t.Error(r)

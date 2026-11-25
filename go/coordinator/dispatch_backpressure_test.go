@@ -565,3 +565,39 @@ func TestDispatchContinuationStaysOnItsHost(t *testing.T) {
 		t.Fatalf("continuation placed on %v, want its last host %s; route %v", ex["hostId"], mac, dispatchTestRouteDecisions(t, env, eid2))
 	}
 }
+
+// Requirement: docs/designs/fleet-host-cleanup.md#6-host-saturation: swap use above ruleSwapUsedShare of swap total
+// overloads a host whatever its free memory; the reason names swap, free memory and the top three consumers, from a
+// poll's load and from a heartbeat span's fleet.* attributes alike.
+// Risk: a host with full swap keeps taking work, or waits it with a reason that does not say what holds its memory.
+func TestHostOverloadReasonSwapAndTopConsumers(t *testing.T) {
+	const gib = 1 << 30
+	poll := hostLoadFromContract(&contract.HostLoad{Load1: ptr(2.0), Cpus: ptr(int64(8)), MemFree: ptr(0.25 * 32 * gib), MemTotal: ptr(32.0 * gib),
+		SwapUsed: ptr(37.0 * gib), SwapTotal: ptr(38.0 * gib), Top: []contract.HostConsumer{
+			{Pid: 1, Command: "com.apple.Virtualization.VirtualMachine", MemBytes: 20 * gib},
+			{Pid: 2, Command: "postgres", MemBytes: 2 * gib, Fleet: ptr(true)},
+			{Pid: 3, Command: "node", MemBytes: 1 * gib},
+			{Pid: 4, Command: "go", MemBytes: 0.5 * gib},
+		}}, 1000)
+	// Above 80% swap with a quarter of memory free: overloaded.
+	want := "owner-mac is overloaded (swap 37/38 GB, free memory 25%); top: com.apple.Virtualization.VirtualMachine 20 GB, postgres 2 GB (fleet), node 1 GB"
+	if got := hostOverloadReason("owner-mac", poll, 1000); got != want {
+		t.Fatalf("poll reason = %q, want %q", got, want)
+	}
+	span := spanHostLoad(&obs.Span{Start: time.UnixMilli(1000).UTC().Format(obs.TimeFormat), Load1: ptr(2.0), MemFree: ptr(0.25 * 32 * gib), Attrs: map[string]string{
+		"fleet.cpus": "8", "fleet.mem_total": "34359738368", "fleet.swap_used": "39728447488", "fleet.swap_total": "40802189312",
+		"fleet.top": "com.apple.Virtualization.VirtualMachine:20480,postgres:2048*,node:1024,go:512"}}, 1000)
+	if got := hostOverloadReason("owner-mac", span, 1000); got != want {
+		t.Fatalf("span reason = %q, want %q", got, want)
+	}
+	// Swap at 80% is not overload.
+	poll.SwapUsed = ptr(0.8 * 38 * gib)
+	if got := hostOverloadReason("owner-mac", poll, 1000); got != "" {
+		t.Fatalf("swap at 80%%: reason = %q", got)
+	}
+	// Low free memory still decides alone, with the consumers named.
+	poll.MemFree = ptr(0.03 * 32 * gib)
+	if got := hostOverloadReason("owner-mac", poll, 1000); !strings.HasPrefix(got, "owner-mac is overloaded (free memory 3% below 5%); top: ") {
+		t.Fatalf("memory reason = %q", got)
+	}
+}

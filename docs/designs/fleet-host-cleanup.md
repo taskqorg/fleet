@@ -48,18 +48,20 @@ Process ownership has gaps. The executor tracks a run's descendants by parent li
 
 ### 1. Run marker
 
-The executor sets `FLEET_EXECUTION_ID=<execution>` in the environment of every harness and script process it starts. Children inherit it, including those that double-fork or call `setsid`.
+The executor sets `FLEET_EXECUTION_ID=<execution>` and `FLEET_EXECUTION_OWNER=<its data directory>` in the environment of every harness and script process it starts. The owner part keeps one executor (a test executor inside a run, say) from killing another executor's runs. Children inherit it, including those that double-fork or call `setsid`.
 
-A cleanup pass lists the processes of the executor's user and reads each one's environment: `/proc/<pid>/environ` on Linux, `sysctl kern.procargs2` on macOS. A process whose marker names an execution that is not live and has no journaled launch is frozen and killed. The pass runs:
+A cleanup pass lists the processes of the executor's user and reads each one's environment: `/proc/<pid>/environ` on Linux, `sysctl kern.procargs2` on macOS. A process whose marker names this executor and an execution that is not live and has no journaled launch is frozen and killed. The pass runs:
 
 *   at the end of each run, after the existing owned-tree cleanup (`live.cleanup`);
 *   at executor start, after `reconcileProcesses`.
+
+macOS hides the environment of Apple's own programs (`sleep`, `tail`, `perl`) from `kern.procargs2`, so on macOS those are found only through the owned tree and the process group; every other program (Homebrew, Node, Go, PostgreSQL, Docker CLI) carries a readable marker. Linux reads every process of the executor's user.
 
 The count killed for one run goes into that run's execution span as `attrs['fleet.orphans']`, which the coordinator already reads.
 
 ### 2. Run temporary directory
 
-Each run gets `TMPDIR=<session dir>/tmp-<execution>`, mode 0700, created before spawn. The executor removes the directory when it releases the run. Codex's workspace-write sandbox already allows `$TMPDIR`.
+Each run gets `TMPDIR=<executor data dir>/run-tmp/<execution>`, mode 0700, created before spawn. The executor removes the directory at run end, and at start removes every such directory of a run that is not unresolved. Codex's workspace-write sandbox already allows `$TMPDIR`.
 
 ### 3. `/tmp` sweep on a dedicated user
 
@@ -86,7 +88,7 @@ The poll's `load` and the `host.heartbeat` span carry the same readings. The hea
 
 ### 6. `host-saturation`
 
-The existing rule, and `hostOverloadReason` in dispatch placement, also fire when swap use is above `ruleSwapUsedShare` (default 0.5) of swap total and free memory is below `ruleMemFreeShare`. The finding's subject stays the host. Its text names the top three consumers, for example `owner-mac: swap 37/38 GB; top: com.apple.Virtualization.VirtualMachine 20 GB, postgres 2 GB (fleet), ...`. No new rule is added.
+The existing rule, and `hostOverloadReason` in dispatch placement, also fire when swap use is above `ruleSwapUsedShare` (default 0.8) of swap total. The finding's subject stays the host. Its text names the top three consumers, for example `owner-mac: swap 37/38 GB; top: com.apple.Virtualization.VirtualMachine 20 GB, postgres 2 GB (fleet), ...`. No new rule is added.
 
 ### 7. Cleanup ledger
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"regexp"
 	"sort"
@@ -33,12 +34,18 @@ const (
 )
 
 type hostLoadObservation struct {
-	Load1     *float64 `json:"load1,omitempty"`
-	Cpus      *int64   `json:"cpus,omitempty"`
-	MemFree   *float64 `json:"memFree,omitempty"`
-	MemTotal  *float64 `json:"memTotal,omitempty"`
-	DiskFree  *float64 `json:"diskFree,omitempty"` // heartbeat spans only; a poll's load keeps the last one
-	UpdatedAt int64    `json:"updatedAt,omitempty"`
+	Load1         *float64                `json:"load1,omitempty"`
+	Cpus          *int64                  `json:"cpus,omitempty"`
+	MemFree       *float64                `json:"memFree,omitempty"`
+	MemTotal      *float64                `json:"memTotal,omitempty"`
+	SwapUsed      *float64                `json:"swapUsed,omitempty"`
+	SwapTotal     *float64                `json:"swapTotal,omitempty"`
+	MemCompressed *float64                `json:"memCompressed,omitempty"`
+	TmpUsed       *float64                `json:"tmpUsed,omitempty"`
+	TmpTotal      *float64                `json:"tmpTotal,omitempty"`
+	Top           []contract.HostConsumer `json:"top,omitempty"`      // largest first; from a heartbeat span: pid 0
+	DiskFree      *float64                `json:"diskFree,omitempty"` // heartbeat spans only; a poll's load keeps the last one
+	UpdatedAt     int64                   `json:"updatedAt,omitempty"`
 }
 
 func hostLoadFromContract(l *contract.HostLoad, now int64) *hostLoadObservation {
@@ -46,14 +53,24 @@ func hostLoadFromContract(l *contract.HostLoad, now int64) *hostLoadObservation 
 		return nil
 	}
 	return &hostLoadObservation{
-		Load1:     l.Load1,
-		Cpus:      l.Cpus,
-		MemFree:   l.MemFree,
-		MemTotal:  l.MemTotal,
-		UpdatedAt: now,
+		Load1:         l.Load1,
+		Cpus:          l.Cpus,
+		MemFree:       l.MemFree,
+		MemTotal:      l.MemTotal,
+		SwapUsed:      l.SwapUsed,
+		SwapTotal:     l.SwapTotal,
+		MemCompressed: l.MemCompressed,
+		TmpUsed:       l.TmpUsed,
+		TmpTotal:      l.TmpTotal,
+		Top:           l.Top,
+		UpdatedAt:     now,
 	}
 }
 
+// hostOverloadReason: why dispatch places no new run on the host, or "" (rules.go host-saturation is the same test
+// over heartbeat spans): load above the CPU count, swap use above ruleSwapUsedShare of swap total, or free memory below
+// ruleMemFreeShare (docs/designs/fleet-host-cleanup.md#6-host-saturation). The reason names the top three memory
+// consumers when the host reports them.
 func hostOverloadReason(hostID string, load *hostLoadObservation, now int64) string {
 	if load == nil {
 		return ""
@@ -61,13 +78,76 @@ func hostOverloadReason(hostID string, load *hostLoadObservation, now int64) str
 	if load.UpdatedAt > 0 && now-load.UpdatedAt >= hostLoadStaleMs {
 		return ""
 	}
-	if load.Cpus != nil && *load.Cpus > 0 && load.Load1 != nil && *load.Load1 > float64(*load.Cpus) {
-		return fmt.Sprintf("%s is overloaded (load %.2f on %d cores)", hostID, *load.Load1, *load.Cpus)
+	memKnown := load.MemTotal != nil && *load.MemTotal > 0 && load.MemFree != nil
+	var why string
+	switch {
+	case load.Cpus != nil && *load.Cpus > 0 && load.Load1 != nil && *load.Load1 > float64(*load.Cpus):
+		why = fmt.Sprintf("load %.2f on %d cores", *load.Load1, *load.Cpus)
+	case load.SwapTotal != nil && *load.SwapTotal > 0 && load.SwapUsed != nil && *load.SwapUsed > ruleSwapUsedShare*(*load.SwapTotal):
+		why = fmt.Sprintf("swap %s/%s GB", gb(*load.SwapUsed), gb(*load.SwapTotal))
+		if memKnown {
+			why += fmt.Sprintf(", free memory %.0f%%", 100*(*load.MemFree)/(*load.MemTotal))
+		}
+	case memKnown && *load.MemFree < ruleMemFreeShare*(*load.MemTotal):
+		why = fmt.Sprintf("free memory %.0f%% below %.0f%%", 100*(*load.MemFree)/(*load.MemTotal), 100*ruleMemFreeShare)
+	default:
+		return ""
 	}
-	if load.MemTotal != nil && *load.MemTotal > 0 && load.MemFree != nil && *load.MemFree < ruleMemFreeShare*(*load.MemTotal) {
-		return fmt.Sprintf("%s is overloaded (free memory %.0f%% below %.0f%%)", hostID, 100*(*load.MemFree)/(*load.MemTotal), 100*ruleMemFreeShare)
+	reason := fmt.Sprintf("%s is overloaded (%s)", hostID, why)
+	if top := topConsumers(load.Top, 3); top != "" {
+		reason += "; top: " + top
 	}
-	return ""
+	return reason
+}
+
+// gb: bytes as whole gigabytes (GiB), at least one decimal below 10 GB so small hosts do not read 0.
+func gb(b float64) string {
+	g := b / (1 << 30)
+	if g < 10 {
+		return strconv.FormatFloat(math.Round(g*10)/10, 'f', -1, 64)
+	}
+	return strconv.FormatFloat(math.Round(g), 'f', 0, 64)
+}
+
+// topConsumers: the first n consumers as "command 20 GB, postgres 2 GB (fleet)"; the executor sends them largest first.
+func topConsumers(top []contract.HostConsumer, n int) string {
+	parts := make([]string, 0, n)
+	for _, c := range top {
+		if len(parts) == n {
+			break
+		}
+		p := c.Command + " " + gb(c.MemBytes) + " GB"
+		if c.Fleet != nil && *c.Fleet {
+			p += " (fleet)"
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// parseHostTop: the heartbeat's fleet.top attribute ("command:MB,...", a trailing * marks a Fleet process) as
+// consumers with pid 0; entries that do not parse are skipped.
+func parseHostTop(raw string) []contract.HostConsumer {
+	var out []contract.HostConsumer
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.TrimSpace(e)
+		fleet := strings.HasSuffix(e, "*")
+		e = strings.TrimSuffix(e, "*")
+		i := strings.LastIndexByte(e, ':')
+		if i <= 0 {
+			continue
+		}
+		mb, err := strconv.ParseFloat(e[i+1:], 64)
+		if err != nil || mb < 0 {
+			continue
+		}
+		c := contract.HostConsumer{Command: e[:i], MemBytes: mb * (1 << 20)}
+		if fleet {
+			c.Fleet = ptr(true)
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 type hostHeartbeat struct {
@@ -1105,15 +1185,15 @@ func (a *App) hostMayRun(h hostRecord, projectID any, director any) bool {
 
 // hostPollObservationPayload holds the payload fields of a host observation (host_observation.payload).
 type hostPollObservationPayload struct {
-	Platform        string                     `json:"platform,omitempty"`
+	Platform         string                     `json:"platform,omitempty"`
 	Capabilities     *[]string                  `json:"capabilities,omitempty"`
 	HarnessVersions  *[]contract.HarnessVersion `json:"harnessVersions,omitempty"`
 	GitConnections   *[]string                  `json:"gitConnections,omitempty"`
 	ProjectRoots     *[]string                  `json:"projectRoots,omitempty"`
 	ActiveExecutions *[]string                  `json:"activeExecutions,omitempty"`
-	Version         *string                    `json:"version,omitempty"`
-	Problems        []hostProblem              `json:"problems,omitempty"`
-	Update          any                        `json:"update,omitempty"`
+	Version          *string                    `json:"version,omitempty"`
+	Problems         []hostProblem              `json:"problems,omitempty"`
+	Update           any                        `json:"update,omitempty"`
 	Stores           any                        `json:"stores"`
 	Load             *hostLoadObservation       `json:"load,omitempty"`
 	PollError        json.RawMessage            `json:"pollError,omitempty"`

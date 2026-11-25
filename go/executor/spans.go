@@ -159,6 +159,17 @@ func heartbeat(root string, prev map[int]float64) {
 	} else {
 		hb.Set("missing.mem_free", "unreadable")
 	}
+	var pressure contract.HostLoad
+	hostPressure(&pressure)
+	for k, v := range map[string]*float64{"fleet.swap_used": pressure.SwapUsed, "fleet.swap_total": pressure.SwapTotal,
+		"fleet.mem_compressed": pressure.MemCompressed, "fleet.tmp_used": pressure.TmpUsed, "fleet.tmp_total": pressure.TmpTotal} {
+		if v != nil {
+			hb.Set(k, strconv.FormatFloat(*v, 'f', 0, 64))
+		}
+	}
+	if len(pressure.Top) > 0 {
+		hb.Set("fleet.top", topAttr(pressure.Top))
+	}
 	var st unix.Statfs_t
 	if unix.Statfs(root, &st) == nil {
 		d := float64(st.Bavail) * float64(st.Bsize)
@@ -254,5 +265,6 @@ func executionSpan(execution string, l *live) {
 	case l.state() == nil || !l.state().Success() || l.cleanupUnknown:
 		s.Fail("internal")
 	}
+	s.Set("fleet.orphans", strconv.Itoa(l.orphans))
 	s.End(nil)
 }

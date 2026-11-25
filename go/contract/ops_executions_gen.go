@@ -1249,16 +1249,27 @@ func (v *HostHarnessVersion) Validate() error {
 
 // HostLoadReading: The host's latest load reading from its polls and heartbeat spans; only while the host polls and the reading is under 2 minutes old.
 type HostLoadReading struct {
-	At       float64  `json:"at"`
-	Cpus     *int64   `json:"cpus,omitempty"`
-	DiskFree *float64 `json:"diskFree,omitempty"`
-	Load1    *float64 `json:"load1,omitempty"`
-	MemFree  *float64 `json:"memFree,omitempty"`
-	MemTotal *float64 `json:"memTotal,omitempty"`
+	At            float64        `json:"at"`
+	Cpus          *int64         `json:"cpus,omitempty"`
+	DiskFree      *float64       `json:"diskFree,omitempty"`
+	Load1         *float64       `json:"load1,omitempty"`
+	MemCompressed *float64       `json:"memCompressed,omitempty"`
+	MemFree       *float64       `json:"memFree,omitempty"`
+	MemTotal      *float64       `json:"memTotal,omitempty"`
+	SwapTotal     *float64       `json:"swapTotal,omitempty"`
+	SwapUsed      *float64       `json:"swapUsed,omitempty"`
+	TmpTotal      *float64       `json:"tmpTotal,omitempty"`
+	TmpUsed       *float64       `json:"tmpUsed,omitempty"`
+	Top           []HostConsumer `json:"top,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostLoadReading) Validate() error {
+	for i := range v.Top {
+		if err := Check(&v.Top[i], "top"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
