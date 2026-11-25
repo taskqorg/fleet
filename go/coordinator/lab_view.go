@@ -1,0 +1,32 @@
+package main
+
+// Lab view (lab_view, docs/design-system/pages/laboratory.md, docs/designs/fleet-data-layer.md): the Lab screen in one
+// read: the experiments, the use-case registry, the open rating questions and the last 30 days' leaderboard the idle
+// screen and the tree's best scores show. An opened use case or suite reads its own lab_leaderboard.
+
+import "fleet/contract"
+
+func init() {
+	op("lab_view", labView)
+}
+
+func labView(q *Request, _ *contract.LabViewRequest) (contract.LabViewReply, error) {
+	var out contract.LabViewReply
+	exps, err := labExperimentsList(q, nil)
+	if err != nil {
+		return out, err
+	}
+	out.Experiments = exps.Experiments
+	reg, err := labRegistry()
+	if err != nil {
+		return out, err
+	}
+	out.UseCases = reg.UseCases
+	ratings, err := labRatings(q, nil, ptr("open"))
+	if err != nil {
+		return out, err
+	}
+	out.Ratings = ratings.Ratings
+	out.Leaderboard, err = labLeaderboard(q, &contract.LabLeaderboardRequest{Days: ptr(int64(30))})
+	return out, err
+}

@@ -16,7 +16,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type OpName, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
-import { useOp } from '../store.ts';
+import { useOp, useView } from '../store.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, setListGroups, usePins, useViews } from '../prefs.ts';
 import { LabCreate } from './lab-create.tsx';
@@ -136,9 +136,18 @@ export function Lab(props: { id?: string }) {
   const views = useViews('lab', LAB_VIEWS);
 
   const me = useOp('me', {});
-  const experiments = useOp('lab_experiments_list', {});
-  const registry = useOp('lab_registry', {});
-  const ratings = useOp('lab_ratings_list', { state: 'open' });
+  // One read for the screen (lab_view, docs/designs/fleet-data-layer.md): experiments, registry, open ratings and the
+  // last 30 days' leaderboard; an opened use case or suite reads its own leaderboard.
+  const view = useView('lab_view', {}, { quiet: 2000 });
+  const part = <T,>(of: (d: NonNullable<typeof view.data>) => T) => ({
+    get data() { return view.data ? of(view.data) : null; },
+    get error() { return view.error; },
+    get state() { return view.state; },
+    reload: () => view.reload(),
+  });
+  const experiments = part(d => ({ experiments: d.experiments }));
+  const registry = part(d => ({ useCases: d.useCases }));
+  const ratings = part(d => ({ ratings: d.ratings }));
 
   const suiteFolderId = createMemo(() => {
     const r = route();
@@ -158,7 +167,12 @@ export function Lab(props: { id?: string }) {
   });
   const leaderboardWindowLabel = createMemo(() => leaderboardReq()?.days === 30 ? 'last 30 days' : 'last 90 days');
 
-  const leaderboard = useOp('lab_leaderboard', () => leaderboardReq());
+  const detailBoard = useOp('lab_leaderboard', () => { const r = leaderboardReq(); return r && !r.days ? r : null; });
+  const leaderboard = {
+    get data() { return leaderboardReq()?.days ? view.data?.leaderboard ?? null : detailBoard.data; },
+    get error() { return leaderboardReq()?.days ? view.error : detailBoard.error; },
+    reload: () => (leaderboardReq()?.days ? view.reload() : detailBoard.reload()),
+  };
   // Approved examples are read only where they show: the open use case (FLT-41: the idle screen no longer counts them).
   const approvedExamples = useOp('lab_examples_list', () => (route().kind === 'use-case' ? { state: 'approved' } : null));
 
@@ -378,7 +392,7 @@ export function Lab(props: { id?: string }) {
     </div>
     <section class="panel">
       <Show when={!initialLoading()} fallback={<Skeleton rows={8} />}>
-        <Show when={!loadError()} fallback={<ErrorBanner text={loadError()!} onRetry={() => { void experiments.reload(); void registry.reload(); }} />}>
+        <Show when={!loadError()} fallback={<ErrorBanner text={loadError()!} onRetry={() => view.reload()} />}>
           <CatalogueTree
             fill
             label="Lab catalogue"
