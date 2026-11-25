@@ -3111,15 +3111,17 @@ func (v *SystemChangeComponentHost) Validate() error {
 }
 
 type SystemChangeDefinition struct {
-	Head    int64           `json:"head"`
-	Id      string          `json:"id"`
-	Kind    DefinitionKind  `json:"kind"`
-	Name    string          `json:"name"`
-	Path    string          `json:"path"`
-	RepoSha *string         `json:"repoSha,omitempty"`
-	Runs30d int64           `json:"runs30d"`
-	State   DefinitionState `json:"state"`
-	Summary *string         `json:"summary,omitempty"`
+	Experiment    *string         `json:"experiment,omitempty"`
+	Head          int64           `json:"head"`
+	Id            string          `json:"id"`
+	Kind          DefinitionKind  `json:"kind"`
+	Name          string          `json:"name"`
+	Path          string          `json:"path"`
+	PublishTaskId *string         `json:"publishTaskId,omitempty"`
+	RepoSha       *string         `json:"repoSha,omitempty"`
+	Runs30d       int64           `json:"runs30d"`
+	State         DefinitionState `json:"state"`
+	Summary       *string         `json:"summary,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

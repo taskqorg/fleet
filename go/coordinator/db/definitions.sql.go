@@ -108,6 +108,32 @@ func (q *Queries) DefDraftPut(ctx context.Context, arg DefDraftPutParams) error 
 	return err
 }
 
+const defExperimentsNaming = `-- name: DefExperimentsNaming :many
+SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL
+ AND jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text)) ORDER BY id
+`
+
+// Live experiments naming the id anywhere in their variants (a Lab variant's experiment).
+func (q *Queries) DefExperimentsNaming(ctx context.Context, id string) ([]string, error) {
+	rows, err := q.db.Query(ctx, defExperimentsNaming, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const defExperimentsUsing = `-- name: DefExperimentsUsing :many
 SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL AND (pipeline_id=$1::text
  OR jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text))
@@ -609,6 +635,65 @@ UPDATE definition SET initial_member_revoked_at=now(), access_version=access_ver
 func (q *Queries) DefProjectRevoke(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, defProjectRevoke, id)
 	return err
+}
+
+const defPublishInsert = `-- name: DefPublishInsert :exec
+INSERT INTO definition_publish(kind, id, revision, task_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING
+`
+
+type DefPublishInsertParams struct {
+	Kind     string
+	ID       string
+	Revision int32
+	TaskID   string
+}
+
+// A revision sent to the repository by a Fleet task (definition_publish).
+func (q *Queries) DefPublishInsert(ctx context.Context, arg DefPublishInsertParams) error {
+	_, err := q.db.Exec(ctx, defPublishInsert,
+		arg.Kind,
+		arg.ID,
+		arg.Revision,
+		arg.TaskID,
+	)
+	return err
+}
+
+const defPublishTasks = `-- name: DefPublishTasks :many
+SELECT DISTINCT ON (kind, id) kind, id, revision, task_id FROM definition_publish ORDER BY kind, id, revision DESC
+`
+
+type DefPublishTasksRow struct {
+	Kind     string
+	ID       string
+	Revision int32
+	TaskID   string
+}
+
+// The latest publish of every definition: its revision and task.
+func (q *Queries) DefPublishTasks(ctx context.Context) ([]DefPublishTasksRow, error) {
+	rows, err := q.db.Query(ctx, defPublishTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DefPublishTasksRow
+	for rows.Next() {
+		var i DefPublishTasksRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Revision,
+			&i.TaskID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const defRecordRepo = `-- name: DefRecordRepo :exec

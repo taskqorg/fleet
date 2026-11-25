@@ -486,6 +486,9 @@ func definitionSave(q *Request, r *contract.DefinitionSaveRequest) (contract.Def
 	if err != nil {
 		return out, err
 	}
+	if err := publishAfterSave(q, contract.DefinitionKey{Kind: r.Kind, Id: r.Id}); err != nil {
+		return out, err
+	}
 	now, err := headOf(q, string(r.Kind), r.Id, false)
 	if err != nil {
 		return out, err

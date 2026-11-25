@@ -320,5 +320,14 @@ func definitionAddSkill(q *Request, r *contract.DefinitionAddSkillRequest) (cont
 			Kind: contract.DefinitionKindAgent, Id: id, Status: contract.BulkOpStatusApplied, Revision: &rev.Revision,
 		})
 	}
-	return out, nil
+	if r.Preview {
+		return out, nil
+	}
+	keys := []contract.DefinitionKey{}
+	for _, it := range out.Items {
+		if it.Status == contract.BulkOpStatusApplied {
+			keys = append(keys, contract.DefinitionKey{Kind: it.Kind, Id: it.Id})
+		}
+	}
+	return out, publishAfterSave(q, keys...)
 }
