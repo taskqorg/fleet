@@ -13,7 +13,7 @@ import (
 )
 
 const telegramAuthorRecentWork = `-- name: TelegramAuthorRecentWork :one
-SELECT u.work_id::text AS work_id FROM telegram_update u JOIN telegram_work w ON w.id = u.work_id
+SELECT u.work_id::text AS work_id, u.received_at FROM telegram_update u JOIN telegram_work w ON w.id = u.work_id
 WHERE u.chat_id = $1 AND u.from_id = $2 AND u.outcome IN ('delivered', 'status') AND w.room_id = $3
   AND w.closed_at IS NULL AND u.received_at > $4::timestamptz AND u.id <> $5
 ORDER BY u.update_id DESC LIMIT 1
@@ -27,9 +27,14 @@ type TelegramAuthorRecentWorkParams struct {
 	ID     string
 }
 
+type TelegramAuthorRecentWorkRow struct {
+	WorkID     string
+	ReceivedAt time.Time
+}
+
 // The work item the author's last routed message in this room went to, within the window: a follow-up of theirs
 // goes there without a model (owner-tester F19). Per author, so two people's threads never mix (pilotq L14).
-func (q *Queries) TelegramAuthorRecentWork(ctx context.Context, arg TelegramAuthorRecentWorkParams) (string, error) {
+func (q *Queries) TelegramAuthorRecentWork(ctx context.Context, arg TelegramAuthorRecentWorkParams) (TelegramAuthorRecentWorkRow, error) {
 	row := q.db.QueryRow(ctx, telegramAuthorRecentWork,
 		arg.ChatID,
 		arg.FromID,
@@ -37,9 +42,9 @@ func (q *Queries) TelegramAuthorRecentWork(ctx context.Context, arg TelegramAuth
 		arg.Since,
 		arg.ID,
 	)
-	var work_id string
-	err := row.Scan(&work_id)
-	return work_id, err
+	var i TelegramAuthorRecentWorkRow
+	err := row.Scan(&i.WorkID, &i.ReceivedAt)
+	return i, err
 }
 
 const telegramDeliveryHealth = `-- name: TelegramDeliveryHealth :one

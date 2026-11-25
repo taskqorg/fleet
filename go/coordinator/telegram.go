@@ -50,6 +50,10 @@ const telegramSendAttempts = 8
 // telegramFollowUp: how long after a person's message their next one counts as its follow-up.
 const telegramFollowUp = 5 * time.Minute
 
+// backReference: words that point back at the last answer ("these", "them", "этих", "его"). Words common in any
+// question ("it", "there", "там") are left out: they would glue a new question to the last work.
+var backReference = regexp.MustCompile(`(^|[^\pL])(эт(от|а|о|и|их|им|ими|ого|ой|ом|у)|он[аи]|его|её|их|ему|ним|нему|them|these|those|that one|this one)([^\pL]|$)`)
+
 // newWorkCue: words that say a message starts different work, so it never counts as a follow-up.
 var newWorkCue = regexp.MustCompile(`^\s*(нов(ая|ое|ый)|друг(ой|ая|ое)|отдельн|ещё одн|еще одн|new\b|another\b|separate|different)`)
 
@@ -667,20 +671,26 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 	if len(open) == 0 {
 		return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{newWork: workTitle(messageText(m))})
 	}
-	// A follow-up shortly after the author's last message goes to that message's work item, without a model, unless
-	// it says it starts something new (owner-tester F19: "А какая из этих трёх самая старая?" 30 s after an answer).
-	// Only a short message: a long one may well be about other work, and the model sees each item's last answer.
-	if len([]rune(messageText(m))) <= 120 && !newWorkCue.MatchString(strings.ToLower(messageText(m))) {
+	// Owner-tester F19: "А какая из этих трёх самая старая?" 30 s after an answer went to an older work item.
+	// The author's last work item within the follow-up window. A short message that refers back ("этих", "it") goes
+	// there without a model; anything else goes to the model with it as a hint, so a short new question right after
+	// an answer can still open new work (owner-tester, 2026-11-25).
+	hint := ""
+	if low := strings.ToLower(messageText(m)); !newWorkCue.MatchString(low) {
 		recent, err := q.db().TelegramAuthorRecentWork(q.ctx(), db.TelegramAuthorRecentWorkParams{ChatID: &m.Chat.ID, FromID: &m.From.ID, RoomID: room.ID,
 			Since: pgtype.Timestamptz{Time: time.Now().Add(-telegramFollowUp), Valid: true}, ID: row.ID})
-		if err == nil {
-			for _, w := range open {
-				if w.ID == recent {
-					return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{sessionID: w.SessionID, workID: w.ID})
-				}
-			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
+		}
+		for _, w := range open {
+			if err != nil || w.ID != recent.WorkID {
+				continue
+			}
+			if len([]rune(low)) <= 120 && backReference.MatchString(low) {
+				return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{sessionID: w.SessionID, workID: w.ID})
+			}
+			hint = fmt.Sprintf("The author's previous message went to %s %s; a follow-up continues it, a question about something else is new work.\n",
+				w.ID, sinceWords("en", time.Since(recent.ReceivedAt)))
 		}
 	}
 	a, text, author := q.app, messageText(m), tp.Email
@@ -696,7 +706,7 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 		}
 	}
 	c.Call = func(ctx context.Context) any {
-		return tgDecided{decision: conductorChoose(ctx, a, open, lastReplies, author, text)}
+		return tgDecided{decision: conductorChoose(ctx, a, open, lastReplies, hint, author, text)}
 	}
 	return nil
 }
@@ -853,11 +863,11 @@ func conductorModel(ctx context.Context, a *App) (string, string) {
 
 // conductorChoose asks the conductor model which open work item a message belongs to. Any failure is "ask": the
 // person then chooses with one tap, so a model outage never misroutes a message.
-var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, lastReplies map[string]string, author, text string) conductorDecision {
+var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, lastReplies map[string]string, hint, author, text string) conductorDecision {
 	conn, model := conductorModel(ctx, a)
 	d := conductorDecision{Choice: "ask", err: errors.New("no OpenAI connection open to every project")}
 	if conn != "" {
-		d = conductorCall(ctx, a, conn, model, open, lastReplies, author, text)
+		d = conductorCall(ctx, a, conn, model, open, lastReplies, hint, author, text)
 	}
 	call := &contract.TelegramConductorCall{Connection: conn, Model: model, At: nowMs(), Choice: ptr(d.Choice)}
 	if d.err != nil {
@@ -870,7 +880,7 @@ var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, 
 }
 
 // conductorCall: one Responses API call; its answer is a JSON object (text.format json_object).
-func conductorCall(ctx context.Context, a *App, conn, model string, open []db.TelegramWork, lastReplies map[string]string, author, text string) conductorDecision {
+func conductorCall(ctx context.Context, a *App, conn, model string, open []db.TelegramWork, lastReplies map[string]string, hint, author, text string) conductorDecision {
 	var items strings.Builder
 	for _, w := range open {
 		fmt.Fprintf(&items, "- id %s (last active %s): %s", w.ID, sinceWords("en", time.Since(w.LastAt)), w.Title)
@@ -885,7 +895,7 @@ func conductorCall(ctx context.Context, a *App, conn, model string, open []db.Te
 		"Short follow-ups (\"so?\", \"show mobile too\", \"ok go\") belong to the most recent item unless they name another; " +
 		"a follow-up that refers back (\"these\", \"it\", \"them\", \"этих\", \"его\") belongs to the item whose last answer it refers to, usually the most recently active one."
 	// The Responses API's json_object format wants the word JSON in the input itself, not only in the instructions.
-	input := "Open work items, most recent first:\n" + items.String() + "\nNew message from " + author + ":\n" + clip(text, 2000) + "\n\nAnswer with the JSON object."
+	input := "Open work items, most recent first:\n" + items.String() + "\n" + hint + "New message from " + author + ":\n" + clip(text, 2000) + "\n\nAnswer with the JSON object."
 	token, release, err := readTokenFor(ctx, a, conn, "")
 	if err != nil {
 		return conductorDecision{Choice: "ask", err: err}

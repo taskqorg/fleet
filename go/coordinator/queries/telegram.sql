@@ -298,7 +298,7 @@ WHERE state = 'open' ORDER BY asked_at DESC LIMIT 100;
 -- name: TelegramAuthorRecentWork :one
 -- The work item the author's last routed message in this room went to, within the window: a follow-up of theirs
 -- goes there without a model (owner-tester F19). Per author, so two people's threads never mix (pilotq L14).
-SELECT u.work_id::text AS work_id FROM telegram_update u JOIN telegram_work w ON w.id = u.work_id
+SELECT u.work_id::text AS work_id, u.received_at FROM telegram_update u JOIN telegram_work w ON w.id = u.work_id
 WHERE u.chat_id = @chat_id AND u.from_id = @from_id AND u.outcome IN ('delivered', 'status') AND w.room_id = @room_id
   AND w.closed_at IS NULL AND u.received_at > @since::timestamptz AND u.id <> @id
 ORDER BY u.update_id DESC LIMIT 1;
