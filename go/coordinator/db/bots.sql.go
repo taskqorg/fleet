@@ -12,6 +12,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const botAvatarSet = `-- name: BotAvatarSet :execrows
+UPDATE bot SET avatar_artifact_id = $1, avatar_still_artifact_id = $2,
+       avatar_glow = $3
+WHERE id = $4 AND tombstoned_at IS NULL
+`
+
+type BotAvatarSetParams struct {
+	AvatarArtifactID      *string
+	AvatarStillArtifactID *string
+	AvatarGlow            string
+	ID                    string
+}
+
+// The bot's avatar (bot_avatar_set, bot_avatar_clear): NULL artifact clears it back to the letter.
+func (q *Queries) BotAvatarSet(ctx context.Context, arg BotAvatarSetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, botAvatarSet,
+		arg.AvatarArtifactID,
+		arg.AvatarStillArtifactID,
+		arg.AvatarGlow,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const botByHomeSession = `-- name: BotByHomeSession :one
 SELECT b.id
 FROM bot b
@@ -70,9 +97,15 @@ SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        s.created_at AS revision_created_at,
        coalesce(m.memory, '')::text AS memory,
        ar.id AS active_run_id, ar.execution_id AS active_execution_id,
-       lr.created_at AS last_run_at, lr.state AS last_run_state
+       lr.created_at AS last_run_at, lr.state AS last_run_state,
+       b.avatar_artifact_id, av.media_type AS avatar_media_type, b.avatar_still_artifact_id, b.avatar_glow,
+       (ar.state = 'waiting' OR EXISTS (
+         SELECT 1 FROM question q WHERE q.state = 'open'
+           AND (q.session_id = b.home_session_id OR (ar.execution_id IS NOT NULL AND q.execution_id = ar.execution_id))
+       ))::boolean AS needs_you
 FROM bot b
 JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+LEFT JOIN artifact av ON av.id = b.avatar_artifact_id
 LEFT JOIN bot_memory_revision m ON m.bot_id = b.id AND m.revision = b.memory_revision
 LEFT JOIN session hs ON hs.id = b.home_session_id AND hs.tombstoned_at IS NULL
 LEFT JOIN bot_run ar ON ar.id = (
@@ -89,31 +122,36 @@ WHERE b.id = $1
 `
 
 type BotGetRow struct {
-	ID                string
-	Code              *string
-	ProjectID         string
-	Director          string
-	Revision          int32
-	MemoryRevision    int32
-	HomeSessionID     *string
-	Paused            bool
-	PausedAt          *time.Time
-	PausedBy          *string
-	ResumedAt         *time.Time
-	Name              string
-	Purpose           string
-	ProfileID         string
-	Instructions      string
-	Soul              string
-	ScheduleTime      string
-	ScheduleZone      string
-	WakeOnNeedsYou    bool
-	RevisionCreatedAt time.Time
-	Memory            string
-	ActiveRunID       *string
-	ActiveExecutionID *string
-	LastRunAt         *time.Time
-	LastRunState      *string
+	ID                    string
+	Code                  *string
+	ProjectID             string
+	Director              string
+	Revision              int32
+	MemoryRevision        int32
+	HomeSessionID         *string
+	Paused                bool
+	PausedAt              *time.Time
+	PausedBy              *string
+	ResumedAt             *time.Time
+	Name                  string
+	Purpose               string
+	ProfileID             string
+	Instructions          string
+	Soul                  string
+	ScheduleTime          string
+	ScheduleZone          string
+	WakeOnNeedsYou        bool
+	RevisionCreatedAt     time.Time
+	Memory                string
+	ActiveRunID           *string
+	ActiveExecutionID     *string
+	LastRunAt             *time.Time
+	LastRunState          *string
+	AvatarArtifactID      *string
+	AvatarMediaType       *string
+	AvatarStillArtifactID *string
+	AvatarGlow            string
+	NeedsYou              bool
 }
 
 func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
@@ -145,6 +183,11 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 		&i.ActiveExecutionID,
 		&i.LastRunAt,
 		&i.LastRunState,
+		&i.AvatarArtifactID,
+		&i.AvatarMediaType,
+		&i.AvatarStillArtifactID,
+		&i.AvatarGlow,
+		&i.NeedsYou,
 	)
 	return i, err
 }
@@ -241,9 +284,15 @@ const botList = `-- name: BotList :many
 SELECT b.id, b.code, b.project_id, b.revision,
        hs.id AS home_session_id,
        b.paused, s.name, s.purpose,
-       ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at
+       ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at,
+       b.avatar_artifact_id, av.media_type AS avatar_media_type, b.avatar_still_artifact_id, b.avatar_glow,
+       (ar.state = 'waiting' OR EXISTS (
+         SELECT 1 FROM question q WHERE q.state = 'open'
+           AND (q.session_id = b.home_session_id OR (ar.execution_id IS NOT NULL AND q.execution_id = ar.execution_id))
+       ))::boolean AS needs_you
 FROM bot b
 JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+LEFT JOIN artifact av ON av.id = b.avatar_artifact_id
 LEFT JOIN session hs ON hs.id = b.home_session_id AND hs.tombstoned_at IS NULL
 LEFT JOIN bot_run ar ON ar.id = (
   SELECT r.id FROM bot_run r
@@ -268,17 +317,22 @@ type BotListParams struct {
 }
 
 type BotListRow struct {
-	ID            string
-	Code          *string
-	ProjectID     string
-	Revision      int32
-	HomeSessionID *string
-	Paused        bool
-	Name          string
-	Purpose       string
-	ActiveRunID   *string
-	LastRunState  *string
-	LastRunAt     *time.Time
+	ID                    string
+	Code                  *string
+	ProjectID             string
+	Revision              int32
+	HomeSessionID         *string
+	Paused                bool
+	Name                  string
+	Purpose               string
+	ActiveRunID           *string
+	LastRunState          *string
+	LastRunAt             *time.Time
+	AvatarArtifactID      *string
+	AvatarMediaType       *string
+	AvatarStillArtifactID *string
+	AvatarGlow            string
+	NeedsYou              bool
 }
 
 func (q *Queries) BotList(ctx context.Context, arg BotListParams) ([]BotListRow, error) {
@@ -302,6 +356,11 @@ func (q *Queries) BotList(ctx context.Context, arg BotListParams) ([]BotListRow,
 			&i.ActiveRunID,
 			&i.LastRunState,
 			&i.LastRunAt,
+			&i.AvatarArtifactID,
+			&i.AvatarMediaType,
+			&i.AvatarStillArtifactID,
+			&i.AvatarGlow,
+			&i.NeedsYou,
 		); err != nil {
 			return nil, err
 		}

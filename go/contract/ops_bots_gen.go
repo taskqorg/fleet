@@ -165,6 +165,64 @@ func (v *BotAutomationsRequest) Validate() error {
 	return nil
 }
 
+// BotAvatar: A bot's avatar; the browser reads each file at /api/results/{artifactId}. null avatar: the bot shows its letter.
+type BotAvatar struct {
+	ArtifactId      string  `json:"artifactId"`
+	Glow            string  `json:"glow"`
+	MediaType       string  `json:"mediaType"`
+	StillArtifactId *string `json:"stillArtifactId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotAvatar) Validate() error {
+	return nil
+}
+
+type BotAvatarClearReply struct {
+	Bot BotRecord `json:"bot"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotAvatarClearReply) Validate() error {
+	if err := Check(&v.Bot, "bot"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type BotAvatarClearRequest struct {
+	BotId string `json:"botId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotAvatarClearRequest) Validate() error {
+	return nil
+}
+
+type BotAvatarSetReply struct {
+	Bot BotRecord `json:"bot"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotAvatarSetReply) Validate() error {
+	if err := Check(&v.Bot, "bot"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type BotAvatarSetRequest struct {
+	ArtifactId      string  `json:"artifactId"`
+	BotId           string  `json:"botId"`
+	Glow            *string `json:"glow,omitempty"`
+	StillArtifactId *string `json:"stillArtifactId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotAvatarSetRequest) Validate() error {
+	return nil
+}
+
 type BotGetReply struct {
 	Bot BotRecord `json:"bot"`
 }
@@ -187,21 +245,28 @@ func (v *BotGetRequest) Validate() error {
 }
 
 type BotListItem struct {
-	ActiveRunId   *string `json:"activeRunId"`
-	Code          *string `json:"code,omitempty"`
-	HomeSessionId *string `json:"homeSessionId"`
-	Id            string  `json:"id"`
-	LastRunAt     *string `json:"lastRunAt"`
-	LastRunState  *string `json:"lastRunState"`
-	Name          string  `json:"name"`
-	Paused        bool    `json:"paused"`
-	ProjectId     string  `json:"projectId"`
-	Purpose       string  `json:"purpose"`
-	Revision      int64   `json:"revision"`
+	ActiveRunId   *string    `json:"activeRunId"`
+	Avatar        *BotAvatar `json:"avatar,omitempty"`
+	Code          *string    `json:"code,omitempty"`
+	HomeSessionId *string    `json:"homeSessionId"`
+	Id            string     `json:"id"`
+	LastRunAt     *string    `json:"lastRunAt"`
+	LastRunState  *string    `json:"lastRunState"`
+	Name          string     `json:"name"`
+	NeedsYou      bool       `json:"needsYou"`
+	Paused        bool       `json:"paused"`
+	ProjectId     string     `json:"projectId"`
+	Purpose       string     `json:"purpose"`
+	Revision      int64      `json:"revision"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BotListItem) Validate() error {
+	if v.Avatar != nil {
+		if err := Check(v.Avatar, "avatar"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -282,6 +347,7 @@ func (v *BotPauseRequest) Validate() error {
 type BotRecord struct {
 	ActiveExecutionId *string     `json:"activeExecutionId"`
 	ActiveRunId       *string     `json:"activeRunId"`
+	Avatar            *BotAvatar  `json:"avatar,omitempty"`
 	Code              *string     `json:"code,omitempty"`
 	Director          string      `json:"director"`
 	HomeSessionId     *string     `json:"homeSessionId"`
@@ -290,6 +356,7 @@ type BotRecord struct {
 	LastRunState      *string     `json:"lastRunState"`
 	Memory            string      `json:"memory"`
 	MemoryRevision    int64       `json:"memoryRevision"`
+	NeedsYou          bool        `json:"needsYou"`
 	Paused            bool        `json:"paused"`
 	PausedAt          *string     `json:"pausedAt"`
 	ProjectId         string      `json:"projectId"`
@@ -299,6 +366,11 @@ type BotRecord struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BotRecord) Validate() error {
+	if v.Avatar != nil {
+		if err := Check(v.Avatar, "avatar"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.Settings, "settings"); err != nil {
 		return err
 	}
@@ -746,8 +818,10 @@ func init() {
 	for n, o := range map[string]Operation{
 		"bot_automation_save": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "no", Description: "Create or update one bot automation with an optimistic revision. Enable and pause are settings changes.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"automationId\":{\"type\":\"string\"},\"baseRevision\":{\"minimum\":0,\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"enabled\":{\"type\":\"boolean\"},\"event\":{\"enum\":[\"none\",\"all\",\"question\",\"execution\"],\"type\":\"string\"},\"instructions\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"manual\",\"schedule\",\"needs_you\"],\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"scheduleTime\":{\"type\":\"string\"},\"scheduleZone\":{\"type\":\"string\"}},\"required\":[\"name\",\"instructions\",\"projectId\",\"kind\",\"scheduleTime\",\"scheduleZone\",\"event\",\"enabled\"],\"type\":\"object\"}},\"required\":[\"botId\",\"automationId\",\"baseRevision\",\"settings\"],\"type\":\"object\"}")},
 		"bot_automations":     {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "no", Description: "List a bot's automations and their next scheduled time and last outcome.", Changes: []string{"bot", "bot-run", "execution", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_get":             {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "no", Description: "Read the saved settings, scoped memory, Home conversation and runtime status of a bot by id.", Changes: []string{"bot", "bot-run", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_list":            {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "no", Description: "List bot settings and runtime status visible in granted projects, optionally for one project.", Changes: []string{"bot", "bot-run", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[],\"type\":\"object\"}")},
+		"bot_avatar_clear":    {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Clear a bot's avatar: the bot shows its letter again.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_avatar_set":      {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's avatar to a stored image or video artifact of the bot's project: any still or animated picture (PNG, JPEG, WebP, AVIF, GIF, APNG, SVG) or a muted loop (WebM, MP4). stillArtifactId is an optional still frame that lists show in place of an animated file; glow (#RRGGBB) colours the activity light. Make one with the avatar-make pipeline or upload it (artifact_upload_begin).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"glow\":{\"type\":\"string\"},\"stillArtifactId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"artifactId\"],\"type\":\"object\"}")},
+		"bot_get":             {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read the saved settings, scoped memory, Home conversation and runtime status of a bot by id.", Changes: []string{"bot", "bot-run", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_list":            {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "List bot settings and runtime status visible in granted projects, optionally for one project.", Changes: []string{"bot", "bot-run", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[],\"type\":\"object\"}")},
 		"bot_memory_save":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "no", Description: "Save a new project-scoped bot memory revision.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"memory\":{\"type\":\"string\"}},\"required\":[\"botId\",\"baseRevision\",\"memory\"],\"type\":\"object\"}")},
 		"bot_pause":           {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "no", Description: "Pause or resume a bot's future scheduled and Needs-you wakes.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"paused\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\",\"paused\"],\"type\":\"object\"}")},
 		"bot_run":             {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "no", Description: "Run a bot now using the shared wake admission flow, enforcing single active run admission and pinning settings, memory and project.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},

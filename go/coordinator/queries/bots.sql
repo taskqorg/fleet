@@ -6,9 +6,15 @@ SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        s.created_at AS revision_created_at,
        coalesce(m.memory, '')::text AS memory,
        ar.id AS active_run_id, ar.execution_id AS active_execution_id,
-       lr.created_at AS last_run_at, lr.state AS last_run_state
+       lr.created_at AS last_run_at, lr.state AS last_run_state,
+       b.avatar_artifact_id, av.media_type AS avatar_media_type, b.avatar_still_artifact_id, b.avatar_glow,
+       (ar.state = 'waiting' OR EXISTS (
+         SELECT 1 FROM question q WHERE q.state = 'open'
+           AND (q.session_id = b.home_session_id OR (ar.execution_id IS NOT NULL AND q.execution_id = ar.execution_id))
+       ))::boolean AS needs_you
 FROM bot b
 JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+LEFT JOIN artifact av ON av.id = b.avatar_artifact_id
 LEFT JOIN bot_memory_revision m ON m.bot_id = b.id AND m.revision = b.memory_revision
 LEFT JOIN session hs ON hs.id = b.home_session_id AND hs.tombstoned_at IS NULL
 LEFT JOIN bot_run ar ON ar.id = (
@@ -27,9 +33,15 @@ WHERE b.id = $1;
 SELECT b.id, b.code, b.project_id, b.revision,
        hs.id AS home_session_id,
        b.paused, s.name, s.purpose,
-       ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at
+       ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at,
+       b.avatar_artifact_id, av.media_type AS avatar_media_type, b.avatar_still_artifact_id, b.avatar_glow,
+       (ar.state = 'waiting' OR EXISTS (
+         SELECT 1 FROM question q WHERE q.state = 'open'
+           AND (q.session_id = b.home_session_id OR (ar.execution_id IS NOT NULL AND q.execution_id = ar.execution_id))
+       ))::boolean AS needs_you
 FROM bot b
 JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+LEFT JOIN artifact av ON av.id = b.avatar_artifact_id
 LEFT JOIN session hs ON hs.id = b.home_session_id AND hs.tombstoned_at IS NULL
 LEFT JOIN bot_run ar ON ar.id = (
   SELECT r.id FROM bot_run r
@@ -337,3 +349,9 @@ SELECT bot_run_id, task_id
 FROM bot_task
 WHERE bot_run_id = ANY(@run_ids::text[]) AND tombstoned_at IS NULL
 ORDER BY seq;
+
+-- name: BotAvatarSet :execrows
+-- The bot's avatar (bot_avatar_set, bot_avatar_clear): NULL artifact clears it back to the letter.
+UPDATE bot SET avatar_artifact_id = sqlc.narg(avatar_artifact_id), avatar_still_artifact_id = sqlc.narg(avatar_still_artifact_id),
+       avatar_glow = sqlc.arg(avatar_glow)
+WHERE id = sqlc.arg(id) AND tombstoned_at IS NULL;
