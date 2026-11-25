@@ -166,6 +166,10 @@ func mint(q *Request, run any, requested []string) (mintGrant, error) {
 }
 
 func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error) {
+	requested, err := accessExpand(q, run, requested)
+	if err != nil {
+		return mintGrant{}, err
+	}
 	seen, uniq := map[string]bool{}, []string{}
 	for _, r := range requested {
 		if !seen[r] {

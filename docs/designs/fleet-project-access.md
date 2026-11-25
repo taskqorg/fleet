@@ -69,11 +69,20 @@ Every ask, answer, provisioning, probe and revoke is an `audit()` row on the gra
 
 ## How agents use a grant
 
-Not built: the path agents read through (the owner picks among the [options](#options)): a gateway provider for SQL and files (A), Cloudflare Access per project (B) or the credentials on the executor host (C). The grant, its approval, the provisioner, the recipes and the probe are the same in all three.
+The owner chose option A (2026-11-26): `fleet-gateway` serves each ready grant as an API connection, so credentials never leave PDS18 and every query is on record.
+
+- **Connection.** When a grant becomes ready, Fleet opens connection `<project>-mysql` or `<project>-files` (provider `project-mysql` or `project-files`, `access.projects: [<project>]`; `<project>-<server>-<kind>` when another live grant already has the name). The grant's `connection` names it. A revoke pauses it (intake `paused`), and the gateway refuses its calls at once.
+- **Profiles.** A profile's `connections` entry `project-access` grants every access connection of the run's project (`accessExpand` at minting). The worker, researcher and PM profiles carry it.
+- **Snapshot.** For these connections the snapshot carries `access` (`GatewayAccess`): the hops (address and pinned host key), the OS user, the key file and password file names under `<FLEET_SECRET_DIR>/access`, the database user, database, tables and paths. A connection without a ready grant gets no `access`, and its calls are refused (`access-missing`).
+- **Gateway** (`go/gateway/access.go`, `sftp.go`). The gateway logs in as the grant's OS user through the jump server, keeps the login while the access stays the same, and dials again after a failure.
+  - `sql_schema` lists the granted tables' columns.
+  - `sql_query {sql, maxRows?}` runs one statement in a read-only transaction. For a read grant the statement must be `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN` or `WITH`. The answer holds columns and rows as text, and `truncated` when `maxRows` or the connection's reply limit (16 MiB at most) stopped it.
+  - `files_list {path}` lists a folder. `files_get {path}` streams one file to the run's input folder, as YouTrack attachments are streamed. A path is the server's own path under a granted folder, or `/<folder>/...`; nothing else is reachable.
+- **Audit.** Every call's spool line carries `detail`: the SQL text and row count, or the listed or downloaded path.
 
 ## Options
 
-- **A. Gateway providers.** `fleet-gateway` holds the credentials and reaches the server over SSH with the grant's OS user; agents get `sql_query` and `files_get` tools on their run token; queries are audited in the spool.
+- **A. Gateway providers (chosen).** `fleet-gateway` holds the credentials and reaches the server over SSH with the grant's OS user; agents get `sql_query` and `files_get` tools on their run token; queries are audited in the spool.
 - **B. Cloudflare Access.** A tunnel on each server and a service token per project; the run gets the token and the database password.
 - **C. Host credentials.** The executor gives a run its project's key and database password, like repository keys.
 

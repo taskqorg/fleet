@@ -2,7 +2,8 @@
   "connections": [
     "youtrack",
     "github",
-    "bugsink"
+    "bugsink",
+    "project-access"
   ],
   "effort": "medium",
   "fleetOperations": true,

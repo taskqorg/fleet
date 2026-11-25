@@ -10,6 +10,52 @@ import (
 	"time"
 )
 
+const accessGrantByConnection = `-- name: AccessGrantByConnection :one
+SELECT id, project_id, server_id, kind, level, state, request_id, asked_by, question_id, credential, expires_at, payload, created_at, updated_at
+FROM access_grant WHERE payload->>'connection' = $1::text AND state = 'ready' AND deleted_at IS NULL
+ORDER BY updated_at DESC LIMIT 1
+`
+
+type AccessGrantByConnectionRow struct {
+	ID         string
+	ProjectID  string
+	ServerID   string
+	Kind       string
+	Level      string
+	State      string
+	RequestID  string
+	AskedBy    string
+	QuestionID *string
+	Credential *string
+	ExpiresAt  *time.Time
+	Payload    []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// The ready grant a project access connection serves (payload.connection names it).
+func (q *Queries) AccessGrantByConnection(ctx context.Context, connection string) (AccessGrantByConnectionRow, error) {
+	row := q.db.QueryRow(ctx, accessGrantByConnection, connection)
+	var i AccessGrantByConnectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServerID,
+		&i.Kind,
+		&i.Level,
+		&i.State,
+		&i.RequestID,
+		&i.AskedBy,
+		&i.QuestionID,
+		&i.Credential,
+		&i.ExpiresAt,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const accessGrantByQuestion = `-- name: AccessGrantByQuestion :one
 SELECT id FROM access_grant WHERE question_id = $1 AND deleted_at IS NULL
 `

@@ -1,6 +1,7 @@
 {
   "connections": [
-    "youtrack"
+    "youtrack",
+    "project-access"
   ],
   "delegationProfiles": [
     "claude-reviewer"

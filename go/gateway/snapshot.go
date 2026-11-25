@@ -79,7 +79,7 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 					// The multipart body holds the file part only (an inject field would be dropped); an upload is never
 					// sent twice, so it fails over to no other key.
 					return nil, fmt.Errorf("upload tool %s must inject nothing, not be idempotent and not count usage once", toolName)
-				case *t.File == contract.GatewayFileModeDownload && (t.FileFrom == nil || t.FileFrom.Url == "" || t.FileFrom.Bytes == ""):
+				case *t.File == contract.GatewayFileModeDownload && p.Transport == nil && (t.FileFrom == nil || t.FileFrom.Url == "" || t.FileFrom.Bytes == ""):
 					return nil, fmt.Errorf("download tool %s needs fileFrom url and bytes", toolName)
 				}
 			}

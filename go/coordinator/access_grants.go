@@ -152,6 +152,7 @@ func accessGrantView(g accessGrant, via string) contract.AccessGrantView {
 	if g.Error != "" {
 		v.Error = new(g.Error)
 	}
+	v.Connection = g.connection()
 	return v
 }
 

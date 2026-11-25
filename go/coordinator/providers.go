@@ -1459,6 +1459,49 @@ const providersJSON = `
     "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
    }
   }
+ },
+ "project-mysql": {
+  "baseUrl": "ssh://project-server",
+  "transport": "mysql",
+  "instructions": "Read access to a project's production MySQL, granted by the owner (docs/designs/fleet-project-access.md). The gateway runs your query as the grant's database user on the project's server: only the granted tables, SELECT only for a read grant, one statement per call, inside a read-only transaction. Every query is recorded with its text and row count. Start with sql_schema, then sql_query with explicit columns and a LIMIT; page with LIMIT/OFFSET. The data can be personal (model IDs, releases): keep it inside Fleet, never paste it into another service, and quote only what the task needs.",
+  "tools": {
+   "sql_schema": {
+    "path": "/sql/schema",
+    "unit": "queries",
+    "idempotent": true,
+    "description": "Tables and columns this grant may read: table, column, type, key, nullable.",
+    "inputSchema": {"type": "object", "properties": {}}
+   },
+   "sql_query": {
+    "path": "/sql/query",
+    "unit": "queries",
+    "idempotent": true,
+    "description": "Runs one SELECT, SHOW, DESCRIBE, EXPLAIN or WITH statement and answers columns and rows (values as text, NULL as null). truncated is true when maxRows or the reply size limit stopped it.",
+    "inputSchema": {"type": "object", "required": ["sql"], "properties": {"sql": {"type": "string", "description": "one statement"}, "maxRows": {"type": "integer", "description": "stop after this many rows (optional)"}}}
+   }
+  }
+ },
+ "project-files": {
+  "baseUrl": "ssh://project-server",
+  "transport": "files",
+  "instructions": "Read access to folders on a project's production server, granted by the owner (docs/designs/fleet-project-access.md). Paths are the server's own (for example /home/revilio/revilio.com/web/uploads/123) or /<granted folder name>/...; anything outside the granted folders is refused. files_list lists a folder; files_get saves one file into your input folder and answers its local path. Every read is recorded. The files can be personal (IDs, releases): keep them inside Fleet, never send them to an outside service (OCR, AI, search), and quote only what the task needs.",
+  "tools": {
+   "files_list": {
+    "path": "/files/list",
+    "unit": "calls",
+    "idempotent": true,
+    "description": "Entries of one granted folder: name, folder, bytes, modified. path / lists the granted folders.",
+    "inputSchema": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string", "description": "a folder path"}}}
+   },
+   "files_get": {
+    "path": "/files/get",
+    "unit": "calls",
+    "idempotent": true,
+    "file": "download",
+    "description": "Saves one file and answers {path, name, bytes, mimeType, sha256}: read it at path with your file tools.",
+    "inputSchema": {"type": "object", "properties": {"path": {"type": "string", "description": "the file's path (required)"}}}
+   }
+  }
  }
 }
 `

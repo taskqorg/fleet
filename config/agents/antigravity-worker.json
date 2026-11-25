@@ -1,6 +1,7 @@
 {
   "connections": [
-    "youtrack"
+    "youtrack",
+    "project-access"
   ],
   "effort": null,
   "harness": "antigravity",

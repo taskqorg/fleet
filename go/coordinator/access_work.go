@@ -112,11 +112,16 @@ func accessWorkRecord(q *Request, now time.Time, g accessGrant, op string, out a
 	case op != "revoke" && g.State == "revoking": // revoked meanwhile: the revoke that replaced this work decides
 		err = note("probe", res)
 	case op == "revoke" && res.Ok && g.State == "revoking":
-		err = accessGrantTransition(q, g.ID, "revoked")
+		if err = accessGrantTransition(q, g.ID, "revoked"); err == nil {
+			err = accessConnectionDown(q, g)
+		}
 	case op == "revoke":
 	case res.Ok:
 		if err = note("probe", res); err == nil {
 			err = accessGrantTransition(q, g.ID, "ready")
+		}
+		if err == nil {
+			err = accessConnectionUp(q, g)
 		}
 	default:
 		if err = note("probe", res); err == nil {
