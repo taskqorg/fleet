@@ -467,9 +467,7 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		return out
 	}
 	projectIDs, excludeIDs := named(r.ProjectIds), named(r.ExcludeProjectIds)
-	if len(r.ProjectIds) > 0 && len(projectIDs) == 0 {
-		return out, nil // only work outside projects: no Lab trial is
-	}
+	outsideOnly := len(r.ProjectIds) > 0 && len(projectIDs) == 0 // only work outside projects: no Lab trial is
 	useCaseFilter := ""
 	if r.UseCaseId != nil && strings.TrimSpace(*r.UseCaseId) != "" {
 		useCaseFilter = strings.TrimSpace(*r.UseCaseId)
@@ -520,6 +518,9 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		}
 	}
 	out.Collections = orderedCollections(presentCollections)
+	if outsideOnly {
+		return out, nil
+	}
 
 	trials, err := q.db().LabLeaderboardTrials(q.ctx(), db.LabLeaderboardTrialsParams{
 		ProjectID:         projectID,
