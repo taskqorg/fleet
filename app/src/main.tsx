@@ -263,6 +263,16 @@ function App() {
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   });
+  // The person's time zone, from this browser (Intl): agents and Telegram write times in it (person settings timezone).
+  // Saved when it differs from the stored one, so a trip abroad follows the device in use. A viewer's set is refused.
+  // One try per zone and tab: a refused save (a zone the server does not know) is not repeated.
+  let zoneSent = '';
+  createEffect(() => [access.value.state, prefsRead.value, prefs.value.timezone, viewer()] as const, ([st, pr, tz, v]) => {
+    const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (st !== 'open' || !pr || v || !here || here === tz || here === zoneSent) return;
+    zoneSent = here;
+    savePrefs(() => ({ timezone: here }), { timezone: here });
+  });
   // Each section's counter (nav-rail.md, Counters); Needs you is the head chip, not a counter.
   const counts = useNavCounts(() => access.value.state === 'open');
   const nav = createMemo(() => {

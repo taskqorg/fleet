@@ -14,6 +14,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -120,6 +121,7 @@ type personSettingPayload struct {
 	LastViews    map[string]string      `json:"lastViews"`
 	ListGroups   map[string][]string    `json:"listGroups"`
 	Panels       map[string]bool        `json:"panels"`
+	Timezone     string                 `json:"timezone,omitempty"`
 }
 
 func orEmpty(xs []string) []string {
@@ -306,6 +308,13 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.NavCollapsed != nil {
 		next.NavCollapsed = *r.NavCollapsed
 	}
+	// The person's time zone (agents and Telegram show times in it): an IANA name Go knows, or empty to clear.
+	if r.Timezone != nil {
+		if !knownZone(*r.Timezone) {
+			return contract.PersonSettings{}, fail(400, "timezone: an IANA time zone name such as Europe/Nicosia")
+		}
+		next.Timezone = *r.Timezone
+	}
 	if r.RailBots != nil {
 		if r.RailBots.Recent < 0 {
 			return contract.PersonSettings{}, fail(400, "railBots.recent: 0 or more")
@@ -371,7 +380,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	_, err = unscoped(q, func() (struct{}, error) {
 		payload := personSettingPayload{Order: next.Order, Pins: next.Pins, Views: next.Views, Focus: next.Focus, FocusPresets: next.FocusPresets,
 			Ignored: next.Ignored, Widths: next.Widths, RowPins: next.RowPins, NavCollapsed: next.NavCollapsed, RailBots: next.RailBots, NavCounters: next.NavCounters,
-			LastViews: next.LastViews, ListGroups: next.ListGroups, Panels: next.Panels}
+			LastViews: next.LastViews, ListGroups: next.ListGroups, Panels: next.Panels, Timezone: next.Timezone}
 		if err := q.db().PersonSettingPut(q.ctx(), db.PersonSettingPutParams{ID: "person-setting:" + email, Email: email, Payload: jsonBytes(payload)}); err != nil {
 			return struct{}{}, err
 		}
@@ -387,7 +396,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			name            string
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
-			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}, {"railBots", prev.RailBots, next.RailBots}, {"panels", prev.Panels, next.Panels}, {"navCounters", prev.NavCounters, next.NavCounters}} {
+			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}, {"railBots", prev.RailBots, next.RailBots}, {"panels", prev.Panels, next.Panels}, {"navCounters", prev.NavCounters, next.NavCounters}, {"timezone", prev.Timezone, next.Timezone}} {
 			// lastViews is where the person was and listGroups which groups they folded, not settings: they change as the person
 			// moves around a list and are not audited.
 			a, _ := json.Marshal(f.previous)
@@ -584,4 +593,29 @@ func soonestReset(cs []*candidate, readings map[string][]Reading) {
 	for n, i := range idx {
 		cs[i] = ready[n]
 	}
+}
+
+// knownZone: empty (unknown) or an IANA zone name; "Local" and "UTC"-like aliases Go accepts stay valid names.
+func knownZone(tz string) bool {
+	if tz == "" {
+		return true
+	}
+	if tz == "Local" || len(tz) > 64 {
+		return false
+	}
+	_, err := time.LoadLocation(tz)
+	return err == nil
+}
+
+// zoneInstruction: the line an agent gets about its director's time zone, so the times it writes for them are theirs;
+// UTC, said as UTC, when the zone is unknown. Empty for work no person directs.
+func zoneInstruction(q *Request, email string) string {
+	if email == "" {
+		return ""
+	}
+	ps, err := personSettings(q, email)
+	if err != nil || ps.Timezone == "" || !knownZone(ps.Timezone) {
+		return "The time zone of the person you work for is unknown: write times in UTC and mark them UTC."
+	}
+	return "The person you work for is in time zone " + ps.Timezone + ": write times for them in that zone, without naming it unless asked; tool and log times are usually UTC, convert them."
 }
