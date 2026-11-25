@@ -50,8 +50,8 @@ SELECT count(*)::int FROM purged_hash WHERE project_id=sqlc.arg(project_id) AND 
 
 -- name: LabExampleInsert :many
 -- A new example; nothing when one of that name exists meanwhile.
-INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at)
-VALUES(sqlc.arg(id),sqlc.narg(project_id),'lab',sqlc.arg(content_hash),sqlc.arg(size),'application/json',sqlc.arg(name),'example','stored',sqlc.narg(approved_at))
+INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at,use_case_id)
+VALUES(sqlc.arg(id),sqlc.narg(project_id),'lab',sqlc.arg(content_hash),sqlc.arg(size),'application/json',sqlc.arg(name),'example','stored',sqlc.narg(approved_at),sqlc.arg(use_case_id)::text)
 ON CONFLICT (coalesce(project_id,''),name) WHERE role='example' AND state<>'deleted' DO NOTHING RETURNING id;
 
 -- name: LabExampleApprove :exec
@@ -63,8 +63,19 @@ UPDATE artifact SET approved_at=now() WHERE id=sqlc.arg(id) AND role='example' A
 
 -- name: LabExamplesList :many
 -- The stored examples by name; approved true or false narrows them (lab.go labExamplesList).
-SELECT id,project_id,name,content_hash,approved_at,created_at FROM artifact WHERE role='example' AND state='stored'
+SELECT id,project_id,name,content_hash,approved_at,created_at,use_case_id FROM artifact WHERE role='example' AND state='stored'
   AND (sqlc.narg(approved)::boolean IS NULL OR (approved_at IS NOT NULL)=sqlc.narg(approved)::boolean) ORDER BY name;
+
+-- name: LabExampleUseCases :many
+-- The recorded use case of the given example artifacts (migration 102); a row not read yet has none.
+SELECT id, use_case_id::text AS use_case_id FROM artifact WHERE id = ANY(sqlc.arg(ids)::text[]) AND role='example' AND use_case_id IS NOT NULL;
+
+-- name: LabExamplesUseCaseUnread :many
+-- Stored examples whose use case was not read from their content yet (labExampleUseCaseBackfill).
+SELECT id FROM artifact WHERE role='example' AND state='stored' AND use_case_id IS NULL AND id > sqlc.arg(after)::text ORDER BY id LIMIT sqlc.arg(lim)::int;
+
+-- name: LabExampleUseCaseSet :exec
+UPDATE artifact SET use_case_id = sqlc.arg(use_case_id)::text WHERE id = sqlc.arg(id)::text AND role='example' AND use_case_id IS NULL;
 
 -- name: LabExample :one
 SELECT id,approved_at,project_id,content_hash FROM artifact WHERE id=sqlc.arg(id) AND role='example';

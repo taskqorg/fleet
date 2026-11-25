@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -574,19 +575,40 @@ func TestLabLeaderboard(t *testing.T) {
 			t.Fatalf("artPricing useCaseId = %q, want bench:python-pricing-engine", got)
 		}
 
-		mu.Lock()
-		getsAfterFirst := getCount
-		mu.Unlock()
-		if getsAfterFirst-getsBefore != 1 {
-			t.Fatalf("S3 GETs on first lab_examples_list = %d, want 1", getsAfterFirst-getsBefore)
+		gets := func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return getCount
+		}
+		// FLT-41: the use case is on the example's row (migration 102), so a list reads no example from the store.
+		if n := gets() - getsBefore; n != 0 {
+			t.Fatalf("S3 GETs on lab_examples_list = %d, want 0", n)
 		}
 
-		_ = listExamples()
-		mu.Lock()
-		getsAfterSecond := getCount
-		mu.Unlock()
-		if getsAfterSecond != getsAfterFirst {
-			t.Fatalf("S3 GETs on second lab_examples_list = %d, want 0", getsAfterSecond-getsAfterFirst)
+		// An example stored before migration 102 has none recorded: the start-up backfill reads it once, then lists
+		// read the row again, with an empty in-memory cache (a restart).
+		runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres", "UPDATE artifact SET use_case_id = NULL WHERE id = '"+artPricing+"';")
+		labExampleUseCaseCache.Clear()
+		before := gets()
+		if err := labExampleUseCaseBackfill(env.ctx, env.app); err != nil {
+			t.Fatal(err)
+		}
+		if n := gets() - before; n != 1 {
+			t.Fatalf("S3 GETs of the backfill = %d, want 1 (only the unrecorded example)", n)
+		}
+		if got := strings.TrimSpace(runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres", "SELECT use_case_id FROM artifact WHERE id = '"+artPricing+"';")); !strings.Contains(got, "bench:python-pricing-engine") {
+			t.Fatalf("recorded use case = %q", got)
+		}
+		labExampleUseCaseCache.Clear()
+		before = gets()
+		rep2 := listExamples()
+		for _, ex := range rep2.Examples {
+			if ex.ArtifactId == artPricing && deref(ex.UseCaseId) != "bench:python-pricing-engine" {
+				t.Fatalf("artPricing useCaseId after backfill = %v", ex.UseCaseId)
+			}
+		}
+		if n := gets() - before; n != 0 {
+			t.Fatalf("S3 GETs on lab_examples_list after backfill = %d, want 0", n)
 		}
 	})
 }

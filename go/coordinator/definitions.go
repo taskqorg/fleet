@@ -480,7 +480,7 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 			return out, err
 		}
 	}
-	windows, _, err := usageWindows(q, string(r.Kind), "", 30) // one grouped read for the whole list
+	windows, _, err := usageWindows(q, string(r.Kind), "", nil, 30) // one grouped read for the whole list
 	if err != nil {
 		return out, err
 	}

@@ -14,13 +14,14 @@ import (
 
 // usageWindows: runs, successes, median wall time and tokens of the executions that pinned a saved revision of kind/id
 // (id "" for every definition of the kind) in the last days, per definition and per revision; draft runs are not a
-// revision's runs; rows outside the caller's scope are not counted (row security).
-func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.Window, map[string][]contract.RevisionWindow, error) {
+// revision's runs; rows outside the caller's scope are not counted (row security). only, when not nil, narrows the
+// resource rollup to those ids (the run counts stay per definition of the kind).
+func usageWindows(q *Request, kind, id string, only []string, days int64) (map[string]contract.Window, map[string][]contract.RevisionWindow, error) {
 	pin := map[string]string{"kind": kind}
 	if id != "" {
 		pin["id"] = id
 	}
-	totRes, revRes, err := definitionUsageResources(q, kind, id, days)
+	totRes, revRes, err := definitionUsageResources(q, kind, id, only, days)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -200,7 +201,7 @@ func definitionUsage(q *Request, r *contract.DefinitionUsageRequest) (contract.D
 		}
 		days = *r.Days
 	}
-	totals, byRev, err := usageWindows(q, string(r.Kind), r.Id, days)
+	totals, byRev, err := usageWindows(q, string(r.Kind), r.Id, nil, days)
 	if err != nil {
 		return out, fmt.Errorf("usage: %w", err)
 	}

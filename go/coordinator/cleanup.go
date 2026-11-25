@@ -146,6 +146,7 @@ var referenceMap = []objectRef{
 	{table: "artifact", column: "previous_artifact_id", kind: "artifact", mode: refKeep},
 	{table: "artifact", column: "derived_from_artifact_id", kind: "artifact", mode: refKeep},
 	{table: "artifact", column: "legacy_id", mode: refNone},
+	{table: "artifact", column: "use_case_id", mode: refNone}, // an example's Lab use case (config), migration 102
 	{table: "artifact_copy", column: "artifact_id", kind: "artifact", mode: refOwn},
 	{table: "artifact_copy", column: "project_id", kind: "project", mode: refOwn},
 	{table: "artifact_copy", column: "upload_id", mode: refNone},

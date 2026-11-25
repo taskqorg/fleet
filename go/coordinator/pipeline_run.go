@@ -721,7 +721,7 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 		if err != nil {
 			return err
 		}
-		cd, err := catalogue(q, projectID)
+		cd, err := catalogueBase(q, projectID) // methods and recommendation; no evidence
 		if err != nil {
 			return err
 		}

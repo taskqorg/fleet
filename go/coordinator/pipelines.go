@@ -1074,4 +1074,4 @@ func recommend(q *Request, projectID, methodID string) (any, error) {
 	return projectOps["recommendation_set"].h(&sub)
 }
 
-func projectKnown(q *Request, id string) bool { _, err := catalogue(q, id); return err == nil }
+func projectKnown(q *Request, id string) bool { _, err := catalogueBase(q, id); return err == nil }

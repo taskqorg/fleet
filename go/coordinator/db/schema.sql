@@ -84,7 +84,8 @@ CREATE TABLE artifact (
   "approved_at" timestamp with time zone,
   "tombstoned_at" timestamp with time zone,
   "session_id" text,
-  "code" text
+  "code" text,
+  "use_case_id" text
 );
 CREATE TABLE artifact_copy (
   "artifact_id" text NOT NULL,

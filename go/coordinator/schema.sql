@@ -4789,3 +4789,7 @@ CREATE TABLE person_visit (
 -- sessions_list (sql_builder.go sqlSessionNow, FLT-46), one index probe per listed session.
 CREATE INDEX event_agent_text ON event(session_id, seq)
  WHERE NOT delta AND jsonb_path_exists(payload, '$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @.markdown != "" && (@.role == "agent" || !exists(@.role)))');
+
+-- migration 102: an example artifact's Lab use case, copied from its content when stored (NULL: not read yet, '': none).
+-- Lab lists and leaderboards read it from the row instead of reading every example from the object store (FLT-41).
+ALTER TABLE artifact ADD COLUMN use_case_id text NULL;
