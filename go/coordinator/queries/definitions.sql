@@ -98,6 +98,10 @@ DELETE FROM definition_draft WHERE kind=sqlc.arg(kind) AND id=sqlc.arg(id) AND (
 -- name: DefDelete :exec
 UPDATE definition SET deleted_at=now(), retired_at=coalesce(retired_at,now()) WHERE kind=$1 AND id=$2;
 
+-- name: DefRestoreVariant :execrows
+-- A Lab variant a decision deleted comes back when a changed decision adopts it (labRetireVariants).
+UPDATE definition SET deleted_at=NULL, retired_at=NULL WHERE kind=$1 AND id=$2 AND deleted_at IS NOT NULL AND NOT ever_shipped;
+
 -- name: DefRunning :one
 -- Unfinished executions that pin the definition; older runs name it only in data (pipelineId) or config_ref (profileId).
 SELECT count(*)::bigint FROM execution WHERE state IN ('preparing','running','waiting')
@@ -112,8 +116,11 @@ SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombst
  OR jsonb_path_exists(evaluators, '$.** ? (@ == $id)', jsonb_build_object('id',sqlc.arg(id)::text))) ORDER BY id;
 
 -- name: DefSessionsUsing :one
--- Open sessions whose profile it is.
-SELECT count(*)::bigint FROM session WHERE payload->'agentConfig'->>'id'=sqlc.arg(id)::text AND archived_at IS NULL AND tombstoned_at IS NULL;
+-- Open sessions whose profile it is. A Lab trial's session of an experiment that is no longer live (its executions carry
+-- the experiment) takes no further turn, so it holds nothing (labRetireVariants).
+SELECT count(*)::bigint FROM session s WHERE s.payload->'agentConfig'->>'id'=sqlc.arg(id)::text AND s.archived_at IS NULL AND s.tombstoned_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM execution x JOIN experiment ex ON ex.id=x.experiment_id
+  WHERE x.session_id=s.id AND ex.state NOT IN ('draft','running','paused'));
 
 -- name: DefUsage :many
 -- Runs, successes, median wall time and tokens of the executions that pinned a saved revision of kind/id (id '' for every

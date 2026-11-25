@@ -678,6 +678,13 @@ func expDecide(q *Request, r *contract.LabExperimentDecideRequest) (labExperimen
 	if err := q.db().LabExperimentDecide(q.ctx(), db.LabExperimentDecideParams{ID: e.ID, Decision: &d, DecisionReason: strPtr(reason), DecidedBy: ptr(actor(q, "operator"))}); err != nil {
 		return labExperimentView{}, err
 	}
+	adopted := ""
+	if adopt {
+		adopted = label
+	}
+	if _, err := labRetireVariants(q, e, adopted); err != nil {
+		return labExperimentView{}, err
+	}
 	return expGet(q, e.ID)
 }
 

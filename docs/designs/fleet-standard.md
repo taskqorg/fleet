@@ -128,6 +128,9 @@ restate them. UI principles: [the principles card](../design-system/owner-rules.
    ask the owner only for real product decisions.
 7. **Legacy data may go.** Data the system no longer supports may be deleted in a migration: count the rows and
    check the backup first; no compatibility layer for it.
+8. **One home per definition.** Agents, pipelines and the catalogue change by a pull request to the repository, even
+   after a hotfix save in Fleet; projects, bots and settings change in Fleet. Never copy a change by hand between the
+   repository and the store ([one home per kind](fleet-definition-editors.md#one-home-per-kind)).
 
 ## How the work runs
 
