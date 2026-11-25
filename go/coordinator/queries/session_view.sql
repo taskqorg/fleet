@@ -47,8 +47,9 @@ FROM message m WHERE m.session_id = @session_id AND m.tombstoned_at IS NULL ORDE
 
 -- name: SessionViewThreadItems :many
 -- The work items threads name (task:<id>, question:<id>, execution:<id>): title, current code and state, visible under
--- the caller's RLS. A run is named by its task (code and title), else by its first message line, else by its kind, host and
--- problem ("Host job on owner-mac · preparation failed: ...").
+-- the caller's RLS. A run is named by its task (code and title), else by the trigger or automation that woke it (its
+-- wake prompt is not a name; the thread's lastActivityAt gives the time), else by its first message line, else by its
+-- kind, host and problem ("Host job on owner-mac · preparation failed: ...").
 SELECT ('task:' || t.id)::text AS thread, t.title::text AS title, t.state::text AS state,
  coalesce((SELECT c.code FROM entity_code c WHERE c.entity_id = t.id AND c.superseded_by IS NULL ORDER BY c.issued_at DESC LIMIT 1), '')::text AS code
 FROM task t WHERE t.id = ANY (@task_ids::text[])
@@ -58,7 +59,11 @@ SELECT ('question:' || x.id)::text, x.text::text, x.state::text,
 FROM question x WHERE x.id = ANY (@question_ids::text[])
 UNION ALL
 SELECT ('execution:' || e.id)::text,
- coalesce(nullif(t.title, ''), nullif(left(split_part(btrim((SELECT m.text FROM message m WHERE m.execution_id = e.id ORDER BY m.seq LIMIT 1)), E'\n', 1), 120), ''),
+ coalesce(nullif(t.title, ''),
+  (SELECT coalesce(tr.name, au.name) FROM bot_run br LEFT JOIN trigger tr ON tr.id = br.trigger_id LEFT JOIN bot_automation au ON au.id = br.automation_id
+   WHERE br.execution_id = e.id ORDER BY br.seq DESC LIMIT 1),
+  (SELECT tr.name FROM message m JOIN trigger tr ON tr.id = m.payload->>'triggerId' WHERE m.execution_id = e.id ORDER BY m.seq LIMIT 1),
+  nullif(left(split_part(btrim((SELECT m.text FROM message m WHERE m.execution_id = e.id ORDER BY m.seq LIMIT 1)), E'\n', 1), 120), ''),
   CASE e.kind WHEN 'host_job' THEN 'Host job' ELSE 'Run' END || coalesce(' on ' || e.host_id, '') || coalesce(' · ' || nullif(left(split_part(e.problem, E'\n', 1), 80), ''), ''))::text,
  e.state::text,
  coalesce((SELECT c.code FROM entity_code c WHERE c.entity_id = e.task_id AND c.superseded_by IS NULL ORDER BY c.issued_at DESC LIMIT 1), '')::text
