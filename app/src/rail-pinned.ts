@@ -61,7 +61,8 @@ export function useRailPinned(open: () => boolean, go: (to: string) => void) {
       const id = key.slice(SESSION.length), s = sessionById().get(id);
       if (!s) return [];
       const home = botByHome().get(id);
-      if (home) return [{ ...botPin(key, home), href: '/conversations/' + encodeURIComponent(id) }];
+      // A bot's Home conversation shows as the bot; once, when the bot is pinned too.
+      if (home) return botIds().includes(home.id) ? [] : [{ ...botPin(key, home), href: '/conversations/' + encodeURIComponent(id) }];
       const st = sessionState(s);
       const h = s.harness && s.harness in harnesses ? (s.harness as Harness) : undefined;
       return [{

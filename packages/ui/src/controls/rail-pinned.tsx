@@ -48,7 +48,7 @@ export function RailPinned(p: RailPinnedProps) {
     <div class="rail-pinned" data-ui="rail-pinned">
       <ul class="rail-g" aria-label="Pinned">
         <li class="nav-i rail-pinned-h" onContextMenu={e => e.preventDefault()} onPointerUp={e => { if (e.button === 2) menu.open('h', e); }}>
-          <span class="pin-h" tabindex={0} onKeyDown={ctx('h')}>
+          <span class="pin-h" role="button" tabindex={0} aria-haspopup="menu" aria-label="Pinned menu" onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') menu.open('h', e); else ctx('h')(e); }} onClick={e => menu.open('h', e)}>
             <span class="nav-ic" data-tip="Pinned"><Icon name="pin" /></span>
             <span class="nm">Pinned</span>
           </span>
