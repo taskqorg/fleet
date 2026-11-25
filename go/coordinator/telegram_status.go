@@ -5,7 +5,7 @@
 //   - /help, /now, /needs: shortcuts without a model.
 //   - telegram-watch (everyWake): open questions of a work item's or a home conversation go to its chat with buttons;
 //     answered or withdrawn ones are edited to say by whom; delivery and task milestones go to the work item's room once.
-//   - A tap on a question's button or a Telegram reply to it answers through question_answer as the person.
+//   - A tap on a question's button or a Telegram reply to it answers through questions_answer as the person.
 package main
 
 import (
@@ -417,8 +417,8 @@ func telegramAnswer(q *Request, c *kitClaim, p *Person, questionID, answer strin
 			if err := refreshRequestAccess(pq); err != nil {
 				return err
 			}
-			pq.body = jsonBytes(contract.QuestionAnswerRequest{QuestionId: questionID, Answer: answer})
-			_, err := operations["question_answer"].h(pq)
+			pq.body = jsonBytes(contract.QuestionsAnswerRequest{QuestionId: questionID, Answer: answer})
+			_, err := operations["questions_answer"].h(pq) // as the web app: an agent's question gets the reply delivered
 			return err
 		})
 		return out
