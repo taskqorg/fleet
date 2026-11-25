@@ -163,3 +163,7 @@ SELECT * FROM telegram_outbox WHERE chat_id = @chat_id AND telegram_message_id =
 
 -- name: TelegramOutboxPending :one
 SELECT count(*) FROM telegram_outbox WHERE state = 'pending';
+
+-- name: TelegramOutboxMarkPlain :exec
+-- Telegram refused the item's formatting: its next send goes as plain text.
+UPDATE telegram_outbox SET error = 'html-refused' WHERE id = $1 AND state = 'pending';
