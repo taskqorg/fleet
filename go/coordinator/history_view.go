@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -33,6 +34,17 @@ func historyView(q *Request, r *contract.HistoryViewRequest) (contract.HistoryVi
 	var before int64
 	if r.Before != nil {
 		before = *r.Before
+	}
+	// The scope chip's name: the one object the request narrows to, read once on the first page.
+	if before == 0 && (r.TaskId != nil || r.SessionId != nil || r.ExperimentId != nil || r.BotId != nil || r.HostId != nil) {
+		t, err := q.db().HistoryObjectTitle(q.ctx(), db.HistoryObjectTitleParams{TaskID: r.TaskId, SessionID: r.SessionId,
+			ExperimentID: r.ExperimentId, BotID: r.BotId, HostID: r.HostId})
+		if err != nil {
+			return out, err
+		}
+		if t != "" {
+			out.ScopeTitle = &t
+		}
 	}
 	raw := limit*historyRaw + 1
 	sql, args := sqlHistoryPage(r, before, raw)

@@ -38,7 +38,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * In work: every open task (working, then waiting, then queued; longest in work first) with its work facts: attempts, the agent and the time in work, last; the latest attempt and the time in its state on hover. A task stuck in retries shows here between its attempts, when no slot shows it.
    * Delivery: pull requests moving through checks, merge, release and install, each with its time since opened (time in the stage on hover) and its stage chip.
    * CI runners: jobs running and minutes today; self-hosted runner state.
-   * Just now: the latest events, each with age, a state dot, the task or conversation it belongs to and the agent; repeats are one event with `×N` (OR-58). Host jobs without a task (account probes, cleanup) are the host's upkeep and stay in the host's own conversation and history, not here.
+   * Just now: the newest work entries of [History](history.md) in the focus (`history_view` section work, 5 rows; a host's upkeep jobs, settings and Lab stay on their own pages), each with its state, what happened, the actor and the age; repeats come folded with `×N` (OR-58). The heading opens History.
    * Each side list shows its latest five; its heading, with the count, opens the full list (Projects, Tasks, Delivery), and in wall mode it is plain text (OR-30, OR-65).
 
 Every element opens its detail in the app: a host in System, a slot or event in its session, a pull request in its project's delivery facet, a project in Projects. In wall mode nothing opens; the screen only shows.

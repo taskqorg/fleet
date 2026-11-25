@@ -5,10 +5,11 @@
 import { createMemo, For, Show } from 'solid-js';
 import { useLocation, useSearch } from '../router.ts';
 import {
-  Button, Empty, ErrorBanner, Icon, InfiniteList, LiveRow, Skeleton, WorkFacts, harnesses, peerFence, type Life,
+  Button, Empty, ErrorBanner, Icon, InfiniteList, LiveRow, Skeleton, WorkFacts, day, dayStart, harnesses, peerFence, type Life,
 } from '../../../packages/ui/src/index.ts';
 import type { Ops } from '../api.ts';
 import { useOpPages } from '../op-pages.ts';
+import { useOp } from '../store.ts';
 
 type Req = Ops['history_view']['request'];
 type Entry = Ops['history_view']['reply']['entries'][number];
@@ -27,38 +28,54 @@ export function historyText(e: Entry): string {
   if (e.kind === 'question') return `Question ${e.verb}: ${what}`;
   if (e.kind === 'lab') return `${what} ${e.verb === 'decided' ? 'decided' : e.verb}`;
   if (e.kind === 'run') {
-    const where = e.detail?.executionKind === 'host_job' ? `host job ${e.verb === 'finished' ? 'finished' : e.verb}${e.hostId ? ` on ${e.hostId}` : ''}` : e.verb;
-    return what ? `${what} ${where}` : where;
+    // A host job names its host; an untitled run (written before fleet_activity named it) its harness.
+    if (e.detail?.executionKind === 'host_job') {
+      const on = e.hostId ? ` on ${e.hostId}` : '';
+      return e.title && e.title !== 'Host job' ? `${e.title} · host job ${e.verb}${on}` : `Host job ${e.verb}${on}`;
+    }
+    const harness = typeof e.detail?.harness === 'string' ? e.detail.harness : null;
+    return `${e.title || (harness ? `${harness} run` : 'Run')} ${e.verb}`;
   }
   return `${what} ${e.verb}`;
 }
 
-/** Where a row opens: the object it belongs to, most specific first. */
-export function historyPath(e: Entry): string | null {
-  if (e.taskId) return `/tasks/${encodeURIComponent(e.taskId)}`;
+/** Where a row opens: the object it belongs to, most specific first. Inside an object's own history (a task's tab) a
+ *  row opens what it adds there, the conversation, rather than the object already open. */
+export function historyPath(e: Entry, inside?: 'task'): string | null {
+  if (e.taskId && inside !== 'task') return `/tasks/${encodeURIComponent(e.taskId)}`;
   if (e.experimentId) return `/lab/${encodeURIComponent(e.experimentId)}`;
   if (e.sessionId) return `/conversations/${encodeURIComponent(e.sessionId)}`;
   if (e.hostId) return `/hosts/${encodeURIComponent(e.hostId)}`;
   return null;
 }
 
-/** The rows of a history list: state icon, sentence, actor and ×N, age rightmost. */
-function Rows(p: { entries: readonly Entry[] }) {
+/** A day heading's words (board screens/history.bl): Today, Yesterday, else the date. */
+const dayLabel = (t: number, now: number) => t >= dayStart(now) ? 'Today' : t >= dayStart(now, -1) ? 'Yesterday' : day(t, now);
+
+/** The rows of a history list: state icon, sentence, actor and ×N, age rightmost; with days, a heading where the day
+ *  changes; still (Live's wall) opens nothing. */
+export function HistoryRows(p: { entries: readonly Entry[]; inside?: 'task'; days?: boolean; still?: boolean }) {
   const [, go] = useLocation();
   const fence = createMemo(() => peerFence(p.entries.map(e => e.n)));
-  return <For each={p.entries}>{e => {
-    const to = historyPath(e);
-    return <LiveRow kind="event" at={e.at} state={LIFE[e.outcome]} text={historyText(e)} onOpen={to ? () => go(to) : undefined}
-      facts={<>
-        {/* A harness shows as its mark in the work facts; a person, bot or system actor as a quiet name. */}
-        <Show when={e.actor && !(e.actor in harnesses)}><span class="lr-fact muted">{shortActor(e.actor!)}</span></Show>
-        <WorkFacts attempts={e.n} attemptsFence={fence()} agent={e.actor} />
-      </>} />;
+  const now = Date.now();
+  return <For each={p.entries}>{(e, i) => {
+    const to = historyPath(e, p.inside);
+    const prev = i() > 0 ? p.entries[i() - 1] : null;
+    const head = p.days && (!prev || dayStart(prev.at) !== dayStart(e.at));
+    return <>
+      <Show when={head}><li class="history-day" data-ui="history-day"><h3>{dayLabel(e.at, now)}</h3></li></Show>
+      <LiveRow kind="event" at={e.at} state={LIFE[e.outcome]} text={historyText(e)} onOpen={to && !p.still ? () => go(to) : undefined}
+        facts={<>
+          {/* A harness shows as its mark in the work facts; a person, bot or system actor as a quiet name. */}
+          <Show when={e.actor && !(e.actor in harnesses)}><span class="lr-fact muted">{shortActor(e.actor!)}</span></Show>
+          <WorkFacts attempts={e.n} attemptsFence={fence()} agent={e.actor} />
+        </>} />
+    </>;
   }}</For>;
 }
 
 /** A scoped history that loads on scroll: the History page and an object's History tab. */
-export function HistoryFeed(p: { request: () => Req; label: string }) {
+export function HistoryFeed(p: { request: () => Req; label: string; inside?: 'task' }) {
   const paged = useOpPages('history_view', () => p.request(), {
     page: r => ({ rows: r.entries, next: r.nextCursor ?? null }), after: before => ({ before }), key: e => String(e.seq),
   });
@@ -67,7 +84,7 @@ export function HistoryFeed(p: { request: () => Req; label: string }) {
     <Show when={!paged.first.error || paged.first.data} fallback={<ErrorBanner text={`History did not load: ${paged.first.error}`} onRetry={() => paged.first.reload()} />}>
       <Show when={rows().length > 0} fallback={<Empty text="Nothing has happened here yet." />}>
         <InfiniteList pages={paged.pages} label={p.label} endLabel="Older entries">
-          <ul class="live-list" data-ui="history-list"><Rows entries={rows()} /></ul>
+          <ul class="live-list" data-ui="history-list"><HistoryRows entries={rows()} inside={p.inside} days /></ul>
         </InfiniteList>
       </Show>
     </Show>
@@ -83,7 +100,7 @@ export function HistoryPreview(p: { entries: readonly Entry[] | undefined; to: s
       <header class="panel-h"><Icon name="history" /><h2>
         <a class="dsec-open" href={p.to} onClick={e => { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); go(p.to); } }}>History<Icon name="chevron-right" /></a>
       </h2></header>
-      <ul class="live-list"><Rows entries={p.entries!} /></ul>
+      <ul class="live-list"><HistoryRows entries={p.entries!} /></ul>
     </section>
   </Show>;
 }
@@ -113,7 +130,6 @@ export function History() {
   };
   const kind = createMemo<KindTab>(() => (KINDS.find(k => k.id === q().get('kind'))?.id ?? 'all'));
   const failed = createMemo(() => q().get('outcome') === 'failed');
-  const scope = createMemo(() => SCOPES.flatMap(s => { const v = q().get(s.key); return v ? [{ key: s.key, label: s.label(v) }] : []; }));
   const request = createMemo<Req>(() => {
     const r: Req = {};
     for (const s of SCOPES) { const v = q().get(s.key); if (v) (r as Record<string, string>)[s.key] = v; }
@@ -121,6 +137,13 @@ export function History() {
     if (failed()) r.outcome = 'failed';
     return r;
   });
+  // The object's readable name comes with the first page (scopeTitle); this read shares the feed's (one cache key).
+  const first = useOp('history_view', () => request());
+  const scope = createMemo(() => SCOPES.flatMap(s => {
+    const v = q().get(s.key);
+    if (!v) return [];
+    return [{ key: s.key, label: s.key !== 'section' && first.data?.scopeTitle ? s.label(first.data.scopeTitle) : s.label(v) }];
+  }));
   return (
     <div class="live" data-ui="history">
       <div class="fbar">

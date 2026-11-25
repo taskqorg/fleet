@@ -256,6 +256,7 @@ func (v HistorySection) Valid() bool {
 type HistoryViewReply struct {
 	Entries    []HistoryEntry `json:"entries"`
 	NextCursor *int64         `json:"nextCursor"`
+	ScopeTitle *string        `json:"scopeTitle"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

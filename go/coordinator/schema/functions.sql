@@ -257,6 +257,8 @@ BEGIN
  BEGIN
   IF TG_TABLE_NAME = 'execution' THEN
    ttl := coalesce((SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = r.task_id), (SELECT coalesce(x.lab_group, x.goal, x.kind::text) || ' trial' FROM experiment x WHERE x.id = r.experiment_id), (SELECT s.title FROM session s WHERE s.id = r.session_id), '');
+   -- A run with no task, experiment or titled conversation is named by what ran it.
+   IF ttl = '' THEN ttl := CASE r.kind WHEN 'host_job' THEN 'Host job' WHEN 'pipeline_run' THEN coalesce(r.pipeline_id, 'Pipeline') || ' run' ELSE coalesce(r.harness, 'Agent') || ' run' END; END IF;
   ELSIF TG_TABLE_NAME = 'task' THEN ttl := coalesce(r.code || ' ', '') || r.title;
   ELSIF TG_TABLE_NAME = 'question' THEN ttl := r.text;
   ELSIF TG_TABLE_NAME = 'experiment' THEN ttl := coalesce(r.lab_group, r.goal, r.kind::text);
