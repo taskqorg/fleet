@@ -1,5 +1,5 @@
 // Route consolidation (docs/designs/fleet-ia-and-journeys.md §1, Target route column): the address bar shows the target
-// route of the seven-section rail; the views still speak their earlier paths (the view-url codec, `/tasks/<id>`). The
+// route of the eight-section rail; the views still speak their earlier paths (the view-url codec, `/tasks/<id>`). The
 // router translates both ways, so an earlier link, a bookmark or a view's own link lands on its target route, keeping the
 // item and the query (UR-69).
 //

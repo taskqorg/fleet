@@ -10,6 +10,9 @@ func init() {
 	op("lab_view", labView)
 }
 
+// labHistoryShown: the history entries Lab's empty pane shows.
+const labHistoryShown = 8
+
 func labView(q *Request, _ *contract.LabViewRequest) (contract.LabViewReply, error) {
 	var out contract.LabViewReply
 	exps, err := labExperimentsList(q, nil)
@@ -27,6 +30,12 @@ func labView(q *Request, _ *contract.LabViewRequest) (contract.LabViewReply, err
 		return out, err
 	}
 	out.Ratings = ratings.Ratings
-	out.Leaderboard, err = labLeaderboard(q, &contract.LabLeaderboardRequest{Days: ptr(int64(30))})
+	if out.Leaderboard, err = labLeaderboard(q, &contract.LabLeaderboardRequest{Days: ptr(int64(30))}); err != nil {
+		return out, err
+	}
+	// The empty detail pane's history (docs/designs/fleet-history.md): Lab's newest entries, the full list on History.
+	lab := contract.HistorySection("lab")
+	h, err := historyView(q, &contract.HistoryViewRequest{Section: &lab, Limit: ptr(int64(labHistoryShown))})
+	out.History = h.Entries
 	return out, err
 }

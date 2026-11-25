@@ -2,12 +2,12 @@
 
 **Code.** `NavRail` in `packages/ui`. Demo: [book](../book/index.html#nav-rail).
 
-**Purpose.** Moves between the seven sections (OR-46): Home, Live, Conversations, Projects, Lab, Library, System. Each person may pin the ones they follow first ([D9](../decisions.md)).
+**Purpose.** Moves between the eight sections (OR-46): Home, Live, History, Conversations, Projects, Lab, Library, System. Each person may pin the ones they follow first ([D9](../decisions.md)).
 
 **Anatomy.** A left column of width `size-rail`, from top to bottom:
 0. The head: the Fleet mark and name ([D23](../decisions.md#2026-11-11-d23-name-and-mark)) and the "N need you" chip. The collapse button, the search icon and the focus chip are not here: they sit in the shell header beside the rail (OR-42, OR-43, [app shell](../patterns/app-shell.md)).
 1. The pinned group, in the order the person set.
-2. The seven sections in their fixed order, with no group headings. Every other screen belongs to one of them and highlights it while open (OR-57): Tasks, Results and Delivery are Projects, Bots and the definitions are Library, Hosts, Runners, keys, Spend and People are System.
+2. The eight sections in their fixed order, with no group headings. Every other screen belongs to one of them and highlights it while open (OR-57): Tasks, Results and Delivery are Projects, Bots and the definitions are Library, Hosts, Runners, keys, Spend and People are System.
 3. When the person turns it on, the Pinned zone (**Pinned** below), at the bottom above the user block.
 4. At the bottom, the current user block ([board](../board/screens/shell.bl)): the update strip when a newer app is ready, then the avatar and name, then the version (**Version** below). A click (or right-click) on the person opens a short menu with Versions and Logout, the Cloudflare Access logout (OR-42). The avatar is the person's initial on the `selected` surface in `fg`: the same in every state, theme and width, with no dot or tone.
 
@@ -23,7 +23,7 @@ Each item has a registry icon (OR-3), a name, an optional counter (**Counters** 
 * Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Every icon (the mark, section icons, the avatar) keeps its exact position: the paddings do not change and the collapsed rail is just its icon column wide. The user block keeps its avatar. The toggle shows `panel-left-close` expanded and `panel-left-open` collapsed.
 * The rail is the left [side panel](side-panel.md): its toggle, divider and stored state are that control's. The divider on the rail's right edge resizes it (OR-41): drag, or focus it and press Left and Right; a double-click resets the width. Collapsed, the rail has no divider.
 * The collapse button shrinks the rail to icons: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20).
-* At phone width (760 px and below) the bottom bar of five replaces the rail ([OR-60](../owner-rules.md), [app shell](../patterns/app-shell.md)): Home, Live, Conversations, Projects and More, whose short menu holds the Pinned zone when it is on, Lab, Library, System and the user block.
+* At phone width (760 px and below) the bottom bar of five replaces the rail ([OR-60](../owner-rules.md), [app shell](../patterns/app-shell.md)): Home, Live, History, Conversations and More, whose short menu holds the Pinned zone when it is on, Projects, Lab, Library, System and the user block.
 
 **Counters.** A section's counter counts its *counter view*, a person setting (`navCounters` in `person_settings_get`/`person_settings_set`; agents write it too):
 
@@ -82,4 +82,4 @@ Collapsed, the strip keeps its row with only its button over the avatar column (
 
 ## Board
 
-The user block, the update strip, the version overview and their states (expanded, collapsed, phone): [screens/shell.bl](../board/screens/shell.bl). Masters on [blocks.bl](../board/blocks.bl): `Nav rail` (with the "N need you" chip in its head) (the seven sections of [OR-46](../owner-rules.md), built from `Nav item`, whose `current` variant marks the open section), and the phone `Bottom bar` of five `Tab item`s ([OR-60](../owner-rules.md)). A screen sets its section by switching the nested item to `current`.
+The user block, the update strip, the version overview and their states (expanded, collapsed, phone): [screens/shell.bl](../board/screens/shell.bl). Masters on [blocks.bl](../board/blocks.bl): `Nav rail` (with the "N need you" chip in its head) (the eight sections of [OR-46](../owner-rules.md), built from `Nav item`, whose `current` variant marks the open section), and the phone `Bottom bar` of five `Tab item`s ([OR-60](../owner-rules.md)). A screen sets its section by switching the nested item to `current`.

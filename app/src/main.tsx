@@ -36,6 +36,7 @@ const PersonalLab = lazy(() => import('./views/personal-lab.tsx'), { export: 'Pe
 const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
 const Library = lazy(() => import('./views/agents.tsx'), { export: 'Library' });
 const Live = lazy(() => import('./views/live.tsx'), { export: 'Live' });
+const History = lazy(() => import('./views/history.tsx'), { export: 'History' });
 
 // Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
 // purpose. The release is the version this tab runs.
@@ -76,6 +77,7 @@ const viewerOnly = (roles: readonly string[] | undefined) => !!roles && roles.le
 // A list screen takes an optional focus segment, so focusing a row never unmounts the list.
 const SCREENS = [
   { id: 'live', focus: false, view: () => <Live wall={isWall(useSearch()())} /> },
+  { id: 'history', focus: false, view: () => <History /> },
   { id: 'overview', focus: true, view: (p: { id?: string }) => <Home id={p.id} /> },
   { id: 'conversations', focus: true, view: (p: { id?: string }) => <Conversations id={p.id} /> },
   { id: 'lab', focus: true, view: (p: { id?: string }) => <LabWorkspace id={p.id} /> },

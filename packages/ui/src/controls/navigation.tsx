@@ -250,7 +250,7 @@ export function FocusControl(p: {
  * A section of the rail. count: its counter (nav-rail.md, Counters): n in the person's focus (every item without one), and
  * outside, the rest outside the focus (undefined without a focus); label names what is counted ("running").
  */
-/** A rail section. `group` puts it under a small heading; the app's seven sections have none (OR-46). */
+/** A rail section. `group` puts it under a small heading; the app's eight sections have none (OR-46). */
 export type NavItem = { id: string; label: string; icon: IconName; group?: string; count?: NavCount };
 export type NavCount = { n: number; outside?: number; tone: Tone; label: string };
 /** The counter after a section name: `12·30` (in focus bright, outside dim), `·30` with none in focus, `12` without a focus; nothing at zero. */

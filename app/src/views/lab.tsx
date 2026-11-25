@@ -16,6 +16,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type OpName, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
+import { HistoryPreview } from './history.tsx';
 import { useOp, useView } from '../store.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, setListGroups, usePins, useViews } from '../prefs.ts';
@@ -100,12 +101,13 @@ const RUN_FOLDERS = [
 
 // Saved views of the Lab catalogue (OR-33). "Mine" replaces Personal Lab: the runs the person requested. "Waiting for a
 // decision": finished runs nobody has decided. A person's own views keep the search query.
-const VIEW_ALL = 'All', VIEW_MINE = 'Mine', VIEW_WAITING = 'Waiting for a decision';
-const LAB_VIEWS = [VIEW_ALL, VIEW_MINE, VIEW_WAITING].map(name => ({ name, view: { view: 'lab', preset: name } as unknown as View }));
+const VIEW_ALL = 'All', VIEW_MINE = 'Mine', VIEW_WAITING = 'Waiting for a decision', VIEW_HISTORY = 'History';
+const LAB_VIEWS = [VIEW_ALL, VIEW_MINE, VIEW_WAITING, VIEW_HISTORY].map(name => ({ name, view: { view: 'lab', preset: name } as unknown as View }));
 const VIEW_TIPS: Record<string, string> = {
   [VIEW_ALL]: 'Every use case and run',
   [VIEW_MINE]: 'Runs you requested, and your Personal Lab drafts',
   [VIEW_WAITING]: 'Finished runs that wait for your decision',
+  [VIEW_HISTORY]: "Lab's history: experiments and trials, newest first",
 };
 
 /** An experiment's state in the one state vocabulary (OR-55): a finished, undecided run waits for the person. */
@@ -371,6 +373,8 @@ export function Lab(props: { id?: string }) {
   const pickView = (name: string) => {
     const v = views.list.find(x => x.name === name);
     if (!v) return;
+    // History is the History page in Lab's scope (docs/designs/fleet-history.md), not a filter of the catalogue.
+    if (name === VIEW_HISTORY) { go('/history?section=lab'); return; }
     if (v.system) { setPreset(name); return; }
     setPreset(VIEW_ALL);
     setCtlQuery(v.view.q ?? '');
@@ -444,6 +448,7 @@ export function Lab(props: { id?: string }) {
     <article class="detail" aria-label="Lab overview">
       <Waiting experiments={waitingExperiments()} approvals={approvals()} openRatings={openRatings()} now={now}
         onOpen={x => go(`/lab/${encodeURIComponent(x)}`)} onAll={() => pickView(VIEW_WAITING)} />
+      <HistoryPreview entries={view.data?.history} to="/history?section=lab" />
       {comparison('All use cases')}
     </article>
   );
