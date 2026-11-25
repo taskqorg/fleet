@@ -122,3 +122,12 @@ func TestTelegramCommandRegistry(t *testing.T) {
 		t.Error("ru help: /new is offered only in private chats")
 	}
 }
+
+func TestTelegramNewWorkCue(t *testing.T) {
+	for text, want := range map[string]bool{"Новая задача: сколько вопросов": true, "Другой вопрос: сколько всего": true, "new task: x": true,
+		"Another thing": true, "А какая из этих трёх самая старая?": false, "show mobile also": false, "newsletter draft": false} {
+		if newWorkCue.MatchString(strings.ToLower(text)) != want {
+			t.Errorf("%q: %v", text, !want)
+		}
+	}
+}

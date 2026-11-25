@@ -24,6 +24,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -44,6 +46,12 @@ const telegramLongPoll = 20 * time.Second
 // telegramSendAttempts: tries of one outbox item that fails before Telegram (gateway, key, tool) before it fails for
 // good, so it does not hold the chat's later items (head-of-line, owner-tester 2026-11-25).
 const telegramSendAttempts = 8
+
+// telegramFollowUp: how long after a person's message their next one counts as its follow-up.
+const telegramFollowUp = 5 * time.Minute
+
+// newWorkCue: words that say a message starts different work, so it never counts as a follow-up.
+var newWorkCue = regexp.MustCompile(`^\s*(нов(ая|ое|ый)|друг(ой|ая|ое)|отдельн|ещё одн|еще одн|new\b|another\b|separate|different)`)
 
 // telegramChunk: Telegram's text limit is 4096 characters; the HTML form of a reply longer than this goes out in parts.
 const telegramChunk = 4000
@@ -658,11 +666,36 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 	if len(open) == 0 {
 		return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{newWork: workTitle(messageText(m))})
 	}
+	// A follow-up shortly after the author's last message goes to that message's work item, without a model, unless
+	// it says it starts something new (owner-tester F19: "А какая из этих трёх самая старая?" 30 s after an answer).
+	if !newWorkCue.MatchString(strings.ToLower(messageText(m))) {
+		recent, err := q.db().TelegramAuthorRecentWork(q.ctx(), db.TelegramAuthorRecentWorkParams{ChatID: &m.Chat.ID, FromID: &m.From.ID, RoomID: room.ID,
+			Since: pgtype.Timestamptz{Time: time.Now().Add(-telegramFollowUp), Valid: true}, ID: row.ID})
+		if err == nil {
+			for _, w := range open {
+				if w.ID == recent {
+					return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{sessionID: w.SessionID, workID: w.ID})
+				}
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
 	a, text, author := q.app, messageText(m), tp.Email
 	if pp := q.app.peopleSnapshot().person(tp.Email); pp != nil && pp.Name != "" {
 		author = pp.Name
 	}
-	c.Call = func(ctx context.Context) any { return tgDecided{decision: conductorChoose(ctx, a, open, author, text)} }
+	lastReplies := map[string]string{}
+	for _, w := range open {
+		if r, err := q.db().TelegramWorkLastReply(q.ctx(), &w.ID); err == nil {
+			lastReplies[w.ID] = r.Text
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
+	c.Call = func(ctx context.Context) any {
+		return tgDecided{decision: conductorChoose(ctx, a, open, lastReplies, author, text)}
+	}
 	return nil
 }
 
@@ -818,11 +851,11 @@ func conductorModel(ctx context.Context, a *App) (string, string) {
 
 // conductorChoose asks the conductor model which open work item a message belongs to. Any failure is "ask": the
 // person then chooses with one tap, so a model outage never misroutes a message.
-var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, author, text string) conductorDecision {
+var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, lastReplies map[string]string, author, text string) conductorDecision {
 	conn, model := conductorModel(ctx, a)
 	d := conductorDecision{Choice: "ask", err: errors.New("no OpenAI connection open to every project")}
 	if conn != "" {
-		d = conductorCall(ctx, a, conn, model, open, author, text)
+		d = conductorCall(ctx, a, conn, model, open, lastReplies, author, text)
 	}
 	call := &contract.TelegramConductorCall{Connection: conn, Model: model, At: nowMs(), Choice: ptr(d.Choice)}
 	if d.err != nil {
@@ -835,15 +868,20 @@ var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, 
 }
 
 // conductorCall: one Responses API call; its answer is a JSON object (text.format json_object).
-func conductorCall(ctx context.Context, a *App, conn, model string, open []db.TelegramWork, author, text string) conductorDecision {
+func conductorCall(ctx context.Context, a *App, conn, model string, open []db.TelegramWork, lastReplies map[string]string, author, text string) conductorDecision {
 	var items strings.Builder
 	for _, w := range open {
-		fmt.Fprintf(&items, "- id %s: %s\n", w.ID, w.Title)
+		fmt.Fprintf(&items, "- id %s (last active %s): %s", w.ID, sinceWords("en", time.Since(w.LastAt)), w.Title)
+		if last, ok := lastReplies[w.ID]; ok {
+			fmt.Fprintf(&items, "; last answer: %s", clip(strings.ReplaceAll(last, "\n", " "), 200))
+		}
+		items.WriteString("\n")
 	}
 	instructions := "You are the conductor of a team chat room. People write short messages about several pieces of work. " +
 		"Decide which open work item the new message belongs to. Answer only JSON {\"choice\": <work item id | \"new\" | \"ask\">, \"title\": <short title for new work, else \"\">, \"status\": <true when the message only asks how that item is going or whether it is done or live>}. " +
 		"Choose \"new\" only when the message clearly starts different work; choose \"ask\" when it could belong to more than one item or you are unsure. " +
-		"Short follow-ups (\"so?\", \"show mobile too\", \"ok go\") belong to the most recent item unless they name another."
+		"Short follow-ups (\"so?\", \"show mobile too\", \"ok go\") belong to the most recent item unless they name another; " +
+		"a follow-up that refers back (\"these\", \"it\", \"them\", \"этих\", \"его\") belongs to the item whose last answer it refers to, usually the most recently active one."
 	// The Responses API's json_object format wants the word JSON in the input itself, not only in the instructions.
 	input := "Open work items, most recent first:\n" + items.String() + "\nNew message from " + author + ":\n" + clip(text, 2000) + "\n\nAnswer with the JSON object."
 	token, release, err := readTokenFor(ctx, a, conn, "")
