@@ -479,13 +479,14 @@ func profileNamed(raw json.RawMessage) string {
 }
 
 func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.DefinitionListReply, error) {
-	return definitionListOf(q, r, nil)
+	return definitionListOf(q, r, nil, nil)
 }
 
 // definitionListOf: definition_list with each item's last 30 days from usage (recentUsage: runs, successes, tokens and
 // median wall time, no resources); nil usage reads them with the resource rollup (usageWindows), which resolves
-// container lineage over every execution.
-func definitionListOf(q *Request, r *contract.DefinitionListRequest, usage map[string]contract.Window) (contract.DefinitionListReply, error) {
+// container lineage over every execution. current, when not nil, is every current definition already read (library_view
+// reads them once for its lists, skills and drift); nil reads this kind's.
+func definitionListOf(q *Request, r *contract.DefinitionListRequest, usage map[string]contract.Window, current []definitionRow) (contract.DefinitionListReply, error) {
 	out := contract.DefinitionListReply{Items: []contract.DefinitionListItem{}}
 	if err := definitionKind(r.Kind); err != nil {
 		return out, err
@@ -494,8 +495,15 @@ func definitionListOf(q *Request, r *contract.DefinitionListRequest, usage map[s
 	if r.IncludeRetired != nil && *r.IncludeRetired {
 		f = definitionFilter{kind: string(r.Kind), live: true} // a deleted definition is gone, retired or not
 	}
-	xs, err := definitionsOf(q.ctx(), q.db(), f)
-	if err != nil {
+	var xs []definitionRow
+	var err error
+	if current != nil && !f.live {
+		for _, x := range current {
+			if x.Kind == f.kind {
+				xs = append(xs, x)
+			}
+		}
+	} else if xs, err = definitionsOf(q.ctx(), q.db(), f); err != nil {
 		return out, err
 	}
 	roles := map[string][]string{} // profile -> project:role, read once per list

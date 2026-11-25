@@ -18,11 +18,12 @@ func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.Syste
 	if err != nil {
 		return contract.SystemChangesReply{}, err
 	}
-	return systemChangesOf(q, usage)
+	return systemChangesOf(q, usage, nil)
 }
 
 // systemChangesOf: system_changes with the last 30 days' usage of agents and pipelines already read (recentUsage).
-func systemChangesOf(q *Request, usage map[string]map[string]contract.Window) (contract.SystemChangesReply, error) {
+// current, when not nil, is every current definition already read (library_view); nil reads them.
+func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, current []definitionRow) (contract.SystemChangesReply, error) {
 	out := contract.SystemChangesReply{
 		RepositoryChanged: []contract.SystemChangeDefinition{},
 		Ahead:             []contract.SystemChangeDefinition{},
@@ -31,9 +32,12 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window) (c
 		Components:        []contract.SystemChangeKind{},
 	}
 
-	defs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{current: true})
-	if err != nil {
-		return out, err
+	defs := current
+	if defs == nil {
+		var err error
+		if defs, err = definitionsOf(q.ctx(), q.db(), definitionFilter{current: true}); err != nil {
+			return out, err
+		}
 	}
 
 	for _, d := range defs {

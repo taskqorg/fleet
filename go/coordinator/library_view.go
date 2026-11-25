@@ -36,21 +36,29 @@ func libraryView(q *Request, r *contract.LibraryViewRequest) (contract.LibraryVi
 	if err != nil {
 		return out, err
 	}
+	// Every current definition, read once for the three lists, the skills and the drift (each read them all again).
+	current, err := definitionsOf(q.ctx(), q.db(), definitionFilter{current: true})
+	if err != nil {
+		return out, err
+	}
+	if current == nil {
+		current = []definitionRow{}
+	}
 	for kind, dst := range map[contract.DefinitionKind]*[]contract.DefinitionListItem{
 		contract.DefinitionKindAgent: &out.Agents, contract.DefinitionKindPipeline: &out.Pipelines, contract.DefinitionKindCatalogue: &out.Methods,
 	} {
-		l, err := definitionListOf(q, &contract.DefinitionListRequest{Kind: kind}, usage[string(kind)])
+		l, err := definitionListOf(q, &contract.DefinitionListRequest{Kind: kind}, usage[string(kind)], current)
 		if err != nil {
 			return out, err
 		}
 		*dst = l.Items
 	}
-	skills, err := skillsList(q, &contract.SkillsListRequest{})
+	skills, err := skillsListOf(q, current)
 	if err != nil {
 		return out, err
 	}
 	out.Skills = skills.Skills
-	if out.Changes, err = systemChangesOf(q, usage); err != nil {
+	if out.Changes, err = systemChangesOf(q, usage, current); err != nil {
 		return out, err
 	}
 	recs, err := recommendationChanges(q, &contract.RecommendationChangesRequest{})
