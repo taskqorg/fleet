@@ -81,4 +81,15 @@ func TestHistoryView(t *testing.T) {
 	if len(p2.Entries) != 1 || p2.Entries[0].Verb != "asked" {
 		t.Fatalf("second page: %+v", p2)
 	}
+
+	// Two trials of one experiment start: one entry of two, titled by the experiment.
+	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id, examples, variants, evaluators, primary_evaluator, lab_group) VALUES ('hs-x', 'fleet', 'ab', 'p', '[]', '[]', '[]', 'e', 'code-mode')`)
+	for _, id := range []string{"hs-t1", "hs-t2"} {
+		exec(`INSERT INTO execution (id, kind, state, project_id, experiment_id, started_at, data, observation, config_ref) VALUES ($1, 'agent_run', 'running', 'fleet', 'hs-x', $2, '{}', 'confirmed', '{}')`, id, now.Add(9*time.Second))
+	}
+	var lab contract.HistoryViewReply
+	e.opInto(t, "history_view", map[string]any{"section": "lab", "kinds": []string{"run"}}, e.ownerHeaders(), &lab)
+	if len(lab.Entries) != 1 || lab.Entries[0].N != 2 || lab.Entries[0].Title != "code-mode trial" {
+		t.Fatalf("trials: %+v", lab.Entries)
+	}
 }

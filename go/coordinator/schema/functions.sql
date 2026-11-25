@@ -219,7 +219,7 @@ BEGIN
   sec := CASE WHEN r.experiment_id IS NOT NULL THEN 'lab' WHEN r.kind = 'host_job' AND r.task_id IS NULL THEN 'system' ELSE 'work' END;
   subj := 'execution:' || r.id; act := coalesce(r.bot_id, r.harness, r.system_actor, r.directed_by);
   tid := r.task_id; sid := r.session_id; hid := r.host_id; bid := r.bot_id; xid := r.experiment_id;
-  gk := coalesce('task:' || r.task_id, CASE WHEN r.kind = 'host_job' THEN 'host_job:' || coalesce(r.host_id, '') END, 'session:' || r.session_id, subj);
+  gk := coalesce('task:' || r.task_id, 'experiment:' || r.experiment_id, CASE WHEN r.kind = 'host_job' THEN 'host_job:' || coalesce(r.host_id, '') END, 'session:' || r.session_id, subj);
   det := jsonb_strip_nulls(jsonb_build_object('executionKind', r.kind, 'harness', r.harness, 'model', r.model, 'startedAt', r.started_at, 'problem', r.problem));
  ELSIF TG_TABLE_NAME = 'task' THEN
   IF TG_OP = 'UPDATE' AND OLD.state = r.state THEN RETURN NULL; END IF;
@@ -256,10 +256,10 @@ BEGIN
  PERFORM set_config('fleet.project_ids', '*', true);
  BEGIN
   IF TG_TABLE_NAME = 'execution' THEN
-   ttl := coalesce((SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = r.task_id), (SELECT s.title FROM session s WHERE s.id = r.session_id), '');
+   ttl := coalesce((SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = r.task_id), (SELECT coalesce(x.lab_group, x.goal, x.kind::text) || ' trial' FROM experiment x WHERE x.id = r.experiment_id), (SELECT s.title FROM session s WHERE s.id = r.session_id), '');
   ELSIF TG_TABLE_NAME = 'task' THEN ttl := coalesce(r.code || ' ', '') || r.title;
   ELSIF TG_TABLE_NAME = 'question' THEN ttl := r.text;
-  ELSIF TG_TABLE_NAME = 'experiment' THEN ttl := coalesce(r.goal, r.lab_group, r.kind::text);
+  ELSIF TG_TABLE_NAME = 'experiment' THEN ttl := coalesce(r.lab_group, r.goal, r.kind::text);
   ELSE ttl := r.target || ' ' || r.field; END IF;
   INSERT INTO activity (kind, verb, outcome, section, subject, title, actor, project_id, task_id, session_id, host_id, bot_id, experiment_id, holder, group_key, detail)
   VALUES (k, v, o, sec, subj, left(coalesce(ttl, ''), 300), coalesce(act, nullif(current_setting('fleet.actor', true), ''), nullif(current_setting('fleet.person', true), '')),
