@@ -208,7 +208,7 @@ func main() {
 	var root struct {
 		Defs       map[string]schema `json:"$defs"`
 		Operations map[string]struct {
-			Read, Long               bool
+			Read, Long, View         bool
 			Errors                   []int
 			Auth, Agent, Description string
 			Changes                  []string
@@ -361,8 +361,11 @@ func main() {
 				fail("%v", err)
 			}
 			changes := ""
+			if o.View {
+				changes += ", View: true"
+			}
 			if len(o.Changes) > 0 {
-				changes = fmt.Sprintf(", Changes: %#v", o.Changes)
+				changes += fmt.Sprintf(", Changes: %#v", o.Changes)
 			}
 			fmt.Fprintf(&b, "\t\t%q: {Read: %v, Long: %v, Errors: %#v, Auth: %q, Agent: %q, Description: %q%s, InputSchema: json.RawMessage(%q)},\n", n, o.Read, o.Long, o.Errors, o.Auth, o.Agent, o.Description, changes, string(raw))
 		}

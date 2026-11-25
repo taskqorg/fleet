@@ -832,6 +832,9 @@ var designRulesOwned = map[string]map[string]string{
 	"main.go": {
 		"R-GO": "S6: HTTP plumbing: the signal handler that stops the long polls and the stream and drains the server",
 	},
+	"db_explain.go": {
+		"R-TX": "S3: a savepoint inside db_explain's own read-only Store.Read transaction, rolled back after each EXPLAIN so one failed or timed-out statement leaves the next usable; it opens no transaction",
+	},
 	"store.go": {
 		"R-TX": "S3: the database boundary itself, opening pgx transactions with advisory locks, scope, retry and afterCommit inside txLocks and migrateLocked",
 	},

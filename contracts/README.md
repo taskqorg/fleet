@@ -32,7 +32,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-artifacts` | `artifact`, `store`, `stores` |
   | `ops-bots` | `bot` |
   | `ops-definitions` | `definition`, `agent`, `harness`, `profiles`, `catalogue`, `setting`, `reconcile`, `library` |
-  | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts`, `system`, `object` |
+  | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts`, `system`, `object`, `db` |
   | `ops-lab` | `lab` |
   | `ops-people` | `me`, `people`, `person`, `focus`, `view`, `list`, `search`, `nav`, `home`, `history` |
   | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `trigger`, `worker`, `changes`, `recommendation` |

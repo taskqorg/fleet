@@ -47,6 +47,7 @@ A list that a screen rereads reads stored facts, not a recount:
 
 ## Lessons
 
+- **Measure under RLS through `db_explain`.** `db_explain {view, args}` (owner or full access, `go/coordinator/db_explain.go`) runs a view operation as the caller in a read-only transaction under RLS, records each statement it sends and answers the handler's time and each statement's EXPLAIN (ANALYZE, BUFFERS) with a 20 s timeout. The caller names a view, never SQL. Every agent can verify a screen without a shell on the database host.
 - **Measure under RLS.** Run EXPLAIN as `fleet_app` with `fleet.project_ids` set and a `statement_timeout` ([standard S2a](fleet-standard.md)). As postgres, the runners' queries looked 3-5 times faster than the app's.
 - **Leakproof conditions reach an index; others do not.** Under RLS, an index serves a condition only when its functions are leakproof. Timestamps, numbers, text and `IS NULL` are; regular expressions, most casts and enum comparisons are not. So choose rows by such columns first, then join and build. A jsonb containment (`@>`) is not leakproof either: `DefUsage` scanned every execution under RLS until `DefUsageRecent` chose the window by `started_at`.
 - **Execution changes are a stream.** A busy Fleet writes over 100 execution changes in 20 s (prod, 2026-11-26), and a view touched by `execution` rereads once per `quiet`. Home rereads at most every 2 s; Projects and Lab, whose counts are a glance, every 5 s.
