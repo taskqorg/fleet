@@ -37,7 +37,7 @@ export function Conversations(props: { id?: string }) {
   // pending confirmation; the toggle and a saved view also drop the checked rows. The rows a bulk action finished leave
   // the selection (list-page.tsx).
   const page = useListPage<SessionRow>({
-    view: 'conversations', entity: 'conversation', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations, itemExtra: ['thread'],
+    view: 'conversations', entity: 'conversation', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations,
     // The list names a group by its label; the waiting group's label is "waiting" (sessions_list), no project's name.
     groupLabel: (g, label) => (g === 'project' && label === 'waiting' ? 'Waiting for you' : groupLabel(g, label)),
     pinRead: v => ({ filter: { archived: !!v.archived } }),
