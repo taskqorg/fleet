@@ -487,6 +487,7 @@ type dispatchSpec struct {
 	Harness          string          `json:"harness,omitempty"`
 	Host             *string         `json:"host,omitempty"`
 	Last             *string         `json:"last,omitempty"`
+	LastAccount      *string         `json:"lastAccount,omitempty"` // the subscription of the latest started run (park: its account comes first)
 	Account          *string         `json:"account,omitempty"`
 	Access           *string         `json:"access,omitempty"`
 	Branch           *bool           `json:"branch,omitempty"`
@@ -918,16 +919,11 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 	// the subscription order, so one skipped subscription does not move it to another host (C-FLT-592 moved 45 times in
 	// 14 h). It moves only when no candidate there is usable. A spare host takes work only when no other host can: its
 	// candidates go after every other one, a continuation's included.
-	last := deref(x.Last)
-	rank := func(c *candidate) int {
-		switch {
-		case k.spare(c.Host):
-			return 2
-		case last != "" && c.Host == last:
-			return 0
-		}
-		return 1
-	}
+	// Park covers the account too: on its host a continuation takes its last subscription first, whatever the
+	// subscription order, and changes account only when that one cannot serve (C-FLT-592's 45 handoffs were all
+	// account rotations).
+	last, lastAccount := deref(x.Last), deref(x.LastAccount)
+	rank := func(c *candidate) int { return parkRank(c, last, lastAccount, k.spare(c.Host)) }
 	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
 	// Held for its own host: no other host takes it now. It stays unplaced, so every pass ranks it again.
 	if holdFor != "" {
@@ -1690,4 +1686,20 @@ func nullRaw(v json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return v
+}
+
+// parkRank: a candidate's place for a continuation. The last host comes first and a spare host last; within each, the
+// last subscription comes first.
+func parkRank(c *candidate, lastHost, lastAccount string, spare bool) int {
+	r := 2
+	switch {
+	case spare:
+		r = 4
+	case lastHost != "" && c.Host == lastHost:
+		r = 0
+	}
+	if lastAccount == "" || c.Subscription == nil || c.Subscription.ID != lastAccount {
+		r++
+	}
+	return r
 }

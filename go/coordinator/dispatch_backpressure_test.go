@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,25 @@ func TestNativeForOtherHost(t *testing.T) {
 	}
 	if got := nativeFor(native, nil, "pds18-native"); got != native {
 		t.Fatalf("no last host: %v", got)
+	}
+}
+
+// Requirement: docs/designs/fleet-conversations.md#rules: a continuation keeps its host and its account; it changes
+// account only when its last one cannot serve.
+// Risk: a bot's conversation rotates accounts on every wake and loses its native session each time (C-FLT-592: 45
+// handoffs, all account changes).
+func TestParkRankKeepsHostAndAccount(t *testing.T) {
+	sub := func(id string) *candidateSubscription { return &candidateSubscription{ID: id} }
+	out := []*candidate{{Host: "pds18", Subscription: sub("a")}, {Host: "mac", Subscription: sub("a")}, {Host: "mac", Subscription: sub("b")}}
+	sort.SliceStable(out, func(i, j int) bool { return parkRank(out[i], "mac", "b", false) < parkRank(out[j], "mac", "b", false) })
+	if out[0].Host != "mac" || out[0].Subscription.ID != "b" || out[1].Host != "mac" || out[2].Host != "pds18" {
+		t.Fatalf("order: %s/%s %s/%s %s/%s", out[0].Host, out[0].Subscription.ID, out[1].Host, out[1].Subscription.ID, out[2].Host, out[2].Subscription.ID)
+	}
+	if got := effectiveAccountID([]byte(`{"accountId":"b","binding":"x"}`)); got != "b" {
+		t.Fatalf("effectiveAccountID = %q", got)
+	}
+	if got := effectiveAccountID([]byte(`{"binding":"x","legacy":true}`)); got != "" {
+		t.Fatalf("legacy effectiveAccountID = %q", got)
 	}
 }
 
