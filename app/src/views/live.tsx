@@ -266,10 +266,7 @@ export function Live(props: { wall: boolean }) {
     for (const r of d.runners ?? []) rows.push({ key: 's:' + r.name, name: `self-hosted ${r.name}`, fact: r.status === 'online' ? (r.busy ? 'online · busy' : 'online') : r.status, trouble: r.status !== 'online' });
     return rows;
   });
-  // Just now: the newest work entries of History in the focus (docs/designs/fleet-history.md), repeats folded with ×N on
-  // the server (OR-58); the heading opens History. Section work leaves out a host's upkeep (host jobs without a task:
-  // account probes, cleanup), which buried the work (×144), and settings and Lab, which have their own pages.
-  const recent = useOp('history_view', () => { const { projectIds } = scopeIds(); return { section: 'work', limit: FEED, ...(projectIds?.length ? { projectIds } : {}) }; });
+  const recent = useOp('history_view', () => { const { projectIds, excludeProjectIds } = scopeIds(); return { section: 'work', limit: FEED, ...(projectIds?.length ? { projectIds } : {}), ...(excludeProjectIds?.length ? { excludeProjectIds } : {}) }; });
   const events = createMemo(() => recent.data?.entries ?? []);
   // Feeds are previews of their latest FEED rows, no toggle (OR-30, OR-65): the heading opens the full list where one exists.
   const feed = <T,>(xs: readonly T[]) => xs.slice(0, FEED);

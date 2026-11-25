@@ -1488,6 +1488,15 @@ func sqlHistoryPage(r *contract.HistoryViewRequest, before int64, limit int) (st
 		}
 		c = append(c, "("+strings.Join(or, " OR ")+")")
 	}
+	if len(r.ExcludeProjectIds) > 0 {
+		ids, none := projectSplit(r.ExcludeProjectIds)
+		if len(ids) > 0 {
+			c = append(c, "(project_id IS NULL OR NOT (project_id = ANY("+arg(ids)+"::text[])))")
+		}
+		if none {
+			c = append(c, "project_id IS NOT NULL")
+		}
+	}
 	if before > 0 {
 		c = append(c, "seq < "+arg(before))
 	}

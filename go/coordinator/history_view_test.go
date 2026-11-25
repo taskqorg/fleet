@@ -95,6 +95,12 @@ func TestHistoryView(t *testing.T) {
 	if len(lab.Entries) != 1 || lab.Entries[0].N != 2 || lab.Entries[0].Title != "code-mode trial" {
 		t.Fatalf("trials: %+v", lab.Entries)
 	}
+	// Leaving the project out leaves its trials out.
+	var out contract.HistoryViewReply
+	e.opInto(t, "history_view", map[string]any{"section": "lab", "excludeProjectIds": []string{"fleet"}}, e.ownerHeaders(), &out)
+	if len(out.Entries) != 0 {
+		t.Fatalf("excluded project: %+v", out.Entries)
+	}
 	var x contract.HistoryViewReply
 	e.opInto(t, "history_view", map[string]any{"experimentId": "hs-x"}, e.ownerHeaders(), &x)
 	if x.ScopeTitle == nil || *x.ScopeTitle != "code-mode" {
