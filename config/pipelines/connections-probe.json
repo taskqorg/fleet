@@ -1,4 +1,5 @@
 {
+  "description": "Makes one cheap read call per API connection, so a person or an agent sees which connections answer.",
   "id": "connections-probe",
   "steps": [
     {
