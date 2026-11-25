@@ -120,9 +120,9 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 	// What the proposal changes is read against its base, so a landed proposal still names its versions once this
 	// release pins them.
 	pinned, err := pinsProposedVersions(ctx, a, k, pr.Base.SHA)
-	// An open proposal whose base cannot be read (none at a kind's first proposal) compares with this release's pins; a
-	// landed one would compare with the pins it brought, so its view waits for the next pass.
-	if err != nil && !landed {
+	// No pin file at the base (a kind's first proposal): compare with this release's pins. Any other failure keeps the
+	// last pass's view (pinsViewPass).
+	if err != nil && strings.Contains(err.Error(), "404") {
 		_, current, perr := k.Pinned(releaseDir())
 		if perr != nil {
 			return pinsViewKind{}, perr

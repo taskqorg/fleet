@@ -67,6 +67,9 @@ func hostUpdateComponents(r contract.UpdateResult, platform string, running *str
 				out["cli/"+h.Harness] = h.Expected
 			}
 		}
+		if len(out) == 0 {
+			return nil, false
+		}
 		return out, true
 	}
 	return nil, false
