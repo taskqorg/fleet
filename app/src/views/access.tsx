@@ -182,20 +182,21 @@ function LoginFlow(props: { flow: Flow & { kind: 'login' }; onDone: () => void }
   const accountId = () => it().id.slice('account:'.length);
   const [host, setHost] = createSignal(props.flow.hostId ?? it().hosts?.[0]?.hostId ?? '');
   const binding = () => props.flow.binding ?? it().hosts?.find(h => h.hostId === host())?.binding;
+  // started: the host's previous prompt time at Sign in (0: none); a newer prompt is this login's (host clock only).
   const [started, setStarted] = createSignal<number | null>(null);
   const [err, setErr] = createSignal('');
   // While a login runs the host reports its link: reread every 3 s until it shows (access_status, the same read agents use).
-  const live = useOp('access_status', () => (started() ? {} : null), { every: 3000 });
+  const live = useOp('access_status', () => (started() !== null ? {} : null), { every: 3000 });
   const prompt = createMemo(() => {
-    const at = started();
+    const before = started();
     const h = live.data?.items.find(i => i.id === it().id)?.hosts?.find(x => x.hostId === host());
-    return at && h?.login && h.login.startedAt >= at - 60_000 ? h.login : null;
+    return before !== null && h?.login && h.login.startedAt > before ? h.login : null;
   });
   const start = () => {
     setErr('');
-    const at = Date.now();
+    const before = it().hosts?.find(x => x.hostId === host())?.login?.startedAt ?? 0;
     void op('access_onboard', { kind: 'login', accountId: accountId(), hostId: host(), ...(binding() ? { binding: binding()! } : {}), start: true })
-      .then(() => setStarted(at), e => setErr(String(e.message ?? e)));
+      .then(() => setStarted(before), e => setErr(String(e.message ?? e)));
   };
   const recheck = () => void op('access_check', { id: it().id }).then(props.onDone, props.onDone);
   return <DetailSection title={`Sign in ${it().name}`}>
@@ -205,7 +206,7 @@ function LoginFlow(props: { flow: Flow & { kind: 'login' }; onDone: () => void }
       </Show>
       <span class="muted">Fleet starts {it().guide?.login ?? 'the login'} on {host() || 'the host'} only when you press Sign in. Sign in as {it().name}; Fleet never sees the password.</span>
       <Show when={err()}>{e => <ErrorBanner text={e()} />}</Show>
-      <Show when={started()} fallback={<div class="res-bar">
+      <Show when={started() !== null} fallback={<div class="res-bar">
         <Button label={`Sign in on ${host() || 'host'}`} kind="primary" disabledReason={host() ? undefined : 'Pick a host'} onClick={start} />
         <Button label="Cancel" kind="quiet" onClick={props.onDone} /></div>}>
         <Show when={prompt()} fallback={<span class="t-running">Waiting for the host…</span>}>{p => <Switch>

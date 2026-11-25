@@ -169,7 +169,7 @@ func accessSubscription(a accountRec, period contract.LimitPeriod, profiles []ac
 		}
 		if lc, ok := jsonAs[struct {
 			Reason string `json:"reason"`
-		}](b.LastCheck); ok && lc.Reason != "" && lc.Reason != "ready" {
+		}](b.LastCheck); ok && lc.Reason != "" && lc.Reason != "ready" && lc.Reason != "login-started" {
 			h.Reason = &lc.Reason
 		}
 		if at, ok := jsonAs[int64](b.ObservedAt); ok && at > 0 {

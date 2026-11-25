@@ -740,6 +740,11 @@ func (e *executor) accountLogin(c contract.Command, p contract.AccountInspectPay
 		o.Readiness = nonEmpty(x.Readiness, "unknown")
 		o.Roots = &contract.AccountRoots{Home: &x.Home, NativeHome: &x.NativeHome, Executable: &x.Executable}
 		prompt = runLogin(x, argv)
+		if prompt.State == "failed" && x.Harness == "claude" {
+			// Claude Code's login takes the code back on its own terminal, which a host login started by Fleet does not have.
+			t := "Claude's login asks for the code back in its own terminal; sign in on the host itself. " + str0(prompt.Text)
+			prompt.Text = &t
+		}
 	}
 	o.Login = &prompt
 	r := contract.AccountReceipt{HostId: e.host, CommandId: cid, ExecutionId: execution, AccountObservation: &o}
