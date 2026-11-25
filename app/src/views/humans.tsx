@@ -160,7 +160,7 @@ function TelegramLink(props: { email: string; people?: TelegramPeopleReply; erro
       if (!alive.aborted) setBusy('');
     }
   }
-  const typed = () => /^[1-9][0-9]{0,15}$/.test(id().trim()) ? Number(id().trim()) : 0;
+  const typed = () => /^[1-9][0-9]{0,14}$/.test(id().trim()) ? Number(id().trim()) : 0;
   return <DetailSection title="Telegram">
     <Show when={props.error}>{message => <ErrorBanner text={message()} onRetry={props.onChange} />}</Show>
     <Show when={props.people || props.error} fallback={<Skeleton rows={2} />}>
