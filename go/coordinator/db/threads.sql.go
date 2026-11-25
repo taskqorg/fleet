@@ -205,63 +205,6 @@ func (q *Queries) ThreadMembersOfSession(ctx context.Context, sessionID *string)
 	return items, nil
 }
 
-const threadMembersOfSessionThread = `-- name: ThreadMembersOfSessionThread :many
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
-FROM execution e WHERE e.session_id= $1::text AND e.thread= $2::text AND e.kind='agent_run' ORDER BY e.seq
-`
-
-type ThreadMembersOfSessionThreadParams struct {
-	SessionID string
-	Thread    string
-}
-
-type ThreadMembersOfSessionThreadRow struct {
-	ID          string
-	SessionID   *string
-	Harness     *string
-	Model       *string
-	Effort      []byte
-	State       string
-	Observation Observation
-	ProjectID   *string
-	StartedAt   *time.Time
-	EndedAt     *time.Time
-	Seq         int64
-}
-
-// A session's agent runs in one work-item thread (” the main thread), over execution_thread (migration 109).
-func (q *Queries) ThreadMembersOfSessionThread(ctx context.Context, arg ThreadMembersOfSessionThreadParams) ([]ThreadMembersOfSessionThreadRow, error) {
-	rows, err := q.db.Query(ctx, threadMembersOfSessionThread, arg.SessionID, arg.Thread)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ThreadMembersOfSessionThreadRow
-	for rows.Next() {
-		var i ThreadMembersOfSessionThreadRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.Harness,
-			&i.Model,
-			&i.Effort,
-			&i.State,
-			&i.Observation,
-			&i.ProjectID,
-			&i.StartedAt,
-			&i.EndedAt,
-			&i.Seq,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const threadMembersOfTask = `-- name: ThreadMembersOfTask :many
 
 WITH attached AS (SELECT s.id AS session_id FROM session s WHERE s.task_id= $1::text),

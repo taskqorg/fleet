@@ -646,7 +646,7 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 	}
 	if activeExec != nil && req.Trigger != nil && req.DedupKey != "" {
 		rid := req.DedupKey
-		_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &s.ID, RequestId: &rid, Text: &req.Text}, req.Source, req.Trigger.ID, "")
+		_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &s.ID, RequestId: &rid, Text: &req.Text}, req.Source, req.Trigger.ID)
 		return none, err == nil, err
 	}
 	if activeExec != nil {

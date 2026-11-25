@@ -8,7 +8,7 @@ import {
   OpsSummary, KvRow, Num, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, finishedStates,
   OpenQuestion, Preview, StateDot, statesOf, type Tone,
-  ShellStatus, ShellActions, WorkFacts, peerFence, useTick, ThreadList, plural, clock, timeOf as timeOfIn,
+  ShellStatus, ShellActions, WorkFacts, peerFence, useTick,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -80,12 +80,6 @@ export function Conversations(props: { id?: string }) {
     const p = untrack(initial).get('new');
     if (p !== null && !untrack(isNew)) set({ focus: 'new', extra: { ...untrack(() => page.view.extra), new: undefined, in: p || undefined } });
   });
-  // A bot's Home conversation lists its work-item threads under its row (owner pick B, 2026-11-26): a thread opens the
-  // conversation with ?thread=<key>; a bot with only its main thread lists none.
-  const bots = useOp('bot_list', {});
-  const homes = createMemo(() => new Set((bots.data?.bots ?? []).map(b => b.homeSessionId).filter((x): x is string => !!x)));
-  const shownThread = () => initial().get('thread') ?? undefined;
-  const pickThread = (r: SessionRow, key: string) => set({ focus: page.focusOf(r), extra: { ...page.view.extra, thread: key } });
   const pane = (
     <>
       <ShellStatus><OfflineMarker state={page.list.state} now={now()} /></ShellStatus>
@@ -94,7 +88,6 @@ export function Conversations(props: { id?: string }) {
         page={page}
         cls="conv-list"
         dynamic
-        after={r => <Show when={homes().has(r.id)}><BotThreads id={r.id} selected={props.id !== undefined && (props.id === r.id || props.id === r.code) ? shownThread() ?? null : undefined} onPick={k => pickThread(r, k)} /></Show>}
         lead={!props.id && !isNew() ? <div class="narrow-lead"><WaitingCards page={page} archived={archived()} /></div> : undefined}
         noun="Conversations"
         placeholder="Search conversations"
@@ -152,40 +145,13 @@ export function Conversations(props: { id?: string }) {
           />
         ) : props.id ? (
           <Show when={props.id} keyed>
-            {id => <SessionView id={id} frame="conversations" thread={shownThread()} onClose={() => set({ focus: undefined, extra: { ...page.view.extra, thread: undefined } })} />}
+            {id => <SessionView id={id} frame="conversations" onClose={() => set({ focus: undefined })} />}
           </Show>
         ) : undefined
       }
       idle={<ConversationsIdle page={page} filtered={page.filtered} archived={archived()} />}
       detailKey={props.id}
     />
-  );
-}
-
-/**
- * A bot's work-item threads under its row (owner pick B): Open, Idle and Archived from session_view (the read the open
- * conversation shares), the timer's quiet checks at the foot. `selected`: the thread key shown in the open conversation,
- * null when it is open on its default thread, undefined when another conversation is open.
- */
-function BotThreads(props: { id: string; selected: string | null | undefined; onPick: (key: string) => void }) {
-  const v = useOp('session_view', () => ({ sessionId: props.id }));
-  const threads = createMemo(() => (v.data?.threads ?? []).map(t => ({ key: t.threadKey, title: t.title, code: t.code, itemState: t.itemState,
-    lastActivityAt: t.lastActivityAt, turns: t.turns, open: t.open, unread: t.unread })));
-  // The default thread of the open conversation (session.tsx): the newest Open one, else Main.
-  const selected = createMemo(() => {
-    if (props.selected === undefined) return undefined;
-    if (props.selected !== null) return props.selected;
-    return threads().filter(t => t.open).sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0]?.key ?? '';
-  });
-  const quiet = createMemo(() => {
-    const pass = v.data?.triggers.passMs ?? 0;
-    const t = (v.data?.triggers.triggers ?? []).find(x => x.settings.enabled && x.quietChecks > 0 && (x.settings.when === 'daily' || (x.settings.everyMs ?? 0) > pass));
-    return t ? { schedule: t.settings.when === 'every' ? `Every ${Math.round((t.settings.everyMs ?? 0) / 60000)}m` : 'Daily', text: `${plural(t.quietChecks, 'quiet check')}${t.quietSince ? ` since ${clock(timeOfIn(t.quietSince) ?? 0)}` : ''} · nothing changed` } : undefined;
-  });
-  return (
-    <Show when={threads().length > 1}>
-      <div class="row-sub"><ThreadList threads={threads()} selected={selected()} onSelect={props.onPick} quiet={quiet()} /></div>
-    </Show>
   );
 }
 

@@ -45,7 +45,7 @@ export type SessionFrame = 'home' | 'conversations';
  * with `frame="conversations"` in the work area. `onClose` shows a Close icon in the head (the Conversations frame);
  * `onTitle` receives the session's name (Home titles the shell header with it).
  */
-export function SessionView(props: { id: string; frame: SessionFrame; thread?: string; onClose?: () => void; onTitle?: (title: string) => void }) {
+export function SessionView(props: { id: string; frame: SessionFrame; onClose?: () => void; onTitle?: (title: string) => void }) {
   const code = () => (isSessionCode(props.id) ? props.id : null);
   const resolved = useOp('entity_resolve', () => (code() ? { code: code()! } : null));
   const sessionId = createMemo(() => (code() ? (resolved.data?.type === 'C' ? resolved.data.id : undefined) : props.id));
@@ -57,13 +57,13 @@ export function SessionView(props: { id: string; frame: SessionFrame; thread?: s
         </article>
       </Match>
       <Match when={sessionId()} keyed>
-        {id => <Session id={id} frame={props.frame} thread={props.thread} onClose={props.onClose} onTitle={props.onTitle} />}
+        {id => <Session id={id} frame={props.frame} onClose={props.onClose} onTitle={props.onTitle} />}
       </Match>
     </Switch>
   );
 }
 
-function Session(props: { id: string; frame: SessionFrame; thread?: string; onClose?: () => void; onTitle?: (title: string) => void }) {
+function Session(props: { id: string; frame: SessionFrame; onClose?: () => void; onTitle?: (title: string) => void }) {
   const [, go] = useLocation();
   const alive = useAlive();
   // One read for the screen (session_view, docs/designs/fleet-conversations.md "Session view"): the head, the composer
@@ -80,28 +80,8 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
   const projects = useOp('project_list', () => (s()?.projectId ? {} : null));
   const project = createMemo(() => projects.data?.projects.find(p => rec(p).id === s()?.projectId));
 
-  // Work-item threads (fleet-conversations.md#work-item-threads; Conversations v2, owner pick B): the Conversations list
-  // shows a bot's threads under its row and opens one by ?thread=<key>; the head names it after the bot ("HAL0 › Main").
-  // Without a pick the shown thread is the newest Open one, else Main; the composer writes into the shown one.
-  const threadItems = createMemo(() => view()?.threads ?? []);
-  const hasThreads = createMemo(() => threadItems().length > 1);
-  const shownThread = createMemo(() => {
-    const ts = threadItems(), p = props.thread;
-    if (p !== undefined && ts.some(t => t.threadKey === p)) return p;
-    return ts.filter(t => t.open).sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0]?.threadKey ?? '';
-  });
-  const shownTitle = createMemo(() => { const k = shownThread(); return k === '' ? 'Main' : threadItems().find(t => t.threadKey === k)?.title || k; });
-  // The shown thread counts as read (person_visit page thread; it writes no change row, so session_view rereads after it)
-  // once it has something unread; one mark per thread and unread count, so a failed mark is not repeated in a loop.
-  let readMark = '';
-  createEffect(() => [hasThreads(), shownThread(), threadItems().find(t => t.threadKey === shownThread())?.unread ?? 0] as const, ([on, th, unread]) => {
-    const mark = `${th}:${unread}`;
-    if (!on || unread === 0 || mark === readMark) return;
-    readMark = mark;
-    op('person_visit', { page: 'thread', thread: { sessionId: props.id, thread: th } }, { signal: alive }).then(() => sDoc.reload(), () => {});
-  });
   // Thread: a session that got a task shows the task's thread; Thread quiet folds its blocks (tool-fold.ts).
-  const thread = useThread(() => (hasThreads() ? { session: props.id, thread: shownThread() } : { session: props.id }));
+  const thread = useThread(() => ({ session: props.id }));
   const key = createMemo<ThreadKey>(() => thread.win?.key ?? { session: props.id });
   const answers = useAnswers();
   const execStates = createMemo(() => new Map((view()?.executions.rows ?? []).map(e => [e.id, e.state])));
@@ -357,8 +337,7 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
     // One requestId per draft text and files until it is sent (prepareSending): a resend after a failure or a reload is the
     // same write. A message with files is queued while the agent runs; without files it steers the run.
     const dScope = authorizedDraftScope({ kind: 'session', id: props.id });
-    const th = untrack(hasThreads) ? untrack(shownThread) : '';
-    const body = { sessionId: sid, text, composer: { conversationId: props.id, executionId }, ...(th ? { thread: th } : {}), ...(attachments.length ? { attachments } : executionId ? { delivery: 'steer' } : {}) };
+    const body = { sessionId: sid, text, composer: { conversationId: props.id, executionId }, ...(attachments.length ? { attachments } : executionId ? { delivery: 'steer' } : {}) };
     const request = await prepareSending(dScope, 'message_send', body), sKey = submissionKey(body);
     setFailure(null);
     try {
@@ -400,7 +379,7 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
           <div class="sv-main">
             <header class="sv-head">
               <Avatar {...avatar()} state={avatarState()} tip={bot()?.name} />
-              <h2 class="sv-name" data-tip={title()}>{title()}<Show when={hasThreads()}> <span class="sv-crumb-sep" aria-hidden="true">›</span> <span class="sv-crumb" data-tip={shownTitle()}>{shownTitle()}</span></Show></h2>
+              <h2 class="sv-name" data-tip={title()}>{title()}</h2>
               <Show when={projectName()}>{n => <ProjectChip name={n()} />}</Show>
               <StateDot state={life()} />
               <Show when={headTimer()} keyed>

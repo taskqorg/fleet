@@ -1,5 +1,4 @@
--- Session view (session_view): one conversation screen as summaries, over the execution_thread and message_thread
--- indexes (migration 109). No stored snapshot, dispatch or configuration column is read.
+-- Session view (session_view): one conversation screen as summaries. No stored snapshot, dispatch or configuration column is read.
 
 -- name: SessionViewExecutions :many
 -- The newest turns of a session below before (NULL: from the newest), newest first. The page is chosen on
@@ -10,7 +9,7 @@ WITH page AS (
   AND (sqlc.narg(before)::bigint IS NULL OR x.seq < sqlc.narg(before)::bigint)
  ORDER BY x.seq DESC LIMIT @lim
 )
-SELECT e.id, e.seq, e.kind::text AS kind, e.state::text AS state, e.thread, e.started_at, e.ended_at,
+SELECT e.id, e.seq, e.kind::text AS kind, e.state::text AS state, e.started_at, e.ended_at,
  split_part(coalesce(e.problem, e.data->>'error', e.data->>'errorMessage', ''), E'\n', 1)::text AS error,
  e.harness, e.model, e.host_id, coalesce(e.data->>'source', e.data->>'wakeSource', '')::text AS source
 FROM page JOIN execution e ON e.id = page.id
@@ -18,31 +17,6 @@ ORDER BY e.seq DESC;
 
 -- name: SessionViewExecutionCount :one
 SELECT count(*) FROM execution WHERE session_id = @session_id AND kind IN ('agent_run', 'host_job');
-
--- name: SessionViewThreads :many
--- Each work-item thread of a session with its turns, last activity, whether a turn is queued or running, and the
--- turns since the viewer last opened it (person_visit page thread:<session>:<thread>).
-WITH runs AS (
- SELECT e.thread, count(*) AS turns, max(coalesce(e.ended_at, e.started_at)) AS last_at,
-  bool_or(e.state IN ('preparing', 'running', 'waiting')) AS running
- FROM execution e WHERE e.session_id = @session_id AND e.kind = 'agent_run' GROUP BY e.thread
-), msgs AS (
- SELECT m.thread, max(m.updated_at) AS last_at,
-  (array_agg(m.text ORDER BY m.seq) FILTER (WHERE coalesce(m.source, '') NOT IN ('trigger', 'watch', 'wake', 'needs_you', 'schedule', 'bot_run')))[1] AS first_text
- FROM message m WHERE m.session_id = @session_id GROUP BY m.thread
-), queued AS (
- SELECT coalesce(qm.payload->>'thread', '') AS thread, count(*) AS n FROM queued_message qm WHERE qm.session_id = @session_id AND qm.execution_id IS NULL GROUP BY 1
-), keys AS (
- SELECT thread FROM runs UNION SELECT thread FROM msgs UNION SELECT thread FROM queued
-)
-SELECT k.thread::text AS thread, coalesce(r.turns, 0)::bigint AS turns,
- greatest(r.last_at, m.last_at)::timestamptz AS last_at,
- (coalesce(r.running, false) OR coalesce(q.n, 0) > 0)::boolean AS active,
- (SELECT count(*) FROM execution u WHERE u.session_id = @session_id AND u.thread = k.thread AND u.kind = 'agent_run'
-   AND u.started_at > coalesce((SELECT v.visited_at FROM person_visit v WHERE v.email = @email AND v.page = 'thread:' || @session_id || ':' || k.thread), '-infinity'))::bigint AS unread,
- coalesce(nullif(left(split_part(btrim(m.first_text), E'\n', 1), 120), ''), '')::text AS first_line
-FROM keys k LEFT JOIN runs r ON r.thread = k.thread LEFT JOIN msgs m ON m.thread = k.thread LEFT JOIN queued q ON q.thread = k.thread
-ORDER BY 3 DESC NULLS LAST;
 
 -- name: SessionViewLastMessage :one
 SELECT m.id, coalesce(m.text, '')::text AS text, coalesce(m.payload->'attachments', '[]')::jsonb AS attachments

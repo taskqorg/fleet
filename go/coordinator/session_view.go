@@ -1,7 +1,7 @@
 package main
 
 // Session view (session_view, docs/designs/fleet-conversations.md "Session view"): one read for the conversation
-// screen, composed here from summaries: the head, the composer target, open questions, work-item threads, the
+// screen, composed here from summaries: the head, the composer target, open questions, the
 // session's and its bot's triggers, the context panel, the last message and the newest turns. It reads no stored
 // snapshot, dispatch or configuration of an execution (queries/session_view.sql); execution_get and tool_output load
 // one item's details when it is opened.
@@ -62,7 +62,7 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 	out.Executions = contract.ExecutionsPage{Rows: make([]contract.ExecutionSummary, 0, len(rows)), Total: total}
 	for _, e := range rows {
 		out.Executions.Rows = append(out.Executions.Rows, contract.ExecutionSummary{
-			Id: e.ID, Seq: e.Seq, Kind: e.Kind, State: e.State, ThreadKey: e.Thread,
+			Id: e.ID, Seq: e.Seq, Kind: e.Kind, State: e.State,
 			StartedAt: unixMs(e.StartedAt), EndedAt: unixMs(e.EndedAt), Error: optStr(e.Error),
 			Harness: e.Harness, Model: e.Model, HostId: e.HostID, Source: optStr(e.Source),
 		})
@@ -116,10 +116,6 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 	for _, x := range qs {
 		opts := choiceLabels(x.Options)
 		out.Questions = append(out.Questions, contract.SessionViewQuestion{Id: x.ID, SessionId: x.SessionID, Kind: x.Kind, Text: x.Text, Options: opts, ExecutionId: x.ExecutionID})
-	}
-
-	if out.Threads, err = sessionViewThreads(q, sid); err != nil {
-		return out, err
 	}
 
 	if out.Triggers, err = triggerList(q, &contract.TriggerListRequest{SessionId: &sid}); err != nil {
@@ -191,53 +187,6 @@ func sessionViewHead(q *Request, s *agentSession, rows []db.SessionViewExecution
 		h.Cost = res.Total.Cost
 	}
 	return h, nil
-}
-
-// sessionViewThreads: each work-item thread with its item's title, code and state and the viewer's unread turns.
-func sessionViewThreads(q *Request, sid string) ([]contract.SessionThread, error) {
-	email := ""
-	if q.person != nil {
-		email = q.person.Email
-	}
-	rows, err := q.db().SessionViewThreads(q.ctx(), db.SessionViewThreadsParams{SessionID: &sid, Email: email})
-	if err != nil {
-		return nil, err
-	}
-	var tasks, questions, runs []string
-	for _, r := range rows {
-		if id, ok := strings.CutPrefix(r.Thread, "task:"); ok {
-			tasks = append(tasks, id)
-		} else if id, ok := strings.CutPrefix(r.Thread, "question:"); ok {
-			questions = append(questions, id)
-		} else if id, ok := strings.CutPrefix(r.Thread, "execution:"); ok {
-			runs = append(runs, id)
-		}
-	}
-	items := map[string]db.SessionViewThreadItemsRow{}
-	if len(tasks)+len(questions)+len(runs) > 0 {
-		found, err := q.db().SessionViewThreadItems(q.ctx(), db.SessionViewThreadItemsParams{TaskIds: tasks, QuestionIds: questions, ExecutionIds: runs})
-		if err != nil {
-			return nil, err
-		}
-		for _, it := range found {
-			items[it.Thread] = it
-		}
-	}
-	out := make([]contract.SessionThread, 0, len(rows))
-	for _, r := range rows {
-		t := contract.SessionThread{ThreadKey: r.Thread, Turns: r.Turns, Unread: r.Unread, Open: r.Active, Title: threadTitle(r.Thread, r.FirstLine)}
-		if r.LastAt.Valid {
-			t.LastActivityAt = ptr(r.LastAt.Time.UnixMilli())
-		}
-		if it, ok := items[r.Thread]; ok {
-			t.Title, t.Code, t.ItemState = it.Title, optStr(it.Code), optStr(it.State)
-			if !t.Open {
-				t.Open = !finishedItem(it.State)
-			}
-		}
-		out = append(out, t)
-	}
-	return out, nil
 }
 
 // sessionAgentOf: the profile fields the composer chips show, from the session's stored agent configuration.
@@ -321,12 +270,4 @@ func threadTitle(key, firstLine string) string {
 		return firstLine
 	}
 	return "Conversation"
-}
-
-func finishedItem(state string) bool {
-	switch state {
-	case "completed", "succeeded", "failed", "cancelled", "answered", "withdrawn", "expired", "closed", "merged":
-		return true
-	}
-	return false
 }

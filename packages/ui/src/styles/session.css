@@ -40,32 +40,7 @@
   .tool-call-io pre { margin: 0; max-height: calc(var(--size-list) * 1.25); overflow: auto; padding: var(--space-2); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--bg); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
   @media (pointer: coarse) { .tool-chip, .tool-call-row { min-height: var(--size-hit-phone); } }
 
-  /* Thread list (Conversations v2, owner pick B): a bot's work-item threads nested under its row in the Conversations list */
-  .thread-list { display: flex; flex-direction: column; min-width: 0; padding-block: var(--space-1); color: var(--fg); }
-  .thread-list h3 { margin: 0; padding: var(--space-2) var(--space-3) var(--space-1) var(--space-7); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); text-transform: uppercase; letter-spacing: .04em; }
-  .thread-list ul { margin: 0; padding: 0; list-style: none; }
-  .thread-list-empty { margin: 0; padding: var(--space-1) var(--space-3) var(--space-2) var(--space-7); color: var(--fg-faint); font-size: var(--font-size-sm); }
-  .thread-item { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; padding: var(--space-2) var(--space-3) var(--space-2) var(--space-7); border: 0; border-inline-start: 2px solid transparent; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
-  .thread-item:hover { background: var(--hover); }
-  .thread-item.on { border-inline-start-color: var(--accent); background: var(--selected); }
-  .thread-item-top, .thread-item-foot { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
-  .thread-item-title { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
-  .thread-item.idle .thread-item-title { color: var(--fg-muted); }
-  .thread-item-top .when { flex: none; color: var(--fg-faint); font-size: var(--font-size-xs); }
-  .thread-item-new { flex: none; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--attention-bg); color: var(--attention-fg); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
-  .thread-item-foot { align-items: center; font-size: var(--font-size-xs); }
-  .thread-item-code { color: var(--fg-muted); font-family: var(--font-mono); }
-  .thread-list-archived { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3) var(--space-2) var(--space-7); border: 0; background: none; color: var(--fg-muted); font: inherit; font-size: var(--font-size-sm); text-align: start; cursor: pointer; }
-  .thread-list-archived:hover { background: var(--hover); }
-  .thread-list-archived .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
-  .thread-list-archived > span:first-of-type { flex: none; white-space: nowrap; }
-  .thread-list-archived .muted { color: var(--fg-faint); font-size: var(--font-size-xs); }
-  .thread-list-quiet { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) var(--space-7); color: var(--fg-muted); font-size: var(--font-size-xs); }
-  .thread-list-quiet .icon { flex: none; width: var(--size-icon-sm); height: var(--size-icon-sm); color: var(--running-fg); }
-  .thread-list-quiet > span { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); min-width: 0; }
-  .thread-list-quiet b { font-weight: var(--font-weight-medium); color: var(--fg); }
-  @media (pointer: coarse) { .thread-item, .thread-list-archived { min-height: var(--size-hit-phone); } }
-  /* Conversations list (owner pick B, 2026-11-26): a bot's threads under its row; rows measure themselves. */
+  /* Conversations list: rows measure themselves. */
   /* Measured rows (VirtualList dynamic) are block by default; the Conversations rows keep the list's grid and rule. */
   .conv-list .vl-row.dyn { display: grid; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
   .conv-list .vl-row:not(.grp) { min-height: var(--size-row); }
