@@ -247,6 +247,13 @@
         },
         "me": {
           "$ref": "#/$defs/TelegramMe"
+        },
+        "groupReads": {
+          "type": "boolean",
+          "$comment": "getMe can_read_all_group_messages: the bot's privacy mode is off, so it reads every group message (an admin bot reads them either way)"
+        },
+        "conductor": {
+          "$ref": "#/$defs/TelegramConductorCall"
         }
       },
       "required": [
@@ -445,6 +452,35 @@
         "intake",
         "replies",
         "outbox"
+      ]
+    },
+    "TelegramConductorCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "the conductor's last model call since the coordinator started",
+      "properties": {
+        "connection": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "at": {
+          "type": "integer"
+        },
+        "choice": {
+          "type": "string",
+          "$comment": "a work item id, new or ask"
+        },
+        "error": {
+          "type": "string",
+          "$comment": "why the call gave no usable answer (the message then got the one-tap question)"
+        }
+      },
+      "required": [
+        "connection",
+        "model",
+        "at"
       ]
     }
   }

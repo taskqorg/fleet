@@ -582,6 +582,23 @@ func (q *Queries) TelegramTurnGet(ctx context.Context, id string) (TelegramTurn,
 	return i, err
 }
 
+const telegramTurnOthers = `-- name: TelegramTurnOthers :one
+SELECT count(*) FROM telegram_turn WHERE work_id = $1 AND id <> $2
+`
+
+type TelegramTurnOthersParams struct {
+	WorkID *string
+	ID     string
+}
+
+// Messages of a work item still waiting for their reply, besides this one: its status stays "working" until the last.
+func (q *Queries) TelegramTurnOthers(ctx context.Context, arg TelegramTurnOthersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, telegramTurnOthers, arg.WorkID, arg.ID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const telegramTurnPending = `-- name: TelegramTurnPending :one
 SELECT count(*) FROM telegram_turn
 `
@@ -953,6 +970,37 @@ func (q *Queries) TelegramWorkOpen(ctx context.Context, roomID string) ([]Telegr
 		return nil, err
 	}
 	return items, nil
+}
+
+const telegramWorkStatusMessage = `-- name: TelegramWorkStatusMessage :one
+SELECT id, chat_id, thread_id, kind, reply_to, edit_message_id, text, payload, work_id, session_id, telegram_message_id, state, created_at, sent_at, error, attempts, next_attempt_at, last_error FROM telegram_outbox WHERE work_id = $1 AND id LIKE 'notice:newwork:%' ORDER BY created_at LIMIT 1
+`
+
+// A work item's status message: the "New: <title>" notice that opened it, edited in place afterwards.
+func (q *Queries) TelegramWorkStatusMessage(ctx context.Context, workID *string) (TelegramOutbox, error) {
+	row := q.db.QueryRow(ctx, telegramWorkStatusMessage, workID)
+	var i TelegramOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.ChatID,
+		&i.ThreadID,
+		&i.Kind,
+		&i.ReplyTo,
+		&i.EditMessageID,
+		&i.Text,
+		&i.Payload,
+		&i.WorkID,
+		&i.SessionID,
+		&i.TelegramMessageID,
+		&i.State,
+		&i.CreatedAt,
+		&i.SentAt,
+		&i.Error,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+	)
+	return i, err
 }
 
 const telegramWorkTouch = `-- name: TelegramWorkTouch :exec

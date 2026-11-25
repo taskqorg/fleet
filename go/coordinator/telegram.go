@@ -73,6 +73,7 @@ type tgUser struct {
 	FirstName    string `json:"first_name"`
 	Username     string `json:"username"`
 	LanguageCode string `json:"language_code"`
+	ReadsGroups  bool   `json:"can_read_all_group_messages"` // getMe only: the bot's privacy mode is off
 }
 
 type tgChat struct {
@@ -131,6 +132,8 @@ var telegramHealth struct {
 	pollError   string
 	botID       int64
 	botUsername string
+	readsGroups bool
+	conductor   *contract.TelegramConductorCall // the last model call
 }
 
 func telegramNote(err string) {
@@ -210,7 +213,7 @@ func telegramPoll(ctx context.Context, a *App) error {
 		var me tgUser
 		_ = json.Unmarshal(r.Result, &me)
 		telegramHealth.Lock()
-		telegramHealth.botID, telegramHealth.botUsername = me.ID, me.Username
+		telegramHealth.botID, telegramHealth.botUsername, telegramHealth.readsGroups = me.ID, me.Username, me.ReadsGroups
 		telegramHealth.Unlock()
 	}
 	var offset int64
@@ -498,8 +501,10 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 					if err := pq.db().TelegramWorkAdd(pq.ctx(), db.TelegramWorkAddParams{ID: t.workID, RoomID: room.ID, SessionID: sid, Title: t.newWork, CreatedBy: tp.Email}); err != nil {
 						return err
 					}
+					// The notice is the work item's status message, edited in place afterwards (telegramWorkStatus).
 					if err := telegramOutbox(pq, db.TelegramOutboxAddParams{ID: "notice:newwork:" + rid, ChatID: room.ChatID, ThreadID: room.ThreadID,
-						Kind: "text", Text: say(tp.Language, "newWork", t.newWork), WorkID: &t.workID}); err != nil {
+						Kind: "text", Text: say(tp.Language, "newWork", t.newWork), WorkID: &t.workID, SessionID: &sid,
+						Payload: openMarkup(tp.Language, sid)}); err != nil {
 						return err
 					}
 				}
@@ -510,6 +515,13 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 			if t.workID != "" {
 				work = &t.workID
 				if err := pq.db().TelegramWorkTouch(pq.ctx(), t.workID); err != nil {
+					return err
+				}
+				name := p.Name
+				if name == "" {
+					name = tp.Email
+				}
+				if err := telegramWorkStatus(pq, t.workID, rid+":start", tp.Language, say(tp.Language, "statusWorking", name)); err != nil {
 					return err
 				}
 			}
@@ -688,7 +700,6 @@ func workTitle(text string) string {
 	return clip(line, 60)
 }
 
-
 // conductorModel: the conductor's model connection and model (FLEET_TELEGRAM_CONDUCTOR, "<connection>/<model>");
 // by default the first OpenAI connection open to every project.
 func conductorModel(ctx context.Context, a *App) (string, string) {
@@ -716,8 +727,21 @@ func conductorModel(ctx context.Context, a *App) (string, string) {
 var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, author, text string) conductorDecision {
 	conn, model := conductorModel(ctx, a)
 	if conn == "" {
-		return conductorDecision{Choice: "ask"}
+		return conductorDecision{Choice: "ask", err: errors.New("no OpenAI connection open to every project")}
 	}
+	d := conductorCall(ctx, a, conn, model, open, author, text)
+	call := &contract.TelegramConductorCall{Connection: conn, Model: model, At: nowMs(), Choice: ptr(d.Choice)}
+	if d.err != nil {
+		call.Error = ptr(d.err.Error())
+	}
+	telegramHealth.Lock()
+	telegramHealth.conductor = call
+	telegramHealth.Unlock()
+	return d
+}
+
+// conductorCall: one Responses API call; its answer is a JSON object (text.format json_object).
+func conductorCall(ctx context.Context, a *App, conn, model string, open []db.TelegramWork, author, text string) conductorDecision {
 	var items strings.Builder
 	for _, w := range open {
 		fmt.Fprintf(&items, "- id %s: %s\n", w.ID, w.Title)
@@ -732,17 +756,29 @@ var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, 
 		return conductorDecision{Choice: "ask", err: err}
 	}
 	defer release()
+	// Reasoning tokens count against max_output_tokens: 1000 leaves room for a low-effort thought and the short answer.
 	line := gatewayCall(ctx, token, conn, "create_response", struct {
-		Model           string            `json:"model"`
-		Instructions    string            `json:"instructions"`
-		Input           string            `json:"input"`
-		MaxOutputTokens int               `json:"max_output_tokens"`
-		Reasoning       map[string]string `json:"reasoning"`
-	}{model, instructions, input, 300, map[string]string{"effort": "low"}}, false)
+		Model           string                       `json:"model"`
+		Instructions    string                       `json:"instructions"`
+		Input           string                       `json:"input"`
+		MaxOutputTokens int                          `json:"max_output_tokens"`
+		Reasoning       map[string]string            `json:"reasoning"`
+		Text            map[string]map[string]string `json:"text"`
+	}{model, instructions, input, 1000, map[string]string{"effort": "low"}, map[string]map[string]string{"format": {"type": "json_object"}}}, false)
 	if line.Outcome != contract.CallOutcomeOk {
-		return conductorDecision{Choice: "ask", err: errors.New(deref(line.ErrorCode))}
+		cause := deref(line.ErrorCode)
+		var e struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(line.Output, &e) == nil && e.Error.Message != "" {
+			cause += ": " + clip(e.Error.Message, 200)
+		}
+		return conductorDecision{Choice: "ask", err: errors.New(cause)}
 	}
 	var resp struct {
+		Status string `json:"status"`
 		Output []struct {
 			Content []struct {
 				Type string `json:"type"`
@@ -764,7 +800,7 @@ var conductorChoose = func(ctx context.Context, a *App, open []db.TelegramWork, 
 			}
 		}
 	}
-	return conductorDecision{Choice: "ask"}
+	return conductorDecision{Choice: "ask", err: errors.New("no usable answer (response " + resp.Status + ")")}
 }
 
 // --- replies ---
@@ -835,6 +871,33 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 		}
 		final = say(lang, key, "")
 	}
+	// Each answer in a room links its work item's status message.
+	buttons := []map[string]string{}
+	if link := conversationLink(t.SessionID); link != "" {
+		buttons = append(buttons, map[string]string{"text": say(lang, "open", ""), "url": link})
+	}
+	if t.WorkID != nil {
+		key := "statusAnswered"
+		if e.State != "succeeded" {
+			key = "statusFailed"
+		}
+		others, err := q.db().TelegramTurnOthers(q.ctx(), db.TelegramTurnOthersParams{WorkID: t.WorkID, ID: t.ID})
+		if err != nil {
+			return err
+		}
+		if others == 0 {
+			if err := telegramWorkStatus(q, *t.WorkID, t.ID+":end", lang, say(lang, key, "")); err != nil {
+				return err
+			}
+		}
+		if sm, err := q.db().TelegramWorkStatusMessage(q.ctx(), t.WorkID); err == nil && sm.TelegramMessageID != nil {
+			if link := telegramMessageLink(sm.ChatID, sm.ThreadID, *sm.TelegramMessageID); link != "" {
+				buttons = append(buttons, map[string]string{"text": say(lang, "status", ""), "url": link})
+			}
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
 	parts := chunks(final, telegramChunk)
 	for i, part := range parts {
 		p := db.TelegramOutboxAddParams{ID: fmt.Sprintf("reply:%s:%d", e.ID, i), ChatID: t.ChatID, ThreadID: t.ThreadID, Kind: "text", Text: part,
@@ -842,10 +905,8 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 		if i == 0 {
 			p.ReplyTo = &t.MessageID
 		}
-		if i == len(parts)-1 {
-			if link := conversationLink(t.SessionID); link != "" {
-				p.Payload = jsonBytes(tgMarkup{InlineKeyboard: [][]map[string]string{{{"text": say(lang, "open", ""), "url": link}}}})
-			}
+		if i == len(parts)-1 && len(buttons) > 0 {
+			p.Payload = jsonBytes(tgMarkup{InlineKeyboard: [][]map[string]string{buttons}})
 		}
 		if err := telegramOutbox(q, p); err != nil {
 			return err
@@ -866,6 +927,43 @@ func telegramTyping(q *Request, now time.Time, c *kitClaim, t db.TelegramTurn) e
 	}
 	c.Call = func(ctx context.Context) any { return telegramCall(ctx, a, "send_chat_action", args) }
 	return nil
+}
+
+// openMarkup: the [Open in Fleet] button of a conversation (nil without FLEET_BROWSER_ORIGIN).
+func openMarkup(lang, sessionID string) []byte {
+	link := conversationLink(sessionID)
+	if link == "" {
+		return nil
+	}
+	return jsonBytes(tgMarkup{InlineKeyboard: [][]map[string]string{{{"text": say(lang, "open", ""), "url": link}}}})
+}
+
+// telegramMessageLink: a t.me link to a message of a supergroup (chat ids -100<n>); other chats have none.
+func telegramMessageLink(chat, thread, message int64) string {
+	c, ok := strings.CutPrefix(strconv.FormatInt(chat, 10), "-100")
+	if !ok {
+		return ""
+	}
+	if thread != 0 {
+		return fmt.Sprintf("https://t.me/c/%s/%d/%d", c, thread, message)
+	}
+	return fmt.Sprintf("https://t.me/c/%s/%d", c, message)
+}
+
+// telegramWorkStatus queues an edit of a work item's status message: its title and one line of where it stands. The
+// sender resolves the message once the opening notice is sent (telegramSendStep); a chat's items leave in order, so
+// the notice always goes first.
+func telegramWorkStatus(q *Request, workID, id, lang, line string) error {
+	w, err := q.db().TelegramWorkGet(q.ctx(), workID)
+	if err != nil {
+		return err
+	}
+	room, err := q.db().TelegramRoomGet(q.ctx(), w.RoomID)
+	if err != nil {
+		return err
+	}
+	return telegramOutbox(q, db.TelegramOutboxAddParams{ID: "status:" + workID + ":" + id, ChatID: room.ChatID, ThreadID: room.ThreadID, Kind: "edit",
+		Text: "**" + w.Title + "**\n" + line, WorkID: &workID, SessionID: &w.SessionID, Payload: openMarkup(lang, w.SessionID)})
 }
 
 func conversationLink(sessionID string) string {
@@ -935,7 +1033,21 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 		}
 	case "edit":
 		tool, args.MessageID = "edit_message_text", o.EditMessageID
+		if o.EditMessageID == nil && o.WorkID != nil {
+			sm, err := q.db().TelegramWorkStatusMessage(q.ctx(), o.WorkID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if err != nil || sm.TelegramMessageID == nil {
+				// The opening notice was refused or its send is unknown: there is no status message to edit.
+				return q.db().TelegramOutboxSettle(q.ctx(), db.TelegramOutboxSettleParams{ID: o.ID, State: "failed", Error: ptr("no status message")})
+			}
+			args.MessageID = sm.TelegramMessageID
+		}
 		args.Text = tgFormatted(o, &args)
+		if len(o.Payload) > 0 {
+			args.ReplyMarkup = json.RawMessage(o.Payload) // an edit without its buttons would drop them
+		}
 	case "reaction":
 		tool, args.MessageID, args.Reaction = "set_message_reaction", o.EditMessageID, json.RawMessage(o.Payload)
 	case "callback":
@@ -1032,28 +1144,36 @@ func telegramSent(q *Request, now time.Time, o db.TelegramOutbox, line contract.
 
 var telegramWords = map[string]map[string]string{
 	"en": {
-		"linked":       "Linked to Fleet as %s. Write here to talk to Fleet.",
-		"notDelivered": "Not delivered: %s",
-		"filesLater":   "Files without text do not reach Fleet yet; add a line of text.",
-		"newHome":      "The next message starts a new conversation.",
-		"newWork":      "New: %s",
-		"which":        "Is this about:",
-		"newButton":    "Something new",
-		"noReply":      "Done, without a text answer.",
-		"runFailed":    "The run failed without an answer.",
-		"open":         "Open in Fleet",
+		"linked":         "Linked to Fleet as %s. Write here to talk to Fleet.",
+		"notDelivered":   "Not delivered: %s",
+		"filesLater":     "Files without text do not reach Fleet yet; add a line of text.",
+		"newHome":        "The next message starts a new conversation.",
+		"newWork":        "New: %s",
+		"which":          "Is this about:",
+		"newButton":      "Something new",
+		"noReply":        "Done, without a text answer.",
+		"runFailed":      "The run failed without an answer.",
+		"open":           "Open in Fleet",
+		"status":         "Status",
+		"statusWorking":  "⏳ Working on a message from %s",
+		"statusAnswered": "✓ Answered",
+		"statusFailed":   "✗ The run failed",
 	},
 	"ru": {
-		"linked":       "Telegram привязан к Fleet: %s. Пишите сюда, чтобы говорить с Fleet.",
-		"notDelivered": "Не доставлено: %s",
-		"filesLater":   "Файлы без текста пока не доходят до Fleet; добавьте строку текста.",
-		"newHome":      "Следующее сообщение начнёт новый разговор.",
-		"newWork":      "Новое: %s",
-		"which":        "Это про:",
-		"newButton":    "Новое",
-		"noReply":      "Готово, без текстового ответа.",
-		"runFailed":    "Запуск завершился ошибкой без ответа.",
-		"open":         "Открыть во Fleet",
+		"linked":         "Telegram привязан к Fleet: %s. Пишите сюда, чтобы говорить с Fleet.",
+		"notDelivered":   "Не доставлено: %s",
+		"filesLater":     "Файлы без текста пока не доходят до Fleet; добавьте строку текста.",
+		"newHome":        "Следующее сообщение начнёт новый разговор.",
+		"newWork":        "Новое: %s",
+		"which":          "Это про:",
+		"newButton":      "Новое",
+		"noReply":        "Готово, без текстового ответа.",
+		"runFailed":      "Запуск завершился ошибкой без ответа.",
+		"open":           "Открыть во Fleet",
+		"status":         "Статус",
+		"statusWorking":  "⏳ В работе: сообщение от %s",
+		"statusAnswered": "✓ Ответ дан",
+		"statusFailed":   "✗ Запуск завершился ошибкой",
 	},
 }
 
@@ -1088,8 +1208,9 @@ func telegramStatus(q *Request, _ *contract.TelegramStatusRequest) (contract.Tel
 	out.Connected = ok
 	telegramHealth.Lock()
 	if telegramHealth.botID != 0 {
-		out.BotId, out.BotUsername = ptr(telegramHealth.botID), ptr(telegramHealth.botUsername)
+		out.BotId, out.BotUsername, out.GroupReads = ptr(telegramHealth.botID), ptr(telegramHealth.botUsername), ptr(telegramHealth.readsGroups)
 	}
+	out.Conductor = telegramHealth.conductor
 	if telegramHealth.polledAt != 0 {
 		out.PolledAt = ptr(telegramHealth.polledAt)
 	}
