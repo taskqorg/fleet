@@ -29,7 +29,7 @@
     "task_page": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "changes": ["task", "delivery:delivery-state:"], "description": "A page of tasks by filter, group and sort, with group counts, paged with after and limit"},
     "task_release": {"read": false, "errors": [], "auth": "person", "agent": "tool", "description": "Release a held task (taskId)"},
     "task_request_acceptance": {"read": false, "errors": [400,409], "auth": "person", "agent": "tool", "description": "No artifactIds: the task's stored originals."},
-    "task_take": {"read": false, "errors": [400,403,409], "auth": "person", "agent": "no", "description": "Take a task (taskId) onto your own subscription"},
+    "task_take": {"read": false, "errors": [400,403,409], "auth": "person", "agent": "tool", "description": "Take a task (taskId) onto your own subscription"},
     "task_update": {"read": false, "errors": [400,409], "auth": "person", "agent": "tool", "description": "action pause, resume, cancel or fail (people only); the other fields replace the stored value when present."}
   },
   "$defs": {

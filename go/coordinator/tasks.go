@@ -1604,9 +1604,6 @@ func init() {
 		if _, err := taskLoad(q, id); err != nil {
 			return none, err
 		}
-		if r.Action != nil && q.agent != "" {
-			return none, fail(400, "Use task_hold, task_release or task_cancel")
-		}
 		if r.Action != nil {
 			trig := map[string]string{"pause": "pause", "resume": "resume", "cancel": "cancel", "fail": "operator_fail"}[*r.Action]
 			if trig == "" {
@@ -1695,7 +1692,7 @@ func init() {
 			return none, err
 		}
 		if t.State != db.TaskStateInProgress {
-			if t.State != db.TaskStateQueued || q.agent != "" {
+			if t.State != db.TaskStateQueued {
 				return none, fail(409, "Task is not in progress")
 			}
 			hasExec, err := q.db().TaskHasPrimaryExecution(q.ctx(), &id)
