@@ -86,6 +86,11 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 		if tools == nil {
 			tools = []string{}
 		}
+		if c.Provider == telegramConn {
+			// The Telegram channel's own connection offers every tool of this build: a release that adds one (rich
+			// messages, the command menu) must not wait for an owner's grant, or the chat's outbox stops behind it.
+			tools = toolNames(telegramConn)
+		}
 		gc := contract.GatewayConnection{Provider: c.Provider, Tools: tools, Intake: c.Intake, Keys: keys, Blocked: bl}
 		// A value that does not decode leaves this connection at its defaults; it never blocks every other one.
 		if limits, err := c.limits(); err != nil {
