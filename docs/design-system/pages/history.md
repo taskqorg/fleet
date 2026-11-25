@@ -5,11 +5,14 @@
 **Purpose.** See what happened in Fleet, newest first: runs starting and ending, tasks created and moving state, questions asked and answered, experiments, settings and access changes. Narrow it to a section or one object. Design: [history](../../designs/fleet-history.md).
 
 **Layout.** [App shell](../patterns/app-shell.md) and one scrolling page, no control column (OR-24: no catalogue), like Live.
-* **Scope:** `All › <section or object>` at the top. The last step has × and removing it widens the scope. The scope is in the address (`?section=lab`, `?taskId=…`, `?sessionId=…`, `?experimentId=…`, `?hostId=…`, `?botId=…`), so a section or an object links to its own history.
+* **Scope:** `All › <section or object>` at the top. The last step has × and removing it widens the scope. The scope is in the address (`?section=lab`, `?taskId=…`, `?sessionId=…`, `?experimentId=…`, `?hostId=…`, `?botId=…`), so a section or an object links to its own history. An object's chip shows its name (`scopeTitle`: a task's code and title, a conversation's title, an experiment's lab group), not its id.
 * **Filters:** kind chips (All, Runs, Tasks, Questions, Lab, Settings, Access) and a Failed toggle, also kept in the address.
-* **Rows:** the [live row](../controls/live-row.md) of Live's Just now: state icon, the subject and what happened, then the [work facts](../controls/work-facts.md) (×N for folded repeats, standing out against the page's rows, and the actor), and the age last ([OR-64](../owner-rules.md)). A row opens its task, experiment, conversation or host. The list loads older entries on scroll ([OR-65](../owner-rules.md)).
+* **Days:** a heading where the day changes: Today, Yesterday, then the date.
+* **Rows:** the [live row](../controls/live-row.md) of Live's Just now: state icon, the subject and what happened, then the [work facts](../controls/work-facts.md) (×N for folded repeats, standing out against the page's rows, and the actor), and the age last ([OR-64](../owner-rules.md)). A row opens its task, experiment, conversation or host. A run with no task, conversation title or experiment reads `<harness> run`. At phone width the age stays last on the first line, and the actor and ×N wrap below it. The list loads older entries on scroll ([OR-65](../owner-rules.md)).
 
 **Elsewhere.**
+* A task's History tab is this list scoped to the task (`taskId`); a row opens its conversation.
+* Live's Just now is its newest 5 entries in the focus; the heading opens this page.
 * Lab: the History view chip opens `/history?section=lab`. With nothing selected, Lab's detail pane shows the newest 8 entries under Waiting for you, and the heading opens the same page.
 * Phone: History is the third tab of the bottom bar, and Projects moves to More.
 

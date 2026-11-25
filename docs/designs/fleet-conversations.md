@@ -106,7 +106,7 @@ The data is small (about 1,400 sessions and 10,000 runs), so each step rewrites 
 <a id="work-item-threads"></a>
 4. **Bot conversations.** Today a bot works in one Home session holding work-item threads: the `thread` column of `message` and `execution` (migration 109), one native session per thread in `nativeSessions[<key>#<thread>]`, fork and handoff for the main thread only. Bot wakes instead find or create the bot's conversation for each subject (`session.subject`, migration 117), and the per-bot limit becomes the per-conversation turn rule: a trigger's message to a busy conversation waits in its queue. Migration 117 moves each thread of a Home session into its own conversation with its messages, runs, events, questions, artifacts, commands, queued messages and bot runs, and the thread's native session as its own; an `execution:` thread folds into its host's subject. The Home session stays as the bot's conversation without a subject: person messages and direct runs, and the turns from before threads. Not built: `bot_run` merged into the run and the trigger log; the `thread` columns dropped.
 5. **Telegram.** `telegram_person.home_session_id` becomes the private room's current conversation. `telegram_work` is the room-conversation binding.
-6. **Task history.** The task thread view is renamed Task history and lists the task's conversations.
+6. **Task history.** The task thread view is renamed Task history. It is the task's [history](fleet-history.md) (`history_view {taskId}`): its conversations' runs, questions and state moves, newest first.
 
 Steps 3, 4 and 6 change the screen. They are drawn on the [board](../design-system/README.md#design-board) and approved before UI code (OR-62).
 

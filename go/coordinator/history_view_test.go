@@ -68,6 +68,9 @@ func TestHistoryView(t *testing.T) {
 	// One object: the session's entries only.
 	var one contract.HistoryViewReply
 	e.opInto(t, "history_view", map[string]any{"sessionId": "hs-s"}, e.ownerHeaders(), &one)
+	if one.ScopeTitle == nil || *one.ScopeTitle == "" {
+		t.Fatal("an untitled session is named by its code")
+	}
 	if len(one.Entries) != 4 || one.NextCursor != nil {
 		t.Fatalf("session scope: %+v", one)
 	}
@@ -91,5 +94,16 @@ func TestHistoryView(t *testing.T) {
 	e.opInto(t, "history_view", map[string]any{"section": "lab", "kinds": []string{"run"}}, e.ownerHeaders(), &lab)
 	if len(lab.Entries) != 1 || lab.Entries[0].N != 2 || lab.Entries[0].Title != "code-mode trial" {
 		t.Fatalf("trials: %+v", lab.Entries)
+	}
+	// Leaving the project out leaves its trials out.
+	var out contract.HistoryViewReply
+	e.opInto(t, "history_view", map[string]any{"section": "lab", "excludeProjectIds": []string{"fleet"}}, e.ownerHeaders(), &out)
+	if len(out.Entries) != 0 {
+		t.Fatalf("excluded project: %+v", out.Entries)
+	}
+	var x contract.HistoryViewReply
+	e.opInto(t, "history_view", map[string]any{"experimentId": "hs-x"}, e.ownerHeaders(), &x)
+	if x.ScopeTitle == nil || *x.ScopeTitle != "code-mode" {
+		t.Fatalf("experiment scope title: %v", x.ScopeTitle)
 	}
 }

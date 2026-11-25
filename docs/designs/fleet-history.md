@@ -1,6 +1,6 @@
 # History: one feed of what happened, for every scope
 
-Status: accepted (owner picked option A with the panel, 2026-11-26). Step 1 (Telegram row security, grant moves with their project) and step 2 (the activity table and `history_view`) are built; the screens follow.
+Status: accepted (owner picked option A with the panel, 2026-11-26). Built: Telegram row security and grant moves with their project; the activity table and `history_view`; the History page, Lab's chip and empty pane, the task's History tab and Live's Just now.
 
 ## Problem
 

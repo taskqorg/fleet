@@ -14,6 +14,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
 import { prefs, scopeIds, noProject } from '../prefs.ts';
+import { HistoryRows } from './history.tsx';
 import { useClockOffset } from './hosts.tsx';
 import { firstSentence, hostRecoveredAt } from './system-idle.tsx';
 import { CHIP_STAGE } from './delivery-model.tsx';
@@ -29,7 +30,6 @@ const FEED = 5;
 /** Free slots drawn one tile each up to this many; more are one tile with their count. */
 const IDLE_TILES = 3;
 const TONES: DataTone[] = ['d1', 'd2', 'd3', 'd4'];
-const KINDS: Record<string, string> = { agent_run: 'run', child_agent: 'child run', host_job: 'host job' };
 const ACTIVE = new Set<string>(statesOf('execution', ['working', 'waiting']));
 const OPEN_TASK = openStates('task');
 /** In work: working first, then waiting, then queued (attention order of the one vocabulary). */
@@ -266,30 +266,8 @@ export function Live(props: { wall: boolean }) {
     for (const r of d.runners ?? []) rows.push({ key: 's:' + r.name, name: `self-hosted ${r.name}`, fact: r.status === 'online' ? (r.busy ? 'online · busy' : 'online') : r.status, trouble: r.status !== 'online' });
     return rows;
   });
-  // Just now: runs that started, finished or failed, newest first. Repeats of one subject (a task, else a session) in one
-  // state are one event with ×N and the newest time (OR-58): a bot that runs every five minutes is one row, not five.
-  type Event = { id: string; at: number; n: number; text: string; state: Life; agent: string | null; to: string | null };
-  const events = createMemo(() => {
-    const by = new Map<string, Event>();
-    for (const r of runs()) {
-      // A host job without a task (account probes, cleanup) is the host's own upkeep: it belongs in the host's
-      // conversation and history, not in the top feed, where one job every few minutes buried the work (×144).
-      if (r.kind === 'tool_run' || (r.kind === 'host_job' && !r.taskId) || (r.endedAt ?? r.startedAt) == null) continue;
-      const at = (ACTIVE.has(r.state) ? r.startedAt : r.endedAt ?? r.startedAt)! - offset();
-      const task = r.taskId ? taskById().get(r.taskId) : undefined;
-      const what = task ? `${task.code ? task.code + ' ' : ''}${task.title}` : r.taskTitle ?? r.sessionTitle ?? `${r.harness ? r.harness + ' ' : ''}${KINDS[r.kind] ?? 'run'}`;
-      const where = r.hostId ?? 'coordinator';
-      const verb = ACTIVE.has(r.state) ? `started on ${where}` : r.state === 'failed' ? `failed on ${where}` : r.state === 'cancelled' ? 'stopped' : 'finished';
-      const life: Life = ACTIVE.has(r.state) ? 'working' : r.state === 'failed' ? 'failed' : r.state === 'cancelled' ? 'stopped' : 'done';
-      const subject = r.taskId ?? r.sessionId ?? r.id;
-      const key = `${subject}\0${life}\0${ACTIVE.has(r.state) || r.state === 'failed' ? where : ''}`;
-      const e = by.get(key);
-      if (e) { e.n++; if (at > e.at) Object.assign(e, { at, agent: r.harness ?? e.agent }); continue; }
-      by.set(key, { id: key, at, n: 1, text: `${what} ${verb}`, state: life, agent: r.harness, to: r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null });
-    }
-    return [...by.values()].toSorted((a, b) => b.at - a.at);
-  });
-  const eventFence = createMemo(() => peerFence(events().map(e => e.n)));
+  const recent = useOp('history_view', () => { const { projectIds, excludeProjectIds } = scopeIds(); return { section: 'work', limit: FEED, ...(projectIds?.length ? { projectIds } : {}), ...(excludeProjectIds?.length ? { excludeProjectIds } : {}) }; });
+  const events = createMemo(() => recent.data?.entries ?? []);
   // Feeds are previews of their latest FEED rows, no toggle (OR-30, OR-65): the heading opens the full list where one exists.
   const feed = <T,>(xs: readonly T[]) => xs.slice(0, FEED);
   const head = (label: string, n: number, to?: string): JSX.Element => (
@@ -374,11 +352,8 @@ export function Live(props: { wall: boolean }) {
           </Show>
           <Show when={events().length}>
             <section aria-label="Just now">
-              {head('Just now', events().length)}
-              <ul class="live-list">
-                <For each={feed(events())} keyed={e => e.id}>{ee => { const e = ee(); return <LiveRow kind="event" at={e.at} state={e.state} text={e.text} stale={stale()} onOpen={e.to ? open(e.to) : undefined}
-                  facts={<WorkFacts attempts={e.n} attemptsFence={eventFence()} agent={e.agent} />} />; }}</For>
-              </ul>
+              {head('Just now', events().length, '/history')}
+              <ul class="live-list"><HistoryRows entries={events()} still={props.wall} /></ul>
             </section>
           </Show>
         </aside>

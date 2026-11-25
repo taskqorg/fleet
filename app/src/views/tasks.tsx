@@ -13,7 +13,8 @@ import {
 import { op, online } from '../api.ts';
 import { useAnswers } from '../answers.ts';
 import { useOp } from '../store.ts';
-import type { TaskRow as ContractTaskRow, TaskConversation } from '../../../contracts/generated/ops.ts';
+import type { TaskRow as ContractTaskRow } from '../../../contracts/generated/ops.ts';
+import { HistoryFeed } from './history.tsx';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage, type Frame } from '../list-page.tsx';
@@ -360,7 +361,6 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
 
   const t = () => tDoc.data;
   const activeTab = () => (tab() === 'swarm' && !hasSwarm() ? 'history' : tab());
-  const history = createMemo(() => t()?.history ?? []);
   const swarmCount = createMemo(() => (board.data ? (board.data.summary.messagesTotal || board.data.roster.length || undefined) : undefined));
   const result = createMemo(() => latestResult(t()?.latestResult));
   const req = createMemo(() => {
@@ -541,7 +541,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             cls="detail-tabs"
             label="Task views"
             tabs={[
-              { id: 'history', label: 'History', count: history().length || undefined },
+              { id: 'history', label: 'History' },
               { id: 'details', label: 'Details' },
               ...(hasSwarm() ? [{ id: 'swarm' as const, label: 'Swarm', count: swarmCount() }] : []),
             ]}
@@ -551,7 +551,9 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
           <div role="tabpanel" aria-label={activeTab() === 'swarm' ? 'Swarm' : activeTab() === 'history' ? 'History' : 'Details'} class="stack">
             <Switch fallback={renderDetailsBody()}>
               <Match when={activeTab() === 'swarm'}><SwarmPanel scopeKind="task" scopeId={props.id} board={board} /></Match>
-              <Match when={activeTab() === 'history'}><TaskHistory items={history()} onOpen={id => go(`/conversations/${encodeURIComponent(id)}`)} /></Match>
+              {/* History (docs/designs/fleet-history.md): the task's activity, its conversations' runs, questions and state moves
+                  interleaved; a row opens its conversation. */}
+              <Match when={activeTab() === 'history' && t()}>{task => <HistoryFeed request={() => ({ taskId: task().id })} label="Task history" inside="task" />}</Match>
             </Switch>
           </div>
         </article>
@@ -567,20 +569,3 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   );
 }
 
-/** Task history (fleet-conversations.md#entities; board D3): the task's conversations, oldest first: the one that
- * created it, its workers and reviewers, a bot's conversation about it. Each opens on its own. */
-function TaskHistory(props: { items: TaskConversation[]; onOpen: (id: string) => void }) {
-  const role = (c: TaskConversation) => c.botName || (c.createdTask && !c.role ? 'created' : c.role === 'pm' ? 'PM' : c.role || 'conversation');
-  return (
-    <Show when={props.items.length > 0} fallback={<Empty text="No conversation has worked on this task yet." />}>
-      <ul class="live-list" aria-label="Task history">
-        <For each={props.items}>{c => (
-          <LiveRow kind="task" state={life('session', c.state)} code={role(c)} title={c.createdTask ? `${c.title} · created the task` : c.title}
-            trouble={c.state === 'failed'}
-            facts={<Show when={c.activityAt}>{at => <AgeChip t={at()} />}</Show>}
-            onOpen={() => props.onOpen(c.code || c.sessionId)} />
-        )}</For>
-      </ul>
-    </Show>
-  );
-}
