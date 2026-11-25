@@ -473,9 +473,11 @@ type Request struct {
 	peopleView *peopleSnapshot
 	host       *authHost
 	agent      string // execution:<id> when a host agent calls on behalf of person (its director)
-	body       json.RawMessage
-	tx         pgx.Tx
-	accessTx   pgx.Tx // tx on which refreshRequestAccess already ran
+	// unknownEmail: the email Access signed in for a person Fleet does not know, set only for boot (bootUnknownAllowed).
+	unknownEmail string
+	body         json.RawMessage
+	tx           pgx.Tx
+	accessTx     pgx.Tx // tx on which refreshRequestAccess already ran
 }
 
 func (q *Request) baseCtx() context.Context {
@@ -618,6 +620,10 @@ func (a *App) authorize(q *Request) error {
 		}
 	}
 	if p == nil {
+		if bootUnknownAllowed(q.r.URL.Path) {
+			q.unknownEmail = strings.ToLower(email)
+			return checkOrigin(q)
+		}
 		return fail(403, "Unknown person")
 	}
 	var err error

@@ -6,6 +6,52 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// BootPerson: unknown: signed in through Access, not in Fleet's people (they read nothing until added).
+type BootPerson string
+
+const (
+	BootPersonKnown   BootPerson = "known"
+	BootPersonUnknown BootPerson = "unknown"
+)
+
+// BootPersonValues lists every BootPerson in schema order.
+var BootPersonValues = []BootPerson{BootPersonKnown, BootPersonUnknown}
+
+// Valid: v is one of the schema's values.
+func (v BootPerson) Valid() bool {
+	for _, x := range BootPersonValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type BootReply struct {
+	Cursor   *int64          `json:"cursor"`
+	Me       MeReply         `json:"me"`
+	Person   BootPerson      `json:"person"`
+	Settings *PersonSettings `json:"settings,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BootReply) Validate() error {
+	if err := Check(&v.Me, "me"); err != nil {
+		return err
+	}
+	if err := Check(&v.Person, "person"); err != nil {
+		return err
+	}
+	if v.Settings != nil {
+		if err := Check(v.Settings, "settings"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type BootRequest = map[string]json.RawMessage
+
 // DispatchOrder: list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)
 type DispatchOrder string
 
@@ -1180,6 +1226,7 @@ func (v VisitPage) Valid() bool {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"boot":                {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "no", Description: "The app's start in one request: who you are (me), your settings and the change stream's cursor, so the page opens after one round trip. A person signed in through Access whom Fleet does not know gets person unknown with their email, not a 403.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"focus_set":           {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus. Focus does not bind a repository checkout; use session_transition with projectId for that. Configure focus for the user’s intended granted project before project context reads", InputSchema: json.RawMessage("{\"$comment\":\"projectIds: a list of project ids in the caller's grants, or \\\"*\\\".\",\"additionalProperties\":true,\"properties\":{\"projectIds\":{},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"projectIds\"],\"type\":\"object\"}")},
 		"history_view":        {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "History: what happened in Fleet, newest first, one entry per thing (a run started or ended, a task created or moving state, a question asked or answered, an experiment created, moving or decided, a setting or access change). The same list for every scope: no filter is everything you may see; section (work, lab, system), projectIds ('-': outside projects) or one object (taskId, sessionId, hostId, botId, experimentId) narrows it; kinds, actor and outcome filter it. Consecutive entries of one subject, verb and outcome come as one entry with n and the oldest firstAt. Page older entries with before: the reply's nextCursor.", View: true, Changes: []string{"activity"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"actor\":{\"$comment\":\"Only entries by this actor (a person's email, a bot id, a harness).\",\"type\":\"string\"},\"before\":{\"$comment\":\"Page: entries with seq below this (the previous reply's nextCursor).\",\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"excludeProjectIds\":{\"$comment\":\"Leave these projects out ('-': outside projects); the focus's ignored projects.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"experimentId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"kinds\":{\"items\":{\"enum\":[\"run\",\"task\",\"question\",\"lab\",\"settings\",\"access\"],\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"$comment\":\"Entries returned after folding (default 50, at most 200).\",\"minimum\":1,\"type\":\"integer\"},\"outcome\":{\"enum\":[\"ok\",\"failed\",\"stopped\",\"waiting\",\"running\",\"info\"],\"type\":\"string\"},\"projectIds\":{\"$comment\":\"Only these projects ('-': outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"section\":{\"$comment\":\"work: tasks, conversations and their runs; lab: experiments and trials; system: host jobs, settings, access and coordinator problems.\",\"enum\":[\"work\",\"lab\",\"system\"],\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"home_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Your Home screen in one read (projectIds or excludeProjectIds: the focus, '-' is work outside projects; dayStart: your local midnight in ms, default UTC): the active and failed sessions (up to 200, newest activity first) with the plain cause of each failed one, the open questions for people, the blockers grouped by cause and host (failed runs that need a look and the coordinator's problem questions), the bots, and the counts of the pulse and the quiet summary (sessions done today, and done, merged and failed since your last Home visit). It counts on the server and returns no finished sessions or runs.", View: true, Changes: []string{"session", "execution", "question", "bot", "setting-change", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"dayStart\":{\"$comment\":\"ms: the start of the caller's day, which doneToday counts from; default the UTC midnight.\",\"minimum\":0,\"type\":\"integer\"},\"excludeProjectIds\":{\"$comment\":\"Leave these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"Only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},

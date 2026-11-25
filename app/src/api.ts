@@ -28,10 +28,10 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
   return request(name, body, signal, () => assertAccessGeneration(generation), undefined, opts.keepalive);
 }
 
-/** Only the injected identity validator and no-cursor baseline transport use this boundary. */
-export function accessControlOp<K extends 'me' | 'changes_since'>(name: K, body: Ops[K]['request'], opts: { signal?: AbortSignal } = {}): Promise<Ops[K]['reply']> {
-  if (name !== 'me' && name !== 'changes_since') throw new Error('Invalid access control operation');
-  if (name === 'changes_since' && Object.keys(body).length) throw new Error('Access baseline must have no cursor or options');
+/** Only the injected identity validator (boot, me) and no-cursor baseline transport use this boundary. */
+export function accessControlOp<K extends 'me' | 'boot' | 'changes_since'>(name: K, body: Ops[K]['request'], opts: { signal?: AbortSignal } = {}): Promise<Ops[K]['reply']> {
+  if (name !== 'me' && name !== 'boot' && name !== 'changes_since') throw new Error('Invalid access control operation');
+  if ((name === 'changes_since' || name === 'boot') && Object.keys(body).length) throw new Error('Access baseline must have no cursor or options');
   return request(name, body, opts.signal, () => { if (opts.signal?.aborted) throw new AccessChanged(); });
 }
 let inFlight = 0;

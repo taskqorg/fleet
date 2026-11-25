@@ -84,10 +84,19 @@ function connect(generation: number) {
   es.onmessage = e => { if (current()) { const c = JSON.parse(e.data) as Change; deliver(c, generation); cursor = c.seq; } };
   es.onerror = () => { if (!current()) return; es.close(); failures++; feedState.value = failures >= 3 ? 'polling' : 'connecting'; reconnect(generation); };
 }
+// The stream's cursor boot answered for a generation (main.tsx validator): the baseline takes it instead of waiting for the
+// stream's ready, so the gate opens after boot alone; the stream then connects from it.
+let bootCursor: { generation: number; cursor: number } | null = null;
+export function offerBootCursor(generation: number, cursor: number) { bootCursor = { generation, cursor }; }
 /** Registers transport only; access.ts alone runs validation and opens the generation. */
 export function startFeed(_from: number | null = null) {
   if (started) return; started = true;
   unregisterBaseline = registerAccessBaseline(async ({ generation, signal }) => {
+    const offered = bootCursor; bootCursor = null;
+    if (offered && offered.generation === generation && typeof EventSource !== 'undefined') {
+      const c = offered.cursor;
+      return { cursor: c, dispose: reset, activate: () => { cursor = c; for (const s of subs) s.resync(); connect(generation); } };
+    }
     if (failures >= 3 || typeof EventSource === 'undefined') {
       feedState.value = 'polling';
       const r = await accessControlOp('changes_since', {}, { signal });

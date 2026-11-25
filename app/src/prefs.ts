@@ -3,6 +3,7 @@
 // presets and ignored projects, column widths, the open side panels (the collapsed navigation among them), the navigation counter views, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
 import { cell } from './signal.ts';
 import { op, type Ops } from './api.ts';
+import { ensureAccessGeneration } from './access.ts';
 import { onClear } from './offline.ts';
 import { persist, restore } from './persist.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
@@ -35,6 +36,12 @@ let readSeq = 0, refreshAfterSave = false, inflight: { epoch: number; seq: numbe
 let seq = 0, epoch = 0, pending = 0, chain: Promise<unknown> = Promise.resolve();
 // Any answer of the current person's read opens the gate (one held back by a save keeps the shown copy, the server's plus
 // that save); an answer for a person cleared meanwhile (epoch) does not.
+let primed: { epoch: number; settings: Settings } | null = null;
+/** The person's settings as boot answered them (main.tsx validator): shown at once, and the next read takes them. */
+export function primePrefs(s: Settings) {
+  primed = { epoch, settings: s };
+  if (!pending) { prefs.value = s; persist('prefs', s); prefsRead.value = true; }
+}
 export function loadPrefs(): Promise<void> {
   // A setting-change during a local save must be read after the last queued patch settles.
   if (pending) { refreshAfterSave = true; prefsRead.value = true; return Promise.resolve(); }
@@ -42,7 +49,12 @@ export function loadPrefs(): Promise<void> {
   if (inflight && inflight.epoch === epoch && inflight.seq === seq) return inflight.done;
   const n = seq, e = epoch, read = ++readSeq;
   const done = () => { if (e === epoch) prefsRead.value = true; };
-  const answered = op('person_settings_get', {}).then(s => {
+  // The settings boot answered for this person (primePrefs) answer the read the store's clear asked for at the start.
+  const asked = ensureAccessGeneration().then(() => {
+    if (primed && primed.epoch === e) { const p = primed.settings; primed = null; return p; }
+    return op('person_settings_get', {});
+  });
+  const answered = asked.then(s => {
     if (e !== epoch || read !== readSeq) return;
     if (seq === n && !pending) { prefs.value = s; persist('prefs', s); }
     else if (pending) refreshAfterSave = true;
