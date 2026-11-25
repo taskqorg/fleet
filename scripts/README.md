@@ -11,7 +11,8 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 | [check.sh](check.sh) | Every check of a change, the same in CI (jobs `go` and `app`) and locally: `scripts/check.sh [go|app]` ([checks per change](../docs/designs/fleet-delivery-pipeline.md#checks-per-change)). |
 | [design-report-comment.ts](design-report-comment.ts) | `diffReport`, `appNotRun`, `comment`: the PR design report comment against the latest `main` artifact (new, fixed, changed figures; standing report folded); `--self-check`. |
 | [docs-report.ts](docs-report.ts) | `kind`, `linkFixOnly`, `anchors`, `links`; CLI `--base <ref>` or `--self-check`. |
-| [ui-context.ts](ui-context.ts) | `rules`, `principles`, `cited`, `refs`, `links`, `section`, `context`; CLI `<page>` prints the minimal reading for one page (spec, canvas, blocks, controls, patterns, cited rule texts). |
+| [ui-context.ts](ui-context.ts) | `rules`, `principles`, `cited`, `refs`, `links`, `section`, `context`; CLI `<page>` prints the minimal reading for one page (spec, canvas, blocks, controls, patterns, cited rule texts, the data-layer rules). |
+| [page-budget.ts](page-budget.ts) | CLI `<path>...`: reads, bytes and settle time of a deployed screen on open, reload, Alt-Tab and Back, as site-agents ([data layer](../docs/designs/fleet-data-layer.md)); a tool, not a gate. |
 | [lab-drift.ts](lab-drift.ts) | `Source`, `Status`, `slug`, `section`, `hash`, `repoDir`, `current`, `check`, `registryDir`, `loadRegistry`, `run`; CLI can report, `--write`, or `--pin` registry sources. |
 | [lab-example-format.ts](lab-example-format.ts) | `ExampleFile`, `Example`, `useCaseIds`, `parseExample`: validated canonical Lab inputs. |
 | [lab-export.ts](lab-export.ts) | `parseExport`, `examplesFromExport`: version-1 project exports to inline examples. |
