@@ -45,6 +45,13 @@ func TestAccessStatusOnboardDelete(t *testing.T) {
 	if it := item(s, "connection:openai-work"); it["state"] != "needs-key" || it["where"] != "all projects" {
 		t.Fatal(it)
 	}
+	// A check runs outside any transaction; a connection with no key has nothing to call and says so.
+	if c := call("access_check", doc{"id": "connection:openai-work"}, 200); c["item"].(doc)["state"] != "needs-key" {
+		t.Fatal(c)
+	}
+	if c := call("access_check", doc{"id": "account:" + id}, 200); c["queued"] != false {
+		t.Fatal("a subscription with no host login has nothing to inspect", c)
+	}
 	l := call("access_onboard", doc{"kind": "limit", "connection": "openai-work", "limit": doc{"amount": 200, "unit": "calls"}}, 200)
 	again := call("access_onboard", doc{"kind": "limit", "connection": "openai-work", "limit": doc{"amount": 300, "unit": "calls"}}, 200)
 	if l["budgetId"] == nil || again["budgetId"] != l["budgetId"] {

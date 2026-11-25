@@ -347,13 +347,13 @@ func accessConnection(c apiConnection, keys []connKey, call db.AccessLastCallsRo
 			it.UsedBy = append(it.UsedBy, p.ID)
 		}
 	}
-	if call.LastID != "" {
+	if call.LastID != "" && slices.Contains([]string{"succeeded", "failed", "cancelled"}, call.LastState) {
 		ok := call.LastState == "succeeded"
 		text := "ok"
 		if !ok {
-			text = firstString(contract.PlainCause(call.LastProblem, "").Text, call.LastState)
-			if call.LastProblem != "" {
-				text += " (" + call.LastProblem + ")"
+			text = call.LastState
+			if f := contract.PlainCause(call.LastProblem, ""); f != nil {
+				text = f.Text + " (" + call.LastProblem + ")"
 			}
 		}
 		chk := &contract.AccessCheck{At: call.LastStartedAt, Ok: ok, Text: text, Tool: strPtr(call.LastTool)}
@@ -398,28 +398,54 @@ func accessConnection(c apiConnection, keys []connKey, call db.AccessLastCallsRo
 	return it
 }
 
-// accessCheck: one item now, read-only. A connection: its provider's cheap call through the gateway (recorded as a
-// tool_run like any other); a subscription: a status inspection of each host login (never a login).
+// accessCheck: one item now, read-only (a long operation: the gateway call holds no transaction). A connection: its
+// provider's cheap call through the gateway (recorded as a tool_run like any other); a subscription: a status inspection
+// of each host login. An Antigravity login is inspected only where an earlier probe found it signed in: agy may open a
+// browser sign-in for a login it lacks, and a check never starts a login.
 func accessCheck(q *Request, r *contract.AccessCheckRequest) (contract.AccessCheckReply, error) {
 	var no contract.AccessCheckReply
 	kind, id, _ := strings.Cut(r.Id, ":")
+	read := func(fn func(q *Request) error) error { return q.app.store.Read(q.ctx(), q, fn) }
 	switch kind {
 	case "account":
-		a, err := accountGet(q, id)
-		if err != nil {
-			return no, err
-		}
-		for _, b := range a.bindings() {
-			if _, err := accountInspect(q, a.ID, deref(b.HostID), b.Binding); err != nil {
-				return no, err
+		queued := false
+		if err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
+			a, err := accountGet(q, id)
+			if err != nil {
+				return err
 			}
-		}
-		it, err := accessItem(q, r.Id)
-		return contract.AccessCheckReply{Item: it, Queued: len(a.bindings()) > 0}, err
-	case "connection":
-		c, err := connNamed(q, id)
-		if err != nil {
+			if q.person != nil && !fullAccess(q.person) && q.person.Email != a.Holder {
+				return fail(403, "Only the holder or the owner checks this subscription")
+			}
+			for _, b := range a.bindings() {
+				if a.Harness == "antigravity" && len(b.Models) == 0 {
+					continue
+				}
+				if _, err := accountInspect(q, a.ID, deref(b.HostID), b.Binding); err != nil {
+					return err
+				}
+				queued = true
+			}
+			return nil
+		}); err != nil {
 			return no, err
+		}
+		var it contract.AccessItem
+		err := read(func(q *Request) (err error) { it, err = accessItem(q, r.Id); return })
+		return contract.AccessCheckReply{Item: it, Queued: queued}, err
+	case "connection":
+		var c apiConnection
+		var it contract.AccessItem
+		if err := read(func(q *Request) (err error) {
+			if c, err = connNamed(q, id); err == nil {
+				it, err = accessItem(q, r.Id)
+			}
+			return
+		}); err != nil {
+			return no, err
+		}
+		if it.State == contract.AccessStateNeedsKey {
+			return contract.AccessCheckReply{Item: it}, nil // nothing to call with
 		}
 		g := accessGuides[c.Provider]
 		if g.probe == "" {
@@ -432,7 +458,7 @@ func accessCheck(q *Request, r *contract.AccessCheckRequest) (contract.AccessChe
 		if err := accessProbe(q, c.Name, project, g); err != nil {
 			return no, err
 		}
-		it, err := accessItem(q, r.Id)
+		err := read(func(q *Request) (err error) { it, err = accessItem(q, r.Id); return })
 		return contract.AccessCheckReply{Item: it}, err
 	}
 	return no, fail(400, "Expected an access_status item id (account:<id> or connection:<name>)")
@@ -440,7 +466,7 @@ func accessCheck(q *Request, r *contract.AccessCheckRequest) (contract.AccessChe
 
 // accessProbe: the provider's check call, outside the request's transaction (a gateway call must not hold it).
 func accessProbe(q *Request, connection, project string, g accessGuide) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(q.ctx()), time.Minute)
+	ctx, cancel := context.WithTimeout(q.ctx(), time.Minute)
 	defer cancel()
 	token, release, err := readTokenFor(ctx, q.app, connection, project)
 	if err != nil {
@@ -516,6 +542,9 @@ func accessOnboardKey(q *Request, r *contract.AccessOnboardRequest) (contract.Ac
 	}
 	out.Steps = append(out.Steps, "Paste the key on System › Access › "+c.Name+" (Add and check); Fleet checks it at once")
 	if r.ProjectId != nil && r.RequestId != nil {
+		if q.person != nil && !fullAccess(q.person) && !hasRole(q.person, "architect") {
+			return no, fail(403, "Asking the owner for a key needs the architect role")
+		}
 		v, err := connectionsKeyRequest(q, &contract.ConnectionsKeyRequestRequest{ProjectId: *r.ProjectId, RequestId: *r.RequestId, Connection: c.Name, Reason: r.Reason})
 		if err != nil {
 			return no, err
@@ -578,6 +607,9 @@ func accessOnboardLogin(q *Request, r *contract.AccessOnboardRequest) (contract.
 
 func accessOnboardLimit(q *Request, r *contract.AccessOnboardRequest) (contract.AccessOnboardReply, error) {
 	var no contract.AccessOnboardReply
+	if q.person != nil && !fullAccess(q.person) {
+		return no, fail(403, "Only the owner sets a limit")
+	}
 	if r.Connection == nil || r.Limit == nil || r.Limit.Amount <= 0 || r.Limit.Unit == "" {
 		return no, fail(400, "Expected connection and limit {amount > 0, unit}")
 	}
