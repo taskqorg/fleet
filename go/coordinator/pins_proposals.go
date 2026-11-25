@@ -56,7 +56,7 @@ func pinsProblems(open []ghPull) []Problem {
 		if len(failures) > 3 {
 			failures = append(failures[:3], "and more in the pull request")
 		}
-		text := "Managed " + kind + " update failed qualification and stays unmerged (" + pr.URL + "): " + strings.Join(failures, "; ") + "."
+		text := "Managed " + kind + " pin proposal failed qualification and stays unmerged (" + pr.URL + "): " + strings.Join(failures, "; ") + "."
 		out = append(out, Problem{Cause: "pins:" + kind + ":" + pr.Head.SHA, Text: text, Options: []any{"ok"}})
 	}
 	return out
