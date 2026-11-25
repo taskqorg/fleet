@@ -62,7 +62,10 @@ jobs:
           if [ "$same" = true ]; then
             sha=$remote
             state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" --jq '[.statuses[] | select(.context == "harness-qualify")][0].state // ""')
-            qualify=$([ -z "$state" ] || [ "$state" = pending ] || [ "$REQUALIFY" = true ] && echo true || echo false)
+            auto=$(gh pr view "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null')
+            # Qualify again when nothing decided this head yet, when asked, or when it passed but lost auto-merge
+            # (a queue removal): the decision then turns auto-merge on again.
+            qualify=$([ -z "$state" ] || [ "$state" = pending ] || [ "$REQUALIFY" = true ] || { [ "$state" = success ] && [ "$auto" = false ]; } && echo true || echo false)
           else
             # A new proposal starts from the current main: one commit, never a merge.
             git config user.name 'github-actions[bot]'
@@ -72,9 +75,12 @@ jobs:
             git commit -m 'chore(deploy): update managed agent CLI pins'
             git push --force-with-lease="refs/heads/$BRANCH:$remote" origin "$BRANCH"
             sha=$(git rev-parse HEAD)
+            running='Qualification is running: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            # An earlier head's failed body must not stand for this head (the coordinator asks on that marker).
+            [ -z "$pr" ] || gh pr edit "$pr" --body "$running"
             if [ -z "$pr" ]; then
               gh pr create --head "$BRANCH" --base main --title 'Update managed agent CLI pins' \
-                --body 'Qualification is running: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+                --body "$running"
               pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
             fi
             qualify=true
@@ -180,7 +186,7 @@ jobs:
           if [ "$ok" = 1 ]; then
             gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=harness-qualify -f target_url="$RUN" -f description='Qualified against the current pins'
             # The ruleset's code-review status: this pull request's review is the qualification above.
-            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=code-review -f target_url="$RUN" -f description='harness qualification, 0 findings'
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=code-review -f target_url="$RUN" -f description='harness-qualify, 0 findings fixed'
             gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH"
             gh pr merge "$PR" -R "$GITHUB_REPOSITORY" --auto
           else
@@ -194,8 +200,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       actions: write
-      contents: read
-      pull-requests: write
+      pull-requests: read
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
