@@ -152,9 +152,9 @@ A project whose toolchain the hosts do not carry (PHP, Composer, a database) dec
   "setup": "composer install --no-interaction && php yii migrate --interactive=0"}}
 ```
 
-*   **Main container**: `image`, or `build` (a Containerfile path in the worktree, built once per host and tagged by the file's hash). The worktree is mounted at `workdir` (default `/workspace`) with the executor user's ids (`--userns keep-id`), so files it writes stay the agent's.
+*   **Main container**: `image`, or `build` (a Containerfile path in the worktree, built on every start; the layer cache keeps an unchanged build fast). The worktree is mounted at `workdir` (default `/workspace`) with the executor user's ids (`--userns keep-id`), so files it writes stay the agent's.
 *   **Services**: side containers of the same pod; each name resolves to `127.0.0.1` in every container, so a repository config that names the host `db` works unchanged. Their data lives in the containers: no production data, only what the spec and the worktree hold.
-*   **Tools**: `env_exec {command, timeoutSeconds}` runs `sh -lc` in the main container and answers the exit code and the last 64 KiB of output; the first call starts the pod and runs `setup`. `env_reset` removes the pod; the next call starts it fresh. Teardown removes it too.
+*   **Tools**: `env_exec {command, timeoutSeconds}` runs `sh -lc` in the main container and answers the exit code and the last 64 KiB of output; the first call starts the pod and runs `setup`; a start that fails, setup included, removes the pod, and a pod with a stopped container starts again. Codex gets `tool_timeout_sec` 5400 for these calls. `env_reset` removes the pod; the next call starts it fresh. Teardown removes it too.
 *   **Placement and readiness**: `execution.environment` requires `podman` in `execution.tools`, which places the run on hosts reporting `tool:podman` and checks `podman info` as the executor user (its own HOME and `XDG_RUNTIME_DIR`, never a harness HOME) before the model starts.
 *   **Host setup**: rootless Podman for the executor user: `subuid`/`subgid` ranges, lingering on (`loginctl enable-linger`), cgroup v2 with the systemd cgroup manager, overlay storage. pds18-native: `fleet-agent` 493216:65536, Podman 5.7.
 

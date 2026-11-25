@@ -104,7 +104,8 @@ func (c projectEnvConfig) workdir() string {
 	return "/workspace"
 }
 
-// image: the spec's image, or the build file's image tagged by the file's hash and built once per host.
+// image: the spec's image, or the build file's image, built on every start: Podman's layer cache keeps an unchanged
+// build fast and rebuilds when the build file or a file it copies changed.
 func (c projectEnvConfig) image() (string, error) {
 	if img := str0(c.Spec.Image); img != "" {
 		return img, nil
@@ -114,15 +115,10 @@ func (c projectEnvConfig) image() (string, error) {
 	if !filepath.IsLocal(build) {
 		return "", errors.New("build must be a path inside the worktree")
 	}
-	b, err := os.ReadFile(file)
-	if err != nil {
+	if _, err := os.Stat(file); err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(b)
-	tag := fmt.Sprintf("localhost/fleet-env-%s:%x", strings.ToLower(c.Project), sum[:6])
-	if _, err := c.run(time.Minute, "image", "exists", tag); err == nil {
-		return tag, nil
-	}
+	tag := "localhost/" + c.Pod
 	if _, err := c.run(45*time.Minute, "build", "-t", tag, "-f", file, c.Worktree); err != nil {
 		return "", err
 	}
@@ -142,13 +138,36 @@ func envArgs(env map[string]string) []string {
 	return out
 }
 
-// ensure starts the pod when its main container is not running; the answer carries setup output on a fresh start.
-func (c projectEnvConfig) ensure() (string, error) {
-	main := c.Pod + "-main"
-	if out, err := c.run(time.Minute, "container", "inspect", "-f", "{{.State.Running}}", main); err == nil && strings.TrimSpace(out) == "true" {
+// running: the pod has its main container and every container of it runs (a dead service restarts the pod).
+func (c projectEnvConfig) running() bool {
+	out, err := c.run(time.Minute, "ps", "-a", "--filter", "pod="+c.Pod, "--format", "{{.Names}} {{.State}}")
+	if err != nil {
+		return false
+	}
+	main := false
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		name, state, _ := strings.Cut(line, " ")
+		if state != "running" {
+			return false
+		}
+		main = main || name == c.Pod+"-main"
+	}
+	return main
+}
+
+// ensure starts the pod unless it runs whole; the answer carries setup output on a fresh start. A start that fails at
+// any step, setup included, removes the pod, so the next call starts fresh and runs setup again.
+func (c projectEnvConfig) ensure() (out string, err error) {
+	if c.running() {
 		return "", nil
 	}
+	main := c.Pod + "-main"
 	_, _ = c.run(2*time.Minute, "pod", "rm", "-f", "--ignore", c.Pod)
+	defer func() {
+		if err != nil {
+			_, _ = c.run(2*time.Minute, "pod", "rm", "-f", "--ignore", c.Pod)
+		}
+	}()
 	img, err := c.image()
 	if err != nil {
 		return "", err
@@ -244,7 +263,9 @@ func projectEnvCall(name string, args any, cfg projectEnvConfig) (any, error) {
 func projectEnvServer(project string, spec *contract.ProjectDevEnvironment, workspace, worktree string) M {
 	cfg := projectEnvConfig{Pod: projectEnvPod(workspace), Project: project, Worktree: worktree, Spec: *spec,
 		Home: os.Getenv("HOME"), Runtime: os.Getenv("XDG_RUNTIME_DIR"), Path: os.Getenv("PATH")}
-	return M{"command": exe(), "args": []any{"mcp", "project-env", enc(cfg)}, "tools": []any{"env_exec", "env_reset"}}
+	// toolTimeoutSec: above env_exec's longest bound (build 45 min + setup 30 min, or a 60 min command), so the harness
+	// never cuts a call podman is still running.
+	return M{"command": exe(), "args": []any{"mcp", "project-env", enc(cfg)}, "tools": []any{"env_exec", "env_reset"}, "toolTimeoutSec": 5400}
 }
 
 // removeProjectEnv: teardown's step; a host without podman has no pod to remove.
