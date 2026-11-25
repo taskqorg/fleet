@@ -39,7 +39,7 @@
         409
       ],
       "auth": "project:projectId",
-      "agent": "no",
+      "agent": "tool",
       "description": "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its Home conversation."
     },
     "bot_memory_save": {
@@ -50,7 +50,7 @@
         409
       ],
       "auth": "person",
-      "agent": "no",
+      "agent": "tool",
       "description": "Save a new project-scoped bot memory revision."
     },
     "bot_avatar_set": {
@@ -82,7 +82,7 @@
         409
       ],
       "auth": "person",
-      "agent": "no",
+      "agent": "tool",
       "description": "Run a bot now using the shared wake admission flow, enforcing single active run admission and pinning settings, memory and project."
     },
     "bot_pause": {
@@ -92,7 +92,7 @@
         404
       ],
       "auth": "person",
-      "agent": "no",
+      "agent": "tool",
       "description": "Pause or resume a bot's future scheduled and Needs-you wakes."
     },
     "bot_stop": {
@@ -102,7 +102,7 @@
         404
       ],
       "auth": "person",
-      "agent": "no",
+      "agent": "tool",
       "description": "Request cancellation of a bot's active execution through the execution lifecycle and report the observed stop outcome."
     },
     "bot_runs": {
@@ -112,7 +112,7 @@
         404
       ],
       "auth": "person",
-      "agent": "no",
+      "agent": "tool",
       "description": "List bot runs, including quiet wakes and skipped, queued, failed and unconfirmed work.",
       "changes": [
         "bot-run",
