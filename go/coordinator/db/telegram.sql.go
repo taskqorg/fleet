@@ -181,6 +181,31 @@ func (q *Queries) TelegramOutboxAdd(ctx context.Context, arg TelegramOutboxAddPa
 	return err
 }
 
+const telegramOutboxAddPart = `-- name: TelegramOutboxAddPart :exec
+INSERT INTO telegram_outbox(id, chat_id, thread_id, kind, text, payload, work_id, session_id, created_at, error)
+SELECT $1::text, o.chat_id, o.thread_id, o.kind, $2::text, $3::jsonb, o.work_id, o.session_id, o.created_at, 'rich-refused'
+FROM telegram_outbox o WHERE o.id = $4
+ON CONFLICT DO NOTHING
+`
+
+type TelegramOutboxAddPartParams struct {
+	PartID  string
+	Text    string
+	Payload []byte
+	ID      string
+}
+
+// A further HTML part of a refused rich message: it follows the item in the chat's order (created_at, id).
+func (q *Queries) TelegramOutboxAddPart(ctx context.Context, arg TelegramOutboxAddPartParams) error {
+	_, err := q.db.Exec(ctx, telegramOutboxAddPart,
+		arg.PartID,
+		arg.Text,
+		arg.Payload,
+		arg.ID,
+	)
+	return err
+}
+
 const telegramOutboxBySent = `-- name: TelegramOutboxBySent :one
 SELECT id, chat_id, thread_id, kind, reply_to, edit_message_id, text, payload, work_id, session_id, telegram_message_id, state, created_at, sent_at, error, attempts, next_attempt_at, last_error FROM telegram_outbox WHERE chat_id = $1 AND telegram_message_id = $2 LIMIT 1
 `
@@ -292,6 +317,22 @@ UPDATE telegram_outbox SET error = 'html-refused' WHERE id = $1 AND state = 'pen
 // Telegram refused the item's formatting: its next send goes as plain text.
 func (q *Queries) TelegramOutboxMarkPlain(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, telegramOutboxMarkPlain, id)
+	return err
+}
+
+const telegramOutboxMarkRichRefused = `-- name: TelegramOutboxMarkRichRefused :exec
+UPDATE telegram_outbox SET error = 'rich-refused', text = $1, payload = $2 WHERE id = $3 AND state = 'pending'
+`
+
+type TelegramOutboxMarkRichRefusedParams struct {
+	Text    string
+	Payload []byte
+	ID      string
+}
+
+// Telegram refused the item as a rich message: its next send is HTML, with text its first HTML part.
+func (q *Queries) TelegramOutboxMarkRichRefused(ctx context.Context, arg TelegramOutboxMarkRichRefusedParams) error {
+	_, err := q.db.Exec(ctx, telegramOutboxMarkRichRefused, arg.Text, arg.Payload, arg.ID)
 	return err
 }
 
@@ -984,6 +1025,49 @@ UPDATE telegram_turn SET typing_at = clock_timestamp() WHERE id = $1
 func (q *Queries) TelegramTurnTyped(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, telegramTurnTyped, id)
 	return err
+}
+
+const telegramTurnsInRoom = `-- name: TelegramTurnsInRoom :many
+SELECT id, session_id, request_id, work_id, chat_id, thread_id, message_id, email, typing_at, attempts, next_attempt_at, last_error FROM telegram_turn WHERE chat_id = $1 AND thread_id = $2 ORDER BY id LIMIT 50
+`
+
+type TelegramTurnsInRoomParams struct {
+	ChatID   int64
+	ThreadID int64
+}
+
+// Messages of one chat (and topic) still waiting for their reply: /stop asks their runs to stop.
+func (q *Queries) TelegramTurnsInRoom(ctx context.Context, arg TelegramTurnsInRoomParams) ([]TelegramTurn, error) {
+	rows, err := q.db.Query(ctx, telegramTurnsInRoom, arg.ChatID, arg.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramTurn
+	for rows.Next() {
+		var i TelegramTurn
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RequestID,
+			&i.WorkID,
+			&i.ChatID,
+			&i.ThreadID,
+			&i.MessageID,
+			&i.Email,
+			&i.TypingAt,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const telegramUnknownSenders = `-- name: TelegramUnknownSenders :many

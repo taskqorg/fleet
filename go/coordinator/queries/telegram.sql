@@ -130,6 +130,10 @@ SELECT * FROM telegram_turn WHERE id = $1;
 -- name: TelegramTurnTyped :exec
 UPDATE telegram_turn SET typing_at = clock_timestamp() WHERE id = $1;
 
+-- name: TelegramTurnsInRoom :many
+-- Messages of one chat (and topic) still waiting for their reply: /stop asks their runs to stop.
+SELECT * FROM telegram_turn WHERE chat_id = @chat_id AND thread_id = @thread_id ORDER BY id LIMIT 50;
+
 -- name: TelegramTurnDelete :exec
 DELETE FROM telegram_turn WHERE id = $1;
 
@@ -163,6 +167,17 @@ SELECT * FROM telegram_outbox WHERE chat_id = @chat_id AND telegram_message_id =
 
 -- name: TelegramOutboxPending :one
 SELECT count(*) FROM telegram_outbox WHERE state = 'pending';
+
+-- name: TelegramOutboxMarkRichRefused :exec
+-- Telegram refused the item as a rich message: its next send is HTML, with text its first HTML part.
+UPDATE telegram_outbox SET error = 'rich-refused', text = @text, payload = sqlc.narg(payload) WHERE id = @id AND state = 'pending';
+
+-- name: TelegramOutboxAddPart :exec
+-- A further HTML part of a refused rich message: it follows the item in the chat's order (created_at, id).
+INSERT INTO telegram_outbox(id, chat_id, thread_id, kind, text, payload, work_id, session_id, created_at, error)
+SELECT @part_id::text, o.chat_id, o.thread_id, o.kind, @text::text, sqlc.narg(payload)::jsonb, o.work_id, o.session_id, o.created_at, 'rich-refused'
+FROM telegram_outbox o WHERE o.id = @id
+ON CONFLICT DO NOTHING;
 
 -- name: TelegramOutboxMarkPlain :exec
 -- Telegram refused the item's formatting: its next send goes as plain text.
