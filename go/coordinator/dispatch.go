@@ -1691,7 +1691,8 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		liveSession.PendingHandoffID = sess.PendingHandoffID // a handoff made here (host_move) and not delivered stays linked
 	}
 	var runConns []connSpec
-	if granted := jsonStrings(prof.Connections); len(granted) > 0 && e.PipelineRunID == nil {
+	granted := runConnections(jsonStrings(prof.Connections))
+	if e.PipelineRunID == nil {
 		minted, err := mintGrantFor(q, mintRun{ExecutionID: &e.ID, DirectedBy: e.DirectedBy, ProjectID: d.ProjectID,
 			ExperimentID: e.ExperimentID, PipelineRunID: liveSession.PipelineRunID}, granted)
 		if err != nil {

@@ -7,6 +7,7 @@ package main
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -123,6 +124,16 @@ func accessGatewayAccess(q *Request, name string) (*contract.GatewayAccess, erro
 		a.DbUser, a.Password, a.Database, a.Tables = new(accessDBUser(g.ProjectID, g.ID)), new(accessPasswordName(g)), g.Scope.Database, g.Scope.Tables
 	}
 	return a, nil
+}
+
+// runConnections: an agent run's requested connections: its profile's, plus project-access. Every agent run of a
+// project gets its project's access connections whatever the session's profile snapshot lists, since a session keeps
+// the profile it started with and an owner-approved grant must still reach it (DAM pilot, 2026-11-26).
+func runConnections(profile []string) []string {
+	if slices.Contains(profile, accessGrantAll) {
+		return profile
+	}
+	return append(append([]string{}, profile...), accessGrantAll)
 }
 
 // accessExpand replaces project-access in a profile's connection list by the run project's access connections.
