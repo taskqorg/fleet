@@ -41,26 +41,51 @@
   .tool-call-io pre { margin: 0; max-height: calc(var(--size-list) * 1.25); overflow: auto; padding: var(--space-2); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--bg); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
   @media (pointer: coarse) { .tool-chip, .tool-call-row { min-height: var(--size-hit-phone); } }
 
-  /* Thread list (Conversations v2, owner pick b2): work-item threads of a conversation */
-  .thread-list { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); color: var(--fg); }
-  .thread-list-body { flex: 1; min-height: 0; overflow-y: auto; padding-block: var(--space-2); }
-  .thread-list h3 { margin: 0; padding: var(--space-3) var(--space-4) var(--space-1); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); text-transform: uppercase; letter-spacing: .04em; }
+  /* Thread list (Conversations v2, owner pick B): a bot's work-item threads nested under its row in the Conversations list */
+  .thread-list { display: flex; flex-direction: column; min-width: 0; padding-block: var(--space-1); color: var(--fg); }
+  .thread-list h3 { margin: 0; padding: var(--space-2) var(--space-3) var(--space-1) var(--space-7); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); text-transform: uppercase; letter-spacing: .04em; }
   .thread-list ul { margin: 0; padding: 0; list-style: none; }
-  .thread-item { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; padding: var(--space-2) var(--space-4); border: 0; border-inline-start: 2px solid transparent; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+  .thread-list-empty { margin: 0; padding: var(--space-1) var(--space-3) var(--space-2) var(--space-7); color: var(--fg-faint); font-size: var(--font-size-sm); }
+  .thread-item { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; padding: var(--space-2) var(--space-3) var(--space-2) var(--space-7); border: 0; border-inline-start: 2px solid transparent; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
   .thread-item:hover { background: var(--hover); }
   .thread-item.on { border-inline-start-color: var(--accent); background: var(--selected); }
-  .thread-item-top, .thread-item-foot { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-  .thread-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
-  .thread-item.parked .thread-item-title { color: var(--fg-muted); }
+  .thread-item-top, .thread-item-foot { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+  .thread-item-title { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
+  .thread-item.idle .thread-item-title { color: var(--fg-muted); }
   .thread-item-top .when { flex: none; color: var(--fg-faint); font-size: var(--font-size-xs); }
   .thread-item-new { flex: none; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--attention-bg); color: var(--attention-fg); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
-  .thread-item-code { color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--font-size-xs); }
-  .thread-list-quiet { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line-soft); background: var(--surface); font-size: var(--font-size-sm); }
+  .thread-item-foot { align-items: center; font-size: var(--font-size-xs); }
+  .thread-item-code { color: var(--fg-muted); font-family: var(--font-mono); }
+  .thread-list-archived { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3) var(--space-2) var(--space-7); border: 0; background: none; color: var(--fg-muted); font: inherit; font-size: var(--font-size-sm); text-align: start; cursor: pointer; }
+  .thread-list-archived:hover { background: var(--hover); }
+  .thread-list-archived .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .thread-list-archived > span:first-of-type { flex: none; white-space: nowrap; }
+  .thread-list-archived .muted { color: var(--fg-faint); font-size: var(--font-size-xs); }
+  .thread-list-quiet { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) var(--space-7); color: var(--fg-muted); font-size: var(--font-size-xs); }
   .thread-list-quiet .icon { flex: none; width: var(--size-icon-sm); height: var(--size-icon-sm); color: var(--running-fg); }
-  .thread-list-quiet > span { display: flex; flex-direction: column; min-width: 0; }
-  .thread-list-quiet b { font-weight: var(--font-weight-medium); }
-  .thread-list-quiet span span { color: var(--fg-muted); font-size: var(--font-size-xs); }
-  @media (pointer: coarse) { .thread-item { min-height: var(--size-hit-phone); } }
+  .thread-list-quiet > span { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); min-width: 0; }
+  .thread-list-quiet b { font-weight: var(--font-weight-medium); color: var(--fg); }
+  @media (pointer: coarse) { .thread-item, .thread-list-archived { min-height: var(--size-hit-phone); } }
+  /* Conversations list (owner pick B, 2026-11-26): a bot's threads under its row; rows measure themselves. */
+  .conv-list .vl-row:not(.grp) { min-height: var(--size-row); }
+  .conv-list .vl-row > .row-sub { grid-column: 1 / -1; min-width: 0; margin-inline: calc(-1 * var(--space-4)); white-space: normal; border-top: 1px solid var(--line-soft); }
+  /* The phone row (approved "строка ок"): the title takes the width and wraps to two lines, the time stays rightmost on
+     line 1 (OR-64), the agent mark and the newest line go to line 2, the code stays in the head and in search. */
+  @media (max-width: 767px) {
+    .conv-list .vl-row:not(.grp) { grid-template-rows: auto auto; align-items: start; row-gap: var(--space-1); padding-block: var(--space-2); white-space: normal; }
+    .conv-list .vl-row:not(.grp) > .tt { grid-row: 1; }
+    .conv-list .vl-row .tt .title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
+    .conv-list .vl-row .tt > :not(.title) { display: none; }
+    .conv-list .vl-row > .rz, .conv-list .vl-row > .rz > .row-facts { display: contents; }
+    .conv-list .row-facts > * { grid-row: 2; grid-column: -2; }
+    .conv-list .row-facts > .row-now { display: block; grid-column: 2; max-inline-size: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-family: var(--font-sans); font-size: var(--font-size-sm); }
+    .conv-list .row-facts > .harness { grid-column: 1; justify-self: center; }
+    .conv-list .row-facts > :last-child:not(.row-now):not(.harness) { grid-row: 1; grid-column: -2; font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--fg-muted); }
+    .conv-list .vl-row > .row-sub { grid-row: 3; }
+  }
+  /* The session head names the shown thread after the bot: "HAL0 › Main" (owner pick B). */
+  .sv-crumb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-size: var(--font-size-lg); }
+  .sv-crumb-sep { flex: none; color: var(--fg-faint); }
 
   /* Context panel (OR-51) */
   .ctx-panel { display: flex; flex-direction: column; gap: var(--space-4); width: var(--size-search); min-width: 0; padding: var(--space-4); border-inline-start: 1px solid var(--line); background: var(--surface); color: var(--fg); }
@@ -104,14 +129,6 @@
      600 px of its own width the column gives way to a sheet (the Context icon opens it). */
   .detail.session-view { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; container-type: inline-size; }
   .session-view[data-frame=home] { block-size: 100%; }
-  /* Work-item threads (owner pick b2): the thread list as the first column; at phone width the list and the thread take turns. */
-  .detail.session-view.with-threads { grid-template-columns: calc(var(--size-rail) + var(--space-7) + var(--space-6)) minmax(0, 1fr) auto; }
-  .session-view.with-threads > .thread-list { border-inline-end: 1px solid var(--line-soft); }
-  .sv-threads-back { display: none; }
-  /* Narrow (data-threads list or thread, set from the view's own width): the list and the thread take turns. */
-  .detail.session-view.with-threads:is([data-threads=list], [data-threads=thread]) { grid-template-columns: minmax(0, 1fr) auto; }
-  .session-view[data-threads=list] > .sv-main, .session-view[data-threads=thread] > .thread-list { display: none; }
-  .session-view[data-threads=thread] .sv-threads-back { display: inline-flex; }
   .sv-main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; min-height: 0; padding-block: var(--space-4); padding-inline: clamp(var(--space-3), calc(6% - var(--space-5)), var(--space-6)); }
   .sv-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--size-control); }
   .sv-name { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }

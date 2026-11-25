@@ -1,7 +1,8 @@
-// Thread list: the work-item threads of a conversation (Conversations v2, owner pick b2; board drafts/conversations-v2.bl
-// frames A and C; docs/designs/fleet-conversations.md#work-item-threads). Open threads first, then parked ones, each
+// Thread list: the work-item threads of a bot's Home conversation, nested under the bot's row in the Conversations list
+// (Conversations v2, owner pick B, 2026-11-26; board screens/conversations.bl "Thread list v2";
+// docs/designs/fleet-conversations.md#work-item-threads). Open, then Idle, then Archived (folded into one row), each
 // newest first; the timers' quiet checks fold into one row at the foot.
-import { createMemo, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import { Ago, Icon, StateBadge } from './primitives.tsx';
 import { states, type Family } from '../registry.ts';
 
@@ -22,14 +23,15 @@ function Row(p: { t: ThreadItem; selected: boolean; onSelect: (key: string) => v
   const known = createMemo(() => { const f = family(); return !!f && !!p.t.itemState && p.t.itemState in states[f]; });
   return (
     <li>
-      <button type="button" class={['thread-item', { on: p.selected, parked: !p.t.open }]} aria-current={p.selected ? 'true' : undefined} onClick={() => p.onSelect(p.t.key)}>
+      <button type="button" class={['thread-item', { on: p.selected, idle: !p.t.open }]} aria-current={p.selected ? 'true' : undefined} onClick={() => p.onSelect(p.t.key)}>
         <span class="thread-item-top">
-          <span class="thread-item-title">{p.t.title || (p.t.key === '' ? 'Main thread' : p.t.key)}</span>
+          <span class="thread-item-title">{p.t.key === '' ? 'Main · all turns before threads' : p.t.title || p.t.key}</span>
           <Show when={p.t.unread > 0}><span class="thread-item-new">{p.t.unread} new</span></Show>
           <Show when={p.t.lastActivityAt}>{at => <Ago t={at()} />}</Show>
         </span>
         <span class="thread-item-foot">
           <Show when={p.t.code}><span class="thread-item-code">{p.t.code}</span></Show>
+          <Show when={p.t.key === ''}><span class="muted">{p.t.turns} turns</span></Show>
           <Show when={known()}><StateBadge family={family()! as 'task'} state={p.t.itemState as never} /></Show>
           <Show when={!known() && p.t.itemState}><span class="muted">{p.t.itemState}</span></Show>
         </span>
@@ -38,29 +40,41 @@ function Row(p: { t: ThreadItem; selected: boolean; onSelect: (key: string) => v
   );
 }
 
+/** A thread idle this long is archived: it folds into the Archived row until a new event brings it back to Open. */
+export const ARCHIVE_AFTER_MS = 7 * 24 * 3600_000;
+
 /**
- * The threads as a list: Open (a queued or running turn, or an unfinished item) and Parked, newest first within each; the
- * selected one is marked. `quiet` folds the timers' quiet checks into the foot row ("Every 5m · quiet checks").
+ * The threads as a list: Open (a queued or running turn, or an unfinished item; an empty line says so when none is),
+ * Idle (nothing waiting) and Archived (idle for ARCHIVE_AFTER_MS or more: one row "Archived · N" that opens them), newest
+ * first within each; the selected one is marked. `quiet` folds the timers' quiet checks into the foot row.
  */
 export function ThreadList(p: {
-  threads: ThreadItem[]; selected: string; onSelect: (key: string) => void;
-  quiet?: { schedule: string; text: string };
+  threads: ThreadItem[]; selected?: string; onSelect: (key: string) => void;
+  quiet?: { schedule: string; text: string }; now?: number;
 }) {
   const byTime = (a: ThreadItem, b: ThreadItem) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0);
+  const old = (t: ThreadItem) => !t.open && (p.now ?? Date.now()) - (t.lastActivityAt ?? 0) >= ARCHIVE_AFTER_MS;
   const open = createMemo(() => p.threads.filter(t => t.open).sort(byTime));
-  const parked = createMemo(() => p.threads.filter(t => !t.open).sort(byTime));
+  const idle = createMemo(() => p.threads.filter(t => !t.open && !old(t)).sort(byTime));
+  const archived = createMemo(() => p.threads.filter(old).sort(byTime));
+  const [showArchived, setShowArchived] = createSignal(false);
+  const row = (t: ThreadItem) => <Row t={t} selected={t.key === p.selected} onSelect={p.onSelect} />;
   return (
     <nav class="thread-list" data-ui="thread-list" aria-label="Threads">
-      <div class="thread-list-body">
-        <Show when={open().length}>
-          <h3>Open</h3>
-          <ul><For each={open()}>{t => <Row t={t} selected={t.key === p.selected} onSelect={p.onSelect} />}</For></ul>
-        </Show>
-        <Show when={parked().length}>
-          <h3>Parked</h3>
-          <ul><For each={parked()}>{t => <Row t={t} selected={t.key === p.selected} onSelect={p.onSelect} />}</For></ul>
-        </Show>
-      </div>
+      <h3>Open</h3>
+      <Show when={open().length} fallback={<p class="thread-list-empty">No open threads: nothing queued or running</p>}>
+        <ul><For each={open()}>{row}</For></ul>
+      </Show>
+      <Show when={idle().length}>
+        <h3>Idle</h3>
+        <ul><For each={idle()}>{row}</For></ul>
+      </Show>
+      <Show when={archived().length}>
+        <button type="button" class="thread-list-archived" aria-expanded={showArchived() ? 'true' : 'false'} onClick={() => setShowArchived(v => !v)}>
+          <Icon name="archive" /><span>Archived · {archived().length}</span><span class="muted">idle 7+ days, back to Open on a new event</span>
+        </button>
+        <Show when={showArchived()}><ul><For each={archived()}>{row}</For></ul></Show>
+      </Show>
       <Show when={p.quiet}>
         {q => (
           <div class="thread-list-quiet">

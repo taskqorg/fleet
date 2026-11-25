@@ -351,6 +351,12 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   before?: (r: R) => JSX.Element;
   facts: (r: R) => JSX.Element;
   focused?: string;
+  /** Rows under a row, spanning its width (Conversations: a bot's work-item threads); the list then measures its rows. */
+  after?: (r: R) => JSX.Element;
+  /** A class on the panel, for a page's own row layout (Conversations: the phone row). */
+  cls?: string;
+  /** Rows of their own height (two-line titles, rows under a row): measured once, cached by key. */
+  dynamic?: boolean;
 }) {
   const g = p.page;
   const rowMenu = (r: R): MenuItems => [
@@ -361,7 +367,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
     { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + targetUrl(formatView({ view: g.view.view, focus: g.focusOf(r), project: g.scope() ? [g.scope()!] : undefined, extra: g.view.extra?.project ? { project: g.view.extra.project } : undefined }))) },
     ...p.menu(r),
   ];
-  return <section class="panel">
+  return <section class={['panel', p.cls]}>
     <ListFrame pending={g.list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={g.list.total} chips={p.chips} onRemove={p.onRemoveChip}
       extra={<Presets system={g.views.list.filter(v => v.system).map(v => v.name)} systemTips={p.systemTips} presets={g.views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
         onSave={g.save} onUnpin={g.views.remove} counted={navCounted(g.view.view, g.views.list.map(v => v.name))} onCount={g.view.view in NAV_COUNTER_DEFAULTS ? n => setNavCounter(g.view.view, n) : undefined} />}
@@ -385,7 +391,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
       {g.pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${g.pinnedDoc.error}`} onRetry={g.pinnedDoc.reload} />}
       {!g.displayed.length && (g.list.shownKey === null || g.list.pending || (!g.isLocal && g.pins.ids.length > 0 && g.pinnedDoc.data === null && !g.pinnedDoc.error)) ? <Skeleton rows={8} />
         : !g.displayed.length ? (g.list.error || g.pinnedDoc.error ? null : p.empty)
-        : <VirtualList keepRowFocus items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} follow="top" label={p.listLabel} onEnd={g.list.more} endKey={g.endKey}
+        : <VirtualList keepRowFocus items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} dynamic={p.dynamic} follow="top" label={p.listLabel} onEnd={g.list.more} endKey={g.endKey}
           columns={`${g.selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${p.focused !== undefined && (i.r.id === p.focused || g.focusOf(i.r) === p.focused) ? 'sel' : ''}${g.sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
           render={i => i.kind === 'group'
@@ -407,6 +413,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
                   // The Menu key and Shift+F10 fire contextmenu on the row: onRowMenu opens the menu.
                 }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} kind={g.entity} /></span>
               <span class="rz">{p.facts(i.r)}</span>
+              <Show when={p.after}>{a => a()(i.r)}</Show>
             </>} />}
     </ListFrame>
     <Show when={g.menu} keyed>{m => <ContextMenu at={m.at} label={p.title(m.r)} items={rowMenu(m.r)} onClose={g.closeMenu} />}</Show>

@@ -30,16 +30,21 @@ function ToolLineDemo() {
 }
 
 const THREADS: ThreadItem[] = [
-  { key: 'topic:a1', title: 'Аудит UI', code: null, itemState: null, lastActivityAt: NOW - 2 * min, turns: 3, open: true, unread: 0 },
-  { key: 'question:q432', title: 'P90 выпуска вырос до 2:56', code: 'Q-FLT-432', itemState: 'open', lastActivityAt: NOW - 5 * min, turns: 2, open: true, unread: 1 },
-  { key: 'task:t63', title: 'Форматирование Go-файлов', code: 'T-FLT-63', itemState: 'queued', lastActivityAt: NOW - 120 * min, turns: 1, open: true, unread: 0 },
-  { key: 'task:t64', title: 'Ответ Telegram на /help', code: 'T-FLT-64', itemState: 'held', lastActivityAt: NOW - 60 * min, turns: 4, open: false, unread: 0 },
-  { key: '', title: 'Main thread', code: null, itemState: null, lastActivityAt: NOW - 180 * min, turns: 9, open: false, unread: 0 },
+  { key: 'question:q432', title: 'Release P90 grew from 1:54 to 2:56 over 111 measurements; find the cause', code: 'Q-FLT-432', itemState: 'open', lastActivityAt: NOW - 5 * min, turns: 2, open: true, unread: 1 },
+  { key: 'task:t64', title: 'Telegram: answer to /help in groups and forum topics with buttons', code: 'T-FLT-64', itemState: 'running', lastActivityAt: NOW - 12 * min, turns: 4, open: true, unread: 0 },
+  { key: '', title: 'Main', code: null, itemState: null, lastActivityAt: NOW - 120 * min, turns: 265, open: false, unread: 0 },
+  { key: 'task:t66', title: 'Rights check target: cancel me', code: 'T-FLT-66', itemState: 'cancelled', lastActivityAt: NOW - 180 * min, turns: 2, open: false, unread: 0 },
+  { key: 'task:t12', title: 'Old reconciliation of host slots', code: 'T-FLT-12', itemState: 'done', lastActivityAt: NOW - 9 * 24 * 60 * min, turns: 3, open: false, unread: 0 },
 ];
 function ThreadListDemo() {
-  const [sel, setSel] = createSignal('topic:a1');
-  return <div style={{ width: 'calc(var(--size-rail) + var(--space-7) + var(--space-6))', border: '1px solid var(--line)' }}>
-    <ThreadList threads={THREADS} selected={sel()} onSelect={setSel} quiet={{ schedule: 'Every 5m · quiet checks', text: '14 quiet checks since 13:05 · nothing changed' }} />
+  const [sel, setSel] = createSignal('');
+  return <div class="col">
+    <div style={{ width: 'var(--size-list)', border: '1px solid var(--line)' }}>
+      <ThreadList threads={THREADS} selected={sel()} onSelect={setSel} now={NOW} quiet={{ schedule: 'Every 5m', text: '22 quiet checks since 22:14 · nothing changed' }} />
+    </div>
+    <div style={{ width: 'var(--size-list)', border: '1px solid var(--line)' }}>
+      <ThreadList threads={THREADS.filter(t => !t.open && t.key !== 'task:t12')} selected="" onSelect={() => {}} now={NOW} />
+    </div>
   </div>;
 }
 
@@ -95,7 +100,7 @@ function CommandDemo() {
 export const SESSION_BLOCKS: BookSection[] = [
   ['message', 'Message in the session view', 'transcript-viewer', () => <MessageDemo />, () => <>OR-54: <span class="mono">TextRow quiet</span>, no service row; the agent's words as text, the person's in a bubble on the right.</>],
   ['tool-line', 'Tool line', 'tool-line', () => <ToolLineDemo />, () => <>OR-52, Conversations v2 (c2): chips per kind of call with count, failures and time; a chip opens its calls (a call opens its input and output); running (the time ticks) and failed. A failure the agent recovered from only counts in its chip.</>],
-  ['thread-list', 'Thread list', 'context-panel', () => <ThreadListDemo />, () => <>Conversations v2 (b2): work-item threads, Open then Parked, newest first; unread as “1 new”; the timers' quiet checks fold into the foot row.</>],
+  ['thread-list', 'Thread list', 'context-panel', () => <ThreadListDemo />, () => <>Owner pick B: a bot's threads under its row in the Conversations list. Open (with its empty line when none), Idle, and Archived folded into one row (idle 7+ days); long names wrap to two lines; unread as “1 new”; the timer's quiet checks at the foot. Second: HAL0 today, no open thread.</>],
   ['context-parts', 'Plan item, timer row, swarm member', 'context-panel', () => <PartsDemo />, () => <>Todo and done steps; a timer with its schedule, live time to the next check, its message, quiet checks, Pause, Edit and Cancel (Cancel confirms in place); a paused one; one the person may not change; a swarm member opens its own session.</>],
   ['timer-chip', 'Timer chip', 'context-panel', () => <TimerChipDemo />, () => <>Owner pick A: in the session head while a timer exists; the interval and the live time to the next check, paused, and +1 for more timers. A click opens Context.</>],
   ['composer-command', 'Composer command with preview', 'composer', () => <CommandDemo />, () => <>Edit of a timer fills the composer with its command; the preview shows what changes before Apply, and a conflict (409) says what the timer is now with Load current.</>],

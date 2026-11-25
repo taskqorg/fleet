@@ -35,7 +35,7 @@ func TestThreadNativeSession(t *testing.T) {
 	}
 	s := dispatchSession{rest: recordRest{"nativeSessions": json.RawMessage(`{"codex::fleet::":{"nativeSessionId":"main"},"codex::fleet::#task:t1":{"nativeSessionId":"n1"}}`)}}
 	if n := s.threadNative("codex::fleet::#task:t1"); n == nil || *n != "n1" {
-		t.Fatalf("a parked thread resumes its own native session, got %v", n)
+		t.Fatalf("an idle thread resumes its own native session, got %v", n)
 	}
 	if n := s.threadNative("codex::fleet::#task:t2"); n != nil {
 		t.Fatalf("a new thread starts fresh, got %v", *n)

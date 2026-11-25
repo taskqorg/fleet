@@ -4,7 +4,8 @@ package main
 // A bot's Home session holds one thread per work item: a task, a question, a pull request, or a topic a person started.
 // The thread key travels on the queued and sent message and on the execution (field thread); each thread continues its
 // own native session (continuation key + "#" + thread), so a turn about one item never carries another item's context.
-// A thread with no new event is parked: it simply has no turn; the next event on its item resumes its native session.
+// A thread with no new event is idle: it simply has no turn; the next event on its item resumes its native session.
+// ("Park" in Fleet means only host stickiness: a session keeps the host it started on, dispatch.go.)
 // The empty key is the session's main thread, as before.
 
 import (

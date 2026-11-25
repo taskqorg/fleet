@@ -5,7 +5,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import { currentUrl, useLocation } from '../router.ts';
 import {
-  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ThreadList, type ThreadItem, ContextPanel, SidePanel, Composer, TimerChip, CommandPreview,
+  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer, TimerChip, CommandPreview,
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
   EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, life as lifeIn, statesOf, timeOf, plural, clock,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
@@ -41,7 +41,7 @@ export type SessionFrame = 'home' | 'conversations';
  * with `frame="conversations"` in the work area. `onClose` shows a Close icon in the head (the Conversations frame);
  * `onTitle` receives the session's name (Home titles the shell header with it).
  */
-export function SessionView(props: { id: string; frame: SessionFrame; onClose?: () => void; onTitle?: (title: string) => void }) {
+export function SessionView(props: { id: string; frame: SessionFrame; thread?: string; onClose?: () => void; onTitle?: (title: string) => void }) {
   const code = () => (isSessionCode(props.id) ? props.id : null);
   const resolved = useOp('entity_resolve', () => (code() ? { code: code()! } : null));
   const sessionId = createMemo(() => (code() ? (resolved.data?.type === 'C' ? resolved.data.id : undefined) : props.id));
@@ -53,13 +53,13 @@ export function SessionView(props: { id: string; frame: SessionFrame; onClose?: 
         </article>
       </Match>
       <Match when={sessionId()} keyed>
-        {id => <Session id={id} frame={props.frame} onClose={props.onClose} onTitle={props.onTitle} />}
+        {id => <Session id={id} frame={props.frame} thread={props.thread} onClose={props.onClose} onTitle={props.onTitle} />}
       </Match>
     </Switch>
   );
 }
 
-function Session(props: { id: string; frame: SessionFrame; onClose?: () => void; onTitle?: (title: string) => void }) {
+function Session(props: { id: string; frame: SessionFrame; thread?: string; onClose?: () => void; onTitle?: (title: string) => void }) {
   const [, go] = useLocation();
   const alive = useAlive();
   // One read for the screen (session_view, docs/designs/fleet-conversations.md "Session view"): the head, the composer
@@ -74,36 +74,21 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const projects = useOp('project_list', () => (s()?.projectId ? {} : null));
   const project = createMemo(() => projects.data?.projects.find(p => rec(p).id === s()?.projectId));
 
-  // Work-item threads (fleet-conversations.md#work-item-threads; Conversations v2, owner pick b2): a session with more than
-  // its main thread lists them and shows one at a time, the newest by default; the composer writes into the shown one.
-  const threadItems = createMemo<ThreadItem[]>(() => (view()?.threads ?? []).map(t => ({ key: t.threadKey, title: t.title, code: t.code,
-    itemState: t.itemState, lastActivityAt: t.lastActivityAt, turns: t.turns, open: t.open, unread: t.unread })));
+  // Work-item threads (fleet-conversations.md#work-item-threads; Conversations v2, owner pick B): the Conversations list
+  // shows a bot's threads under its row and opens one by ?thread=<key>; the head names it after the bot ("HAL0 › Main").
+  // Without a pick the shown thread is the newest Open one, else Main; the composer writes into the shown one.
+  const threadItems = createMemo(() => view()?.threads ?? []);
   const hasThreads = createMemo(() => threadItems().length > 1);
-  const [picked, setPicked] = createSignal<string | null>(null);
   const shownThread = createMemo(() => {
-    const ts = threadItems(), p = picked();
-    if (p !== null && ts.some(t => t.key === p)) return p;
-    return [...ts].sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0]?.key ?? '';
+    const ts = threadItems(), p = props.thread;
+    if (p !== undefined && ts.some(t => t.threadKey === p)) return p;
+    return ts.filter(t => t.open).sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0]?.threadKey ?? '';
   });
-  // The first thread shown stays shown: a turn in another thread marks it new in the list and never switches the transcript.
-  createEffect(() => [hasThreads(), picked(), shownThread()] as const, ([on, p, th]) => { if (on && p === null) setPicked(th); });
-  // At phone width the list and the thread take turns: the list first, a pick opens the thread, Threads goes back.
-  const [threadsMode, setThreadsMode] = createSignal<'list' | 'thread'>('list');
-  const pickThread = (k: string) => { setPicked(k); setThreadsMode('thread'); };
-  // The list is a column only when the view itself is wide enough for it and a readable transcript (Conversations shows
-  // the session beside its list at 1440); narrower, the list and the thread take turns, as on a phone.
-  const [stacked, setStacked] = createSignal(false);
-  let sizeWatch: ResizeObserver | undefined;
-  const watchWidth = (el: HTMLElement) => {
-    sizeWatch?.disconnect();
-    sizeWatch = new ResizeObserver(([e]) => setStacked(e.contentRect.width < STACK_BELOW));
-    sizeWatch.observe(el);
-  };
-  onSettled(() => () => sizeWatch?.disconnect());
+  const shownTitle = createMemo(() => { const k = shownThread(); return k === '' ? 'Main' : threadItems().find(t => t.threadKey === k)?.title || k; });
   // The shown thread counts as read (person_visit page thread; it writes no change row, so session_view rereads after it)
   // once it has something unread; one mark per thread and unread count, so a failed mark is not repeated in a loop.
   let readMark = '';
-  createEffect(() => [hasThreads(), shownThread(), threadItems().find(t => t.key === shownThread())?.unread ?? 0] as const, ([on, th, unread]) => {
+  createEffect(() => [hasThreads(), shownThread(), threadItems().find(t => t.threadKey === shownThread())?.unread ?? 0] as const, ([on, th, unread]) => {
     const mark = `${th}:${unread}`;
     if (!on || unread === 0 || mark === readMark) return;
     readMark = mark;
@@ -254,11 +239,6 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     nextAt: timeOf(t.nextAt) ?? undefined, selected: editing()?.id === t.id,
     quiet: t.quietChecks > 0 ? `${plural(t.quietChecks, 'quiet check')}${t.quietSince ? ` since ${clock(Date.parse(t.quietSince))}` : ''}` : undefined,
   })));
-  // The thread list's foot: the timer's quiet checks folded into one row (owner pick b2).
-  const quietRow = createMemo(() => {
-    const t = timed().find(x => x.quietChecks > 0 && x.settings.enabled);
-    return t ? { schedule: `${scheduleOf(t.settings)} · quiet checks`, text: `${plural(t.quietChecks, 'quiet check')}${t.quietSince ? ` since ${clock(Date.parse(t.quietSince))}` : ''} · nothing changed` } : undefined;
-  });
   // The head's timer chip (owner pick A): the first active timer, else the first paused one; a click opens Context.
   const headTimer = createMemo(() => { const ts = timed(); const t = ts.find(x => x.settings.enabled) ?? ts[0]; return t ? { t, more: ts.length - 1 } : null; });
   const [reveal, setReveal] = createSignal(0);
@@ -401,15 +381,11 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   return (
     <Switch
       fallback={
-        <article class={['detail session-view', { 'with-threads': hasThreads() }]} data-ui="detail" data-frame={props.frame} data-threads={hasThreads() ? (stacked() ? threadsMode() : 'split') : undefined} ref={watchWidth} tabindex={-1} aria-label={title()}>
-          <Show when={hasThreads()}>
-            <ThreadList threads={threadItems()} selected={shownThread()} onSelect={pickThread} quiet={quietRow()} />
-          </Show>
+        <article class="detail session-view" data-ui="detail" data-frame={props.frame} tabindex={-1} aria-label={title()}>
           <div class="sv-main">
             <header class="sv-head">
-              <Show when={hasThreads()}><span class="sv-threads-back"><Button label="Threads" icon="arrow-left" kind="quiet" onClick={() => setThreadsMode('list')} /></span></Show>
               <Avatar {...avatar()} />
-              <h2 class="sv-name" data-tip={title()}>{title()}</h2>
+              <h2 class="sv-name" data-tip={title()}>{title()}<Show when={hasThreads()}> <span class="sv-crumb-sep" aria-hidden="true">›</span> <span class="sv-crumb" data-tip={shownTitle()}>{shownTitle()}</span></Show></h2>
               <Show when={projectName()}>{n => <ProjectChip name={n()} />}</Show>
               <StateDot state={life()} />
               <Show when={headTimer()} keyed>
@@ -576,8 +552,6 @@ const whenOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZo
 /** A composer text that is a command (composer.md#commands), not a message. */
 const commandText = (text: string) => /^\s*\/trigger(\s|$)/.test(text);
 
-// Below this width of the session view the thread list and the thread take turns (the list column plus a readable transcript).
-const STACK_BELOW = 1000;
 /** A trigger's schedule as the timer row shows it: Every 5m, Daily 09:00 UTC. */
 const scheduleOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string }) =>
   t.when === 'every' ? `Every ${every(t.everyMs ?? 0)}` : t.when === 'daily' ? `Daily ${t.dailyTime ?? ''} ${t.dailyZone ?? ''}`.trim() : 'Manual';
