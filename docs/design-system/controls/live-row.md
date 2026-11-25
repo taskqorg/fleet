@@ -9,8 +9,8 @@
 | Kind | Left | Right |
 |---|---|---|
 | Project | name; under it running, queued and done counts in their tones ([OR-29](../owner-rules.md)) | a sparkline of runs |
-| Task | the shared [state dot](state-badge.md#dot-and-word) of the task's state (OR-55), task [entity code](entity-card.md) and title | [work facts](work-facts.md): `×N`, latest attempt, time in work, time in state, agent |
-| Delivery | state dot, pull request [entity code](entity-card.md) and title | [work facts](work-facts.md) (time since opened, time in the stage), then the [stage chip](stage-chip.md) |
+| Task | the shared [state dot](state-badge.md#dot-and-word) of the task's state (OR-55), task [entity code](entity-card.md) and title | [work facts](work-facts.md): `×N`, time in work, agent; latest attempt and time in state on hover |
+| Delivery | state dot, pull request [entity code](entity-card.md) and title | [work facts](work-facts.md) (time since opened; time in the stage on hover), then the [stage chip](stage-chip.md) |
 | Runner | state dot, runner name | jobs running and minutes today, in mono |
 | Event | age in mono ([OR-2](../owner-rules.md)), the shared [state dot](state-badge.md#dot-and-word) of the event's state (OR-55; the word for screen readers only), the event in words: the task's code and title, else the conversation's title | [work facts](work-facts.md): `×N` repeats and the agent |
 
@@ -22,7 +22,7 @@
 * Repeats aggregate ([OR-58](../owner-rules.md)): runs of one subject (a task, else a conversation) in one state are one event with `×N` and the newest time; failed and started runs also by host.
 * With work facts the title keeps at least 60% of the row; facts that do not fit wrap under it ([OR-60](../owner-rules.md)).
 
-**Board.** The canvas master `Live row` predates the task row and work facts; the book is the reference until the board session redraws it.
+**Board.** The task row and work facts are drawn in [screens/live.bl](../board/screens/live.bl), frame `Work facts · Live rows`; the master `Live row` in blocks.bl keeps its four earlier kinds.
 
 **Accessibility.** Rows are list items named by their full text; a sparkline is `role="img"` named by its range.
 

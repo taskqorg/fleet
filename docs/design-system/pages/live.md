@@ -33,8 +33,8 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * A 24-hour strip of runs, one tick per run window, with failures in the danger tone; marks at −24 h, −18 h, −12 h, −6 h and now.
 4. **Side column.**
    * Projects now: running, queued and done counts per project, with a sparkline.
-   * In work: every open task (working, then waiting, then queued; longest in work first) with its work facts: attempts, time since the latest attempt, time in work, time in its state, agent. A task stuck in retries shows here between its attempts, when no slot shows it.
-   * Delivery: pull requests moving through checks, merge, release and install, each with its time since opened, time in the stage and its stage chip.
+   * In work: every open task (working, then waiting, then queued; longest in work first) with its work facts: attempts, time in work and the agent; the latest attempt and the time in its state on hover. A task stuck in retries shows here between its attempts, when no slot shows it.
+   * Delivery: pull requests moving through checks, merge, release and install, each with its time since opened (time in the stage on hover) and its stage chip.
    * CI runners: jobs running and minutes today; self-hosted runner state.
    * Just now: the latest events, each with age, a state dot, the task or conversation it belongs to and the agent; repeats are one event with `×N` (OR-58).
    * Each side list shows its latest five, then `+K more`, which opens the rest in place (OR-30).
@@ -109,7 +109,7 @@ Each line says why in words: who set it, when, until, what it moved. A subscript
 * **Failing slot retry:** no read names when a failed start retries, so the failing tile shows the cause without a countdown.
 * **Disk gauge fill:** hosts report free disk only; a fill needs the disk's size in the heartbeat (a host-protocol change).
 * **Delivery attempts:** `delivery_status` has no rerun or queue-removal count per pull request (`delivery_history` has `queueRuns` and `queueRemovals`), so a Delivery row shows no `×N` yet.
-* **Canvas:** [screens/live.bl](../board/screens/live.bl) predates the In work list and the work facts (25 Nov); the board session redraws it from the book.
+* **Canvas:** the work facts and the side-column rows are a group of their own on [screens/live.bl](../board/screens/live.bl) (owner pick B, 25 Nov); the 1440 and 390 frames above it still show the earlier side column.
 
 Settled on 25 Nov ([FLT-47](https://youtrack.ufobe.com/issue/FLT-47)): CPU load and slot identity come from `hosts_list`, and wall mode uses a viewer grant ([people access, Wall viewer](../../designs/fleet-people-access.md#wall-viewer)). Slot identity is the start order, not a stored slot number: executors run a host's work as one pool with a count limit and number no slots, so a stored number would be a second fact that could disagree with the pool.
 

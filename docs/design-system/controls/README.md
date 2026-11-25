@@ -58,7 +58,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [host-band](host-band.md) | One host: health, slots, runs |
 | [worker-slot](worker-slot.md) | What runs in one worker slot |
 | [live-row](live-row.md) | A project, task in work, pull request, runner or event on Live |
-| [work-facts](work-facts.md) | Attempts, time since the latest attempt, time in work and in state, agent: one row anatomy for work |
+| [work-facts](work-facts.md) | Attempts, time in work and agent; latest attempt and time in state on hover: one row anatomy for work |
 | [matrix-cell](matrix-cell.md) | One example × variant of a Lab experiment |
 | [tab-bar](tab-bar.md) | Facets of one opened entity |
 | [quiet-summary](quiet-summary.md) | What happened while you were away, when nothing waits |
