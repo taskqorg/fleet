@@ -24,10 +24,44 @@
       "connection": "google-ai",
       "id": "image",
       "kind": "api",
-      "tool": "generate_content"
+      "tool": "generate_content",
+      "when": {
+        "domain": [
+          "api",
+          "subscription"
+        ],
+        "equals": "api",
+        "kind": "enum",
+        "source": {
+          "path": [
+            "source"
+          ],
+          "step": "request"
+        }
+      }
     },
     {
-      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/avatar.py check",
+      "id": "image-sub",
+      "kind": "agent",
+      "profile": "codex-image",
+      "prompt": "Make one square 1:1 image with your built-in image generation tool from this description:\n\n${steps.request.output.prompt}\n\nIf $FLEET_INPUT_DIR/example/ holds a reference image (PNG, JPEG or WebP), look at it first and keep the look of its subject. Copy the generated PNG from where the tool saved it to $FLEET_OUTPUT_DIR/avatar.png, then write $FLEET_OUTPUT_DIR/output.json as {\"image\": \"avatar.png\"}.",
+      "when": {
+        "domain": [
+          "api",
+          "subscription"
+        ],
+        "equals": "subscription",
+        "kind": "enum",
+        "source": {
+          "path": [
+            "source"
+          ],
+          "step": "request"
+        }
+      }
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/avatar.py check --alternate image-sub",
       "host": "owner-mac",
       "id": "check",
       "kind": "script"

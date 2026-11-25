@@ -205,6 +205,9 @@ func (p Profile) check() error {
 			return errors.New("unsupported Codex profile: effort, instruction role, tools or settings")
 		}
 	case ProfileHarnessClaude:
+		if p.ImageGeneration != nil {
+			return errors.New("imageGeneration is Codex only")
+		}
 		if p.Effort != nil || role != "system" || p.Settings != nil {
 			return errors.New("unsupported Claude profile: effort, instruction role, tools or settings")
 		}
@@ -214,6 +217,9 @@ func (p Profile) check() error {
 			}
 		}
 	case ProfileHarnessAntigravity, ProfileHarnessAcp:
+		if p.ImageGeneration != nil {
+			return errors.New("imageGeneration is Codex only")
+		}
 		if p.Effort != nil || role != "user" || p.Tools != nil {
 			return errors.New("unsupported Antigravity profile: effort, instruction role or tools")
 		}

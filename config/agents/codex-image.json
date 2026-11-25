@@ -1,0 +1,10 @@
+{
+  "category": "design",
+  "effort": "low",
+  "id": "codex-image",
+  "imageGeneration": true,
+  "instructions": "Make the requested image with your built-in image generation tool, which the run's ChatGPT subscription pays for; never call an image API. Copy each generated file from where the tool saved it into $FLEET_OUTPUT_DIR under the name the task gives, and write $FLEET_OUTPUT_DIR/output.json as the task says. Do not edit the image with other programs.",
+  "mcpServers": [],
+  "model": "gpt-6.2-sol",
+  "purpose": "Makes an image within the Codex subscription (built-in image generation), no API key."
+}

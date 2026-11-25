@@ -222,6 +222,25 @@ func TestRegistryCommand(t *testing.T) {
 	if slices.Contains(app.Args, "skills.enabled=false") || !slices.Contains(app.Args, "skills.include_instructions=false") || !slices.Contains(app.Args, "skip_host_skill_discovery") {
 		t.Fatalf("unexpected Codex skill controls: %v", app.Args)
 	}
+	// Built-in image generation stays off unless the profile turns it on (imageGeneration, paid by the subscription).
+	pair := func(args []string, flag string) bool {
+		for i := range args[:len(args)-1] {
+			if args[i] == flag && args[i+1] == "image_generation" {
+				return true
+			}
+		}
+		return false
+	}
+	if !pair(app.Args, "--disable") || pair(app.Args, "--enable") {
+		t.Fatal("image generation on by default", app.Args)
+	}
+	c, _, err = Harnesses["codex"].Command(mk("w3"), "", M{"account": "cx", "text": "t", "agentConfig": M{"id": "img", "model": "m", "effort": "low", "instructions": "", "mcpServers": []any{}, "imageGeneration": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app := codexAppServer(c); !pair(app.Args, "--enable") || pair(app.Args, "--disable") {
+		t.Fatal("imageGeneration did not turn image generation on", app.Args)
+	}
 }
 
 // Requirement: every codex launch applies one isolation: the run's exec command keeps all of it through codexAppServer,
