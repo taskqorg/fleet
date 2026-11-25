@@ -67,9 +67,9 @@ This design adds those operations. Saved definitions live in the coordinator's d
 
 ### CUJ 3: Release changes a file under a store revision
 
-*   **Given**: `search-basic` has store revision 3 (editor), based on repository file A; a release ships file B.
+*   **Given**: `search-basic` has store revision 3 (editor), based on repository file A; a release ships file B. (Had nobody edited it in Fleet, B becomes revision 4 by itself: see Reconcile.)
 *   **When**: the coordinator starts and reconciles definitions.
-*   **Then**: the definition state is `repository-changed` (the same when nobody had edited it: the store wins after first boot); executions keep using revision 3; the Draft bar offers the diff 3 against B; saving requires `repoSha: B` in the request, either with B's content ("take repository") or another content ("keep mine"); export leaves the definition out until that save. No save is lost and no release is lost.
+*   **Then**: the definition state is `repository-changed`; executions keep using revision 3; the Draft bar offers the diff 3 against B; saving requires `repoSha: B` in the request, either with B's content ("take repository") or another content ("keep mine"); export leaves the definition out until that save. No save is lost and no release is lost.
 
 ### CUJ 4: Fix a failed pipeline step and rerun
 
@@ -157,7 +157,7 @@ git: definition_export  ──▶  unified diff of every ahead definition agains
 
 ### Failure modes and their rules
 
-1. **Upgrades never clobber edits.** `config/` in the release is a seed. A definition is imported only when the store has no row for it. After first boot the store wins: a release that changes a shipped file only updates the row's repository fields, and the definition shows `repository-changed` (or `synced` if the content is equal). Taking the shipped version is an explicit save ("take repository"). This holds even when nobody edited the definition, so a release never changes behaviour without a save.
+1. **Upgrades never clobber edits.** `config/` in the release is a seed. A definition is imported only when the store has no row for it. After first boot an edit in Fleet wins: a release that changes a shipped file whose head was changed in Fleet (a save, a Lab promote) only updates the row's repository fields, and the definition shows `repository-changed`; taking the shipped version is then an explicit save ("take repository"). A head nobody changed in Fleet (`synced`) follows the repository: the release's content becomes its next revision (owner decision 2026-11-26: a merged change must reach the store, as the doc-recognize descriptions of #1041 did not).
 2. **Pinned revisions.** An execution resolves each definition once, when it is created, records `{kind, id, revision, contentSha}`, and every later use reads that revision by id, never the head: the start command built at claim, each turn of the session's execution, every agent step of a pipeline run and every delegation child that names a profile. A save during a run affects only executions created after it. A new turn in an existing session is a new execution and resolves the head at its creation; the session shows when its profile revision changed between turns.
 3. **Skills as files.** See Non-Goals: `(revision, path, content)` rows when skills become definitions.
 4. **Readable history.** `source` (`repo`, `editor`, `lab`, `agent`) is shown on each History row with its link: Lab revisions name the experiment and variant, agent revisions the execution and its director. A filter hides Lab and agent revisions.
@@ -174,7 +174,8 @@ For each definition file:
 2. `repoSha` equals the row's `repo_sha`: nothing.
 3. Otherwise, let *ahead* = head `content_sha` differs from the row's old `repo_content_sha` (the store held something the repository did not; the source of the head does not matter). Update the row's `repo_sha`, `repo_content`, `repo_content_sha` first, then:
    * new content equals head content: nothing more (an export came back); state `synced`.
-   * otherwise: head stays; state becomes `repository-changed` (failure mode 1: the store wins after first boot, whether or not it is *ahead*). *ahead* is shown in the note so the person knows whether the store held edits.
+   * the head was `synced` (it equals the old repository content: nobody changed it in Fleet) and the new content has no problems: the new content becomes the next revision (`source: repo`, actor `system`, message `Repository <release>`); state `synced`. Projects are left out: they move only by their own save.
+   * otherwise: head stays; state becomes `repository-changed` (failure mode 1: an edit in Fleet wins). *ahead* is shown in the note so the person knows whether the store held edits.
 
 A shipped file that no longer exists sets the row's repository fields to null. If the head equals the last repository content, the definition is retired (`retired_at`; `definition_list` hides it unless asked; new executions get 404 for it). Otherwise state `repository-deleted`. A retired definition whose file returns is un-retired and shows `repository-changed` unless the content equals head. A definition created in the store has no file: state `store-only`.
 
