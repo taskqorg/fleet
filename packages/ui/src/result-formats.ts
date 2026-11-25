@@ -6,7 +6,15 @@ export type KvNode =
   | { kind: 'string' | 'number' | 'boolean' | 'null'; text: string }
   | { kind: 'object' | 'array'; entries: { key: string; node: KvNode }[] };
 
+/** JSON.parse that keeps each number's source text (reviver `context.source`, current Chromium and Node 22+): a 64-bit id
+ *  or a nanosecond time reads as stored, not rounded to a double. */
+const NUM = Symbol('number source');
+type Num = { [NUM]: string };
+const parseExact = (t: string): unknown => JSON.parse(t, (_k, v, ctx?: { source?: string }) =>
+  typeof v === 'number' && ctx?.source !== undefined ? { [NUM]: ctx.source } satisfies Num : v);
+
 export function kvOf(v: unknown): KvNode {
+  if (v !== null && typeof v === 'object' && NUM in v) return { kind: 'number', text: (v as Num)[NUM] };
   if (v === null || v === undefined) return { kind: 'null', text: 'none' };
   if (Array.isArray(v)) return { kind: 'array', entries: v.map((x, i) => ({ key: String(i + 1), node: kvOf(x) })) };
   if (typeof v === 'object') return { kind: 'object', entries: Object.entries(v as Record<string, unknown>).map(([key, x]) => ({ key, node: kvOf(x) })) };
@@ -23,14 +31,14 @@ export function kvOf(v: unknown): KvNode {
 export function jsonRecords(text: string, lines: boolean, complete: boolean): KvNode[] | null {
   if (!lines) {
     if (!complete) return null;
-    try { return [kvOf(JSON.parse(text))]; } catch { return null; }
+    try { return [kvOf(parseExact(text))]; } catch { return null; }
   }
   const all = text.split('\n');
   const whole = complete ? all : all.slice(0, -1);
   const out: KvNode[] = [];
   for (const l of whole) {
     if (!l.trim()) continue;
-    try { out.push(kvOf(JSON.parse(l))); } catch { return null; }
+    try { out.push(kvOf(parseExact(l))); } catch { return null; }
   }
   return out;
 }

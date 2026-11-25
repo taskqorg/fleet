@@ -16,6 +16,12 @@ test('a JSON-lines record reads as keys and values, null as none, nested objects
   assert.deepEqual(kvOf([1, true]), { kind: 'array', entries: [{ key: '1', node: { kind: 'number', text: '1' } }, { key: '2', node: { kind: 'boolean', text: 'true' } }] });
 });
 
+test('a large integer reads as stored, not rounded', () => {
+  const [r] = jsonRecords('{"ts":1795578213107123456,"f":1.50}', false, true)!;
+  assert.ok('entries' in r);
+  assert.deepEqual(r.entries.map(e => e.node), [{ kind: 'number', text: '1795578213107123456' }, { kind: 'number', text: '1.50' }]);
+});
+
 test('while pages are still coming, only whole JSON lines show and a JSON document waits', () => {
   assert.equal(jsonRecords(RECORD + '\n{"phase":"so', true, false)!.length, 1);
   assert.equal(jsonRecords('{"a":', false, false), null);

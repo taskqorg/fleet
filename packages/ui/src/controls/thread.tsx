@@ -181,7 +181,7 @@ export const renderOf = (mediaType: string, name: string): 'html' | 'svg' | 'mar
         : /^text\/x-(diff|patch)/.test(mediaType) || /\.(diff|patch)$/i.test(name) ? 'diff' : null;
 /** A type as people read it in the viewer head: "JSON lines", "Markdown", "Diff"; else the stored media type. */
 export const formatLabel = (mediaType: string, name: string): string => {
-  const f = renderOf(mediaType, name);
+  const f = viewOf(mediaType) === 'text' ? renderOf(mediaType, name) : null; // a name alone gives no viewer
   if (f) return ({ html: 'HTML page', svg: 'SVG image', markdown: 'Markdown', json: 'JSON', jsonl: 'JSON lines', csv: 'CSV table', diff: 'Diff' })[f];
   const k = viewOf(mediaType);
   return k === 'image' ? 'Image' : k === 'video' ? 'Video' : /^text\/plain/.test(mediaType) ? 'Text' : mediaType;
@@ -269,7 +269,19 @@ export function ArtifactView(p: { a: ArtifactMeta; src: string }) {
     if (f === 'svg') return <div class="av-frame"><img src={p.src} alt={p.a.name} /></div>;
     if (f === 'markdown') return scroller(<Markdown text={text()} />);
     if (f === 'json' || f === 'jsonl') {
-      const recs = createMemo(() => jsonRecords(text(), f === 'jsonl', next() >= p.a.size));
+      // JSON lines parse only the lines each new page completes; earlier records keep their nodes, so their rows stay.
+      let seen = { at: 0, recs: [] as KvNode[], bad: false };
+      const recs = createMemo(() => {
+        const t = text(), done = next() >= p.a.size;
+        if (f === 'json') return jsonRecords(t, false, done);
+        if (t.length < seen.at) seen = { at: 0, recs: [], bad: false };
+        const end = done ? t.length : t.lastIndexOf('\n') + 1;
+        if (!seen.bad && end > seen.at) {
+          const more = jsonRecords(t.slice(seen.at, end), true, true);
+          seen = more ? { at: end, recs: [...seen.recs, ...more], bad: false } : { ...seen, bad: true };
+        }
+        return seen.bad ? null : seen.recs;
+      });
       // Not JSON after all (or a JSON document still loading): its text, as stored.
       return scroller(<Show when={recs()} fallback={<pre><code>{text()}</code></pre>}>{r => <KvRecords records={r()} lines={f === 'jsonl'} />}</Show>);
     }
@@ -324,14 +336,19 @@ export function ArtifactView(p: { a: ArtifactMeta; src: string }) {
 
 /** JSON as key/value records (result-viewer.md): keys left, values right, objects and arrays folded under their key, null as "none". */
 function KvRecords(p: { records: KvNode[]; lines: boolean }) {
+  const STEP = 200; // the first records, then "+K" (OR-30): a long log never builds every row at once
+  const [shown, setShown] = createSignal(STEP, { ownedWrite: true });
   return (
     <div class="kv-view" data-ui="kv-view">
-      <For each={p.records}>{(r, i) => (
+      <For each={p.records.slice(0, shown())}>{(r, i) => (
         <section class="kv-rec" aria-label={p.lines ? `Record ${i() + 1} of ${p.records.length}` : undefined}>
           <Show when={p.lines}><div class="kv-rec-h muted type-sm">Record {i() + 1} of {p.records.length}</div></Show>
           <KvNodeView node={r} />
         </section>
       )}</For>
+      <Show when={p.records.length > shown()}>
+        <Button label={`+${p.records.length - shown()}`} kind="quiet" onClick={() => setShown(n => n + STEP)} />
+      </Show>
     </div>
   );
 }
