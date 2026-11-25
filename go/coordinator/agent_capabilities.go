@@ -134,7 +134,7 @@ func capabilityInstruction(dir *Person, ops []agentOperation, conns []connSpec, 
 	}
 	lines = append(lines,
 		"- "+readerInstruction,
-		"- "+sandboxInstruction+" Check a repository with project_readiness (git ls-remote on each environment host with the repo's connection key; results in execution_status).",
+		"- "+sandboxInstruction+" Check a repository with project_readiness (git ls-remote on each environment host with the repo's connection key; results in execution_status {executionId} of each host's check).",
 		"- Ask a person only after your own tools: find (project_list remotes, search, connection tools, files), then check (project_readiness). The question names what you tried and what each returned, and asks only what no tool of yours can do: a decision, a secret, or a grant outside Fleet such as adding a deploy key to a GitLab project.")
 	return strings.Join(lines, "\n")
 }

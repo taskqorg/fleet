@@ -702,12 +702,10 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 			hosts = append(hosts, contract.ProjectReadinessHost{HostId: hid, Problem: ptr("unregistered host " + hid)})
 			continue
 		}
-		sid, id := newID(), newID()
-		s := agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid, ReadinessOfSessionID: deref(r.CallerSessionId)}
-		if err := sessionPut(q, &s); err != nil {
-			return none, err
-		}
-		e := agentExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: &hid, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid}
+		// A host job is no conversation: no session. The caller's session may read its result (execution_status).
+		id := newID()
+		e := agentExecution{ID: id, ExecutionID: id, HostID: &hid, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid,
+			ReadinessOfSessionID: deref(r.CallerSessionId)}
 		if err := executionPut(q, &e); err != nil {
 			return none, err
 		}
@@ -726,7 +724,7 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 			pr["profileIds"] = pr["roles"]
 		}
 		pr["roles"] = jsonBytes(roles)
-		c := agentCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hid, ProjectID: pid, Kind: "readiness", Status: "pending", Payload: jsonBytes(struct {
+		c := agentCommand{ID: newID(), ExecutionID: id, HostID: hid, ProjectID: pid, Kind: "readiness", Status: "pending", Payload: jsonBytes(struct {
 			ProjectID string                     `json:"projectId"`
 			Project   map[string]json.RawMessage `json:"project"`
 		}{pid, pr})}

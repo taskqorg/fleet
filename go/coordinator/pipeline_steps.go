@@ -92,15 +92,10 @@ func scriptHost(q *Request, projectID, director string) (string, error) {
 	return q.app.hostID, nil
 }
 
-// startScript: a script command for the executor, as its own session and execution.
+// startScript: a script command for the executor, as its own execution: a host job (actor program-worker) of the run,
+// with no session (a host job is no conversation).
 func (run *runRecord) startScript(q *Request, stepExecutionID, command string, timeout json.RawMessage, hostID string, inputs []fileRef) (string, error) {
-	sid := newID()
 	dir := run.director()
-	// A host command session like the others (actor program-worker): it holds the step's host job, not a conversation.
-	s := agentSession{ID: sid, CreatedAt: nowMs(), PipelineRunID: run.ID, Actor: "program-worker", DirectedBy: dir, ProjectID: run.project()}
-	if err := sessionPut(q, &s); err != nil {
-		return "", err
-	}
 	if hostID == "" {
 		h, err := scriptHost(q, run.project(), dir)
 		if err != nil {
@@ -109,7 +104,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 		hostID = h
 	}
 	id := newID()
-	e := pipelineHostJob{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", PipelineStepID: stepExecutionID,
+	e := pipelineHostJob{ID: id, ExecutionID: id, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", PipelineStepID: stepExecutionID,
 		PipelineRunID: run.ID, ProjectSnapshot: orNull(run.ProjectSnapshot), DirectedBy: dir, ExperimentID: run.ExperimentID}
 	if err := executionWrite(q, e); err != nil { // a host job, the step's child in the run's project (session) and experiment
 		return "", err
@@ -121,7 +116,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	if !isNull(timeout) {
 		payload.TimeoutMs = timeout
 	}
-	return id, commandPut(q, &agentCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: "script", Payload: jsonBytes(payload), Status: "pending", HandedOut: ptr(false)})
+	return id, commandPut(q, &agentCommand{ID: newID(), ExecutionID: id, HostID: hostID, Kind: "script", Payload: jsonBytes(payload), Status: "pending", HandedOut: ptr(false)})
 }
 
 // pipelineClaimCall claims a provider call of a pipeline api step in q's transaction (claimPipelineAPI: a submit is handed

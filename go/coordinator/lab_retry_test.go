@@ -11,6 +11,18 @@ func TestSuffixProofRejectsBrokenBindings(t *testing.T) {
 	if !suffixProof(execution, command, event, "source:step:1") {
 		t.Fatal("canonical resolved proof rejected")
 	}
+	{ // a script host job has no session (fleet-conversations.md, migration step 2)
+		var e, c, v doc
+		jsonRoundTrip(execution, &e)
+		jsonRoundTrip(command, &c)
+		jsonRoundTrip(event, &v)
+		delete(e, "sessionId")
+		delete(c, "sessionId")
+		delete(v, "sessionId")
+		if !suffixProof(e, c, v, "source:step:1") {
+			t.Fatal("session-less proof rejected")
+		}
+	}
 	for _, tc := range []struct {
 		name   string
 		mutate func(doc, doc, doc)

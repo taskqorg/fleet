@@ -1027,19 +1027,16 @@ type jobExecution struct {
 }
 
 // queueCommand: a tool command for a host's executor (copy, verify) on an artifact, in a program-worker execution of its
-// own; payload is the command's (a contract struct).
+// own (a host job: no session); payload is the command's (a contract struct).
 func queueCommand(ctx context.Context, a *App, hostID, kind, artifactID string, payload any) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
 		q := backgroundRequest(ctx, a, tx) // carries app: put wakes the host's held poll once the command commits
-		sid, id := newID(), newID()
-		if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
-			return err
-		}
-		if err := executionWrite(q, jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
+		id := newID()
+		if err := executionWrite(q, jobExecution{ID: id, ExecutionID: id, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
 			ArtifactID: artifactID}); err != nil {
 			return err
 		}
-		return commandPut(q, &agentCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: jsonBytes(payload)})
+		return commandPut(q, &agentCommand{ID: newID(), ExecutionID: id, HostID: hostID, Kind: kind, Status: "pending", Payload: jsonBytes(payload)})
 	})
 }
 

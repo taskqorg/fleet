@@ -138,7 +138,6 @@ func harnessAllowed(q *Request, host, harness string) (bool, error) {
 type accountJobExecution struct {
 	ID          string `json:"id"`
 	ExecutionID string `json:"executionId"`
-	SessionID   string `json:"sessionId"`
 	HostID      string `json:"hostId"`
 	State       string `json:"state"`
 	CreatedAt   int64  `json:"createdAt"`
@@ -146,18 +145,15 @@ type accountJobExecution struct {
 	AccountID   string `json:"accountId"`
 }
 
-// accountInspectionJob: a program-worker session and host job on host with a pending account-inspect command
-// (account_discover, account_connect, subscription_limits_refresh); the execution's id.
+// accountInspectionJob: a program-worker host job on host with a pending account-inspect command (account_discover,
+// account_connect, subscription_limits_refresh); the execution's id. A host job is no conversation: it has no session.
 func accountInspectionJob(q *Request, host string, p contract.AccountInspectPayload) (string, error) {
-	sid, eid := newID(), newID()
-	if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
-		return "", err
-	}
-	if err := executionWrite(q, accountJobExecution{ID: eid, ExecutionID: eid, SessionID: sid, HostID: host, State: "preparing", CreatedAt: nowMs(),
+	eid := newID()
+	if err := executionWrite(q, accountJobExecution{ID: eid, ExecutionID: eid, HostID: host, State: "preparing", CreatedAt: nowMs(),
 		Actor: "program-worker", AccountID: p.AccountId}); err != nil {
 		return "", err
 	}
-	return eid, commandPut(q, &agentCommand{ID: newID(), ExecutionID: eid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindAccountInspect),
+	return eid, commandPut(q, &agentCommand{ID: newID(), ExecutionID: eid, HostID: host, Kind: string(contract.CommandKindAccountInspect),
 		Status: "pending", Payload: jsonBytes(p)})
 }
 

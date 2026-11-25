@@ -166,7 +166,8 @@ func suffixProven(execution *labProofExecution, command *labSuffixCommand, event
 		return false
 	}
 	xid, cid, sid, hid := execution.ID, command.ID, execution.SessionID, execution.HostID
-	if xid == "" || cid == "" || sid == "" || hid == "" || command.ExecutionID != xid || command.SessionID != sid || command.HostID != hid {
+	// A script host job has no session (sid ""); command and event still name the same one.
+	if xid == "" || cid == "" || hid == "" || command.ExecutionID != xid || command.SessionID != sid || command.HostID != hid {
 		return false
 	}
 	if event.Seq == nil || *event.Seq < 0 || event.ID != fmt.Sprintf("event:%s:%s-%d", xid, cid, *event.Seq) || event.ExecutionID != xid || event.SessionID != sid || event.Type != "process.reconciled" {
