@@ -47,8 +47,12 @@ func pinsTargetOf(platform string) string {
 // pinsVariant: one trial of the experiment, before it is a Lab variant.
 type pinsVariant struct {
 	Host, Account, Harness, Model string
+	Target                        string // the pin target the host runs (pinsTargetOf)
 	Asset                         harnessrelease.Asset
 }
+
+// coverage: what a trial proves for every host of its target.
+func (v pinsVariant) coverage() string { return v.Target + " " + v.Harness + " " + v.Model }
 
 func (v pinsVariant) label() string {
 	return strings.Join([]string{v.Host, v.Harness, v.Model}, " ")
@@ -70,7 +74,7 @@ func pinsHostVariants(accounts []accountRec, current, candidate pinsCandidate, m
 				continue
 			}
 			for _, m := range models[a.Harness] {
-				v := pinsVariant{Host: *b.HostID, Account: a.ID, Harness: a.Harness, Model: m, Asset: next}
+				v := pinsVariant{Host: *b.HostID, Account: a.ID, Harness: a.Harness, Model: m, Target: target, Asset: next}
 				if !seen[v.label()] {
 					seen[v.label()] = true
 					out = append(out, v)
@@ -103,27 +107,41 @@ func pinsHostsOf(rows []db.DeliveryHostsSeenRow, now time.Time) map[string]pinsH
 
 // pinsLiveVariants keeps the trials on hosts that polled in the last hour. A host whose executor is older than since
 // ignores the candidate and would run its release's CLI, so its trial would qualify the current pin: while its update is
-// on its way the qualification waits for it; when its update is held, refused or failed it is skipped and named.
+// on its way the qualification waits for it. An offline host, or one whose update is held, refused or failed, is
+// skipped by name, but only when another host of the same target runs the same CLI and model: the qualification counts
+// per platform (docs/designs/fleet-host-updates.md, step 4), and no target with a ready account goes unqualified. A
+// combination only a skipped host could run makes it wait.
 func pinsLiveVariants(variants []pinsVariant, hosts map[string]pinsHost, since string) (out []pinsVariant, skipped []string, ready bool) {
 	out = []pinsVariant{}
 	named := map[string]bool{}
+	var left []pinsVariant
 	for _, v := range variants {
 		h := hosts[v.Host]
+		why := ""
 		switch {
 		case !h.live:
-			if !named[v.Host] {
-				named[v.Host] = true
-				skipped = append(skipped, v.Host+" (offline)")
-			}
+			why = v.Host + " (offline)"
 		case olderVersion(h.version, since) && !h.stuck:
 			return nil, nil, false
 		case olderVersion(h.version, since):
-			if !named[v.Host] {
-				named[v.Host] = true
-				skipped = append(skipped, v.Host+" (executor "+h.version+" cannot run a candidate; its update is held or refused)")
-			}
+			why = v.Host + " (executor " + h.version + " cannot run a candidate; its update is held or refused)"
 		default:
 			out = append(out, v)
+			continue
+		}
+		left = append(left, v)
+		if !named[v.Host] {
+			named[v.Host] = true
+			skipped = append(skipped, why)
+		}
+	}
+	covered := map[string]bool{}
+	for _, v := range out {
+		covered[v.coverage()] = true
+	}
+	for _, v := range left {
+		if !covered[v.coverage()] {
+			return nil, nil, false
 		}
 	}
 	return out, skipped, true
