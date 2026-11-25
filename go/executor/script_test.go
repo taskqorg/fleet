@@ -75,6 +75,46 @@ func TestLaunchWindowKeepsSessionUntilStop(t *testing.T) {
 	}
 }
 
+// Requirement: a host job command without a sessionId (fleet-conversations.md, migration step 2) runs under its
+// executionId: its directory and launch row use it, events and receipts flow, FLEET_SESSION_ID stays empty and the sweep
+// sees the directory busy only while the job is open. Risk: hosts refuse session-less jobs once the coordinator stops
+// creating a session per job.
+func TestHostJobWithoutSession(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	if err := e.run(M{"id": "hj-ready", "executionId": "hj-ready-x", "kind": "readiness", "payload": M{"project": M{}}}); err != nil {
+		t.Fatal(err)
+	}
+	if r := lastReceipt(e, "hj-ready"); r != "completed" && r != "failed" {
+		t.Fatal("readiness receipt", r)
+	}
+	script := `printf %s "$FLEET_SESSION_ID" > "$FLEET_OUTPUT_DIR/sid"`
+	if err := e.run(M{"id": "hj", "executionId": "hj-x", "kind": "script", "payload": M{"command": script}}); err != nil {
+		t.Fatal(err)
+	}
+	var session string
+	if err := e.db.QueryRow("SELECT session FROM launches WHERE execution='hj-x'").Scan(&session); err != nil || session != "hj-x" {
+		t.Fatal("launch session", session, err)
+	}
+	if !e.sessionBusy("hj-x") {
+		t.Fatal("open host job not busy")
+	}
+	settle(t, e, "hj-x")
+	if r := lastReceipt(e, "hj"); r != "completed" {
+		t.Fatal("script receipt", r)
+	}
+	if b, err := os.ReadFile(filepath.Join(e.sessions, "hj-x", "output", "sid")); err != nil || len(b) != 0 {
+		t.Fatalf("FLEET_SESSION_ID %q %v", b, err)
+	}
+	var closed int
+	e.db.QueryRow(`SELECT count(*) FROM outbox WHERE route=? AND body LIKE '%"executionId":"hj-x"%' AND body LIKE '%process.closed%'`, contract.RouteEvents.Path).Scan(&closed)
+	if closed != 1 {
+		t.Fatal("process.closed events", closed)
+	}
+	if e.sessionBusy("hj-x") {
+		t.Fatal("finished host job still busy")
+	}
+}
+
 // Requirement: automatic output collection uploads only regular single-link files inside the output folder, the same
 // policy as artifact_save (K2-7, K2-8). Risk: a hard link or a link at any level uploads bytes from outside the working area.
 func TestOutputCollectionSkipsLinks(t *testing.T) {

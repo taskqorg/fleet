@@ -173,7 +173,7 @@ type live struct {
 // commandID and sessionID: the live command's identities, checked when it ran ("" for one that is not).
 func (l *live) commandID() string { s, _ := idOf(l.command, "id"); return s }
 
-func (l *live) sessionID() string { s, _ := idOf(l.command, "sessionId"); return s }
+func (l *live) sessionID() string { s, _ := workOf(l.command); return s }
 
 // state: the reaped process's state; nil while it runs.
 func (l *live) state() *os.ProcessState {
@@ -664,7 +664,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			// observation and changes so ordinary event traffic can batch in the outbox.
 			n, _ := projection["session"].(string) // the in-memory projection Blocks built, not received JSON
 			if n != "" && (!l.nativeObserved || n != l.native) {
-				sid, err := idOf(l.command, "sessionId")
+				sid, err := workOf(l.command)
 				if err != nil {
 					return false, err
 				}
@@ -743,7 +743,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, Resources: res, StderrTail: stderrTail(e.commandDir(l.sessionID(), workspaceKey(l.command)), execution, code)}); err != nil {
 		return false, err
 	}
-	sid, err := idOf(l.command, "sessionId")
+	sid, err := workOf(l.command)
 	if err != nil {
 		return false, err
 	}

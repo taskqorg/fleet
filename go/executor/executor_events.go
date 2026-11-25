@@ -23,10 +23,32 @@ import (
 // cmdID returns a command identity field: non-empty ASCII alphanumerics, '_' and '-'.
 func cmdID(v any, k string) (string, error) {
 	s, ok := jAt(v, k).(string)
-	if !ok {
-		return "", errors.New("missing identity")
+	if !ok || s == "" {
+		return "", errMissingIdentity
 	}
 	return checkedID(s)
+}
+
+// errMissingIdentity: the command names no such identity (absent or empty).
+var errMissingIdentity = errors.New("missing identity")
+
+// workID: the identity a command's directory, launch row and native id are kept under: its sessionId, or its
+// executionId for a host job that runs in no session (fleet-conversations.md, migration step 2).
+func workID(c M) (string, error) {
+	s, err := cmdID(c, "sessionId")
+	if errors.Is(err, errMissingIdentity) {
+		return cmdID(c, "executionId")
+	}
+	return s, err
+}
+
+// workOf is workID of a typed command.
+func workOf(c contract.Command) (string, error) {
+	s, err := idOf(c, "sessionId")
+	if errors.Is(err, errMissingIdentity) {
+		return idOf(c, "executionId")
+	}
+	return s, err
 }
 
 // idOf returns a command's identity field (id, executionId or sessionId) as cmdID checks it; a command that does not fit
@@ -51,8 +73,8 @@ func idOf(c contract.Command, k string) (string, error) {
 		raw, _ = json.Marshal(c)
 	}
 	s, ok := valStr(typedRaw[map[string]jsonValue](raw)[k])
-	if !ok {
-		return "", errors.New("missing identity")
+	if !ok || s == "" {
+		return "", errMissingIdentity
 	}
 	return checkedID(s)
 }

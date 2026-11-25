@@ -28,7 +28,7 @@ func (e *executor) run(c M) error {
 	if err != nil {
 		return err
 	}
-	session, err := cmdID(c, "sessionId")
+	session, err := workID(c) // its executionId for a host job without a session
 	if err != nil {
 		return err
 	}
@@ -1012,7 +1012,8 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	cmd := cleanCmd("sh", "-c", command)
 	cmd.Dir = work
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+session, "FLEET_EXECUTION_ID="+execution,
+	realSession, _ := idOf(c, "sessionId") // "" for a host job: session is then its executionId, not a session
+	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+realSession, "FLEET_EXECUTION_ID="+execution,
 		// Lab scripts ship in the release next to the binary (fleet-asset-pipelines §4); Blender is a host setting.
 		"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"), "FLEET_MCP_OWNER="+mcp.socket)
 	if v := os.Getenv("FLEET_BLENDER"); v != "" {
