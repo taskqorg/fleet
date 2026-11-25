@@ -126,7 +126,7 @@ Confirmation of risky actions is [section 17](#17-error-prevention-and-recovery)
 |---|---|---|
 | **UR-48.** | Light and dark are equal; the default follows the system, the person's choice is stored, and a screen is reviewed in dark first. | Browser: emulate each colour scheme and compare screenshots. |
 | **UR-49.** | Desktop layouts serve 1280 to 1920 px: catalogue sections in three columns ([OR-24](owner-rules.md)), Home and Live full width right of the navigation. | Browser: at 1280 and 1920 px, expect the section's columns and no page scroll sideways. |
-| **UR-50.** | No page scroll in either direction; code and wide tables scroll inside their own frame ([OR-25](owner-rules.md)). | Browser: `scrollWidth` equals `clientWidth` on the document at 1440 and 390 px. |
+| **UR-50.** | No page scroll in either direction, and nothing scrolls sideways inside it: code and tables wrap or stack ([OR-66](owner-rules.md)). | Browser: `scrollWidth` equals `clientWidth` on the document at 1440 and 390 px. |
 
 Phone rules are [section 19](#19-phone).
 

@@ -14,7 +14,7 @@
 * **By purpose.** When purpose results are present, show the known amounts and shares separately for **Billed USD** and **Estimated subscription value**, using the same totals as the breakdown. Use a [share bar](../controls/share-bar.md) when the nonnegative parts add up to the basis total. Otherwise list the amounts and shares in a table and explain why there is no bar. When purpose amounts are available and the basis has no positive total, keep the amounts in the table with unavailable shares. When no purpose amounts are known, show an unavailable message. Omit purpose amounts that have no figure for the basis.
 * **What it bought:** completed tasks and task spend, conversation runs and spend, plus per-project completed tasks, task spend, estimated cost per task ([number](../controls/number.md)), and unpriced count.
 
-Monetary figures keep their currency and basis. At narrow widths, the shared table frames scroll sideways and the period, total, and breakdown controls stay within the work area.
+Monetary figures keep their currency and basis. At narrow widths, the shared tables become stacked rows (OR-66) and the period, total, and breakdown controls stay within the work area.
 
 | Inventory item | Shown by |
 |---|---|
