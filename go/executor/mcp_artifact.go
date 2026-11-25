@@ -164,7 +164,7 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 		} else if ctx.TempDir != nil && insideParts(*ctx.TempDir, parts) != nil {
 			// The run's own temporary directory (TMPDIR, run-tmp/<execution>) holds files the agent made for this
 			// turn; they are saved from there as from the working area.
-			workdir, parts = *ctx.TempDir, insideParts(*ctx.TempDir, parts)
+			workdir, parts, rooted = *ctx.TempDir, insideParts(*ctx.TempDir, parts), true
 		} else {
 			rooted = true
 		}
@@ -174,7 +174,7 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 	}
 	f, err := openInside(workdir, parts)
 	if err != nil && rooted {
-		return nil, refusal("path must be a regular file inside your working area " + workdir + " or your temporary directory $TMPDIR (relative to the working area, or absolute), not a link")
+		return nil, refusal("path must be a regular file inside your working area " + *ctx.Workdir + " or your temporary directory $TMPDIR (relative to the working area, or absolute), not a link")
 	}
 	if err != nil {
 		return nil, err
