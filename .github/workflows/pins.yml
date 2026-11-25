@@ -1,0 +1,34 @@
+# Release-managed component updates (docs/designs/fleet-host-updates.md): once a day, each kind proposes and
+# qualifies its vendors' newest releases offline (pins-kind.yml). Replaces the harness-pins workflow.
+name: Managed component pins
+on:
+  schedule:
+    - cron: '43 3 * * *'
+  workflow_dispatch:
+    inputs:
+      requalify:
+        description: Qualify the open proposals' heads again
+        type: boolean
+        default: false
+permissions: {}
+jobs:
+  cli:
+    uses: ./.github/workflows/pins-kind.yml
+    with:
+      kind: cli
+      requalify: ${{ inputs.requalify || false }}
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+  tool:
+    uses: ./.github/workflows/pins-kind.yml
+    with:
+      kind: tool
+      requalify: ${{ inputs.requalify || false }}
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write

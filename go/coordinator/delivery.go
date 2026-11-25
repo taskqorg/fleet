@@ -425,6 +425,9 @@ func deliveryPass(ctx context.Context, a *App) error {
 		g.runs, g.finished, g.queueDone = append(active.Runs, queued.Runs...), finished.Runs, queueDone.Runs
 		if strings.EqualFold(name, githubPublicRepo) {
 			g.releases = withReleases(g.releases, recordedUI)
+			if err := pinsPass(ctx, a, g.open); err != nil {
+				log.Printf("pins proposal question: %v", err)
+			}
 		}
 		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
 		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged}
