@@ -72,3 +72,7 @@ export const wakeLabel = (c: string) => WAKE[c] ?? 'Other wake';
 /** Why a wake did not run (BotRunRecord.reason): the two stored codes in words; any other reason is already a sentence. */
 const SKIP: Record<string, string> = { paused: 'The bot is paused', active_run: 'Another run of this bot was still going' };
 export const reasonLabel = (r: string | null | undefined) => r ? SKIP[r] ?? r : undefined;
+
+/** Where a wake came from (BotRunRecord.source): the stored operation names in words; any other source is already words. */
+const SOURCE: Record<string, string> = { bot_run: 'Run now', schedule: 'Schedule', needs_you: 'Needs you', message: 'Message' };
+export const sourceLabel = (s: string | null | undefined) => s ? SOURCE[s] ?? s : undefined;
