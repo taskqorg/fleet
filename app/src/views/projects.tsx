@@ -247,7 +247,7 @@ function Summary(props: { names: Map<string, string> }) {
     <article class="detail" data-ui="detail" tabindex={-1} aria-label="Projects summary">
       <DetailSection title="Waiting for you" count={questions.data?.questions.length || undefined}
         href={WAITING_HREF} onOpen={() => go(WAITING_HREF)}>
-        <Switch fallback={<Preview n={3} items={(questions.data?.questions ?? []).map(q => <AskCard q={q} label={name(q.projectId)} />)} />}>
+        <Switch fallback={<Preview n={3} items={(questions.data?.questions ?? []).slice(0, 3).map(q => <AskCard q={q} label={name(q.projectId)} />)} />}>
           <Match when={questions.error}><ErrorBanner text={`Questions did not load: ${questions.error}`} onRetry={questions.reload} /></Match>
           <Match when={!questions.data}><Skeleton rows={2} /></Match>
           <Match when={questions.data!.questions.length === 0}><p class="muted">Nothing waits for you.</p></Match>

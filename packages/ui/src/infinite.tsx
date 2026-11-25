@@ -11,6 +11,8 @@ export type Page<R, C> = { rows: R[]; next: C | null };
 
 /** What a list end needs: whether a page is loading, the last error, whether the list is complete, and the two actions. */
 export type Pager = {
+  /** Rows shown so far: a change re-checks the end, so a page that leaves the end in view asks for the next. */
+  readonly size: number;
   readonly loading: boolean;
   readonly error: string | null;
   readonly done: boolean;
@@ -42,6 +44,8 @@ export function createPages<R, C>(o: {
   onCleanup(stop);
   createEffect(() => o.reset?.(), () => { stop(); setKept([]); setNext(undefined); setLoading(false); setError(null); });
   const dedupe = (rows: R[]) => { const seen = new Set<string>(); return rows.filter(r => { const k = o.key(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
+  // A reread first page wins by key; a row it no longer holds stays from the pages read before (it may only have moved
+  // down when new rows arrived), so nothing the person saw jumps away while they scroll.
   const rows = createMemo(() => {
     const f = o.first();
     if (!f) return [];
@@ -75,6 +79,7 @@ export function createPages<R, C>(o: {
   };
   return {
     get rows() { return rows(); },
+    get size() { return rows().length; },
     get loading() { return loading(); },
     get error() { return error(); },
     get done() { return !!o.first() && cursor() === null; },
@@ -93,6 +98,7 @@ export function createWindow<R>(items: () => R[], step: number, reset?: () => un
   const rows = createMemo(() => items().slice(0, shown()));
   return {
     get rows() { return rows(); },
+    get size() { return rows().length; },
     loading: false,
     error: null,
     get done() { return shown() >= items().length; },
@@ -126,7 +132,7 @@ export function ListEnd(p: { pages: Pager; what?: string; rows?: number }) {
     return () => io.disconnect();
   });
   // One trigger per arrival: a page that leaves the end in view asks for the next as soon as it lands.
-  createEffect(() => [near(), p.pages.loading, p.pages.error, p.pages.done] as const, ([n, loading, error, done]) => {
+  createEffect(() => [near(), p.pages.size, p.pages.loading, p.pages.error, p.pages.done] as const, ([n, , loading, error, done]) => {
     if (n && !loading && !error && !done) p.pages.more();
   });
   return (

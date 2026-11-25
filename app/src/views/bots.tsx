@@ -108,8 +108,9 @@ export function BotDetail(props: {
   }));
 
   const tabsWithCounts = createMemo(() => BOT_TABS.map(t => {
-    if (t.id === 'tasks' && tasks().length > 0) return { ...t, count: tasks().length };
-    if (t.id === 'runs' && runs().length > 0) return { ...t, count: runs().length };
+    // Counts only for a complete list: a list that loads on scroll knows no total (OR-64).
+    if (t.id === 'tasks' && tasks().length > 0 && tasksPaged.pages.done) return { ...t, count: tasks().length };
+    if (t.id === 'runs' && runs().length > 0 && runsPaged.pages.done) return { ...t, count: runs().length };
     return t;
   }));
 

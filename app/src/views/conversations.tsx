@@ -175,7 +175,7 @@ function WaitingCards(props: { page: ListPage<SessionRow>; archived: boolean }) 
         <div class="stack">
           <Preview
             n={3}
-            items={waiting().map(q => {
+            items={waiting().slice(0, 3).map(q => {
               const name = () => names().get(q.sessionId);
               return <OpenQuestion q={q} answers={answers} title={name() ? `${name()}: ${q.text}` : q.text} />;
             })}
