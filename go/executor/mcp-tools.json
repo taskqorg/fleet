@@ -116,6 +116,10 @@
               }
             }
           }
+        },
+        "wait": {
+          "type": "boolean",
+          "description": "false answers the started run at once; follow it with pipeline_get. Omitted, the call waits for the run to end."
         }
       }
     }

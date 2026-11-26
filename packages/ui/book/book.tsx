@@ -5,7 +5,7 @@ import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
   Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, RailPinned, type RailPin, type RailPinnedProps, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, EntityCardLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
-  Composer, DropZone, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
+  Composer, DropZone, FilePicker, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
 } from '../src/index.ts';
 import { EntityCardDemo, CardsProvider } from './entity-cards.tsx';
@@ -496,6 +496,7 @@ const SECTIONS: [string, string, string | undefined, () => JSX.Element, (() => J
   ['setting-field', 'Setting field', 'setting-field', () => <SettingsDemo />, () => <>Click a value to edit it inline.</>],
   ['start-picker', 'Start a conversation: project, preset, start facts', 'preset-pick', () => <StartDemo />, () => <>/conversations/new. Focused and recent projects first, No project is one choice, search finds the rest (OR-9). A preset card says what it sets in words; the chips under the composer show the project, agent, access and branch, and access and branch flip in one click.</>],
   ['composer', 'Composer: idle, with files, running', 'composer', () => <ComposerDemo />, () => <>One box: the files above the text, then + (attach), the agent profile (opens Switch profile or model), the permissions and one Send button, Stop while the agent runs and the box is empty. Enter sends, Shift+Enter adds a line; files also come by paste (screenshots, files, long text as a .txt) and by drop anywhere over the conversation. Send waits for uploads. A sent message shows its files: images as thumbnails, other files as chips; each opens in the result viewer.</>],
+  ['file-picker', 'File picker: files for a run', 'file-picker', () => <FilePickerDemo />, () => <>A pipeline page's Run on files. Drop files over the dashed area or pick several at once; each uploads as it is added and its chip shows the progress, a failed file is red. The caller keeps the files and starts the run.</>],
   ['code-editor', 'Code editor and diff text', 'code-editor', () => <div class="pane"><CodeEditor label="config/pipelines/search-basic.json" value={'{\n  "id": "search-basic",\n  "steps": [],\n  "version": 2\n}\n'} onChange={() => {}} problems={[{ path: '', message: 'Invalid pipeline: steps' }]} /><DiffText label="Draft against revision 3" text={'@@ -1,4 +1,4 @@\n {\n-  "id": "hello"\n+  "id": "search-basic"\n }'} /></div>, () => <>A definition's text is edited in place and kept as a draft; problems come from the coordinator and do not block typing.</>],
   ['offline-marker', 'Offline marker', 'offline-marker', () => <div class="row"><OfflineMarker state="updating" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="offline" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="signed-out" now={NOW} /></div>, () => <>Stored data is never shown as current (D3).</>],
   ['problem-row', 'Problem row', 'problem-row', () => <ProblemDemo />],
@@ -506,6 +507,18 @@ const SECTIONS: [string, string, string | undefined, () => JSX.Element, (() => J
 ];
 
 const BOOK_DOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGN4VqFBEmIY1TCqYfhqAAAUGoYQFRF6QAAAAABJRU5ErkJggg==';
+function FilePickerDemo() {
+  const [files, setFiles] = createSignal<ComposerAttachment[]>([
+    { id: 'a', name: 'passport.jpg', size: 55_300, mediaType: 'image/jpeg', state: 'ready', preview: BOOK_DOT },
+    { id: 'b', name: 'release.pdf', size: 612_000, mediaType: 'application/pdf', state: 'uploading', progress: 0.6 },
+    { id: 'c', name: 'scan.tif', size: 8_400_000, mediaType: 'image/tiff', state: 'failed', error: 'upload failed (413)' },
+  ]);
+  return <div class="col">
+    <div class="pane"><FilePicker files={[]} onFiles={() => {}} prompt="Drop the files to read, or" /></div>
+    <div class="pane"><FilePicker files={files()} onFiles={() => {}} onRemove={id => setFiles(f => f.filter(x => x.id !== id))} prompt="Drop the files to read, or" /></div>
+  </div>;
+}
+
 function ComposerDemo() {
   const chips = [{ harness: 'claude', label: 'opus-5.5 · high', tip: 'Profile claude-worker · switch profile or model', onClick: () => {} }, { icon: 'shield' as const, label: 'Workspace', tip: 'Permissions of the profile: the harness tools, no git network' }];
   const [files, setFiles] = createSignal<ComposerAttachment[]>([

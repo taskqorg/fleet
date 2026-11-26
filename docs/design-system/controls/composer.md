@@ -1,6 +1,6 @@
 # Composer
 
-**Code.** `Composer`, `DropZone` and `MessageFiles` in `packages/ui`.
+**Code.** `Composer`, `DropZone`, `AttachmentChips` (the files above the text, shared with the [file picker](file-picker.md)) and `MessageFiles` in `packages/ui`.
 
 **Purpose.** Type a message to an agent, with files: start a turn, or steer or queue one while the agent is busy.
 

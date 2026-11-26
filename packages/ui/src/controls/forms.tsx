@@ -328,36 +328,7 @@ function ScopedComposer(p: ComposerProps) {
   return (
     <div ref={el => { box = el; }} class={['composer', { off: !!p.disabledReason, 'with-target': !!p.target, command: !!p.command }]} data-ui="composer">
       <Show when={p.above} keyed>{a => <div class="composer-above">{a}</div>}</Show>
-      <Show when={files()}>
-        <div class="composer-files" role="list" aria-label="Attachments">
-          <For each={attachments()}>
-            {a => (
-              <span role="listitem" class={['att', { failed: a.state === 'failed' }]} data-tip={a.error ?? `${a.mediaType} · ${bytes(a.size).text}`}>
-                <Show
-                  when={a.preview && /^image\//.test(a.mediaType)}
-                  fallback={<span class="att-thumb"><Icon name="file-text" /></span>}
-                >
-                  <img class="att-thumb" src={a.preview} alt="" />
-                </Show>
-                <span class="att-name">{a.name}</span>
-                <span class="att-size">
-                  {a.state === 'uploading' ? `${Math.round((a.progress ?? 0) * 100)}%` : a.state === 'failed' ? 'failed' : bytes(a.size).text}
-                </span>
-                <Show when={p.onRemoveAttachment} keyed>
-                  {rem => (
-                    <button type="button" class="att-x" aria-label={`Remove ${a.name}`} onClick={() => rem(a.id)}>
-                      <Icon name="x" />
-                    </button>
-                  )}
-                </Show>
-                <Show when={a.state === 'uploading'}>
-                  <span class="att-bar" style={{ width: `${Math.round((a.progress ?? 0) * 100)}%` }} />
-                </Show>
-              </span>
-            )}
-          </For>
-        </div>
-      </Show>
+      <Show when={files()}><AttachmentChips files={attachments()} onRemove={p.onRemoveAttachment} /></Show>
       <Show when={p.target} keyed>{t => <span class="composer-target">{t}</span>}</Show>
       <Textarea
         value={text()}
@@ -440,6 +411,41 @@ function ScopedComposer(p: ComposerProps) {
   );
 }
 
+/** Files being attached (a message's, a run's): name, size or upload progress, a remove button; a failed file is red
+ * with its error on hover (controls/composer.md). */
+export function AttachmentChips(p: { files: ComposerAttachment[]; onRemove?: (id: string) => void; label?: string }) {
+  return (
+    <div class="composer-files" role="list" aria-label={p.label ?? 'Attachments'}>
+      <For each={p.files}>
+        {a => (
+          <span role="listitem" class={['att', { failed: a.state === 'failed' }]} data-tip={a.error ?? `${a.mediaType} · ${bytes(a.size).text}`}>
+            <Show
+              when={a.preview && /^image\//.test(a.mediaType)}
+              fallback={<span class="att-thumb"><Icon name="file-text" /></span>}
+            >
+              <img class="att-thumb" src={a.preview} alt="" />
+            </Show>
+            <span class="att-name">{a.name}</span>
+            <span class="att-size">
+              {a.state === 'uploading' ? `${Math.round((a.progress ?? 0) * 100)}%` : a.state === 'failed' ? 'failed' : bytes(a.size).text}
+            </span>
+            <Show when={p.onRemove} keyed>
+              {rem => (
+                <button type="button" class="att-x" aria-label={`Remove ${a.name}`} onClick={() => rem(a.id)}>
+                  <Icon name="x" />
+                </button>
+              )}
+            </Show>
+            <Show when={a.state === 'uploading'}>
+              <span class="att-bar" style={{ width: `${Math.round((a.progress ?? 0) * 100)}%` }} />
+            </Show>
+          </span>
+        )}
+      </For>
+    </div>
+  );
+}
+
 /**
  * Files dropped anywhere over its children (a conversation): a highlight covers the area while files are dragged over
  * it and moves nothing (OR-23); a drop hands the files to onFiles.
@@ -471,6 +477,40 @@ export function DropZone(p: { onFiles: (files: File[]) => void; label?: string; 
         <div class="drop-over" aria-hidden="true"><Icon name="paperclip" /><span>{p.label ?? 'Drop files to attach'}</span></div>
       </Show>
     </div>
+  );
+}
+
+/**
+ * Files for a run (controls/file-picker.md): a drop area with a "pick files" button (several at once) and the chosen
+ * files as chips under it. The caller uploads and keeps the files; a drop anywhere over the area adds them too.
+ */
+export function FilePicker(p: { files: ComposerAttachment[]; onFiles: (files: File[]) => void; onRemove?: (id: string) => void; prompt: string; accept?: string; disabledReason?: string }) {
+  let input: HTMLInputElement | undefined;
+  return (
+    <DropZone onFiles={p.onFiles} label={p.prompt} disabledReason={p.disabledReason}>
+      <div class="file-pick" data-ui="file-picker">
+        <div class="file-pick-area">
+          <Icon name="file-plus-2" />
+          <span>{p.prompt}</span>
+          <Button label="Pick files" kind="quiet" disabledReason={p.disabledReason} onClick={() => input?.click()} />
+          <input
+            ref={el => { input = el; }}
+            type="file"
+            multiple
+            accept={p.accept}
+            hidden
+            aria-hidden="true"
+            tabindex={-1}
+            onChange={e => {
+              const t = e.currentTarget;
+              if (t.files?.length) p.onFiles([...t.files]);
+              t.value = '';
+            }}
+          />
+        </div>
+        <Show when={p.files.length > 0}><AttachmentChips files={p.files} onRemove={p.onRemove} label="Files" /></Show>
+      </div>
+    </DropZone>
   );
 }
 
