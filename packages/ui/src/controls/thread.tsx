@@ -69,7 +69,7 @@ export function DecisionBlock(p: DecisionProps) {
             if (o) send(o.label);
           }}
         >
-          <div class="dq"><Icon name="bell" /><b>{p.question}</b></div>
+          <div class="dq"><Icon name="bell" /><b>{linkCodes(p.question, 0)}</b></div>
           <div class="meta">
             {p.askedBy}{p.addressedTo === 'you' ? '' : ` · for ${p.addressedTo}`}
             <Show when={!p.timeInRow}> <> · <AgeChip t={p.since} /></></Show>
@@ -117,12 +117,12 @@ export function DecisionBlock(p: DecisionProps) {
           fallback={
             <div class="decision answered" data-ui="decision-block" role="status">
               <Icon name={a.delivered ? 'check-check' : 'history'} />
-              <span>{p.question} <b>{a.answer}</b> · {a.by} · <Ago t={a.at} />{a.delivered ? '' : ' · delivery pending'}</span>
+              <span>{linkCodes(p.question, 0)} <b>{a.answer}</b> · {a.by} · <Ago t={a.at} />{a.delivered ? '' : ' · delivery pending'}</span>
             </div>
           }
         >
           <div class="decision answered thread-answer" data-ui="decision-block" role="status">
-            <div class="dq"><Icon name="message-circle-question" label="Question" /><span>{p.question}</span></div>
+            <div class="dq"><Icon name="message-circle-question" label="Question" /><span>{linkCodes(p.question, 0)}</span></div>
             <div class="decision-reply">
               <span class="muted">Answer</span>{' '}
               {p.technicalAnswer ? <CodeBlock text={a.answer} /> : <b>{a.answer}</b>}

@@ -553,12 +553,13 @@ func askQuestionAs(q *Request, a questionAsk) (string, error) {
 	return a.ID, nil
 }
 
-// addressToManagingBot: a decision or an agent's question in a task a bot created or manages goes to that bot (its
-// Needs you trigger wakes it; it answers with question_answer or asks its owner itself), never to Needs you: on
-// 2026-11-26 Home's Waiting for you held a dozen "route a reviewer" and "fail task" items of HAL0's own tasks. The
-// bot's own questions and secret requests stay with the person they ask.
+// addressToManagingBot: a decision, an agent's question or a result's acceptance in a task a bot created or manages
+// goes to that bot (its Needs you trigger wakes it; it answers with question_answer or asks its owner itself), never to
+// Needs you: on 2026-11-26 Home's Waiting for you held a dozen "route a reviewer" and "fail task" items of HAL0's own
+// tasks, and on 2026-11-27 the acceptance of HAL0's fix for its own problem P-83. The bot's own questions and secret
+// requests stay with the person they ask.
 func addressToManagingBot(q *Request, a questionAsk) error {
-	if a.TaskID == "" || (a.Kind != "operator_decision" && a.Kind != "agent_question") {
+	if a.TaskID == "" || (a.Kind != "operator_decision" && a.Kind != "agent_question" && a.Kind != "acceptance") {
 		return nil
 	}
 	bot, err := q.db().TaskManagingBot(q.ctx(), a.TaskID)

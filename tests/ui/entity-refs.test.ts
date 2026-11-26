@@ -78,6 +78,13 @@ test('pull requests in agent text: a GitHub URL and owner/repo#n, never a path o
   assert.deepEqual(hits('see #643, src/app/x#1, https://github.com/a/b/pull/12/files'), []);
 });
 
+test('a link to a Fleet page of one entity is its reference, not a raw URL (OR-38)', async () => {
+  const { APP_URL_REF } = await import('../../packages/ui/src/markdown.ts');
+  const ids = (t: string) => [...t.matchAll(APP_URL_REF)].map(m => m[1]);
+  assert.deepEqual(ids('send a continuation in https://fleet.ufobe.com/conversations/02c02b71-b565-4d2e-8053-a0e52f19b9dc asking'), ['02c02b71-b565-4d2e-8053-a0e52f19b9dc']);
+  assert.deepEqual(ids('https://storage.example.com/objects/02c02b71-b565-4d2e-8053-a0e52f19b9dc/file.tar'), []);
+});
+
 test('a UUID in agent text is a reference (OR-38); a bare id registers by id alone', async () => {
   const { UUID_REF } = await import('../../packages/ui/src/markdown.ts');
   assert.deepEqual([...'run 8be57cc0-7076-4d1b-b0f6-6976a21496fa failed; sha abcdef'.matchAll(UUID_REF)].map(m => m[0]), ['8be57cc0-7076-4d1b-b0f6-6976a21496fa']);

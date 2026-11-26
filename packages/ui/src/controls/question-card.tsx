@@ -3,6 +3,7 @@ import { createEffect, createSignal, For, Show } from 'solid-js';
 import { createDraft } from '../drafts.ts';
 import { isSubmitEnter } from '../keys.ts';
 import { Button, Ago } from './primitives.tsx';
+import { linkCodes } from './overlays.tsx';
 import type { QuestionChoice } from '../answer.ts';
 
 /**
@@ -34,7 +35,8 @@ export function QuestionCard(p: {
       keyed
       fallback={
         <div class={['qcard', { danger: danger() }]} data-ui="question-card" role="group" aria-label={p.question} onClick={e => e.stopPropagation()}>
-          <p class="qcard-q">{p.question}</p>
+          {/* Codes, Fleet links and UUIDs in the text are entity references (OR-38, OR-44), never raw ids or URLs. */}
+          <p class="qcard-q">{linkCodes(p.question, 0)}</p>
           <div class="qcard-choices">
             <For each={p.choices}>
               {c => (

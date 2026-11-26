@@ -11,6 +11,8 @@ export type MdBlock<T = string> =
 
 /** A pull request named in text: its GitHub URL, or owner/repo#number (entity-card.md: agent messages). */
 export const PR_REF = /\bhttps:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-9][0-9]*)(?![\w/])|(?<![\w/.-])([\w.-]+)\/([\w.-]+)#([1-9][0-9]*)\b/g;
+/** A link to a Fleet page of one entity (…/conversations/<uuid>, …/tasks/<uuid>): its reference, never the raw URL (OR-38). */
+export const APP_URL_REF = /\bhttps?:\/\/[^\s/]+\/(?:home|live|conversations|tasks|results|delivery|projects|lab|library|system|history)\/(?:[\w.-]+\/)*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?![\w/-])/g;
 /** A UUID in agent text: a reference whose kind the server finds (OR-38: a UUID is never shown). */
 export const UUID_REF = /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/g;
 
