@@ -235,7 +235,7 @@ func TestProjectAppUse(t *testing.T) {
 	if len(apps.Apps) != 1 {
 		t.Fatalf("apps %+v", apps.Apps)
 	}
-	if u := apps.Apps[0].Use30d; u.Runs != 3 || u.Failed != 1 || usd(u.Cost) != 2.25 {
+	if u := apps.Apps[0].Use30d; u == nil || u.Runs != 3 || u.Failed != 1 || usd(u.Cost) != 2.25 {
 		t.Fatalf("use30d %+v (USD %v), want 3 runs, 1 failed, $2.25", u, usd(u.Cost))
 	}
 	var use []contract.ProjectPipelineUse

@@ -137,13 +137,14 @@ UPDATE app_callback SET delivered_at = clock_timestamp() WHERE run_id = $1;
 
 -- name: ProjectAppUse :many
 -- Each app's real use since @since (fleet-project-apps.md, Screens): its pipeline runs (execution_app) and the failed
--- ones, and the cost of their leaf executions only (fleet-analytics.md: containers never count, a leaf counts once),
--- summed per currency and basis from execution_spend; a leaf without a fresh spend row counts as unpriced. A run
--- still queued (no start yet) counts.
+-- or cancelled ones, and the cost of their leaf executions only (fleet-analytics.md: containers never count, a leaf
+-- counts once), summed per currency and basis from execution_spend (a stale row with its last confirmed value); a leaf
+-- without a spend row counts as unpriced. A run still queued (no start yet, touched in the window) counts. A leaf under
+-- two runs of the set (a nested run) goes to the app's.
 WITH RECURSIVE runs AS MATERIALIZED (
- SELECT e.id, e.app_id AS caller, (e.state = 'failed') AS failed
+ SELECT e.id, e.app_id AS caller, (e.state IN ('failed', 'cancelled')) AS failed
  FROM execution e
- WHERE e.app_id = ANY(@app_ids::text[]) AND (e.started_at >= @since::timestamptz OR (e.started_at IS NULL AND e.ended_at IS NULL))
+ WHERE e.app_id = ANY(@app_ids::text[]) AND (e.started_at >= @since::timestamptz OR (e.started_at IS NULL AND e.ended_at IS NULL AND e.updated_at >= @since::timestamptz))
   AND e.kind = 'pipeline_run'
 ), tree(root, id) AS (
  SELECT r.id, r.id FROM runs r
@@ -154,19 +155,19 @@ WITH RECURSIVE runs AS MATERIALIZED (
  FROM tree t JOIN runs r ON r.id = t.root JOIN execution x ON x.id = t.id
  LEFT JOIN execution_totals tt ON tt.execution_id = x.id
  WHERE x.kind NOT IN ('pipeline_run', 'pipeline_step') AND NOT (x.kind = 'child_agent' AND tt.execution_id IS NULL)
- ORDER BY x.id, r.caller
+ ORDER BY x.id, (r.caller = ''), r.caller
 ), figures AS (
  SELECT l.caller, s.cost_currency AS currency, s.cost_basis AS basis, s.cost_value AS value, 0::bigint AS unpriced
  FROM leaves l JOIN execution_spend s ON s.execution_id = l.id
- WHERE NOT s.stale AND s.payload IS NULL AND s.cost_currency IS NOT NULL AND s.cost_value IS NOT NULL
+ WHERE s.payload IS NULL AND s.cost_currency IS NOT NULL AND s.cost_value IS NOT NULL
  UNION ALL
  SELECT l.caller, f.currency, f.basis, f.value, 0::bigint
  FROM leaves l JOIN execution_spend s ON s.execution_id = l.id CROSS JOIN LATERAL jsonb_to_recordset(s.payload) f(currency text, basis text, value float8)
- WHERE NOT s.stale AND s.payload IS NOT NULL AND f.currency IS NOT NULL AND f.value IS NOT NULL
+ WHERE s.payload IS NOT NULL AND f.currency IS NOT NULL AND f.value IS NOT NULL
  UNION ALL
- SELECT l.caller, NULL, NULL, NULL, CASE WHEN s.execution_id IS NULL OR s.stale THEN 1 ELSE s.cost_unpriced END::bigint
+ SELECT l.caller, NULL, NULL, NULL, CASE WHEN s.execution_id IS NULL THEN 1 ELSE s.cost_unpriced END::bigint
  FROM leaves l LEFT JOIN execution_spend s ON s.execution_id = l.id
- WHERE s.execution_id IS NULL OR s.stale OR s.cost_unpriced > 0
+ WHERE s.execution_id IS NULL OR s.cost_unpriced > 0
 ), costs AS (
  SELECT z.caller, jsonb_agg(jsonb_build_object('currency', z.currency, 'basis', z.basis, 'value', z.value, 'unpriced', z.unpriced)) AS j
  FROM (SELECT caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM figures GROUP BY 1, 2, 3) z
@@ -181,9 +182,9 @@ GROUP BY r.caller;
 -- Who ran a project's pipeline since @since (the pipeline page's Used by): one row per app, and an empty caller for agents and
 -- people; Lab runs (experiment_id) and Fleet's own runs (system_actor) are left out. Runs, failed runs and the leaf cost as ProjectAppUse counts them.
 WITH RECURSIVE runs AS MATERIALIZED (
- SELECT e.id, coalesce(e.app_id, '') AS caller, (e.state = 'failed') AS failed
+ SELECT e.id, coalesce(e.app_id, '') AS caller, (e.state IN ('failed', 'cancelled')) AS failed
  FROM execution e
- WHERE e.project_id = @project_id::text AND (e.started_at >= @since::timestamptz OR (e.started_at IS NULL AND e.ended_at IS NULL))
+ WHERE e.project_id = @project_id::text AND (e.started_at >= @since::timestamptz OR (e.started_at IS NULL AND e.ended_at IS NULL AND e.updated_at >= @since::timestamptz))
   AND e.pipeline_id = @pipeline_id::text AND e.experiment_id IS NULL AND e.system_actor IS NULL AND e.kind = 'pipeline_run'
 ), tree(root, id) AS (
  SELECT r.id, r.id FROM runs r
@@ -194,19 +195,19 @@ WITH RECURSIVE runs AS MATERIALIZED (
  FROM tree t JOIN runs r ON r.id = t.root JOIN execution x ON x.id = t.id
  LEFT JOIN execution_totals tt ON tt.execution_id = x.id
  WHERE x.kind NOT IN ('pipeline_run', 'pipeline_step') AND NOT (x.kind = 'child_agent' AND tt.execution_id IS NULL)
- ORDER BY x.id, r.caller
+ ORDER BY x.id, (r.caller = ''), r.caller
 ), figures AS (
  SELECT l.caller, s.cost_currency AS currency, s.cost_basis AS basis, s.cost_value AS value, 0::bigint AS unpriced
  FROM leaves l JOIN execution_spend s ON s.execution_id = l.id
- WHERE NOT s.stale AND s.payload IS NULL AND s.cost_currency IS NOT NULL AND s.cost_value IS NOT NULL
+ WHERE s.payload IS NULL AND s.cost_currency IS NOT NULL AND s.cost_value IS NOT NULL
  UNION ALL
  SELECT l.caller, f.currency, f.basis, f.value, 0::bigint
  FROM leaves l JOIN execution_spend s ON s.execution_id = l.id CROSS JOIN LATERAL jsonb_to_recordset(s.payload) f(currency text, basis text, value float8)
- WHERE NOT s.stale AND s.payload IS NOT NULL AND f.currency IS NOT NULL AND f.value IS NOT NULL
+ WHERE s.payload IS NOT NULL AND f.currency IS NOT NULL AND f.value IS NOT NULL
  UNION ALL
- SELECT l.caller, NULL, NULL, NULL, CASE WHEN s.execution_id IS NULL OR s.stale THEN 1 ELSE s.cost_unpriced END::bigint
+ SELECT l.caller, NULL, NULL, NULL, CASE WHEN s.execution_id IS NULL THEN 1 ELSE s.cost_unpriced END::bigint
  FROM leaves l LEFT JOIN execution_spend s ON s.execution_id = l.id
- WHERE s.execution_id IS NULL OR s.stale OR s.cost_unpriced > 0
+ WHERE s.execution_id IS NULL OR s.cost_unpriced > 0
 ), costs AS (
  SELECT z.caller, jsonb_agg(jsonb_build_object('currency', z.currency, 'basis', z.basis, 'value', z.value, 'unpriced', z.unpriced)) AS j
  FROM (SELECT caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM figures GROUP BY 1, 2, 3) z

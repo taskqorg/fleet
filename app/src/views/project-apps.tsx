@@ -80,7 +80,8 @@ function AppDetail(props: { a: App; manage: boolean; onChanged: () => void }) {
 export function ProjectApps(props: { projectId: string }) {
   const [, go] = useLocation();
   const search = useSearch();
-  const read = useOp('project_apps', () => ({ projectId: props.projectId }));
+  // Runs move use30d: every execution change touches the read, so it rereads at most once in 5 s.
+  const read = useOp('project_apps', () => ({ projectId: props.projectId }), { quiet: 5000 });
   const me = useOp('me', {});
   const manage = () => !!(me.data?.owner || me.data?.managesPeople);
   // Rows are keyed by id: a reread keeps an open detail (a confirmation in flight).

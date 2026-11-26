@@ -98,8 +98,7 @@ func projectAppView(r db.ProjectAppGetRow, keys []db.ProjectAppKeysRow) contract
 	p := projectAppPayloadOf(r.Payload)
 	v := contract.ProjectAppView{Id: r.ID, ProjectId: r.ProjectID, Name: r.Name, State: contract.ProjectAppState(r.State), Pipelines: p.Pipelines,
 		CallbackOrigins: p.CallbackOrigins, Limits: p.Limits, RequestId: r.RequestID, AskedBy: r.AskedBy, ApprovedBy: r.ApprovedBy, QuestionId: r.QuestionID,
-		Reason: p.Reason, Keys: []contract.ProjectAppKeyView{}, CreatedAt: r.CreatedAt.UnixMilli(), LastUsedAt: appMs(r.LastUsedAt),
-		Use30d: contract.ProjectAppUse{Cost: []contract.CostFigure{}}}
+		Reason: p.Reason, Keys: []contract.ProjectAppKeyView{}, CreatedAt: r.CreatedAt.UnixMilli(), LastUsedAt: appMs(r.LastUsedAt)}
 	for _, k := range keys {
 		if k.AppID == r.ID {
 			v.Keys = append(v.Keys, contract.ProjectAppKeyView{Id: k.ID, CreatedAt: k.CreatedAt.UnixMilli(), LastUsedAt: appMs(k.LastUsedAt),
@@ -119,7 +118,7 @@ func projectAppRead(q *Request, id string) (contract.ProjectAppView, error) {
 		return contract.ProjectAppView{}, err
 	}
 	keys, err := q.db().ProjectAppKeys(q.ctx(), []string{id})
-	// A write's reply leaves use30d empty: project_apps, which the change stream rereads, answers it.
+	// A write's reply leaves use30d out: project_apps, which the change stream rereads, answers it.
 	return projectAppView(db.ProjectAppGetRow(r), keys), err
 }
 
@@ -160,9 +159,11 @@ func projectApps(q *Request, r *contract.ProjectAppsRequest) (contract.ProjectAp
 	out := contract.ProjectAppsReply{Apps: []contract.ProjectAppView{}}
 	for _, a := range rs {
 		v := projectAppView(db.ProjectAppGetRow(a), keys)
-		if u, ok := use[a.ID]; ok {
-			v.Use30d = u
+		u, ok := use[a.ID]
+		if !ok {
+			u = contract.ProjectAppUse{Cost: []contract.CostFigure{}}
 		}
+		v.Use30d = &u
 		out.Apps = append(out.Apps, v)
 	}
 	return out, err

@@ -257,7 +257,7 @@ type ProjectAppView struct {
 	Reason          string              `json:"reason"`
 	RequestId       string              `json:"requestId"`
 	State           ProjectAppState     `json:"state"`
-	Use30d          ProjectAppUse       `json:"use30d"`
+	Use30d          *ProjectAppUse      `json:"use30d,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -282,8 +282,10 @@ func (v *ProjectAppView) Validate() error {
 	if err := Check(&v.State, "state"); err != nil {
 		return err
 	}
-	if err := Check(&v.Use30d, "use30d"); err != nil {
-		return err
+	if v.Use30d != nil {
+		if err := Check(v.Use30d, "use30d"); err != nil {
+			return err
+		}
 	}
 	return nil
 }

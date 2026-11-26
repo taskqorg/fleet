@@ -30,6 +30,7 @@ export function limitsText(l: ProjectApp['limits']): string {
 
 /** An app row's facts: pipelines · use over 30 days (runs and cost) · limits; an asked or ended app without runs leaves use out. */
 export function appRowText(a: Pick<ProjectApp, 'pipelines' | 'state' | 'use30d' | 'limits'>): string {
-  const use = a.use30d.runs > 0 ? `${usageLine({ runs: a.use30d.runs, cost: a.use30d.cost })} · 30 d` : a.state === 'active' ? 'no runs in 30 d' : '';
+  const u = a.use30d ?? { runs: 0, cost: [] };
+  const use = u.runs > 0 ? `${usageLine({ runs: u.runs, cost: u.cost })} · 30 d` : a.state === 'active' ? 'no runs in 30 d' : '';
   return [pipelinesText(a), use, limitsText(a.limits)].filter(Boolean).join(' · ');
 }
