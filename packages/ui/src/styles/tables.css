@@ -18,7 +18,8 @@
   .table-frame.stacked > table > tbody > tr { display: flex; flex-direction: column; }
   .table-frame.stacked > table > tbody > tr > th[scope=row] { order: -1; }
   .table-frame.stacked > table > tbody > tr:first-child { border-top: 0; }
-  .table-frame.stacked > table > tbody > tr > :is(th, td) { padding: var(--space-1) 0; border: 0; text-align: start; white-space: normal; overflow-wrap: anywhere; }
+  /* A name cell's wide-table sizing (.t-name: width 100%, max-width 0) would leave a stacked block one character wide. */
+  .table-frame.stacked > table > tbody > tr > :is(th, td) { padding: var(--space-1) 0; border: 0; text-align: start; white-space: normal; overflow-wrap: anywhere; width: auto; max-width: none; }
   .table-frame.stacked { --stack-label: min(var(--size-label), 40cqi); }
   .table-frame.stacked > table > tbody > tr > td[data-label] { position: relative; padding-inline-start: calc(var(--stack-label) + var(--space-3)); }
   .table-frame.stacked > table > tbody > tr > td[data-label]::before { content: attr(data-label); position: absolute; inset-inline-start: 0; inline-size: var(--stack-label); color: var(--fg-muted); overflow-wrap: anywhere; }
