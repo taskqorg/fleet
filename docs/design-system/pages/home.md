@@ -18,7 +18,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)). The shel
 2. **Composer.** Picks who to talk to and sends the first message; see **Composer** below.
 3. **Session groups.** Cards in this order, each group with its count; an empty group is hidden. A session's group is the word of its state (registry `life`, [OR-55](../controls/state-badge.md#dot-and-word)), the same word its view shows:
    1. **Waiting for you:** sessions with an open question to this person, oldest question first.
-   2. **Failed:** sessions whose latest run failed.
+   2. **Failed:** people's own sessions whose latest run failed. A bot's failed session is that bot's problem, and an aggregated failure of one cause (`×N`) shows only as the pulse line's blocker chip.
    3. **Working:** sessions preparing or running an agent run, most recent activity first.
    4. **Queued:** sessions whose state reads Queued; no session state does today (a preparing session is Working).
 4. **Asleep.** Bots with no active run, as one row of dashed tiles: name, what the bot is for, when it was last used, and a Wake button.
