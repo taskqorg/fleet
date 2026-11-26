@@ -596,6 +596,15 @@ func TestBugsinkCatalogue(t *testing.T) {
 	if len(tools) != 6 {
 		t.Fatalf("bugsink tools: %v", tools)
 	}
+	// A local agent's server reads its spec here (fleet-connections.md §13): the bearer's connections with their tools.
+	status, _, v := gw.raw("POST", tokenSpecsPath, "Bearer "+testToken, `{}`)
+	specs, _ := json.Marshal(v)
+	if status != 200 || !strings.Contains(string(specs), `"name":"bugsink"`) || !strings.Contains(string(specs), `"event_stacktrace"`) || !strings.Contains(string(specs), "inputSchema") {
+		t.Fatalf("token specs: %d %s", status, specs)
+	}
+	if status, _, _ := gw.raw("POST", tokenSpecsPath, "Bearer not-a-token", `{}`); status != 401 {
+		t.Fatalf("token specs without a live token: %d", status)
+	}
 }
 
 // Requirement: fleet-connections.md §5 path fields and §8 YouTrack: each youtrack catalogue tool (coordinator providers.go) reaches the

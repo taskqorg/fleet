@@ -332,13 +332,25 @@ type runToken struct {
 	SystemActor             *string         `json:"systemActor,omitempty"`
 	RevokedAt               json.RawMessage `json:"revokedAt,omitempty"`
 	DirectorAccessRevokedAt json.RawMessage `json:"directorAccessRevokedAt,omitempty"`
+	// Calls: a personal token's last call per connection (local agents' report, fleet-connections.md §13).
+	Calls map[string]tokenCalls `json:"calls,omitempty"`
+}
+
+// tokenCalls: one connection's last successful and last failed call of a personal token.
+type tokenCalls struct {
+	OkAt     int64  `json:"okAt,omitempty"`
+	OkTool   string `json:"okTool,omitempty"`
+	FailAt   int64  `json:"failAt,omitempty"`
+	FailTool string `json:"failTool,omitempty"`
+	FailCode string `json:"failCode,omitempty"`
 }
 
 type runTokenPayload struct {
-	ExperimentID  *string  `json:"experimentId"`
-	Connections   []string `json:"connections"`
-	FileDownloads []string `json:"fileDownloads,omitempty"`
-	SystemActor   *string  `json:"systemActor,omitempty"`
+	ExperimentID  *string               `json:"experimentId"`
+	Connections   []string              `json:"connections"`
+	FileDownloads []string              `json:"fileDownloads,omitempty"`
+	SystemActor   *string               `json:"systemActor,omitempty"`
+	Calls         map[string]tokenCalls `json:"calls,omitempty"`
 }
 
 func runTokenOf(r db.RunToken) (runToken, error) {
@@ -351,7 +363,7 @@ func runTokenOf(r db.RunToken) (runToken, error) {
 		ProjectID: r.ProjectID, ExperimentID: p.ExperimentID, PipelineRunID: r.PipelineRunID,
 		Connections: p.Connections, CreatedAt: msRaw(r.CreatedAt), FileDownloads: p.FileDownloads,
 		Step: r.Step != nil && *r.Step, Personal: r.Personal, SystemActor: p.SystemActor,
-		RevokedAt: msRaw(r.RevokedAt), DirectorAccessRevokedAt: msRaw(r.DirectorAccessRevokedAt),
+		RevokedAt: msRaw(r.RevokedAt), DirectorAccessRevokedAt: msRaw(r.DirectorAccessRevokedAt), Calls: p.Calls,
 	}, nil
 }
 
@@ -402,6 +414,7 @@ func runTokenPut(q *Request, t runToken) error {
 		Connections:   t.Connections,
 		FileDownloads: t.FileDownloads,
 		SystemActor:   t.SystemActor,
+		Calls:         t.Calls,
 	}
 	return q.db().RunTokenPut(q.ctx(), db.RunTokenPutParams{
 		ID:                      t.ID,

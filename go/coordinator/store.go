@@ -96,6 +96,8 @@ func lockRank(key string) (int, error) {
 		return 13, nil
 	case strings.HasPrefix(key, "board:") && len(key) > len("board:"):
 		return 14, nil
+	case strings.HasPrefix(key, "token-calls:") && len(key) > len("token-calls:"):
+		return 15, nil
 	default:
 		return -1, fmt.Errorf("unknown advisory lock scope %q", key)
 	}

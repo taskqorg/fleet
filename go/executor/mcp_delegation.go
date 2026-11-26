@@ -699,12 +699,14 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		s, err := arg(2, "tools")
-		if err != nil {
-			return err
-		}
-		spec, err := dec(s)
-		if err != nil {
+		// Without a spec (a local agent's settings, docs/designs/fleet-connections.md#13-local-agents) the spec comes
+		// from the gateway for this process's token, so the settings never hold stale tools.
+		var spec any
+		if s, err := arg(2, "tools"); err == nil {
+			if spec, err = dec(s); err != nil {
+				return err
+			}
+		} else if spec, err = specOf(context.Background(), conn); err != nil {
 			return err
 		}
 		// The executor passes the run token, gateway URL, Access file path and the run's work and input folders in a

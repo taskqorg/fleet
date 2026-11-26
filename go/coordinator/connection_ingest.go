@@ -272,6 +272,11 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	if err := connAccount(q, id, l, t.Step); err != nil {
 		return false, err
 	}
+	if t.Personal != nil {
+		if err := tokenCallNote(q, t.ID, l); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
 }
 

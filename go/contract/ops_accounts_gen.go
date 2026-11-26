@@ -2052,6 +2052,136 @@ func (v *LimitSubscription) Validate() error {
 	return nil
 }
 
+type LocalAgent struct {
+	ConnectedAt *int64                 `json:"connectedAt,omitempty"`
+	Connections []LocalAgentConnection `json:"connections"`
+	Harness     string                 `json:"harness"`
+	LastOkAt    *int64                 `json:"lastOkAt,omitempty"`
+	Machine     string                 `json:"machine"`
+	Missing     []string               `json:"missing"`
+	Name        string                 `json:"name"`
+	State       LocalAgentState        `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LocalAgent) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	for i := range v.Connections {
+		if err := Check(&v.Connections[i], "connections"); err != nil {
+			return err
+		}
+	}
+	if v.Missing == nil {
+		return Missing("missing")
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type LocalAgentConnectReply struct {
+	Command     string   `json:"command"`
+	Connections []string `json:"connections,omitempty"`
+	Harness     string   `json:"harness"`
+	Machine     string   `json:"machine"`
+	Name        string   `json:"name"`
+	NewToken    *bool    `json:"newToken,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LocalAgentConnectReply) Validate() error {
+	return nil
+}
+
+type LocalAgentConnectRequest struct {
+	Harness string `json:"harness"`
+	Machine string `json:"machine"`
+	Reissue *bool  `json:"reissue,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LocalAgentConnectRequest) Validate() error {
+	return nil
+}
+
+type LocalAgentConnection struct {
+	FailAt   *int64  `json:"failAt,omitempty"`
+	FailCode *string `json:"failCode,omitempty"`
+	FailTool *string `json:"failTool,omitempty"`
+	Name     string  `json:"name"`
+	OkAt     *int64  `json:"okAt,omitempty"`
+	OkTool   *string `json:"okTool,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LocalAgentConnection) Validate() error {
+	return nil
+}
+
+type LocalAgentDisconnectReply struct {
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LocalAgentDisconnectReply) Validate() error {
+	return nil
+}
+
+type LocalAgentDisconnectRequest struct {
+	Harness string `json:"harness"`
+	Machine string `json:"machine"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LocalAgentDisconnectRequest) Validate() error {
+	return nil
+}
+
+type LocalAgentState string
+
+const (
+	LocalAgentStateConnected    LocalAgentState = "connected"
+	LocalAgentStateRefresh      LocalAgentState = "refresh"
+	LocalAgentStateUnused       LocalAgentState = "unused"
+	LocalAgentStateDisconnected LocalAgentState = "disconnected"
+)
+
+// LocalAgentStateValues lists every LocalAgentState in schema order.
+var LocalAgentStateValues = []LocalAgentState{LocalAgentStateConnected, LocalAgentStateRefresh, LocalAgentStateUnused, LocalAgentStateDisconnected}
+
+// Valid: v is one of the schema's values.
+func (v LocalAgentState) Valid() bool {
+	for _, x := range LocalAgentStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type LocalAgentsReply struct {
+	Agents []LocalAgent `json:"agents"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LocalAgentsReply) Validate() error {
+	if v.Agents == nil {
+		return Missing("agents")
+	}
+	for i := range v.Agents {
+		if err := Check(&v.Agents[i], "agents"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LocalAgentsRequest = map[string]json.RawMessage
+
 // ManagedAccount: A managed-account record with its inspections, checks and setting history.
 type ManagedAccount struct {
 	Harness *string `json:"harness,omitempty"`
@@ -2472,6 +2602,9 @@ func init() {
 		"connections_token_list":      {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Gateway tokens of connections: id, connection, created and revoked, never the token value", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_token_revoke":    {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
 		"connections_token_set":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "The owner only (not an agent). Replaces a live personal token's connections, checked as connections_token_create checks them; the token keeps its value. Answers the connection specs for the session's MCP servers.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"connections\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\",\"connections\"],\"type\":\"object\"}")},
+		"local_agent_connect":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "The owner or a full-access person (not an agent). Connects one harness (claude, codex, antigravity) on one Fleet host: mints the personal token <machine>-<harness> naming every connection the person may use, or refreshes its connections, and answers the command to run on that machine (with the new token inside, once). reissue: a new token value.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"harness\":{\"type\":\"string\"},\"machine\":{\"type\":\"string\"},\"reissue\":{\"type\":\"boolean\"}},\"required\":[\"machine\",\"harness\"],\"type\":\"object\"}")},
+		"local_agent_disconnect":      {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "owner", Agent: "no", Description: "The owner or a full-access person. Revokes the local agent's token.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"harness\":{\"type\":\"string\"},\"machine\":{\"type\":\"string\"}},\"required\":[\"machine\",\"harness\"],\"type\":\"object\"}")},
+		"local_agents":                {Read: true, Long: false, Errors: []int{}, Auth: "owner", Agent: "tool", Description: "Per machine and harness: the local agent's state (connected, refresh, unused, disconnected), its connections with the last successful and failed call, and the connections it lacks.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"price_add":                   {Read: false, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Record a price observation for a subject and unit (price, currency, source, optional sourceRef, observedAt, effectiveFrom)", InputSchema: json.RawMessage("{\"properties\":{\"currency\":{\"type\":\"string\"},\"effectiveFrom\":{\"type\":\"integer\"},\"observedAt\":{\"type\":\"integer\"},\"price\":{\"$comment\":\"Per one unit.\",\"type\":\"number\"},\"source\":{\"$comment\":\"vendor | snapshot | owner\",\"type\":\"string\"},\"sourceRef\":{\"type\":\"string\"},\"subject\":{\"$comment\":\"A resolved model ID or \\u003cconnection\\u003e/\\u003ctool\\u003e.\",\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"subject\",\"unit\",\"price\",\"currency\",\"source\"],\"type\":\"object\"}")},
 		"price_refresh":               {Read: false, Long: true, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "Preview official standard provider API rate changes without writes. Apply a verified preview with its planId. Report provider gaps, proposed changes and appended IDs for prices_list and setting_changes readback.", InputSchema: json.RawMessage("{\"properties\":{\"planId\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"prices_list":                 {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Recorded prices, optionally of one subject", InputSchema: json.RawMessage("{\"properties\":{\"subject\":{\"type\":\"string\"}},\"type\":\"object\"}")},
