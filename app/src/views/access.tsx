@@ -12,6 +12,7 @@ import {
 import { op, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { AccessServers, useAccessGrants } from './access-grants.tsx';
+import { LocalAgents } from './local-agents.tsx';
 
 type Status = Ops['access_status']['reply'];
 type Item = Status['items'][number];
@@ -123,6 +124,8 @@ export function Access(props: { onOpen: (path: string) => void }) {
       }}</For>
       {/* Servers (approved 2026-11-26): the project servers Fleet's provisioner reaches (access-grants.tsx). */}
       <AccessServers />
+      {/* Local agents (board drafts/local-agents): a person's own harnesses connected to Fleet's connections. */}
+      <LocalAgents />
       <DetailSection title="Browser only (links)">
         <span class="muted">Flow · Gemini Notebook · Genie · Gemini in Chrome · Veo 3.1 (blocked: needs a Google Cloud sign-in, not a key).</span>
       </DetailSection>
