@@ -768,7 +768,8 @@ CREATE TABLE host_diagnosis (
   "host_id" text NOT NULL,
   "requested_at" timestamp with time zone,
   "reported_at" timestamp with time zone,
-  "report" jsonb
+  "report" jsonb,
+  "project_id" text
 );
 CREATE TABLE host_observation (
   "id" text NOT NULL,

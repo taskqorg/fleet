@@ -6,6 +6,7 @@ package main
 // last poll, the commands the host has not confirmed and the queued runs dispatch skipped this host for.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
@@ -17,7 +18,24 @@ import (
 )
 
 func init() {
-	op("host_diagnose", hostDiagnose)
+	op("host_diagnose", func(q *Request, b *contract.HostDiagnoseRequest) (contract.HostDiagnoseReply, error) {
+		wait := hostDiagnoseWait
+		if b.Wait != nil {
+			wait = min(time.Duration(max(*b.Wait, 0))*time.Second, hostDiagnoseMaxWait)
+		}
+		return diagnoseHost(q, b.Host, wait, true)
+	})
+	// The host detail reads the latest report (and rereads it when one lands: host_diagnosis rows feed the change
+	// stream as kind host); it never asks, so a read stays a read.
+	op("host_diagnosis", func(q *Request, b *contract.HostDiagnosisRequest) (contract.HostDiagnosisReply, error) {
+		return diagnoseHost(q, b.Host, 0, false)
+	})
+	// Without a button (owner, 2026-11-26) the report stays fresh by itself: every online host is asked on this tick.
+	onStart(func(ctx context.Context, a *App) {
+		every(ctx, "host-diagnosis", envMs("FLEET_HOST_DIAGNOSIS_TICK_MS", 300_000), func(ctx context.Context) error {
+			return connDB(ctx, a).HostDiagnosisAskOnline(ctx)
+		})
+	})
 }
 
 const (
@@ -25,8 +43,10 @@ const (
 	hostDiagnoseMaxWait = 60 * time.Second
 )
 
-func hostDiagnose(q *Request, b *contract.HostDiagnoseRequest) (contract.HostDiagnoseReply, error) {
+// diagnoseHost answers the host's diagnosis; ask asks the host for a fresh report first and waits up to wait for it.
+func diagnoseHost(q *Request, host string, wait time.Duration, ask bool) (contract.HostDiagnoseReply, error) {
 	a, ctx := q.app, q.ctx()
+	b := struct{ Host string }{host}
 	out := contract.HostDiagnoseReply{Host: b.Host, CoordinatorCommands: []contract.HostDiagnoseCommand{}, Waiting: []contract.HostDiagnoseWaiting{}}
 	if b.Host == "" {
 		return out, fail(400, "host is required")
@@ -42,25 +62,21 @@ func hostDiagnose(q *Request, b *contract.HostDiagnoseRequest) (contract.HostDia
 	if q.person != nil && !fullAccess(q.person) && deref(obs.Holder) != q.person.Email {
 		return out, fail(404, "Unknown host "+b.Host) // not the holder: the host is not shown, as in hosts_list
 	}
-	wait := hostDiagnoseWait
-	if b.Wait != nil {
-		wait = min(time.Duration(max(*b.Wait, 0))*time.Second, hostDiagnoseMaxWait)
-	}
 	asked := time.Now()
-	if wait > 0 {
+	if ask {
 		if err := d.HostDiagnosisAsk(ctx, b.Host); err != nil {
 			return out, err
 		}
 		a.wakeHost(b.Host) // a host in its long poll answers now and reports in the poll after it
 	}
-	var rep db.HostDiagnosis
+	var rep db.HostDiagnosisGetRow
 	deadline := time.Now().Add(wait)
 	for {
 		rep, err = d.HostDiagnosisGet(ctx, b.Host)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return out, err
 		}
-		if wait == 0 || rep.ReportedAt != nil && !rep.ReportedAt.Before(asked) || time.Now().After(deadline) {
+		if !ask || wait == 0 || rep.ReportedAt != nil && !rep.ReportedAt.Before(asked) || time.Now().After(deadline) {
 			break
 		}
 		select {
@@ -72,7 +88,7 @@ func hostDiagnose(q *Request, b *contract.HostDiagnoseRequest) (contract.HostDia
 	if rep.ReportedAt != nil {
 		ms := rep.ReportedAt.UnixMilli()
 		out.ReportedAt = &ms
-		out.Fresh = !rep.ReportedAt.Before(asked)
+		out.Fresh = ask && !rep.ReportedAt.Before(asked)
 		var r contract.HostDiagnosis
 		if json.Unmarshal(rep.Report, &r) == nil {
 			out.Report = &r
@@ -116,8 +132,8 @@ func hostDiagnose(q *Request, b *contract.HostDiagnoseRequest) (contract.HostDia
 		var cands []candidate
 		json.Unmarshal(w.Candidates, &cands)
 		for _, c := range cands {
-			if c.Host == b.Host {
-				reason := firstString(c.Skipped, "not skipped: another candidate ranked first")
+			if c.Host == b.Host && c.Skipped != "" { // an unskipped candidate here waits its turn: no reason to show
+				reason := c.Skipped
 				x.SkippedHere = &reason
 				break
 			}

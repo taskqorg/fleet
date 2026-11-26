@@ -1047,6 +1047,17 @@
    "status": null
   },
   {
+   "id": "9b59522cadee5513",
+   "canvas": "screens/host-diagnosis",
+   "name": "HD · Host diagnosis (approved, no button)",
+   "page": "host-diagnosis",
+   "width": null,
+   "frameWidth": 1926,
+   "theme": null,
+   "component": false,
+   "status": "approved"
+  },
+  {
    "id": "aae08fb7ff0748f2",
    "canvas": "screens/host-updates",
    "name": "1A · Changes: grouped by kind (recommended)",
