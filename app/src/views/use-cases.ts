@@ -206,7 +206,8 @@ export function buildUseCaseTree(
   useCases: readonly RegistryUseCase[],
   opts: UseCaseTreeOptions = {},
 ): { nodes: CatalogueTreeNode[]; archivedNodes: CatalogueTreeNode[] } {
-  const projectOf = (u: RegistryUseCase) => (isArchivedUseCase(u) ? undefined : opts.projectOf?.(u));
+  // A code benchmark or a real-work case belongs to its collection whatever project ran it (owner, 2026-11-27).
+  const projectOf = (u: RegistryUseCase) => (isArchivedUseCase(u) || isBenchmarkUseCase(u) || isRealWorkUseCase(u) ? undefined : opts.projectOf?.(u));
   const { collections, archived } = groupUseCases(useCases.filter(u => !projectOf(u)));
   const projects = new Map<string, { name: string; items: RegistryUseCase[] }>();
   for (const u of useCases) {

@@ -12,7 +12,7 @@ import {
   type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem,
   type IconName, ShellStatus, ShellActions, actions, Presets, QuestionCard, DetailHead, StateDot, MatrixCell, DiffRow,
   InheritedRows, AgeChip, cause, finishedStates, type Life, type MatrixCellState, type View,
-  timeOf, basisOf,
+  timeOf, basisOf, LiveRow,
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type OpName, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -30,7 +30,7 @@ import {
   groupUseCases, isLabEligibleUseCase, matchingExamplesForUseCase, resolveSuiteKey, type RegistryUseCase, type SuiteKey,
 } from './use-cases.ts';
 import type {
-  LabExampleEntry, LabExperimentRecord, LabLeaderboardEntry, LabRating, LabScoreSummary, LabVariant, ProjectAssessmentRef,
+  LabExampleEntry, LabExperimentRecord, LabWithBot, LabLeaderboardEntry, LabRating, LabScoreSummary, LabVariant, ProjectAssessmentRef,
 } from '../../../contracts/generated/ops.ts';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
@@ -247,7 +247,7 @@ export function Lab(props: { id?: string }) {
       defaultCollapsed: false,
       children: items.toSorted((a, b) => (RUN_STATE_ORDER[a.state] ?? 4) - (RUN_STATE_ORDER[b.state] ?? 4)).map(e => ({
         id: e.id,
-        label: e.labGroup || e.goal || e.pipelineId,
+        label: nameOf(e),
         sub: subtitle(e),
         state: { family: 'experiment', state: e.state, reason: e.stopReason ?? undefined },
         href: `/lab/${encodeURIComponent(e.id)}`,
@@ -440,6 +440,8 @@ export function Lab(props: { id?: string }) {
       projectOf={id => projectOfExperiment().get(id)}
       onOpenExperiment={x => go(`/lab/${encodeURIComponent(x)}`)}
       onRun={onRun}
+      useCaseName={id => useCaseById().get(id)?.goal}
+      onOpenUseCase={u => go(`/lab/use-case:${encodeURIComponent(u)}`)}
     />
   );
 
@@ -448,8 +450,9 @@ export function Lab(props: { id?: string }) {
     <article class="detail" aria-label="Lab overview">
       <Waiting experiments={waitingExperiments()} entries={view.data?.leaderboard.entries ?? []} approvals={approvals()} openRatings={openRatings()} now={now}
         onOpen={x => go(`/lab/${encodeURIComponent(x)}`)} onAll={() => pickView(VIEW_WAITING)} />
+      <WithBots items={view.data?.withBots ?? []} experiments={rawExperiments()} onOpen={x => go(`/lab/${encodeURIComponent(x)}`)} />
       <HistoryPreview entries={view.data?.history} to="/history?section=lab" />
-      {comparison('All use cases')}
+      {comparison('Best per use case')}
     </article>
   );
 
@@ -509,6 +512,8 @@ export function Lab(props: { id?: string }) {
   />;
 }
 
+/** The experiment's human name (its record title, "antigravity 1.5.18 pin · PR #1175"), else its group or goal. */
+const nameOf = (e: LabExperimentRecord) => e.title || e.labGroup || e.goal || e.pipelineId;
 const title = (e: LabExperimentRecord) => `${e.pipelineId} · ${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.map(v => v.label).join(' vs ')}`;
 const subtitle = (e: LabExperimentRecord) => `${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.length > 2 ? `${e.variants.length} variants` : e.variants.map(v => v.label).join(' vs ')}`;
 
@@ -553,7 +558,7 @@ function Waiting(props: {
       <div class="lab-qs stack-pad">
         <For each={props.experiments.slice(0, QUESTIONS_SHOWN)}>{e => <>
           <QuestionCard
-            question={`${shorten(e.labGroup || e.goal || e.pipelineId)} finished. Which variant do you adopt?`}
+            question={`${shorten(nameOf(e))} finished. Which variant do you adopt?`}
             choices={choicesOf(e)}
             answering={answering()?.id === e.id ? answering()!.label : undefined}
             answered={answered()[e.id]}
@@ -582,6 +587,28 @@ function Waiting(props: {
           />
         </Show>
       </div>
+    </section>
+  </Show>;
+}
+
+/**
+ * What agents decide (OR-71): their experiments' open decisions and failed gates, passively, each with the bot or agent
+ * that owns it. No action here; the person talks to that bot if they want to.
+ */
+function WithBots(props: { items: readonly LabWithBot[]; experiments: readonly LabExperimentRecord[]; onOpen: (id: string) => void }) {
+  const byId = createMemo(() => new Map(props.experiments.map(e => [e.id, e])));
+  const rows = createMemo(() => props.items.flatMap(b => { const e = byId().get(b.experimentId); return e ? [{ b, e }] : []; }));
+  return <Show when={rows().length > 0}>
+    <section class="panel" aria-label="With bots" data-ui="lab-with-bots">
+      <header class="panel-h"><Icon name="bot" /><h2>With bots</h2><span class="muted mono">{rows().length}</span></header>
+      <ul class="live-list">
+        <For each={rows()}>{r => (
+          <LiveRow kind="event" at={ms(r.e.decidedAt ?? r.e.launchedAt ?? r.e.createdAt)} state={r.b.failed ? 'failed' : 'waiting'}
+            text={r.b.failed ? `${nameOf(r.e)} failed${r.e.decisionReason ? `: ${r.e.decisionReason}` : ''}` : `${nameOf(r.e)} finished`}
+            onOpen={() => props.onOpen(r.e.id)}
+            facts={<span class="lr-fact muted">{r.b.failed ? 'problem' : 'decision'} with {r.b.owner}</span>} />
+        )}</For>
+      </ul>
     </section>
   </Show>;
 }
@@ -994,7 +1021,7 @@ function Experiment(props: { id: string; projectName: (projectId: string) => str
           crumb={<>
             {/* The project's pipeline page: back to the project the run belongs to. */}
             <Show when={e().projectId}>{p => <><Go to={pipelinePath(p(), e().pipelineId)}>{props.projectName(p())}</Go>{' · '}</>}</Show>
-            {e().labGroup || e().pipelineId}
+            {e().title || e().labGroup || e().pipelineId}
           </>}
           title={e().goal || title(e())}
           onClose={() => props.onClose()}
