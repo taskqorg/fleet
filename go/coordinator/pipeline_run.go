@@ -719,32 +719,72 @@ type pipelineSignature struct {
 	MethodID   *string   `json:"methodId"`
 	ProjectID  string    `json:"projectId"`
 	Query      string    `json:"query"`
+	Refs       []pipelineRefSignature `json:"refs,omitempty"` // inputs by reference, as asked: a retry is the same request whatever the file holds now
 }
+
+type pipelineRefSignature struct {
+	Connection string `json:"connection"`
+	File       string `json:"file"`
+	Path       string `json:"path"`
+}
+
+// pipelineInputsSigned: a pipeline_run's inputs checked (distinct relative paths, an artifact or a ref each) and as
+// its signature names them: stored artifacts as staged input files (example/<path>), refs as asked.
+func pipelineInputsSigned(inputs []contract.PipelineRunInput) ([]fileRef, []pipelineRefSignature, error) {
+	seen := map[string]bool{}
+	var files []fileRef
+	var refs []pipelineRefSignature
+	for _, in := range inputs {
+		if !pipelineInputPath(in.Path) || pipelineReservedInput(in.Path) || seen[in.Path] {
+			return nil, nil, fail(400, "inputs: each path must be a distinct relative file path")
+		}
+		if (in.Ref == nil) == (deref(in.ArtifactId) == "") {
+			return nil, nil, fail(400, "input:"+in.Path+": give either artifactId or ref")
+		}
+		seen[in.Path] = true
+		if in.Ref != nil {
+			refs = append(refs, pipelineRefSignature{Connection: in.Ref.Connection, File: in.Ref.Path, Path: in.Path})
+		} else {
+			files = append(files, fileRef{ArtifactID: *in.ArtifactId, Path: "example/" + in.Path})
+		}
+	}
+	return files, refs, nil
+}
+
+// pipelineRequestFresh: no run of the project answers requestID yet.
+func pipelineRequestFresh(q *Request, projectID, requestID string) (bool, error) {
+	fresh := false
+	err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+		prev, err := q.db().PipelineRunsByProjectRequest(q.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: projectID, RequestID: requestID})
+		fresh = len(prev) == 0
+		return err
+	})
+	return fresh, err
+}
+
+// refKey: an input by reference in Request.refInputs.
+func refKey(r contract.PipelineRunRef) string { return r.Connection + "\x00" + r.Path }
 
 // pipelineRunInputs: a pipeline_run's input files, each a stored artifact of the project (an agent saves its files with
 // artifact_save first) or a file on one of the project's files grants (ref, staged into an artifact by pipelineRefStage
-// first, outside any transaction), given to every step as example/<path>, as a Lab example's input files are.
+// outside any transaction, or before a native agent's receipt by receiptStageRefs), given to every step as
+// example/<path>, as a Lab example's input files are.
 func pipelineRunInputs(q *Request, projectID string, inputs []contract.PipelineRunInput) ([]fileRef, error) {
-	seen := map[string]bool{}
-	for _, in := range inputs {
-		if !pipelineInputPath(in.Path) || pipelineReservedInput(in.Path) || seen[in.Path] {
-			return nil, fail(400, "inputs: each path must be a distinct relative file path")
-		}
-		if (in.Ref == nil) == (deref(in.ArtifactId) == "") {
-			return nil, fail(400, "input:"+in.Path+": give either artifactId or ref")
-		}
-		if in.Ref != nil && q.tx != nil {
-			return nil, fail(400, "input:"+in.Path+": an input by reference is read by a direct pipeline_run call")
-		}
-		seen[in.Path] = true
+	if _, _, err := pipelineInputsSigned(inputs); err != nil {
+		return nil, err
 	}
 	out := []fileRef{}
 	for _, in := range inputs {
 		id := deref(in.ArtifactId)
 		if in.Ref != nil {
-			var err error
-			if id, err = pipelineRefStage(q, projectID, in.Path, *in.Ref); err != nil {
-				return nil, err
+			if id = q.refInputs[refKey(*in.Ref)]; id == "" {
+				if q.tx != nil {
+					return nil, fail(400, "input:"+in.Path+": an input by reference is read before the run's transaction")
+				}
+				var err error
+				if id, err = pipelineRefStage(q, projectID, in.Path, *in.Ref); err != nil {
+					return nil, err
+				}
 			}
 		}
 		a, err := artifactRow(withTx(q), q.app, id)
@@ -781,18 +821,29 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 	if rid == "" || len(rid) > 200 || strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 {
 		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
 	}
-	callback, err := appRunCheck(q, projectID, rid, notify)
+	files, refs, err := pipelineInputsSigned(inputs)
 	if err != nil {
 		return nil, err
 	}
-	staged, err := pipelineRunInputs(q, projectID, inputs)
+	signature := sha256hex([]byte(canonical(pipelineSignature{ProjectID: projectID, Query: query, MethodID: methodID, Invocation: inv, Inputs: files, Refs: refs})))
+	// A retried request answers its run (or its conflict) before any limit or input read.
+	fresh, err := pipelineRequestFresh(q, projectID, rid)
 	if err != nil {
 		return nil, err
+	}
+	callback, err := appRunCheck(q, fresh, notify)
+	if err != nil {
+		return nil, err
+	}
+	var staged []fileRef
+	if fresh {
+		if staged, err = pipelineRunInputs(q, projectID, inputs); err != nil {
+			return nil, err
+		}
 	}
 	var run *runRecord
 	old := false
 	err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
-		signature := sha256hex([]byte(canonical(pipelineSignature{ProjectID: projectID, Query: query, MethodID: methodID, Invocation: inv, Inputs: staged})))
 		prev, err := runsOf(q)(q.db().PipelineRunsByProjectRequest(q.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: projectID, RequestID: rid}))
 		if err != nil {
 			return err
@@ -803,6 +854,9 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 			}
 			run, old = prev[0], true
 			return nil
+		}
+		if !fresh {
+			return fail(409, "The run of request "+rid+" changed meanwhile; call pipeline_run again")
 		}
 		p, err := projectContext(q, projectID)
 		if err != nil {

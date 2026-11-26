@@ -368,7 +368,7 @@ func projectAppMint(q *Request, app db.ProjectAppGetRow, directedBy string) (str
 		Sha256: secretHash(value)}); err != nil {
 		return "", err
 	}
-	if err := appCallbackSecretNew(q, app.ID); err != nil {
+	if err := appCallbackSecretEnsure(q, app.ID); err != nil {
 		return "", err
 	}
 	if err := audit(q, "project-app:"+app.ID, "key", nil, keyID, auditExtra{}); err != nil {
@@ -548,8 +548,8 @@ func appRunLimit(q *Request, appID string, l contract.ProjectAppLimits, now time
 }
 
 // appRunCheck: before an app's pipeline_run reads any input, its notify URL (checked against the app's callback
-// origins) and, for a request that starts a new run, its limits. Other callers may not ask for a callback.
-func appRunCheck(q *Request, projectID, requestID string, notify *contract.PipelineRunNotify) (string, error) {
+// origins) and, for a request that starts a new run (fresh), its limits. Other callers may not ask for a callback.
+func appRunCheck(q *Request, fresh bool, notify *contract.PipelineRunNotify) (string, error) {
 	if q.caller == nil {
 		if notify != nil {
 			return "", fail(400, "notify: only a project app's run calls back")
@@ -571,9 +571,8 @@ func appRunCheck(q *Request, projectID, requestID string, notify *contract.Pipel
 				return err
 			}
 		}
-		prev, err := q.db().PipelineRunsByProjectRequest(q.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: projectID, RequestID: requestID})
-		if err != nil || len(prev) > 0 {
-			return err // a retried request answers its run whatever the limits
+		if !fresh {
+			return nil // a retried request answers its run whatever the limits
 		}
 		return appRunLimit(q, q.caller.ID, p.Limits, time.Now())
 	})

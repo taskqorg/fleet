@@ -87,8 +87,8 @@ func pipelineRefRead(ctx context.Context, a *App, projectID, input string, ref c
 	if line.Outcome != contract.CallOutcomeOk {
 		code, reason := 409, deref(line.ErrorCode)
 		switch reason {
-		case "bad-path", "file-refused", "bad-request", "path-refused":
-			code = 400 // outside the grant, or no such file
+		case "bad-path", "file-refused":
+			code = 400 // the gateway's: outside the grant, or no such file
 		}
 		var text struct {
 			Text string `json:"text"`

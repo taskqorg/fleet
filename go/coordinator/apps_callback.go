@@ -56,9 +56,11 @@ func appNotifyURL(p projectAppPayload, n *contract.PipelineRunNotify) (string, e
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 		return "", fail(400, "notify.url: an https URL on one of the app's callbackOrigins")
 	}
-	if !slices.Contains(p.CallbackOrigins, "https://"+strings.ToLower(u.Host)) {
-		return "", fail(400, "notify.url: "+u.Scheme+"://"+u.Host+" is not one of the app's callbackOrigins (project_app_set)")
+	origin := "https://" + strings.TrimSuffix(strings.ToLower(u.Host), ":443")
+	if !slices.Contains(p.CallbackOrigins, origin) && !slices.Contains(p.CallbackOrigins, origin+":443") {
+		return "", fail(400, "notify.url: "+origin+" is not one of the app's callbackOrigins (project_app_set)")
 	}
+	u.Fragment, u.RawFragment = "", ""
 	return u.String(), nil
 }
 
@@ -69,27 +71,40 @@ func appCallbackSecretFile(appID string) string {
 	return filepath.Join(secretDir(), "apps", "callback", appID)
 }
 
-// appCallbackSecretNew: a fresh callback secret for app, written once the minting transaction commits (a rotation
-// replaces it; the app takes it with its new key).
-func appCallbackSecretNew(q *Request, appID string) error {
+// appCallbackSecretEnsure: app's callback secret, made with its first key (at approval) and kept across key rotations,
+// so callbacks verify while the app still uses its previous key. As the key file, it is written in the minting
+// transaction and goes again if that transaction rolls back.
+func appCallbackSecretEnsure(q *Request, appID string) error {
 	file := appCallbackSecretFile(appID)
 	if file == "" {
 		return fail(409, "FLEET_SECRET_DIR is not set on the coordinator")
+	}
+	if _, err := os.Stat(file); err == nil {
+		return nil
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
-	value := "fcs_" + base64.RawURLEncoding.EncodeToString(raw)
-	afterCommit(q, func() {
-		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
-			return
-		}
-		tmp := file + ".new"
-		if os.WriteFile(tmp, []byte(value), 0o600) == nil {
-			_ = os.Rename(tmp, file)
-		}
-	})
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil // made meanwhile by another mint
+	}
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString("fcs_" + base64.RawURLEncoding.EncodeToString(raw))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(file)
+		return err
+	}
+	afterRollback(q, func() { _ = os.Remove(file) })
 	return nil
 }
 
@@ -139,7 +154,7 @@ func appCallbackStep(q *Request, now time.Time, c *kitClaim) error {
 	if run == nil {
 		return nil
 	}
-	if run.State == "running" {
+	if run.State != "succeeded" && run.State != "failed" && run.State != "cancelled" {
 		return errors.New("the run has not ended")
 	}
 	secret := appCallbackSecret(cb.AppID)

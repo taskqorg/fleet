@@ -569,13 +569,15 @@ func (a *App) uploadWritePart(ctx context.Context, p *Person, id string, first i
 		u.Multipart = &mp
 	}
 	n := int(first/u.PartBytes) + 1
+	size := int64(len(body))
 	etag, err := t.UploadPart(s.Bucket, u.Staging, *u.Multipart, n, body)
+	body = nil
 	sent()
 	if err != nil {
 		return err
 	}
 	u.Parts = append(u.Parts, S3Part{PartNumber: n, ETag: etag})
-	u.Received, u.Sha = first+int64(len(body)), hashState(h)
+	u.Received, u.Sha = first+size, hashState(h)
 	return a.saveUpload(ctx, p, u, first, nil)
 }
 
