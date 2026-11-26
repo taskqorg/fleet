@@ -41,6 +41,13 @@ func (u *updater) prepareHarnesses(p *part, release string) error {
 				continue
 			}
 			if err := u.prepareHarness(p, name, a, path); err != nil {
+				// A host tool that fails here never holds back the release: the host takes everything else, the
+				// executor leaves the tool off its PATH (managedTools), and the host reports it missing in
+				// toolVersions until a release brings a pin that installs. Agent CLIs still refuse the release.
+				if k.Name == harnessrelease.Tools.Name {
+					log.Printf("%s %s %s skipped: %v", kindLabel(k), name, a.Version, err)
+					continue
+				}
 				var invalid refusal
 				if errors.As(err, &invalid) {
 					return fmt.Errorf("%w: %v", refusal(fmt.Sprintf("%s: %s/%s %s", invalid, k.Name, name, a.Version)), err)
@@ -67,14 +74,12 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset, p
 				}
 			}
 		}
-		kept, err := u.retainedHarnesses(p)
-		if err != nil {
-			return err
-		}
-		if kept[dir] {
-			return fmt.Errorf("%w: cached payload %s is damaged and belongs to the current or rollback release", refusal("harness-cache"), dir)
-		}
-		if err := p.r.RemoveAll(dir); err != nil {
+		// A damaged cache (a tool wrote into it, or it was changed) is moved aside, not refused: a running release may
+		// still use it, and the fresh copy installed below takes its path. The prune removes the moved copy once no
+		// release keeps it (it never does: its name is not a digest).
+		aside := fmt.Sprintf("%s.damaged-%d", dir, time.Now().UnixNano())
+		log.Printf("cached payload %s is damaged: moved to %s", dir, aside)
+		if err := p.r.Rename(dir, aside); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -127,10 +132,10 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset, p
 	}
 
 	tmp := dir + ".tmp"
-	if err := p.r.RemoveAll(tmp); err != nil {
+	if err := removeCache(p.r, tmp); err != nil {
 		return err
 	}
-	defer p.r.RemoveAll(tmp)
+	defer removeCache(p.r, tmp)
 	if err := copyTree(files, p.r, tmp); err != nil {
 		return err
 	}
@@ -144,7 +149,40 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset, p
 	if err := p.r.WriteFile(filepath.Join(tmp, ".fleet-checksums"), checksums, 0o444); err != nil {
 		return err
 	}
+	// Directories read-only too, so a component cannot write into its own cache (Python's __pycache__, npm -g).
+	if err := chmodDirs(p.r, tmp, false); err != nil {
+		return err
+	}
 	return p.r.Rename(tmp, dir)
+}
+
+// chmodDirs takes write permission off every directory of the tree (writable false) or gives it back to the owner.
+func chmodDirs(r *os.Root, dir string, writable bool) error {
+	return fs.WalkDir(r.FS(), dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Perm() &^ 0o222
+		if writable {
+			mode = info.Mode().Perm() | 0o200
+		}
+		return r.Chmod(path, mode)
+	})
+}
+
+// removeCache removes a cached payload tree, whose directories are read-only. A missing tree is no error.
+func removeCache(r *os.Root, dir string) error {
+	if _, err := r.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := chmodDirs(r, dir, true); err != nil {
+		return err
+	}
+	return r.RemoveAll(dir)
 }
 
 func (u *updater) downloadHarness(a harnessrelease.Asset, path string, newHash func() hash.Hash) error {
@@ -225,7 +263,7 @@ func (u *updater) pruneHarnesses(p *part) {
 			for _, entry := range entries {
 				path := filepath.Join(parent, entry.Name())
 				if !keep[path] {
-					if err := p.r.RemoveAll(path); err != nil {
+					if err := removeCache(p.r, path); err != nil {
 						log.Printf("prune %s %s: %v", kindLabel(k), path, err)
 					}
 				}

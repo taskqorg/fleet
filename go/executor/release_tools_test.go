@@ -31,7 +31,7 @@ func TestToolSemver(t *testing.T) {
 
 // Requirement: pinned PATH tools put their directories on PATH, while the project browser's Playwright module and
 // Chromium go to FLEET_PLAYWRIGHT_MODULE and FLEET_BROWSER_EXECUTABLE. Risk: the browser keeps the host's hand-installed
-// copy, or Chromium's directory lands on every run's PATH.
+// copy, Chromium's directory lands on every run's PATH, or one missing tool stops the executor.
 func TestManagedTools(t *testing.T) {
 	root := t.TempDir()
 	dir := t.TempDir()
@@ -69,7 +69,8 @@ func TestManagedTools(t *testing.T) {
 		t.Errorf("env %v", env)
 	}
 	os.Remove(filepath.Join(root, read["chromium"].Executable("chromium")))
-	if _, _, err := managedTools(root, read); err == nil {
-		t.Error("a missing Chromium starts the executor")
+	dirs, env, err = managedTools(root, read)
+	if err != nil || env["FLEET_BROWSER_EXECUTABLE"] != "" || len(dirs) != len(harnessrelease.Tools.Names)-2 {
+		t.Errorf("a missing Chromium must be left out, the rest kept: %v %v %v", dirs, env, err)
 	}
 }

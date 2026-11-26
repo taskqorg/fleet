@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,8 +87,7 @@ func useManagedTools() error {
 }
 
 // managedToolDirs: the directory of each pinned PATH tool's executable under the releases root, and the variables of
-// the others, each checked present. A missing one stops the executor, so the release fails its health check and rolls
-// back. Playwright's pinned executable is its cli.js; the module the browser script loads is index.js beside it.
+// the others. A missing one (fleet-update skipped it) is left out, so the rest still apply. Playwright's pinned executable is its cli.js; the module the browser script loads is index.js beside it.
 func managedToolDirs(root string) ([]string, map[string]string, error) {
 	exe, err := os.Executable()
 	if err == nil {
@@ -116,7 +116,10 @@ func managedTools(root string, assets map[string]harnessrelease.Asset) ([]string
 			path = filepath.Join(filepath.Dir(path), "index.js")
 		}
 		if !isFile(path) {
-			return nil, nil, fmt.Errorf("release-managed tool %s %s executable missing", name, a.Version)
+			// fleet-update skipped this tool (it failed to install or run here): the host's own copy, if any, stays
+			// in use, and toolVersions shows the pinned tool missing.
+			log.Printf("release-managed tool %s %s executable missing: left off PATH", name, a.Version)
+			continue
 		}
 		if key, ok := harnessrelease.Tools.Env[name]; ok {
 			env[key] = path

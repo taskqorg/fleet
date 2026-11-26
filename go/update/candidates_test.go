@@ -23,6 +23,7 @@ func TestStageCandidate(t *testing.T) {
 	f := newFixture(t)
 	f.u.client = tls.Client()
 	dir := t.TempDir()
+	writableOnCleanup(t, dir)
 	asset := func(ver, path string) string {
 		sum := sha256.Sum256([]byte(script[path]))
 		return `{"version":"` + ver + `","url":"` + tls.URL + path + `","sha256":"` + hex.EncodeToString(sum[:]) + `"}`
