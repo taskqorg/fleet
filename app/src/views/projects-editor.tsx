@@ -33,6 +33,8 @@ export function ProjectEditor(props: {
   id?: string;
   /** The project's code, for its tile in the colour picker (OR-72). */
   code?: string;
+  /** The stored automatic colour the Auto swatch shows. */
+  autoColor?: string;
   onClose?: () => void;
   onSaved: (id: string) => void;
   renderWork?: (projectId: string, detail: Detail | null) => JSX.Element;
@@ -353,7 +355,7 @@ export function ProjectEditor(props: {
             {field('Name', str(bundle().settings.name), v => setting('name', v))}
             {field('Description', str(bundle().settings.description), v => setting('description', v))}
             {field('Domain', str(bundle().settings.domain), v => setting('domain', v))}
-            <KvRow label="Colour" value={<IdentityPicker code={props.code ?? ''}
+            <KvRow label="Colour" value={<IdentityPicker code={props.code ?? ''} auto={props.autoColor}
               color={str(bundle().settings.color)} pattern={str(bundle().settings.pattern)}
               onColor={c => unsetting('color', c)} onPattern={x => unsetting('pattern', x)} />} />
             <For each={bundle().contextFiles}>

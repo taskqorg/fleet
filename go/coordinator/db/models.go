@@ -1268,6 +1268,13 @@ type HostUpdate struct {
 	Payload     []byte
 }
 
+type IdentityColour struct {
+	Kind       string
+	ID         string
+	Colour     string
+	AssignedAt time.Time
+}
+
 type LabTrial struct {
 	ExecutionID      string
 	CellExample      string

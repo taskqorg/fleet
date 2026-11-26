@@ -413,6 +413,22 @@ CREATE OR REPLACE FUNCTION public.fleet_experiment_record()
  LANGUAGE plpgsql
 AS $function$ BEGIN IF NEW.state IN ('stopped', 'done') AND NEW.decision IS NULL THEN NEW.decision := 'pending'; END IF; IF OLD.state = 'draft' AND NEW.state <> 'draft' AND NEW.launched_at IS NULL THEN NEW.launched_at := now(); END IF; RETURN NEW; END $function$;
 
+CREATE OR REPLACE FUNCTION public.fleet_identity_assign()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE k text := CASE TG_TABLE_NAME WHEN 'bot' THEN 'bot' ELSE 'project' END; c text;
+BEGIN
+ IF TG_TABLE_NAME = 'definition' THEN IF NEW.kind <> 'project' THEN RETURN NULL; END IF; END IF;
+ PERFORM pg_advisory_xact_lock(hashtext('fleet_identity_assign'));
+ SELECT u.p INTO c FROM unnest(ARRAY['rose', 'violet', 'sky', 'teal', 'lime', 'sand', 'coral', 'slate']) WITH ORDINALITY AS u(p, o)
+  LEFT JOIN identity_colour i ON i.kind = k AND i.colour = u.p GROUP BY u.p, u.o ORDER BY count(i.id), u.o LIMIT 1;
+ INSERT INTO identity_colour(kind, id, colour) VALUES (k, NEW.id, c) ON CONFLICT DO NOTHING;
+ RETURN NULL;
+END $function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_inherit_app()
  RETURNS trigger
  LANGUAGE plpgsql

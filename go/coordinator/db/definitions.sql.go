@@ -1288,3 +1288,33 @@ func (q *Queries) DefWriteRequestInsert(ctx context.Context, arg DefWriteRequest
 	)
 	return err
 }
+
+const identityColours = `-- name: IdentityColours :many
+SELECT id, colour FROM identity_colour WHERE kind = $1 ORDER BY id
+`
+
+type IdentityColoursRow struct {
+	ID     string
+	Colour string
+}
+
+// The stored automatic identity colour of every project or bot (identity_colour, OR-72).
+func (q *Queries) IdentityColours(ctx context.Context, kind string) ([]IdentityColoursRow, error) {
+	rows, err := q.db.Query(ctx, identityColours, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []IdentityColoursRow
+	for rows.Next() {
+		var i IdentityColoursRow
+		if err := rows.Scan(&i.ID, &i.Colour); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

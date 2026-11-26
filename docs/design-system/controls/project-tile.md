@@ -6,7 +6,7 @@
 
 **Anatomy.** A square with a hairline border on the page background: the project's code in mono, bold, in its identity colour, over a bar in the same colour along the bottom edge, solid or hatched. Sizes: `xs` 16 (the project reference, [entity card](entity-card.md)), `sm` 20 (Summary lines, the colour picker, Setup), `md` 32 (`size-row`, a Projects list row), `lg` 40 (`size-avatar-lg`, the project head).
 
-**Colour.** Settings `color` names one of eight identity colours (rose, violet, sky, teal, lime, sand, coral, slate) and `pattern` the bar (`solid`, the default, or `hatch`). Absent means automatic: the colour comes from a hash of the code, so a project is coloured without anyone choosing, and the same code always gets the same colour. The owner or an agent changes them in Setup (About, pencil, Colour) or with `project_update`; a value outside the vocabulary is refused (400).
+**Colour.** Settings `color` names one of eight identity colours (rose, violet, sky, teal, lime, sand, coral, slate) and `pattern` the bar (`solid`, the default, or `hatch`). Absent means automatic: when a project (or a bot) is created it is given the least-used colour of its kind, stored once (`identity_colour`) and never recomputed, so no two share a colour while one is free (owner, 27 Nov 2026); `project_list` returns it as `autoColor`. Before the first read the tile falls back to a colour picked from the code. The owner or an agent changes them in Setup (About, pencil, Colour) or with `project_update`; a value outside the vocabulary is refused (400).
 
 **States.** None: the tile is identity, never state ([OR-72](#rules-kept-here)). Readiness is a separate fact on the row ([fact count](fact-count.md), `setup`).
 

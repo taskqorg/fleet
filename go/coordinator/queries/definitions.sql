@@ -244,3 +244,7 @@ FROM definition_publish p LEFT JOIN task t ON t.id=p.task_id ORDER BY p.kind, p.
 -- Live experiments naming the id anywhere in their variants (a Lab variant's experiment).
 SELECT id, coalesce(nullif(goal,''), pipeline_id)::text AS title, state, created_at FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL
  AND jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',sqlc.arg(id)::text)) ORDER BY id;
+
+-- name: IdentityColours :many
+-- The stored automatic identity colour of every project or bot (identity_colour, OR-72).
+SELECT id, colour FROM identity_colour WHERE kind = sqlc.arg(kind) ORDER BY id;

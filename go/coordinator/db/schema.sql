@@ -827,6 +827,12 @@ CREATE TABLE host_update (
   "at" timestamp with time zone NOT NULL,
   "payload" jsonb NOT NULL
 );
+CREATE TABLE identity_colour (
+  "kind" text NOT NULL,
+  "id" text NOT NULL,
+  "colour" text NOT NULL,
+  "assigned_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE lab_trial (
   "execution_id" text NOT NULL,
   "cell_example" text NOT NULL,

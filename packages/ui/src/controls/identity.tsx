@@ -9,7 +9,8 @@ export type IdentityColor = (typeof vocabulary.identity.colors)[number];
 export type IdentityPattern = 'solid' | 'hatch';
 export const identityColors = vocabulary.identity.colors as IdentityColor[];
 
-/** The colour a project or bot shows: the one its settings name, else one picked from its code (stable, no storage). */
+/** The colour a project or bot shows: the one its settings name (or the stored automatic one the caller passes), else,
+ * before one is stored, one picked from its code. */
 export function identityColor(code: string, color?: string | null): IdentityColor {
   if (color && (identityColors as string[]).includes(color)) return color as IdentityColor;
   let h = 0;
@@ -72,12 +73,12 @@ export function FactCounts(p: { facts: Partial<Record<FactKind, number | null | 
 
 /** The identity picker of Setup (project) and Settings & Memory (bot): Auto and the eight colours, then the pattern.
  * A radio group each; Auto clears the setting. */
-export function IdentityPicker(p: { code: string; color?: string | null; pattern?: string | null; onColor: (c: IdentityColor | null) => void; onPattern: (x: IdentityPattern | null) => void }) {
+export function IdentityPicker(p: { code: string; auto?: string; color?: string | null; pattern?: string | null; onColor: (c: IdentityColor | null) => void; onPattern: (x: IdentityPattern | null) => void }) {
   const auto = () => !p.color || !(identityColors as string[]).includes(p.color);
   return (
     <div class="idpick" data-ui="identity-picker">
       <div class="idpick-row" role="radiogroup" aria-label="Colour">
-        <button type="button" role="radio" aria-checked={auto() ? 'true' : 'false'} class={['idpick-sw auto', `id-${identityColor(p.code)}`, { on: auto() }]} data-tip="Auto: from the code" onClick={() => p.onColor(null)}>
+        <button type="button" role="radio" aria-checked={auto() ? 'true' : 'false'} class={['idpick-sw auto', `id-${identityColor(p.code, p.auto)}`, { on: auto() }]} data-tip="Auto: the colour Fleet gave it" onClick={() => p.onColor(null)}>
           <span class="idpick-auto">A</span>
         </button>
         <For each={identityColors}>
@@ -90,7 +91,7 @@ export function IdentityPicker(p: { code: string; color?: string | null; pattern
         <For each={['solid', 'hatch'] as IdentityPattern[]}>
           {x => (
             <button type="button" role="radio" aria-checked={(p.pattern ?? 'solid') === x ? 'true' : 'false'} class={['idpick-pat', { on: (p.pattern ?? 'solid') === x }]} onClick={() => p.onPattern(x === 'solid' ? null : x)}>
-              <ProjectTile code={p.code} color={p.color} pattern={x} size="sm" />
+              <ProjectTile code={p.code} color={p.color || p.auto} pattern={x} size="sm" />
               <span>{x === 'solid' ? 'Solid' : 'Hatched'}</span>
             </button>
           )}
