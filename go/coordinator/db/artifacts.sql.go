@@ -1363,17 +1363,19 @@ func (q *Queries) ArtVerifyQueued(ctx context.Context, arg ArtVerifyQueuedParams
 }
 
 const artWorkFacts = `-- name: ArtWorkFacts :many
-SELECT e.id,e.harness,coalesce(d.executions,0)::bigint AS task_attempts FROM execution e LEFT JOIN task_derived d ON d.task_id=e.task_id
+SELECT e.id,e.harness,e.variant,coalesce(d.executions,0)::bigint AS task_attempts FROM execution e LEFT JOIN task_derived d ON d.task_id=e.task_id
 WHERE e.id=ANY($1::text[])
 `
 
 type ArtWorkFactsRow struct {
 	ID           string
 	Harness      *string
+	Variant      *string
 	TaskAttempts int64
 }
 
-// The work facts of a results page (controls/work-facts.md): per run, its harness and its task's executions so far.
+// The work facts of a results page (controls/work-facts.md): per run, its harness, its Lab variant and its task's
+// executions so far.
 func (q *Queries) ArtWorkFacts(ctx context.Context, ids []string) ([]ArtWorkFactsRow, error) {
 	rows, err := q.db.Query(ctx, artWorkFacts, ids)
 	if err != nil {
@@ -1383,7 +1385,12 @@ func (q *Queries) ArtWorkFacts(ctx context.Context, ids []string) ([]ArtWorkFact
 	var items []ArtWorkFactsRow
 	for rows.Next() {
 		var i ArtWorkFactsRow
-		if err := rows.Scan(&i.ID, &i.Harness, &i.TaskAttempts); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Harness,
+			&i.Variant,
+			&i.TaskAttempts,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

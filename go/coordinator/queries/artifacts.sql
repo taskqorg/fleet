@@ -237,8 +237,9 @@ ORDER BY l.account_id, l.period, l.event_seq DESC;
 SELECT * FROM artifact WHERE state='stored' ORDER BY seq;
 
 -- name: ArtWorkFacts :many
--- The work facts of a results page (controls/work-facts.md): per run, its harness and its task's executions so far.
-SELECT e.id,e.harness,coalesce(d.executions,0)::bigint AS task_attempts FROM execution e LEFT JOIN task_derived d ON d.task_id=e.task_id
+-- The work facts of a results page (controls/work-facts.md): per run, its harness, its Lab variant and its task's
+-- executions so far.
+SELECT e.id,e.harness,e.variant,coalesce(d.executions,0)::bigint AS task_attempts FROM execution e LEFT JOIN task_derived d ON d.task_id=e.task_id
 WHERE e.id=ANY(@ids::text[]);
 
 -- name: ArtTaskAttempts :many
