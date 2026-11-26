@@ -1899,13 +1899,14 @@ const (
 	PinsStageOffline   PinsStage = "offline"
 	PinsStageHosts     PinsStage = "hosts"
 	PinsStageMerging   PinsStage = "merging"
+	PinsStageBlocked   PinsStage = "blocked"
 	PinsStageLanded    PinsStage = "landed"
 	PinsStageReverting PinsStage = "reverting"
 	PinsStageFailed    PinsStage = "failed"
 )
 
 // PinsStageValues lists every PinsStage in schema order.
-var PinsStageValues = []PinsStage{PinsStageOffline, PinsStageHosts, PinsStageMerging, PinsStageLanded, PinsStageReverting, PinsStageFailed}
+var PinsStageValues = []PinsStage{PinsStageOffline, PinsStageHosts, PinsStageMerging, PinsStageBlocked, PinsStageLanded, PinsStageReverting, PinsStageFailed}
 
 // Valid: v is one of the schema's values.
 func (v PinsStage) Valid() bool {
@@ -3238,6 +3239,7 @@ type SystemChangesRequest = map[string]json.RawMessage
 // SystemPinsProposal: The kind's open pull request automation/<kind>-pins, or the one merged in the last day (landed), as the delivery pass last read it.
 type SystemPinsProposal struct {
 	At       string            `json:"at"`
+	Blocked  *string           `json:"blocked,omitempty"`
 	Failures []string          `json:"failures"`
 	Number   int64             `json:"number"`
 	Stage    PinsStage         `json:"stage"`

@@ -1023,6 +1023,16 @@ const providersJSON = `
     "inputSchema": {"type": "object", "required": ["owner", "repo", "ref"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "ref": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "ref": "^[A-Za-z0-9_./-]+$"}
    },
+   "pull_get": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/pulls/{number}",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "One pull request, with its mergeable state.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "number"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "number": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "number": "^[0-9]+$"}
+   },
    "pull_files": {
     "method": "GET",
     "path": "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100",

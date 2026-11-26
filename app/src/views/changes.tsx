@@ -218,6 +218,7 @@ const STAGE: Record<PinsStage, { life: Life; text: string; tone: string }> = {
   offline: { life: 'working', text: 'offline checks', tone: 't-running' },
   hosts: { life: 'working', text: 'on hosts', tone: 't-running' },
   merging: { life: 'working', text: 'merging', tone: 't-running' },
+  blocked: { life: 'waiting', text: 'blocked', tone: 't-attention' },
   landed: { life: 'done', text: 'landed', tone: 't-success' },
   reverting: { life: 'waiting', text: 'reverting', tone: 't-attention' },
   failed: { life: 'failed', text: 'failed', tone: 't-danger' },
@@ -236,7 +237,7 @@ function ProposalRow(p: { group: SystemChangeKind; proposal: SystemPinsProposal 
   };
   return <LiveRow kind="event" state={stage().life} at={timeOf(p.proposal.at, Date.now())}
     text={`#${p.proposal.number} ${proposalTitle(p.group)}`}
-    facts={<span class={['lr-fact', 'pins-tone', stage().tone]} data-tip={p.proposal.failures.join('; ') || undefined}>{[stage().text, trials()].filter(Boolean).join(' · ')}</span>}
+    facts={<span class={['lr-fact', 'pins-tone', stage().tone]} data-tip={p.proposal.failures.join('; ') || undefined}>{[stage().text, p.proposal.blocked, trials()].filter(Boolean).join(' · ')}</span>}
     onOpen={() => window.open(p.proposal.url, '_blank', 'noopener')} />;
 }
 
@@ -274,7 +275,7 @@ function HostCell(p: { cell: SystemChangeComponentHost; href: string; onOpen: ()
 
 function ProposalCell(p: { c: SystemChangeComponent; proposal?: SystemPinsProposal }) {
   const failed = () => p.c.failures.length > 0;
-  const tone = (stage: PinsStage) => failed() ? 't-danger' : stage === 'reverting' ? 't-attention' : stage === 'landed' || stage === 'merging' ? 't-success' : 'muted';
+  const tone = (stage: PinsStage) => failed() ? 't-danger' : stage === 'reverting' || stage === 'blocked' ? 't-attention' : stage === 'landed' || stage === 'merging' ? 't-success' : 'muted';
   return <Show when={p.c.proposed} fallback={<span class="muted">—</span>}>{v => <>
     <span class="mono">{v()}</span>
     <Show when={p.proposal}>{pr => (
