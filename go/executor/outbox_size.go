@@ -28,6 +28,10 @@ func shrinkEvents(value M, limit int) {
 		for keep := 64 << 10; keep >= 256 && len(enc(ev)) > per; keep /= 2 {
 			cutStrings(ev, keep)
 		}
+		if len(enc(ev)) > per {
+			// Large without long strings (many small items): only the event's identity and its size go.
+			ev["data"] = map[string]any{}
+		}
 		if data, ok := ev["data"].(map[string]any); ok {
 			data["fleetTruncated"] = M{"bytes": before, "kept": len(enc(ev))}
 		}

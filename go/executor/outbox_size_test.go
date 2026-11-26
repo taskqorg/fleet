@@ -54,3 +54,16 @@ func TestRequeueOversizeEvents(t *testing.T) {
 		t.Fatalf("left %d, want the small refused row", n)
 	}
 }
+
+// Requirement: an event large from many small items still fits; risk: 413 and a requeue on every start.
+func TestShrinkEventsManySmallItems(t *testing.T) {
+	items := make([]any, 200_000)
+	for i := range items {
+		items[i] = "abcdefgh"
+	}
+	value := M{"events": []any{map[string]any{"id": "e1", "type": "item.completed", "data": map[string]any{"items": items}}}}
+	shrinkEvents(value, maxRequestBytes)
+	if n := len(enc(value)); n > maxRequestBytes {
+		t.Fatalf("batch %d bytes", n)
+	}
+}

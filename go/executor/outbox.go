@@ -28,6 +28,7 @@ import (
 
 // requeueUnauthorized: a 401 is a credential condition of the host, not of the row: at start those rows go back to the
 // queue.
+// requeueUnauthorized also re-queues event rows set aside for their size (see the oversize condition below).
 func requeueUnauthorized(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
