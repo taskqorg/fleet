@@ -401,7 +401,7 @@ func resourceValueCosts(c *contract.ResourceContributionV1, l *resourceLeaf, m c
 		}
 		return add(nil, contract.ResourceBasisUnavailable, nil, nil, 1)
 	}
-	if c.Kind == "tool_run" || l.ConnectionCost != nil {
+	if !pricedByTokens(c.Kind, l.Model, l.ConnectionCost != nil) {
 		if currency := l.DirectCurrency; currency != nil {
 			b := contract.ResourceBasisMeasured
 			if sub {

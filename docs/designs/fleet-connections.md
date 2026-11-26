@@ -242,6 +242,6 @@ Backup encryption is implemented by `deploy/infrastructure/fleet-backup.sh`; a b
 ## Not built
 
 - Script-step gateway token provisioning described above.
-- Usage reconciliation for Meshy and model APIs; Tavily has the per-key endpoint. Google AI records measured `usageMetadata.totalTokenCount`; Hugging Face usage is unavailable, not zero.
+- Usage reconciliation for Meshy and model APIs; Tavily has the per-key endpoint. A model tool (OpenAI `create_response`, Google AI `generate_content`, Anthropic `create_message`) records its token split and model, priced by model and token kind ([fleet-project-apps.md](fleet-project-apps.md#attribution-and-cost)); Hugging Face usage is unavailable, not zero.
 - Person/project/experiment budgets that name a connection, beyond the built connection-scoped budgets and snapshot scope flags.
 - Model API keys as harness endpoints; accepting a custom provider base URL and API key is not subscription OAuth support.

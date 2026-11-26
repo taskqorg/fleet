@@ -28,6 +28,18 @@ SELECT set_config('fleet.deleted', @shown::text, true);
 INSERT INTO question(id, kind, project_id, text, options, asked_by, data)
 VALUES (@id, @kind::question_kind, sqlc.narg(project_id), @text, sqlc.narg(options), @asked_by, @data);
 
+-- name: ConnTokensWrite :exec
+-- A model tool call's token split and model (gateway usageFields), measured as an agent run's are: the price lookup
+-- matches them by model and token kind. Runs after ConnectionCostWrite, which creates the row.
+UPDATE execution_totals SET
+  tokens_input = @input::bigint, tokens_input_basis = 'measured',
+  tokens_output = @output::bigint, tokens_output_basis = 'measured',
+  tokens_cache_read = sqlc.narg(cache_read)::bigint, tokens_cache_read_basis = CASE WHEN sqlc.narg(cache_read)::bigint IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_write = sqlc.narg(cache_write)::bigint, tokens_cache_write_basis = CASE WHEN sqlc.narg(cache_write)::bigint IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_reasoning = sqlc.narg(reasoning)::bigint, tokens_reasoning_basis = CASE WHEN sqlc.narg(reasoning)::bigint IS NULL THEN 'unavailable' ELSE 'measured' END,
+  model = @model::text, computed_at = now()
+WHERE execution_id = @id::text;
+
 -- name: ConnectionCostWrite :exec
 -- The connection_cost total and measured duration of one tool_run.
 INSERT INTO execution_totals(execution_id, project_id, directed_by, billing_basis, connection_cost, connection_cost_basis,

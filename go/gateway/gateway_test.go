@@ -816,6 +816,59 @@ func TestPathPatternsAndUsageField(t *testing.T) {
 	}
 }
 
+// Requirement: a model tool's reply gives the token split and model its price entries need (fleet-project-apps.md,
+// Attribution and cost), counted as an agent run's totals count them. Risk: cache reads or reasoning counted twice or
+// lost, or a reply without the fields priced as measured zero. The fields are the shipped catalogue's.
+func TestTokensAtCatalogue(t *testing.T) {
+	source, err := os.ReadFile("../coordinator/providers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, literal, _ := strings.Cut(string(source), "const providersJSON = `")
+	literal, _, _ = strings.Cut(literal, "`")
+	var catalogue map[string]struct {
+		Tools map[string]tool `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(literal), &catalogue); err != nil {
+		t.Fatal(err)
+	}
+	n := func(v int64) *int64 { return &v }
+	for _, c := range []struct {
+		provider, tool, reply string
+		want                  *contract.CallTokens
+		model                 string
+	}{
+		{"openai", "create_response", `{"model":"gpt-x","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":30},"output_tokens":50,"output_tokens_details":{"reasoning_tokens":20},"total_tokens":150}}`,
+			&contract.CallTokens{Input: 70, Output: 50, CacheRead: n(30), Reasoning: n(20)}, "gpt-x"},
+		{"google-ai", "generate_content", `{"modelVersion":"gemini-x","usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":40,"candidatesTokenCount":10,"thoughtsTokenCount":5,"totalTokenCount":115}}`,
+			&contract.CallTokens{Input: 60, Output: 15, CacheRead: n(40), Reasoning: n(5)}, "gemini-x"},
+		{"google-ai", "generate_content", `{"modelVersion":"gemini-x","usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}`,
+			&contract.CallTokens{Input: 7, Output: 3}, "gemini-x"},
+		{"google-ai", "generate_content", `{"modelVersion":"gemini-x","usageMetadata":{"promptTokenCount":100,"toolUsePromptTokenCount":400,"candidatesTokenCount":50,"totalTokenCount":550}}`,
+			&contract.CallTokens{Input: 500, Output: 50}, "gemini-x"},
+		{"anthropic", "create_message", `{"model":"claude-x","usage":{"input_tokens":10,"output_tokens":7,"cache_read_input_tokens":4,"cache_creation_input_tokens":null}}`,
+			&contract.CallTokens{Input: 10, Output: 7, CacheRead: n(4)}, "claude-x"},
+		{"openai", "create_response", `{"usage":{"input_tokens":1,"output_tokens":1}}`, nil, ""},
+		{"google-ai", "generate_content", `{"modelVersion":"gemini-x","usageMetadata":{"promptTokenCount":1,"cachedContentTokenCount":2,"candidatesTokenCount":1}}`, nil, ""},
+	} {
+		tl := catalogue[c.provider].Tools[c.tool]
+		f := tl.UsageFields
+		if f == nil || c.provider != "anthropic" && tl.UsageField == nil {
+			// Without a split (no model in the reply) the total still counts for a connection budget.
+			t.Fatalf("%s %s: no usageFields or total usageField", c.provider, c.tool)
+		}
+		got, model, ok := tokensAt([]byte(c.reply), f)
+		if c.want == nil {
+			if ok {
+				t.Fatalf("%s: tokens %+v from %s", c.tool, got, c.reply)
+			}
+			continue
+		}
+		expect(t, []any{ok, model}, []any{true, c.model}, c.provider+" model")
+		expect(t, *got, *c.want, c.provider+" split")
+	}
+}
+
 type seenUpload struct {
 	auth, contentType  string
 	length, read       int64 // Content-Length and the bytes the provider read

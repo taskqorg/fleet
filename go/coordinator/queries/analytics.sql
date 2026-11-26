@@ -192,6 +192,8 @@ leaves AS MATERIALIZED (
   t.tool_calls,
   coalesce(t.tool_calls_basis, 'unavailable') AS tool_calls_basis,
   t.connection_cost,
+  -- priced by model and token kind (an agent run, a model tool call), else by the connection's usage
+  (CASE WHEN e.kind = 'tool_run' THEN nullif(coalesce(t.model, e.model), '') IS NOT NULL ELSE t.connection_cost IS NULL END) AS by_tokens,
   coalesce(t.connection_cost_basis, 'unavailable') AS connection_cost_basis,
   coalesce(e.data->>'connection', '') || '/' || coalesce(e.data->>'tool', '') AS conn_subject,
   nullif(t.connection_cost->>'unit', '') AS conn_unit,
@@ -248,35 +250,35 @@ leaf_priced AS (
  LEFT JOIN LATERAL (
   SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms
   FROM price_entry p
-  WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_input > 0
+  WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_input > 0
     AND p.subject = l.model AND p.unit = 'input_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at
   ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1
  ) pi ON true
  LEFT JOIN LATERAL (
   SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms
   FROM price_entry p
-  WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_output > 0
+  WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_output > 0
     AND p.subject = l.model AND p.unit = 'output_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at
   ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1
  ) po ON true
  LEFT JOIN LATERAL (
   SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms
   FROM price_entry p
-  WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_cache_read > 0
+  WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_cache_read > 0
     AND p.subject = l.model AND p.unit = 'cache_read_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at
   ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1
  ) pcr ON true
  LEFT JOIN LATERAL (
   SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms
   FROM price_entry p
-  WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_cache_write > 0
+  WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_cache_write > 0
     AND p.subject = l.model AND p.unit = 'cache_write_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at
   ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1
  ) pcw ON true
  LEFT JOIN LATERAL (
   SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms
   FROM price_entry p
-  WHERE (l.kind = 'tool_run' OR l.connection_cost IS NOT NULL) AND l.direct_currency IS NULL
+  WHERE NOT l.by_tokens AND l.direct_currency IS NULL
     AND l.conn_unit IS NOT NULL AND l.conn_amount IS NOT NULL AND l.leaf_at IS NOT NULL
     AND p.subject = l.conn_subject AND p.unit = l.conn_unit AND p.effective_from <= l.leaf_at
   ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1
@@ -289,47 +291,47 @@ leaf_cost_items AS (
   SELECT
    CASE
     WHEN lp.direct_currency IS NOT NULL THEN lp.direct_currency
-    WHEN (lp.kind = 'tool_run' OR lp.connection_cost IS NOT NULL) AND lp.pc_id IS NOT NULL THEN lp.pc_currency
+    WHEN NOT lp.by_tokens AND lp.pc_id IS NOT NULL THEN lp.pc_currency
    END AS currency,
    CASE
     WHEN lp.direct_currency IS NOT NULL THEN CASE WHEN lp.is_sub THEN 'subscription' ELSE 'measured' END
-    WHEN (lp.kind = 'tool_run' OR lp.connection_cost IS NOT NULL) AND lp.pc_id IS NOT NULL THEN CASE WHEN lp.is_sub THEN 'subscription' ELSE 'estimated' END
+    WHEN NOT lp.by_tokens AND lp.pc_id IS NOT NULL THEN CASE WHEN lp.is_sub THEN 'subscription' ELSE 'estimated' END
    END AS cost_basis,
    CASE
     WHEN lp.direct_currency IS NOT NULL THEN lp.direct_amount
-    WHEN (lp.kind = 'tool_run' OR lp.connection_cost IS NOT NULL) AND lp.pc_id IS NOT NULL THEN lp.pc_price * lp.conn_amount
+    WHEN NOT lp.by_tokens AND lp.pc_id IS NOT NULL THEN lp.pc_price * lp.conn_amount
    END AS amount,
    CASE
-    WHEN (lp.kind = 'tool_run' OR lp.connection_cost IS NOT NULL) AND lp.direct_currency IS NULL THEN lp.pc_id
+    WHEN NOT lp.by_tokens AND lp.direct_currency IS NULL THEN lp.pc_id
    END AS price_id,
    CASE
-    WHEN (lp.kind = 'tool_run' OR lp.connection_cost IS NOT NULL) AND lp.direct_currency IS NULL THEN lp.pc_obs
+    WHEN NOT lp.by_tokens AND lp.direct_currency IS NULL THEN lp.pc_obs
    END AS obs_ms,
    CASE
-    WHEN (lp.kind = 'tool_run' OR lp.connection_cost IS NOT NULL) AND lp.direct_currency IS NULL AND lp.pc_id IS NULL THEN 1::bigint
+    WHEN NOT lp.by_tokens AND lp.direct_currency IS NULL AND lp.pc_id IS NULL THEN 1::bigint
     ELSE 0::bigint
    END AS unpriced
-  WHERE lp.kind = 'tool_run' OR lp.connection_cost IS NOT NULL
+  WHERE NOT lp.by_tokens
 
   UNION ALL
 
   SELECT lp.pi_currency, CASE WHEN lp.is_sub THEN 'subscription' ELSE 'estimated' END, lp.pi_price * lp.tokens_input::numeric, lp.pi_id, lp.pi_obs, CASE WHEN lp.pi_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE lp.kind <> 'tool_run' AND lp.connection_cost IS NULL AND lp.tokens_input > 0
+  WHERE lp.by_tokens AND lp.tokens_input > 0
 
   UNION ALL
 
   SELECT lp.po_currency, CASE WHEN lp.is_sub THEN 'subscription' ELSE 'estimated' END, lp.po_price * lp.tokens_output::numeric, lp.po_id, lp.po_obs, CASE WHEN lp.po_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE lp.kind <> 'tool_run' AND lp.connection_cost IS NULL AND lp.tokens_output > 0
+  WHERE lp.by_tokens AND lp.tokens_output > 0
 
   UNION ALL
 
   SELECT lp.pcr_currency, CASE WHEN lp.is_sub THEN 'subscription' ELSE 'estimated' END, lp.pcr_price * lp.tokens_cache_read::numeric, lp.pcr_id, lp.pcr_obs, CASE WHEN lp.pcr_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE lp.kind <> 'tool_run' AND lp.connection_cost IS NULL AND lp.tokens_cache_read > 0
+  WHERE lp.by_tokens AND lp.tokens_cache_read > 0
 
   UNION ALL
 
   SELECT lp.pcw_currency, CASE WHEN lp.is_sub THEN 'subscription' ELSE 'estimated' END, lp.pcw_price * lp.tokens_cache_write::numeric, lp.pcw_id, lp.pcw_obs, CASE WHEN lp.pcw_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE lp.kind <> 'tool_run' AND lp.connection_cost IS NULL AND lp.tokens_cache_write > 0
+  WHERE lp.by_tokens AND lp.tokens_cache_write > 0
 
   UNION ALL
 
@@ -461,6 +463,8 @@ stale_leaves AS MATERIALIZED (
   t.tokens_cache_read,
   t.tokens_cache_write,
   t.connection_cost,
+  -- priced by model and token kind (an agent run, a model tool call), else by the connection's usage
+  (CASE WHEN e.kind = 'tool_run' THEN nullif(coalesce(t.model, e.model), '') IS NOT NULL ELSE t.connection_cost IS NULL END) AS by_tokens,
   coalesce(e.data->>'connection', '') || '/' || coalesce(e.data->>'tool', '') AS conn_subject,
   nullif(t.connection_cost->>'unit', '') AS conn_unit,
   CASE WHEN t.connection_cost IS NOT NULL AND t.connection_cost_basis = 'measured' THEN
@@ -502,11 +506,11 @@ stale_priced AS (
   pcw.id AS pcw_id, pcw.price AS pcw_price, pcw.currency AS pcw_currency, pcw.obs_ms AS pcw_obs,
   pc.id AS pc_id, pc.price AS pc_price, pc.currency AS pc_currency, pc.obs_ms AS pc_obs
  FROM stale_leaves l
- LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_input > 0 AND p.subject = l.model AND p.unit = 'input_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pi ON true
- LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_output > 0 AND p.subject = l.model AND p.unit = 'output_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) po ON true
- LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_cache_read > 0 AND p.subject = l.model AND p.unit = 'cache_read_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcr ON true
- LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_cache_write > 0 AND p.subject = l.model AND p.unit = 'cache_write_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcw ON true
- LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE (l.kind = 'tool_run' OR l.connection_cost IS NOT NULL) AND l.direct_currency IS NULL AND l.conn_unit IS NOT NULL AND l.conn_amount IS NOT NULL AND l.leaf_at IS NOT NULL AND p.subject = l.conn_subject AND p.unit = l.conn_unit AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pc ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_input > 0 AND p.subject = l.model AND p.unit = 'input_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pi ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_output > 0 AND p.subject = l.model AND p.unit = 'output_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) po ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_cache_read > 0 AND p.subject = l.model AND p.unit = 'cache_read_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcr ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_cache_write > 0 AND p.subject = l.model AND p.unit = 'cache_write_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcw ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE NOT l.by_tokens AND l.direct_currency IS NULL AND l.conn_unit IS NOT NULL AND l.conn_amount IS NOT NULL AND l.leaf_at IS NOT NULL AND p.subject = l.conn_subject AND p.unit = l.conn_unit AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pc ON true
 ),
 stale_cost_items AS (
  SELECT
@@ -535,19 +539,19 @@ stale_cost_items AS (
    CASE WHEN p.direct_currency IS NULL THEN p.pc_id END AS price_id,
    CASE WHEN p.direct_currency IS NULL THEN p.pc_obs END AS obs_ms,
    CASE WHEN p.direct_currency IS NULL AND p.pc_id IS NULL THEN 1::bigint ELSE 0::bigint END AS unpriced
-  WHERE p.kind = 'tool_run' OR p.connection_cost IS NOT NULL
+  WHERE NOT p.by_tokens
   UNION ALL
   SELECT p.pi_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pi_price * p.tokens_input::numeric, p.pi_id, p.pi_obs, CASE WHEN p.pi_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_input > 0
+  WHERE p.by_tokens AND p.tokens_input > 0
   UNION ALL
   SELECT p.po_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.po_price * p.tokens_output::numeric, p.po_id, p.po_obs, CASE WHEN p.po_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_output > 0
+  WHERE p.by_tokens AND p.tokens_output > 0
   UNION ALL
   SELECT p.pcr_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcr_price * p.tokens_cache_read::numeric, p.pcr_id, p.pcr_obs, CASE WHEN p.pcr_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_cache_read > 0
+  WHERE p.by_tokens AND p.tokens_cache_read > 0
   UNION ALL
   SELECT p.pcw_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcw_price * p.tokens_cache_write::numeric, p.pcw_id, p.pcw_obs, CASE WHEN p.pcw_id IS NULL THEN 1::bigint ELSE 0::bigint END
-  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_cache_write > 0
+  WHERE p.by_tokens AND p.tokens_cache_write > 0
   UNION ALL
   SELECT NULL::text, NULL::text, NULL::numeric, NULL::text, NULL::bigint, 1::bigint
   WHERE p.kind IN ('agent_run', 'child_agent') AND p.connection_cost IS NULL AND coalesce(p.tokens_input, p.tokens_output, p.tokens_cache_read, p.tokens_cache_write) IS NULL

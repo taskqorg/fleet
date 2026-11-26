@@ -308,6 +308,12 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 	if err := writeConnectionCost(q, id, cost); err != nil {
 		return err
 	}
+	if tk := l.Tokens; tk != nil && deref(l.Model) != "" {
+		if err := q.db().ConnTokensWrite(q.ctx(), db.ConnTokensWriteParams{ID: id, Input: tk.Input, Output: tk.Output,
+			CacheRead: tk.CacheRead, CacheWrite: tk.CacheWrite, Reasoning: tk.Reasoning, Model: *l.Model}); err != nil {
+			return err
+		}
+	}
 	at := l.StartedAt
 	if l.ProviderAttemptAt != nil {
 		at = *l.ProviderAttemptAt

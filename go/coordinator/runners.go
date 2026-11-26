@@ -173,7 +173,7 @@ func runnerUsages(r *runnerRow) []usage {
 	if r.grouped {
 		return r.usages
 	}
-	if r.kind == "tool_run" {
+	if !pricedByTokens(r.kind, r.model, false) {
 		unit := runnerUnit(r)
 		if unit == nil {
 			return []usage{{r.subject, "", nil, r.at}}
