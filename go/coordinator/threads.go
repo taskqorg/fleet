@@ -76,6 +76,7 @@ type member struct {
 	state                  string
 	observation            db.Observation
 	startedAt, endedAt     *time.Time
+	waitReason, waitDetail *string // why a queued or waiting run has not started (dispatch's waitDetail)
 	seq                    int64
 	known                  bool
 	// pub: the delivery stage of its linked pull request, when pubRead (prefetchPublishing reads a page's at once).
@@ -123,7 +124,8 @@ func prefetchPublishing(q *Request, rows []trow, m map[string]member) error {
 type memberRow = db.ThreadMemberOfRow
 
 func memberOf(r memberRow) member {
-	m := member{id: r.ID, sessionID: r.SessionID, projectID: r.ProjectID, harness: r.Harness, model: r.Model, state: r.State, observation: r.Observation, startedAt: r.StartedAt, endedAt: r.EndedAt, seq: r.Seq, known: true}
+	m := member{id: r.ID, sessionID: r.SessionID, projectID: r.ProjectID, harness: r.Harness, model: r.Model, state: r.State, observation: r.Observation, startedAt: r.StartedAt, endedAt: r.EndedAt, seq: r.Seq, known: true,
+		waitReason: r.WaitReason, waitDetail: nonEmpty(&r.WaitDetail)}
 	json.Unmarshal(r.Effort, &m.effort)
 	return m
 }
@@ -239,6 +241,9 @@ func boundary(e member) threadBlock {
 	b := contract.BoundaryBlock{Kind: "boundary", Key: bkey{e.seq, 0}.String(), SessionId: nonEmpty(e.sessionID), ExecutionId: e.id,
 		State: contract.ExecutionState(e.state), StartedAt: msOfTime(e.startedAt), EndedAt: msOfTime(e.endedAt)}
 	b.Harness, b.Model, b.Effort = markOf(e)
+	if !terminalState[e.state] {
+		b.WaitReason, b.WaitDetail = e.waitReason, e.waitDetail
+	}
 	return blockOf(b)
 }
 
@@ -655,7 +660,7 @@ func composerTarget(q *Request, s *agentSession) (contract.ThreadComposerReply, 
 			continue
 		}
 		out.SessionId = e.sessionID
-		out.Active = &contract.SessionExecution{Id: e.id, State: e.state, Harness: e.harness, Model: e.model, Effort: e.effort}
+		out.Active = &contract.SessionExecution{Id: e.id, State: e.state, Harness: e.harness, Model: e.model, Effort: e.effort, WaitReason: e.waitReason, WaitDetail: e.waitDetail}
 		break
 	}
 	return out, nil

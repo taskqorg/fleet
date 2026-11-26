@@ -1198,6 +1198,13 @@ type Host struct {
 	TombstonedAt      *time.Time
 }
 
+type HostDiagnosis struct {
+	HostID      string
+	RequestedAt *time.Time
+	ReportedAt  *time.Time
+	Report      []byte
+}
+
 type HostObservation struct {
 	ID           string
 	Holder       *string

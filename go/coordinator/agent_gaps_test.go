@@ -72,6 +72,9 @@ func TestAgentGapRules(t *testing.T) {
 		{gapFailure{Source: "gateway", Tool: "issue_get", Connection: "youtrack", Text: "provider-404"}, "gateway-rejected:youtrack/issue_get", "provider-404"},
 		{gapFailure{Source: "gateway", Tool: "x", Connection: "y", Text: "caller-cancelled"}, "", ""},
 		{gapFailure{Source: "gateway", Tool: "x", Connection: "y", Text: "secret-found"}, "other", "secret-found"},
+		// Dispatch: a queued run no host can take until a setting changes (2026-11-26, a DAM turn on a broken glab login).
+		{gapFailure{Source: "dispatch", Tool: "forge", Text: "project forge connection unavailable on owner-mac"}, "auth-unready", "project forge connection unavailable on owner-mac"},
+		{gapFailure{Source: "dispatch", Tool: "roots", Text: "project files not under FLEET_PROJECT_ROOTS of windows"}, "placement-blocked:roots", "project files not under FLEET_PROJECT_ROOTS of windows"},
 	} {
 		class, line, ok := r.classify(c.f)
 		if !ok {

@@ -1249,6 +1249,12 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := recordDecision(q, cur, polling, cs, nil); err != nil {
 				return err
 			}
+			if settingsRefuse(cs) {
+				// Only a changed setting lets it start: an agent gap, so System › Agents shows the class and its setting.
+				if err := dispatchGap(q, id, cur.projectID(), cause, reason); err != nil {
+					return err
+				}
+			}
 		}
 		var holder string
 		if m := causeHost.FindStringSubmatch(cause); m != nil {

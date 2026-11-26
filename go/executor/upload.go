@@ -179,6 +179,7 @@ func newTransferClient(url, token, host string, access *[2]string) *transferClie
 type failure struct {
 	retry       bool
 	recoverable bool
+	refused     bool // the coordinator refused the reservation (4xx): never retried, and it fails the execution
 	msg         string
 }
 
@@ -486,6 +487,10 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 					Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom), Role: optStr(body.Role)}
 				r, f := transferReply(c, contract.RouteArtifactsReserve, req)
 				if f != nil {
+					if !f.retry {
+						// A refused reservation (purged content, no store, a bad name): the coordinator said no on purpose.
+						return nil, &failure{refused: true, msg: refusalText(f.msg)}
+					}
 					return nil, f
 				}
 				a := id
@@ -783,8 +788,31 @@ func settleJob(x execer, host, id, kind string, body transferJob, attempts int64
 			if body.ArtifactId != nil && *body.ArtifactId != "" {
 				aid = *body.ArtifactId
 			}
-			return queueTo(x, contract.RouteArtifactsFailed, contract.ArtifactFailedRequest{HostId: host, ArtifactId: aid, Error: f.msg})
+			req := contract.ArtifactFailedRequest{HostId: host, ArtifactId: aid, Error: f.msg, Name: optStr(body.Name)}
+			if body.ExecutionId != "" {
+				req.ExecutionId = &body.ExecutionId
+			}
+			if f.refused {
+				req.Refused = &f.refused
+			}
+			return queueTo(x, contract.RouteArtifactsFailed, req)
 		}
 	}
 	return nil
+}
+
+// refusalText: the message of a coordinator refusal ("409 {\"message\":\"Content was purged\"}" reads "409 Content was
+// purged"), or the text as it is.
+func refusalText(msg string) string {
+	code, rest, ok := strings.Cut(strings.TrimSpace(msg), " ")
+	if !ok {
+		return msg
+	}
+	var v struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(rest), &v) != nil || v.Message == "" {
+		return msg
+	}
+	return code + " " + v.Message
 }

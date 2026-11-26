@@ -350,7 +350,8 @@ func (q *Queries) ArtDeclareRequired(ctx context.Context, arg ArtDeclareRequired
 
 const artExecution = `-- name: ArtExecution :one
 SELECT id, coalesce(host_id,'')::text AS host_id, project_id, task_id, experiment_id,
- coalesce(data->'requiredArtifacts','[]'::jsonb)::jsonb AS required_artifacts
+ coalesce(data->'requiredArtifacts','[]'::jsonb)::jsonb AS required_artifacts,
+ coalesce(data->'refusedArtifacts','[]'::jsonb)::jsonb AS refused_artifacts
 FROM execution WHERE id=$1
 `
 
@@ -361,6 +362,7 @@ type ArtExecutionRow struct {
 	TaskID            *string
 	ExperimentID      *string
 	RequiredArtifacts []byte
+	RefusedArtifacts  []byte
 }
 
 // The execution an artifact belongs to: its host, project, task, experiment and declared required names.
@@ -374,6 +376,7 @@ func (q *Queries) ArtExecution(ctx context.Context, id string) (ArtExecutionRow,
 		&i.TaskID,
 		&i.ExperimentID,
 		&i.RequiredArtifacts,
+		&i.RefusedArtifacts,
 	)
 	return i, err
 }

@@ -433,3 +433,46 @@ func TestUploadTerminalFailureReleasesUpdateQueue(t *testing.T) {
 		}
 	})
 }
+
+// Requirement: a refused reservation (409 purged) fails the transfer at once and reports artifacts/failed with the
+// execution, the name and the coordinator's message; risk: the step waits a day for an upload that never starts
+// (2026-11-26, DAM page images).
+func TestRefusedReserveReportsExecutionAndName(t *testing.T) {
+	db, err := openJournal(filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	path := filepath.Join(t.TempDir(), "page.jpg")
+	if err := os.WriteFile(path, []byte("page"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body := M{"path": path, "name": "pages/p1.jpg", "executionId": "ex-1"}
+	if err := enqueue(db, "up-1", "upload", body); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(409)
+		fmt.Fprint(w, `{"statusCode":409,"error":"Conflict","message":"Content was purged"}`)
+	}))
+	defer server.Close()
+	v, f := runJob(newTransferClient(server.URL, "fixture", "host", nil), db, "up-1", "upload", readJob(enc(body)))
+	if f == nil || f.retry || !f.refused || f.msg != "409 Content was purged" {
+		t.Fatalf("refusal %+v", f)
+	}
+	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "host", "up-1", "upload", readJob(enc(body)), 0, v, f) }); err != nil {
+		t.Fatal(err)
+	}
+	var route, out string
+	if err := db.QueryRow("SELECT route,body FROM outbox LIMIT 1").Scan(&route, &out); err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		ExecutionId, Name string
+		Refused           bool
+	}
+	json.Unmarshal([]byte(out), &req)
+	if route != "/api/hosts/artifacts/failed" || req.ExecutionId != "ex-1" || req.Name != "pages/p1.jpg" || !req.Refused {
+		t.Fatalf("report %s %s", route, out)
+	}
+}

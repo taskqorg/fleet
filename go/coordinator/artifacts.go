@@ -509,7 +509,8 @@ func checkName(s string) (string, error) {
 type execInfo struct {
 	ID, HostID                    string
 	ProjectID, TaskID, Experiment *string
-	Required                      []string // the names an agent declared required (artifactDeclare)
+	Required                      []string          // the names an agent declared required (artifactDeclare)
+	Refused                       []artifactFailure // reservations the coordinator refused (artifactRefused)
 }
 
 func execGet(ctx context.Context, a *App, id string) (*execInfo, error) {
@@ -520,7 +521,10 @@ func execGet(ctx context.Context, a *App, id string) (*execInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &execInfo{ID: r.ID, HostID: r.HostID, ProjectID: r.ProjectID, TaskID: r.TaskID, Experiment: r.ExperimentID, Required: jsonStrings(r.RequiredArtifacts)}, nil
+	var refused []artifactFailure
+	json.Unmarshal(r.RefusedArtifacts, &refused)
+	return &execInfo{ID: r.ID, HostID: r.HostID, ProjectID: r.ProjectID, TaskID: r.TaskID, Experiment: r.ExperimentID, Required: jsonStrings(r.RequiredArtifacts),
+		Refused: refused}, nil
 }
 
 // jsonStrings: the strings of a JSON list (other items and other values are left out).
@@ -1108,6 +1112,11 @@ func reject(ctx context.Context, a *App, x *Artifact, s *StoreRow, key, why stri
 func artifactRefused(q *Request, b *contract.ArtifactFailedRequest) (any, error) {
 	a, ctx := q.app, q.ctx()
 	x, err := artifactRow(ctx, a, b.ArtifactId)
+	var he *HTTPError
+	if err != nil && asHTTP(err, &he) && he.Code == 404 && deref(b.ExecutionId) != "" && deref(b.Name) != "" {
+		// A refused reservation has no artifact row: the refusal goes on the execution (Refused save).
+		return refusedReservation(q, b)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1679,6 +1688,7 @@ type ArtifactRequirement struct {
 	Pending        []string          `json:"pending"`
 	Failed         []artifactFailure `json:"failed"`
 	Missing        []string          `json:"missing"`
+	Refused        []artifactFailure `json:"refused,omitempty"` // a refused save fails the execution, required or not
 	storedRequired []string
 }
 
@@ -1689,7 +1699,20 @@ type artifactFailure struct {
 }
 
 func (r *ArtifactRequirement) stillUploading() bool {
-	return len(r.Pending) > 0 && len(r.Failed) == 0 && len(r.Missing) == 0
+	return len(r.Pending) > 0 && len(r.Failed) == 0 && len(r.Missing) == 0 && len(r.Refused) == 0
+}
+
+// refusedError: the execution error of a refused save (docs/designs/fleet-data-foundation.md, Refused save), nil
+// without one.
+func (r *ArtifactRequirement) refusedError() *executionArtifactError {
+	if len(r.Refused) == 0 {
+		return nil
+	}
+	parts := []string{}
+	for _, f := range r.Refused {
+		parts = append(parts, f.Name+": "+deref(f.Error))
+	}
+	return &executionArtifactError{Code: "artifact-refused", Message: "upload refused: " + strings.Join(parts, "; "), Missing: r.Missing, Failed: r.Refused}
 }
 
 func artifactRequirement(ctx context.Context, a *App, executionID string, declared []string) (*ArtifactRequirement, error) {
@@ -1726,7 +1749,10 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 		have[r.Name] = true
 	}
 	isDiagnostic := diagnosticFile
-	out := &ArtifactRequirement{Pending: []string{}, Failed: []artifactFailure{}, Missing: []string{}}
+	out := &ArtifactRequirement{Pending: []string{}, Failed: []artifactFailure{}, Missing: []string{}, Refused: e.Refused}
+	for _, f := range e.Refused {
+		have[f.Name] = true // refused: neither pending nor missing
+	}
 	for _, r := range rows {
 		if r.Required || contains(named, r.Name) || match(r.Name) {
 			if r.State == "stored" {
@@ -1922,4 +1948,41 @@ func executionArtifacts(q *Request, executionID string) ([]executionArtifact, er
 		out = append(out, executionArtifact{ID: id, ArtifactID: x.ID, ExecutionID: x.ExecutionID, Path: x.Name, MediaType: x.MediaType, Size: x.Size, Sha256: x.ContentHash})
 	}
 	return out, nil
+}
+
+// refusedReservation records a reservation the coordinator refused on the uploading host's execution
+// (refusedArtifacts) and settles a waiting execution; the execution fails with the reason (refusedError). A failure that
+// was no refusal (an older host, or a transfer that broke before reserve) is recorded the same way: no row means no
+// upload, and waiting a day for it helps nobody.
+func refusedReservation(q *Request, b *contract.ArtifactFailedRequest) (any, error) {
+	a, ctx, id := q.app, q.ctx(), *b.ExecutionId
+	why := truncate(firstString(b.Error, "unknown reason"), 500)
+	err := a.store.Write(ctx, nil, []string{GLOBAL, DISPATCH}, func(w *Request) error {
+		if err := lockExecutionTask(w, id); err != nil {
+			return err
+		}
+		e, err := executionRawMaybe(w, id)
+		if err != nil {
+			return err
+		}
+		if e == nil || e.text("hostId") != b.HostId {
+			return fail(403, "Artifact not uploaded by this host")
+		}
+		var refused []artifactFailure
+		json.Unmarshal(e["refusedArtifacts"], &refused)
+		for _, f := range refused {
+			if f.Name == *b.Name {
+				return nil
+			}
+		}
+		e["refusedArtifacts"] = jsonBytes(append(refused, artifactFailure{Name: *b.Name, Error: &why}))
+		return executionPut(w, &e)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := settleWaiting(ctx, a, id); err != nil {
+		return nil, err
+	}
+	return contract.ArtifactStateReply{State: "failed"}, nil
 }

@@ -103,7 +103,8 @@ func (q *Queries) ThreadEventRows(ctx context.Context, id string) ([]ThreadEvent
 }
 
 const threadMemberOf = `-- name: ThreadMemberOf :many
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq,
+ e.wait_reason, coalesce(e.data->>'waitDetail','')::text AS wait_detail
 FROM execution e WHERE e.id=$1
 `
 
@@ -119,6 +120,8 @@ type ThreadMemberOfRow struct {
 	StartedAt   *time.Time
 	EndedAt     *time.Time
 	Seq         int64
+	WaitReason  *string
+	WaitDetail  string
 }
 
 // One execution as a thread member (its reply text), of any kind.
@@ -143,6 +146,8 @@ func (q *Queries) ThreadMemberOf(ctx context.Context, id string) ([]ThreadMember
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Seq,
+			&i.WaitReason,
+			&i.WaitDetail,
 		); err != nil {
 			return nil, err
 		}
@@ -155,7 +160,8 @@ func (q *Queries) ThreadMemberOf(ctx context.Context, id string) ([]ThreadMember
 }
 
 const threadMembersOfSession = `-- name: ThreadMembersOfSession :many
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq,
+ e.wait_reason, coalesce(e.data->>'waitDetail','')::text AS wait_detail
 FROM execution e WHERE e.kind='agent_run' AND e.session_id=$1 ORDER BY e.seq
 `
 
@@ -171,6 +177,8 @@ type ThreadMembersOfSessionRow struct {
 	StartedAt   *time.Time
 	EndedAt     *time.Time
 	Seq         int64
+	WaitReason  *string
+	WaitDetail  string
 }
 
 func (q *Queries) ThreadMembersOfSession(ctx context.Context, sessionID *string) ([]ThreadMembersOfSessionRow, error) {
@@ -194,6 +202,8 @@ func (q *Queries) ThreadMembersOfSession(ctx context.Context, sessionID *string)
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Seq,
+			&i.WaitReason,
+			&i.WaitDetail,
 		); err != nil {
 			return nil, err
 		}
@@ -210,7 +220,8 @@ const threadMembersOfTask = `-- name: ThreadMembersOfTask :many
 WITH attached AS (SELECT s.id AS session_id FROM session s WHERE s.task_id= $1::text),
  first_task AS (SELECT DISTINCT ON (x.session_id) x.session_id, x.task_id FROM execution x WHERE x.task_id IS NOT NULL
   AND x.session_id IN (SELECT y.session_id FROM execution y WHERE y.task_id= $1::text) ORDER BY x.session_id, x.seq)
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq,
+ e.wait_reason, coalesce(e.data->>'waitDetail','')::text AS wait_detail
 FROM execution e WHERE e.kind='agent_run' AND (e.task_id= $1::text OR (e.task_id IS NULL AND (e.session_id IN (SELECT f.session_id FROM first_task f WHERE f.task_id= $1::text)
  OR e.session_id IN (SELECT a.session_id FROM attached a)))) ORDER BY e.seq
 `
@@ -227,6 +238,8 @@ type ThreadMembersOfTaskRow struct {
 	StartedAt   *time.Time
 	EndedAt     *time.Time
 	Seq         int64
+	WaitReason  *string
+	WaitDetail  string
 }
 
 // Conversation threads (threads.go, docs/designs/fleet-conversations.md): a thread is the agent runs of a task (or of a
@@ -255,6 +268,8 @@ func (q *Queries) ThreadMembersOfTask(ctx context.Context, taskID string) ([]Thr
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Seq,
+			&i.WaitReason,
+			&i.WaitDetail,
 		); err != nil {
 			return nil, err
 		}

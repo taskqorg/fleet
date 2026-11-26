@@ -414,9 +414,19 @@
         "utcOffsetMinutes": {
           "$comment": "the host's current offset from UTC in minutes, for its daily update window (docs/designs/fleet-host-updates.md section 7); absent on older hosts, read as UTC",
           "type": "integer"
+        },
+        "diagnosis": {
+          "$comment": "the executor's report for host_diagnose, sent once after a poll reply with diagnose true; absent otherwise and on older hosts",
+          "$ref": "#/$defs/HostDiagnosis"
         }
       }
     },
+    "HostDiagnosis": {"type": "object", "required": ["at", "logTail", "outbox", "outboxFailed", "transfersFailed", "commands"], "$comment": "What a person used to read on the host (docs/designs/fleet-system-management.md#hosts, host_diagnose): built by the executor (diagnose.go), credentials redacted.", "properties": {"at": {"$comment": "when the executor built it, ms", "type": "integer"}, "pid": {"type": "integer"}, "startedAt": {"$comment": "when this executor process started, ms", "type": "integer"}, "logPath": {"$comment": "the log file the tail is from", "type": "string"}, "logTail": {"$comment": "the last lines of the executor log, oldest first, each with its UTC time", "type": "array", "items": {"type": "string"}}, "outbox": {"$ref": "#/$defs/DiagnosisOutbox"}, "outboxFailed": {"$comment": "the newest outbox rows the coordinator refused (journal outbox_failed), newest first", "type": "array", "items": {"$ref": "#/$defs/DiagnosisOutboxFailed"}}, "transfersFailed": {"$comment": "artifact transfers that failed in the last day, newest first", "type": "array", "items": {"$ref": "#/$defs/DiagnosisTransfer"}}, "commands": {"$comment": "commands in the journal that are not settled, oldest first", "type": "array", "items": {"$ref": "#/$defs/DiagnosisCommand"}}}},
+    "DiagnosisOutbox": {"type": "object", "required": ["rows", "routes"], "properties": {"rows": {"type": "integer"}, "oldestAt": {"$comment": "the oldest queued row's time, ms; absent when empty or unknown", "type": "integer"}, "routes": {"type": "array", "items": {"$ref": "#/$defs/DiagnosisRoute"}}}},
+    "DiagnosisRoute": {"type": "object", "required": ["route", "rows"], "properties": {"route": {"type": "string"}, "rows": {"type": "integer"}}},
+    "DiagnosisOutboxFailed": {"type": "object", "required": ["route", "status", "reason", "at"], "properties": {"route": {"type": "string"}, "status": {"type": "integer"}, "reason": {"type": "string"}, "at": {"type": "integer"}, "executionId": {"type": "string"}, "artifactId": {"type": "string"}}},
+    "DiagnosisTransfer": {"type": "object", "required": ["id", "kind", "error", "at"], "properties": {"id": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"}, "executionId": {"type": "string"}, "error": {"type": "string"}, "at": {"type": "integer"}}},
+    "DiagnosisCommand": {"type": "object", "required": ["id", "state"], "properties": {"id": {"type": "string"}, "kind": {"type": "string"}, "executionId": {"type": "string"}, "state": {"type": "string"}, "at": {"type": "integer"}}},
     "DrainReport": {
       "type": "object",
       "required": ["target", "since", "fenced", "waitsFor"],
@@ -575,6 +585,10 @@
         "autoUpdate": {
           "$comment": "the polling host's autoUpdate: on, off, or an RFC 3339 UTC hold-until time",
           "type": "string"
+        },
+        "diagnose": {
+          "$comment": "true when host_diagnose asked for a report since the host's latest one: the executor sends PollRequest.diagnosis in its next poll",
+          "type": "boolean"
         }
       }
     },
@@ -1832,6 +1846,18 @@
         },
         "error": {
           "type": "string"
+        },
+        "executionId": {
+          "$comment": "the execution whose upload failed; with name, a refused reservation (no artifact row) is recorded on it (refusedArtifacts) instead of answering 404. Absent from older hosts",
+          "type": "string"
+        },
+        "name": {
+          "$comment": "the output name the upload had",
+          "type": "string"
+        },
+        "refused": {
+          "$comment": "true when the coordinator refused the reservation (a 4xx answer to reserve): the bytes were refused on purpose, so the execution fails",
+          "type": "boolean"
         }
       },
       "$comment": "POST /api/hosts/artifacts/failed: a transfer that cannot finish."

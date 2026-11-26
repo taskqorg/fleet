@@ -160,3 +160,42 @@ SELECT execution_id, at, host_id, candidates, winner FROM route_decision
 WHERE at >= sqlc.arg(since)::timestamptz
   AND jsonb_path_exists(candidates, '$[*] ? (@.subscription.id == $sub && exists(@.skipped))', jsonb_build_object('sub', sqlc.arg(subscription_id)::text))
 ORDER BY at DESC LIMIT 50;
+
+-- name: HostDiagnosisAsk :exec
+-- host_diagnose asks the host for a report on its next poll (PollReply.diagnose).
+INSERT INTO host_diagnosis(host_id, requested_at) VALUES (@host_id::text, now())
+ON CONFLICT (host_id) DO UPDATE SET requested_at = now();
+
+-- name: HostDiagnosisWanted :one
+-- Whether a report was asked for after the latest one, in the last two minutes (an older executor never answers: its
+-- polls must not stop waiting for ever).
+SELECT EXISTS (SELECT 1 FROM host_diagnosis WHERE host_id = @host_id::text AND requested_at > now() - interval '2 minutes'
+ AND (reported_at IS NULL OR reported_at < requested_at))::bool;
+
+-- name: HostDiagnosisPut :exec
+-- The report a host sent in its poll (PollRequest.diagnosis).
+INSERT INTO host_diagnosis(host_id, reported_at, report) VALUES (@host_id::text, now(), @report::jsonb)
+ON CONFLICT (host_id) DO UPDATE SET reported_at = now(), report = EXCLUDED.report;
+
+-- name: HostDiagnosisGet :one
+SELECT host_id, requested_at, reported_at, report FROM host_diagnosis WHERE host_id = @host_id::text;
+
+-- name: HostDiagnoseObservation :one
+-- host_diagnose: the host's holder, last poll and observation payload.
+SELECT holder, last_seen_at, payload FROM host_observation WHERE id = @id::text AND tombstoned_at IS NULL;
+
+-- name: HostDiagnoseCommands :many
+-- host_diagnose: commands for the host it has not confirmed as settled, oldest first.
+SELECT id, kind, execution_id, status::text AS status, updated_at FROM command
+WHERE host_id = @host_id::text AND status IN ('pending', 'accepted', 'started', 'unknown') AND tombstoned_at IS NULL
+ORDER BY seq LIMIT 50;
+
+-- name: HostDiagnoseWaiting :many
+-- host_diagnose: queued agent runs no host took, with their first and latest dispatch decision (ms, 0: none).
+SELECT e.id, e.session_id, e.project_id, e.wait_reason, coalesce(e.data->>'waitDetail', '')::text AS wait_detail, e.updated_at,
+ coalesce((SELECT (extract(epoch FROM min(r.at)) * 1000)::bigint FROM route_decision r WHERE r.execution_id = e.id), 0)::bigint AS first_ms,
+ coalesce((SELECT (extract(epoch FROM r.at) * 1000)::bigint FROM route_decision r WHERE r.execution_id = e.id ORDER BY r.id DESC LIMIT 1), 0)::bigint AS last_ms,
+ coalesce((SELECT r.candidates FROM route_decision r WHERE r.execution_id = e.id ORDER BY r.id DESC LIMIT 1), '[]'::jsonb)::jsonb AS candidates
+FROM execution e
+WHERE e.kind = 'agent_run' AND e.state = 'preparing' AND e.host_id IS NULL AND e.tombstoned_at IS NULL
+ORDER BY e.seq LIMIT 100;

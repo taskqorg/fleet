@@ -174,6 +174,8 @@ type BoundaryBlock struct {
 	SessionId   *string          `json:"sessionId,omitempty"`
 	StartedAt   *int64           `json:"startedAt,omitempty"`
 	State       ExecutionState   `json:"state"`
+	WaitDetail  *string          `json:"waitDetail,omitempty"`
+	WaitReason  *string          `json:"waitReason,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -746,6 +748,8 @@ type SessionExecution struct {
 	Model       *string         `json:"model,omitempty"`
 	Observation *string         `json:"observation,omitempty"`
 	State       string          `json:"state"`
+	WaitDetail  *string         `json:"waitDetail,omitempty"`
+	WaitReason  *string         `json:"waitReason,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }

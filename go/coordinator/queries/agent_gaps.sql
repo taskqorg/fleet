@@ -94,3 +94,7 @@ SELECT count(*)::int FROM execution WHERE kind = 'agent_run' AND started_at >= @
 -- The answered question an answer hook reads (agentGapAnswerAfter).
 SELECT id, coalesce(answer, '')::text AS answer, coalesce(data->>'source', '')::text AS source, coalesce(data->>'class', '')::text AS class
 FROM question WHERE id = @id::text;
+
+-- name: AgentGapDispatchRows :many
+-- The dispatch rows of a window (a reclassification classifies their stored reason again).
+SELECT execution_id, project_id, at, tool, line FROM agent_gap WHERE source = 'dispatch' AND at >= @since::timestamptz;
