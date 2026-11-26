@@ -14,6 +14,7 @@ func TestDispatchCausesMapToWaitReasons(t *testing.T) {
 		"host:h:trust": "permission", "host:h:holder": "permission", "subscription:s:not-taken": "permission", "budget:b:reached": "permission",
 		"director:d:claude": "auth", "subscription:s:not-ready": "auth",
 		"host:h:offline": "placement", "host:h:paused": "placement", "host:h:overloaded": "placement", "host:h:concurrency": "placement", "execution:e:no-candidate": "placement",
+		"host:h:subscription:claude": "placement",
 	} {
 		got := waitKindOf(cause)
 		if got != want || !slices.Contains(waitReasons, got) {
@@ -24,5 +25,22 @@ func TestDispatchCausesMapToWaitReasons(t *testing.T) {
 		if !slices.Contains(waitReasons, k) {
 			t.Errorf("%s is not a wait reason", k)
 		}
+	}
+}
+
+// Requirement: a run pinned to a host where none of the director's subscriptions is bound says where they are bound
+// (live 2026-11-26: a review pinned to pds18-native waited on "no claude subscription of site-agents applies" while
+// claude-owner is bound to windows). Risk: the agent and HAL0 chase a missing subscription that exists.
+func TestBoundElsewhereNamesTheHosts(t *testing.T) {
+	name, win, pds := "claude-owner", "windows", "pds18-native"
+	s := &dispatchAccountRec{Name: &name, parsedBindings: []accountBinding{{HostID: &win}}}
+	if got := boundElsewhere([]*dispatchAccountRec{s}, pds); got != "claude-owner on windows" {
+		t.Errorf("pinned elsewhere: %q", got)
+	}
+	if got := boundElsewhere([]*dispatchAccountRec{s}, win); got != "" {
+		t.Errorf("bound here: %q", got)
+	}
+	if got := boundElsewhere(nil, pds); got != "" {
+		t.Errorf("no subscription: %q", got)
 	}
 }
