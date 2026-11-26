@@ -18,7 +18,7 @@
         "model": "gpt-6.2-sol",
         "reasoning": "${steps.request.output.body.reasoning}"
       },
-      "connection": "openai-2",
+      "connection": "openai",
       "description": "reads every file and answers in JSON",
       "id": "call",
       "kind": "api",

@@ -265,3 +265,64 @@ func keyAnswerCheck(q *Request, question json.RawMessage, answer string) error {
 	}
 	return nil
 }
+
+// connectionsKeyMove (owner): moves one key, row and value file, to another connection of the same provider, on the
+// server: no value leaves it (an owner who added a key under a second name merges it into the first). The value file
+// is copied into the target's folder before commit and the source's is removed only after it.
+func connectionsKeyMove(q *Request, r *contract.ConnectionsKeyMoveRequest) (contract.ConnectionsKeyMoveReply, error) {
+	var no contract.ConnectionsKeyMoveReply
+	from, err := connNamed(q, r.Connection)
+	if err != nil {
+		return no, err
+	}
+	to, err := connNamed(q, r.To)
+	if err != nil {
+		return no, err
+	}
+	if from.Name == to.Name || from.Provider != to.Provider {
+		return no, fail(409, "A key moves to another connection of the same provider")
+	}
+	k, err := connKeyMaybe(q, "key:"+r.Key)
+	if err != nil {
+		return no, err
+	}
+	if k == nil || k.ConnectionID != from.Name {
+		return no, fail(404, "Connection "+from.Name+" has no key "+r.Key)
+	}
+	src, err := connDir(from.Name)
+	if err != nil {
+		return no, err
+	}
+	dst, _ := connDir(to.Name)
+	value, err := os.ReadFile(filepath.Join(src, k.Fingerprint))
+	if err != nil {
+		return no, fail(409, "The value of key "+k.Fingerprint+" is missing on the server")
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return no, err
+	}
+	staged, final := filepath.Join(dst, "."+k.Fingerprint+".add"), filepath.Join(dst, k.Fingerprint)
+	if err := os.WriteFile(staged, value, 0o600); err != nil {
+		return no, err
+	}
+	k.ConnectionID = to.Name
+	if err := connKeyPut(q, *k); err != nil {
+		os.Remove(staged)
+		return no, err
+	}
+	if err := audit(q, "connection-key:"+k.ID, "connection", from.Name, to.Name, auditExtra{}); err != nil {
+		os.Remove(staged)
+		return no, err
+	}
+	afterCommit(q, func() {
+		if err := os.Rename(staged, final); err != nil {
+			log.Printf("key %s: %v", k.Fingerprint, err)
+			return
+		}
+		os.Remove(filepath.Join(src, k.Fingerprint))
+	})
+	afterRollback(q, func() { os.Remove(staged) })
+	accessKeyAdded(q, to)
+	publish(q)
+	return contract.ConnectionsKeyMoveReply{Key: k.Fingerprint, Connection: to.Name}, nil
+}
