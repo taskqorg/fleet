@@ -196,7 +196,6 @@
   .new-conversation .composer-row { flex-wrap: wrap; }
   .composer-chips { display: contents; }
   .detail > .drop-zone { flex: none; min-height: auto; gap: var(--space-3); }
-  .composer-row > .btn.primary.icon-only { color: var(--on-accent); }
   .composer-chip { display: inline-flex; align-items: center; gap: var(--space-1); height: var(--size-chip); min-width: 0; padding: 0 var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-md); background: none; color: var(--fg-muted); font: inherit; font-size: var(--font-size-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   button.composer-chip { cursor: pointer; }
   button.composer-chip:hover { background: var(--hover); color: var(--fg); }
