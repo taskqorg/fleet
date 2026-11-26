@@ -938,6 +938,40 @@ func (v *ProjectListReply) Validate() error {
 
 type ProjectListRequest = map[string]json.RawMessage
 
+type ProjectPipelineCaller struct {
+	Id   *string                   `json:"id,omitempty"`
+	Kind ProjectPipelineCallerKind `json:"kind"`
+	Name *string                   `json:"name,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectPipelineCaller) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProjectPipelineCallerKind string
+
+const (
+	ProjectPipelineCallerKindApp    ProjectPipelineCallerKind = "app"
+	ProjectPipelineCallerKindPeople ProjectPipelineCallerKind = "people"
+)
+
+// ProjectPipelineCallerKindValues lists every ProjectPipelineCallerKind in schema order.
+var ProjectPipelineCallerKindValues = []ProjectPipelineCallerKind{ProjectPipelineCallerKindApp, ProjectPipelineCallerKindPeople}
+
+// Valid: v is one of the schema's values.
+func (v ProjectPipelineCallerKind) Valid() bool {
+	for _, x := range ProjectPipelineCallerKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ProjectPipelineGroup struct {
 	Capability  string               `json:"capability"`
 	Experiments int64                `json:"experiments"`
@@ -981,6 +1015,29 @@ func (v *ProjectPipelineRow) Validate() error {
 	return nil
 }
 
+type ProjectPipelineUse struct {
+	Caller ProjectPipelineCaller `json:"caller"`
+	Cost   []CostFigure          `json:"cost"`
+	Failed int64                 `json:"failed"`
+	Runs   int64                 `json:"runs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectPipelineUse) Validate() error {
+	if err := Check(&v.Caller, "caller"); err != nil {
+		return err
+	}
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ProjectPipelineViewReply struct {
 	Capability  *string               `json:"capability"`
 	Description *string               `json:"description"`
@@ -993,6 +1050,7 @@ type ProjectPipelineViewReply struct {
 	Reads       *string               `json:"reads"`
 	Returns     *string               `json:"returns"`
 	Revision    int64                 `json:"revision"`
+	Use         []ProjectPipelineUse  `json:"use"`
 	UseCaseId   *string               `json:"useCaseId"`
 }
 
@@ -1019,6 +1077,14 @@ func (v *ProjectPipelineViewReply) Validate() error {
 	}
 	for i := range v.Ranking {
 		if err := Check(&v.Ranking[i], "ranking"); err != nil {
+			return err
+		}
+	}
+	if v.Use == nil {
+		return Missing("use")
+	}
+	for i := range v.Use {
+		if err := Check(&v.Use[i], "use"); err != nil {
 			return err
 		}
 	}
@@ -2832,7 +2898,7 @@ func init() {
 		"project_context":         {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "bound:project", Description: "A project's definition, settings and context (projectId)", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_detail":          {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a project definition and revision independently of resource statistics; requires projectId", Changes: []string{"definition", "task", "execution", "resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_list":            {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Projects you can reach with their codes", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
-		"project_pipeline_view":   {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One pipeline as a project uses it, in one read (the pipeline page, docs/design-system/pages/projects.md): what it does (description, input, output), its steps as the plain-text outline, its catalogue method and whether it is the one in use, the comparison on the project's sample (every variant of the pipelines its experiments ran for the same job, best first, 90 days) and the project's experiments that ran it, newest first.", View: true, Changes: []string{"definition", "experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"pipelineId\"],\"type\":\"object\"}")},
+		"project_pipeline_view":   {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One pipeline as a project uses it, in one read (the pipeline page, docs/design-system/pages/projects.md): what it does (description, input, output), its steps as the plain-text outline, its catalogue method and whether it is the one in use, the comparison on the project's sample (every variant of the pipelines its experiments ran for the same job, best first, 90 days) the project's experiments that ran it, newest first, and who ran it over 30 days outside Lab (each app, then agents and people: runs, failed runs, leaf cost).", View: true, Changes: []string{"definition", "experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"pipelineId\"],\"type\":\"object\"}")},
 		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"project_resource_items":  {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a bounded prepared tools/costs/prices window with an epoch-bound cursor or surviving anchor; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"anchor\":{\"enum\":[\"start\",\"end\"],\"type\":\"string\"},\"around\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"atOrAfter\",\"atOrBefore\"],\"type\":\"string\"},\"key\":{\"oneOf\":[{\"$comment\":\"Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"tool\"},\"name\":{\"type\":\"string\"}},\"required\":[\"kind\",\"name\",\"connection\"],\"type\":\"object\"},{\"$comment\":\"tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.\",\"additionalProperties\":false,\"properties\":{\"encoded\":{\"type\":\"string\"},\"kind\":{\"const\":\"tool-position\"}},\"required\":[\"kind\",\"encoded\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"cost\"}},\"required\":[\"kind\",\"currency\",\"basis\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"price\"},\"observedAt\":{\"type\":\"integer\"},\"priceId\":{\"type\":\"string\"}},\"required\":[\"kind\",\"priceId\",\"observedAt\"],\"type\":\"object\"}]}},\"required\":[\"key\",\"direction\"],\"type\":\"object\"},\"category\":{\"enum\":[\"tools\",\"costs\",\"prices\"],\"type\":\"string\"},\"cursor\":{\"type\":\"string\"},\"group\":{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"currency\",\"basis\"],\"type\":\"object\"},\"knownVersion\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"category\"],\"type\":\"object\"}")},
 		"project_resources":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read prepared project resource figures/version and current progress; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"knownVersion\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},

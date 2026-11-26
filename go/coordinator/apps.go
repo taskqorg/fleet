@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -117,7 +118,28 @@ func projectAppRead(q *Request, id string) (contract.ProjectAppView, error) {
 		return contract.ProjectAppView{}, err
 	}
 	keys, err := q.db().ProjectAppKeys(q.ctx(), []string{id})
+	// A write's reply leaves use30d out: project_apps, which the change stream rereads, answers it.
 	return projectAppView(db.ProjectAppGetRow(r), keys), err
+}
+
+// appUseDays: the window of an app's and a pipeline's use (fleet-project-apps.md, Screens).
+const appUseDays = 30
+
+func appUseSince() pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: time.Now().Add(-appUseDays * 24 * time.Hour), Valid: true}
+}
+
+// projectAppUse: each app's runs, failed runs and leaf cost over the last 30 days, by app id (absent: no runs).
+func projectAppUse(q *Request, ids []string) (map[string]contract.ProjectAppUse, error) {
+	out := map[string]contract.ProjectAppUse{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rs, err := q.db().ProjectAppUse(q.ctx(), db.ProjectAppUseParams{AppIds: ids, Since: appUseSince()})
+	for _, r := range rs {
+		out[r.Caller] = contract.ProjectAppUse{Runs: r.Runs, Failed: r.Failed, Cost: callGroupCost(r.Costs)}
+	}
+	return out, err
 }
 
 func projectApps(q *Request, r *contract.ProjectAppsRequest) (contract.ProjectAppsReply, error) {
@@ -130,9 +152,19 @@ func projectApps(q *Request, r *contract.ProjectAppsRequest) (contract.ProjectAp
 		ids = append(ids, a.ID)
 	}
 	keys, err := q.db().ProjectAppKeys(q.ctx(), ids)
+	if err != nil {
+		return contract.ProjectAppsReply{}, err
+	}
+	use, err := projectAppUse(q, ids)
 	out := contract.ProjectAppsReply{Apps: []contract.ProjectAppView{}}
 	for _, a := range rs {
-		out.Apps = append(out.Apps, projectAppView(db.ProjectAppGetRow(a), keys))
+		v := projectAppView(db.ProjectAppGetRow(a), keys)
+		u, ok := use[a.ID]
+		if !ok {
+			u = contract.ProjectAppUse{Cost: []contract.CostFigure{}}
+		}
+		v.Use30d = &u
+		out.Apps = append(out.Apps, v)
 	}
 	return out, err
 }

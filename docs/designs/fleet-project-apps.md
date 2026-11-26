@@ -2,7 +2,7 @@
 
 Fleet develops and tunes a pipeline for a project in Lab; then the project's own application uses it. A **project app** is that application (DAM's site at revilio.com, for example) calling the project's pipelines from its own data processing: it starts a run with files it already has, gets the result back, and every run and its cost show in Fleet under the project and the app. One app belongs to one project and may only run that project's pipelines. Agents, people and apps call the same operations ([shared core](../../fleet.md#principles)); an app adds no operation of its own.
 
-Approved by the owner 2026-11-26 (board `drafts/project-apps`, frames PA1-PA4). Built: apps, keys, the app route, the Cloudflare edge, `requestedBy {kind: app}`, the `app` dimension, inputs by reference, callbacks and limits. Not built: API-step pricing, the screens. Today an outside program can call `pipeline_run` only by posing as a person (a Cloudflare Access service token mapped in `people.json`), which makes it an operator of the project with rights far beyond running pipelines.
+Approved by the owner 2026-11-26 (board `drafts/project-apps`, frames PA1-PA4). Built: apps, keys, the app route, the Cloudflare edge, `requestedBy {kind: app}`, the `app` dimension, inputs by reference, callbacks and limits, and the screens Setup › Apps (with `use30d`) and the pipeline page's Used by lines (`use`). Not built: API-step pricing, the Pipelines facet's 30-day runs per row, and a Used by line opening Runs filtered to its caller. Today an outside program can call `pipeline_run` only by posing as a person (a Cloudflare Access service token mapped in `people.json`), which makes it an operator of the project with rights far beyond running pipelines.
 
 ## Terms
 

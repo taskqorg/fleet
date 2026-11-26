@@ -15,6 +15,7 @@ import { formatView } from '../../../packages/view-url/view-url.ts';
 import { CHIP_STAGE, idOf } from './delivery-model.tsx';
 import { HistoryFeed } from './history.tsx';
 import { PipelineRun } from './pipeline-run.tsx';
+import { usageLine } from '../project-apps-model.ts';
 
 type ProjectView = Ops['project_view']['reply'];
 type Group = ProjectView['pipelines'][number];
@@ -23,6 +24,7 @@ type Entry = NonNullable<PipeRow['best']>;
 type Question = ProjectView['waiting'][number];
 type Decision = ProjectView['decisions'][number];
 type Experiment = Ops['project_pipeline_view']['reply']['experiments'][number];
+type Use = Ops['project_pipeline_view']['reply']['use'][number];
 type HistoryKind = NonNullable<Ops['history_view']['request']['kinds']>[number];
 
 /** The project's one Overview read; the head (Talk to PM) and the Pipelines facet ask with the same request and share it. */
@@ -345,6 +347,7 @@ export function PipelinePage(props: { projectId: string; projectName: string; pi
           <>
             <Show when={v().description}><p>{v().description}</p></Show>
             <InOut input={v().reads} output={v().returns} />
+            <UsedBy use={v().use} />
             <TabBar cls="detail-tabs" label="Pipeline" tabs={PIPE_TABS} value={tab()} onChange={t => go(pipelinePath(props.projectId, props.pipelineId, t))} />
             <div role="tabpanel" aria-label={PIPE_TABS.find(t => t.id === tab())?.label}>
               <Switch>
@@ -394,6 +397,26 @@ function InOut(props: { input: string | null; output: string | null }) {
         <Show when={props.input && props.output}><span> · </span></Show>
         <Show when={props.output}><span>Out </span><span class="mono">{props.output}</span></Show>
       </p>
+    </Show>
+  );
+}
+
+/** Who ran the pipeline for the project over the last 30 days outside Lab (board drafts/project-apps.bl PA3, PA4): one
+ * line per app, then agents and people; left out when nobody did. */
+function UsedBy(props: { use: Use[] }) {
+  return (
+    <Show when={props.use.length > 0}>
+      <div class="pw-list pw-use" role="list" aria-label="Used by, 30 days">
+        <For each={props.use}>{u => (
+          <div class="pw-line" role="listitem">
+            <span class="pw-line-m">
+              <span>{u.caller.kind === 'app' ? `Used by ${u.caller.name ?? u.caller.id}` : 'Agents and people'}</span>
+              <span class="muted">{usageLine(u)}</span>
+            </span>
+            <span class="muted" data-tip="Over the last 30 days">30 d</span>
+          </div>
+        )}</For>
+      </div>
     </Show>
   );
 }
