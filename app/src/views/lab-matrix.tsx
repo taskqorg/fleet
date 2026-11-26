@@ -8,6 +8,7 @@ import {
   money,
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type Ops } from '../api.ts';
+import { useLocation } from '../router.ts';
 import type { LabLeaderboardEntry } from '../../../contracts/generated/ops.ts';
 
 /** One model × pipeline cell: every leaderboard group of that pair over the scope, on one score form. */
@@ -133,6 +134,7 @@ export function LabComparison(props: {
     }).sort((a, b) => (b.best ? 1 : 0) - (a.best ? 1 : 0) || (b.best?.score ?? -1) - (a.best?.score ?? -1) || a.id.localeCompare(b.id));
   });
 
+  const [, go] = useLocation();
   const [promoting, setPromoting] = createSignal(false);
   const [promoted, setPromoted] = createSignal<Ops['lab_promote']['reply'] | null>(null);
   const [promoteError, setPromoteError] = createSignal<string | null>(null);
@@ -235,7 +237,7 @@ export function LabComparison(props: {
           </div>
         </Show>
         <Show when={!perUseCase() && notRanked() > 0}>
-          <p class="lab-note muted">{notRanked()} variant{notRanked() === 1 ? '' : 's'} not ranked: retired, no score or every run failed · <a class="row-link" href="/history?section=lab">History</a></p>
+          <p class="lab-note muted">{notRanked()} variant{notRanked() === 1 ? '' : 's'} not ranked: retired, no score or every run failed · <a class="row-link" href="/history?section=lab" onClick={e => { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); go('/history?section=lab'); } }}>History</a></p>
         </Show>
       </Show>
     </section>
