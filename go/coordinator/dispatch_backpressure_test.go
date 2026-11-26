@@ -17,11 +17,14 @@ func TestNativeForOtherHost(t *testing.T) {
 	if got := nativeFor(native, mac, "owner-mac"); got != native {
 		t.Fatalf("same host: %v", got)
 	}
-	if got := nativeFor(native, mac, "pds18-native"); got == nil || *got != "" {
-		t.Fatalf("other host: %v", got)
+	if got := nativeFor(native, mac, "pds18-native"); got != nil {
+		t.Fatalf("other host: got native session ID %q, want it omitted", *got)
 	}
 	if got := nativeFor(native, nil, "pds18-native"); got != native {
 		t.Fatalf("no last host: %v", got)
+	}
+	if got := nativeFor(ptr(""), mac, "owner-mac"); got != nil {
+		t.Fatalf("empty ID: got %q, want it omitted", *got)
 	}
 }
 
