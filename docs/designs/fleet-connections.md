@@ -81,7 +81,7 @@ The `anthropic` catalogue entry uses native [Messages](https://platform.claude.c
 *   The coordinator's connection tick (every 3 s) ingests the spool, then marks the tokens of ended executions revoked and republishes the snapshot, so recovery and every other ending path are covered; no separate expiry number. An `api` step's token is revoked right after its call. An execution that ends while the coordinator is down keeps its token until recovery settles it; the first snapshot after that removes it. A grant revocation removes tokens too (people-access §3). Child executions get their own tokens.
 *   Coordinator-side `api` steps get a token for their step execution the same way.
 *   **Not built: script steps with gateway tokens.** The target gives a token for their step execution the same way, with the profile-free grant set of the pipeline step's `connections` list. The executor writes the same run file and passes its path as `FLEET_RUN_FILE`; the script calls `POST /v1/call/<connection>/<tool>` with it. Each call is a `tool_run` child of the step, so a script that calls the gateway twice records both calls and both costs.
-*   **Owner connection tokens.** The owner's own interactive sessions (Claude Code, Codex, Hermes on any host) use a long-lived token from `connections_token_create {name, connections}` (owner and full-access people such as site-agents during development, the minting person recorded as `directedBy`; the value is answered once, with the MCP spec). It lives in a 0600 file named by `FLEET_TOKEN_FILE`, never in a session config. The session runs the same Go client as Fleet runs, `fleet-executor mcp connection <connection> <spec>` with `FLEET_GATEWAY_URL` and `FLEET_TOKEN_FILE` in its environment; scripts use `fleet-executor connection call`. The tick keeps it; `connections_token_revoke` ends it. Its calls are `tool_run` rows with no parent run and `data.tokenName`, directed by the owner. Such a token may name a [project access](fleet-project-access.md#how-agents-use-a-grant) connection when its minting person sees every project the connection is open to. `connections_token_set {name, connections}` changes a live token's connections with the same checks and keeps its value; `scripts/dev-connections.ts <token> <claude|codex> [connection ...]` runs it and registers the answered specs as the harness's MCP servers, the one way a host's dev sessions gain a connection.
+*   **Owner connection tokens.** The owner's own interactive sessions (Claude Code, Codex, Hermes on any host) use a long-lived token from `connections_token_create {name, connections}` (owner and full-access people such as site-agents during development, the minting person recorded as `directedBy`; the value is answered once, with the MCP spec). It lives in a 0600 file named by `FLEET_TOKEN_FILE`, never in a session config. The session runs the same Go client as Fleet runs, `fleet-executor mcp connection <connection> <spec>` with `FLEET_GATEWAY_URL` and `FLEET_TOKEN_FILE` in its environment; scripts use `fleet-executor connection call`. The tick keeps it; `connections_token_revoke` ends it. Its calls are `tool_run` rows with no parent run and `data.tokenName`, directed by the owner. Such a token may name a [project access](fleet-project-access.md#how-agents-use-a-grant) connection when its minting person sees every project the connection is open to. `connections_token_set {name, connections}` changes a live token's connections with the same checks and keeps its value; [local agents](#13-local-agents) are built on these tokens.
 
 ### 5. Call methods
 
@@ -182,6 +182,42 @@ grants with uses (`go/coordinator/grants.go`).
     after two passes without the gap.
 *   **No silent fallback.** A GitHub read the gateway refuses with `unknown-tool` fails with that cause instead of
     reading the public API; a refused key (expired, wrong lifetime) still falls back to the public repository.
+
+### 13. Local agents
+
+A person's own Claude Code, Codex and Antigravity on their machine reach Fleet's connections the way Fleet runs do, by
+the person's choice (owner, 2026-11-26: Fleet does not manage personal harness settings; it offers an easy way to
+connect and a report of what is connected and whether it works). Fleet runs need none of this: dispatch gives every
+run its connections (§4), whatever the host's own harness settings say.
+
+*   **Local agent:** one harness of one person on one machine, `{machine, harness}`, served by one personal token named
+    `<machine>-<harness>` (`owner-mac-claude`). The machine is a Fleet host the person may use (it has
+    `fleet-executor`); `harness` is `claude`, `codex` or `antigravity`. The token names every connection the person may
+    use (`connAllowedFor` for the person, and the [project access](fleet-project-access.md#how-agents-use-a-grant)
+    connections of the projects they see), so `fleet-postgres` comes with it for a person who sees project `fleet`.
+*   **`local_agent_connect {machine, harness}`** (owner or full access; a person, not an agent): mints the token, or
+    replaces its connections with the current list when it exists (`connections_token_set`, the value stays), and
+    answers the one command to run on that machine. A new value is answered once, inside the command; a refresh answers
+    the command without one. `reissue: true` mints a new value and revokes the old one.
+*   **The command:** `fleet-executor local-agent <harness>` (the token, when new, on standard input). It writes the
+    token to `~/.config/fleet/tokens/<machine>-<harness>` (0600), asks the gateway for the token's connections
+    (`GET /v1/connections` with the token: the specs the snapshot holds) and registers one
+    `fleet-executor mcp connection <name>` server per connection in the harness's own settings: Claude Code with
+    `claude mcp add-json -s user`, Codex with `codex mcp add`, Antigravity in `~/.gemini/antigravity/mcp_config.json`.
+    Servers it did not register are left alone; a server of a connection the token no longer names is removed. Without
+    a spec argument `mcp connection` reads its spec from the gateway at start, so a server never holds stale tools.
+    Tool names are the runs' own: `mcp__<connection>__<tool>` (`mcp__fleet-postgres__sql_query`). The command ends
+    with one real call per connection of a read tool that takes no arguments (`projects`, `sql_schema`), where the
+    connection has one, and prints what answered; a connection without one shows its first real call in the report.
+*   **`local_agents {}`** (person): the report, per machine: each local agent with its token state (live, revoked),
+    its connections, and per connection the last successful call and the last failure of that token (`tool_run` rows
+    with `data.tokenName`), plus drift: connections the person may use that the token lacks (run `local_agent_connect`
+    again, then the command), and a token unused since it was connected. Every write is a change (kind
+    `local-agent`), so the page rereads at once.
+*   **`local_agent_disconnect {machine, harness}`** (owner or full access): revokes the token; the report shows the
+    machine's servers as disconnected until the command runs again.
+*   Not built: machines that are not Fleet hosts (no `fleet-executor` there); Claude Desktop chat, which has no
+    command-line settings; reading a harness's settings to find servers a person removed by hand.
 
 ## Failure and recovery
 
