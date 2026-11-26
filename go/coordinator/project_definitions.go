@@ -72,6 +72,9 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := projectHeadText(recOf(bundle["settings"])); err != nil {
+		return nil, err
+	}
 	text, err := canonicalText(bundle)
 	if err != nil {
 		return nil, err

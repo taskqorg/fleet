@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"fleet/contract"
@@ -155,7 +156,8 @@ func jsType(v json.RawMessage) string {
 var domainPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$`)
 
 // projectHeadText: the optional description (one short line) and domain that the project head shows after its name;
-// absent, null or empty means none.
+// absent, null or empty means none. Checked on write only (project_create, project_update), so a stored head written
+// before the check still reads.
 func projectHeadText(in map[string]json.RawMessage) error {
 	for _, k := range []string{"description", "domain"} {
 		v, present := in[k]
@@ -166,11 +168,11 @@ func projectHeadText(in map[string]json.RawMessage) error {
 		if !ok {
 			return fail(400, "Invalid project setting "+k+": expected text")
 		}
-		s = strings.TrimSpace(s)
+		oneLine := !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == ' ' || r == ' ' })
 		switch {
-		case k == "description" && (strings.ContainsAny(s, "\n\r") || utf8.RuneCountInString(s) > 160):
-			return fail(400, "Invalid project setting description: one line, at most 160 characters")
-		case k == "domain" && s != "" && !domainPattern.MatchString(s):
+		case k == "description" && (!oneLine || s != strings.TrimSpace(s) || utf8.RuneCountInString(s) > 160):
+			return fail(400, "Invalid project setting description: one line, at most 160 characters, no surrounding spaces")
+		case k == "domain" && s != "" && (len(s) > 253 || !domainPattern.MatchString(s)):
 			return fail(400, "Invalid project setting domain: a host name such as example.com")
 		}
 	}
@@ -203,9 +205,6 @@ func projectSettings(p any) (rawObject, []string, error) {
 	}
 	in := recOf(p)
 	top := append([]string{"id", "name", "description", "domain", "capability", "recommendedMethod", "contextFiles", "artifact_locations", "artifact_rules"}, settingsOrder...)
-	if err := projectHeadText(in); err != nil {
-		return nil, nil, err
-	}
 	for k := range in {
 		if !slices.Contains(top, k) {
 			unknown = append(unknown, k)
