@@ -42,8 +42,9 @@ func problemOf(outcome, c string) string {
 	return "step:" + c
 }
 
-// pipelineHostJob: a script step's host job (executionPutRaw writes it), the step's child in the run's project (session)
-// and experiment.
+// pipelineHostJob: a script step's host job (executionPutRaw writes it), the step's child in the run's project and
+// experiment. A host job has no session, so the project is its own field: the files the script saves belong to the
+// run's project (artifactReserve reads the execution's), which the next step's inputs require.
 type pipelineHostJob struct {
 	ID              string          `json:"id"`
 	ExecutionID     string          `json:"executionId"`
@@ -54,6 +55,7 @@ type pipelineHostJob struct {
 	Actor           string          `json:"actor"`
 	PipelineStepID  string          `json:"pipelineStepId"`
 	PipelineRunID   string          `json:"pipelineRunId"`
+	ProjectID       string          `json:"projectId,omitempty"`
 	ProjectSnapshot json.RawMessage `json:"projectSnapshot"`
 	DirectedBy      string          `json:"directedBy,omitempty"`
 	ExperimentID    string          `json:"experimentId,omitempty"`
@@ -105,8 +107,8 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	}
 	id := newID()
 	e := pipelineHostJob{ID: id, ExecutionID: id, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", PipelineStepID: stepExecutionID,
-		PipelineRunID: run.ID, ProjectSnapshot: orNull(run.ProjectSnapshot), DirectedBy: dir, ExperimentID: run.ExperimentID}
-	if err := executionWrite(q, e); err != nil { // a host job, the step's child in the run's project (session) and experiment
+		PipelineRunID: run.ID, ProjectID: run.project(), ProjectSnapshot: orNull(run.ProjectSnapshot), DirectedBy: dir, ExperimentID: run.ExperimentID}
+	if err := executionWrite(q, e); err != nil { // a host job, the step's child in the run's project and experiment
 		return "", err
 	}
 	if inputs == nil {
