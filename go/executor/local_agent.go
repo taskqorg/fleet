@@ -132,7 +132,11 @@ func localAgent(ctx context.Context, harness, name string, stdin io.Reader, out 
 		names = append(names, typed[connectionSpec](s).Name)
 	}
 	sort.Strings(names)
-	if err := registerServers(harness, home, exe, env, names, out); err != nil {
+	removed, err := registerServers(harness, home, exe, env, names, out)
+	if err != nil {
+		return err
+	}
+	if err := antigravityAllow(harness, filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), names, removed); err != nil {
 		return err
 	}
 	if err := codexApprovals(harness, home, specs); err != nil {
@@ -179,7 +183,8 @@ func probeTool(spec any) any {
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
-func registerServers(harness, home, exe string, env map[string]string, names []string, out io.Writer) error {
+// registerServers answers the Fleet servers it removed (Antigravity's, whose allow rules go with them).
+func registerServers(harness, home, exe string, env map[string]string, names []string, out io.Writer) ([]string, error) {
 	switch harness {
 	case "antigravity":
 		return antigravityServers(filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"), exe, env, names, out)
@@ -196,7 +201,7 @@ func registerServers(harness, home, exe string, env map[string]string, names []s
 				}
 			}
 			if err != nil {
-				return fmt.Errorf("claude mcp add-json %s: %v: %s", n, err, bytes.TrimSpace(b))
+				return nil, fmt.Errorf("claude mcp add-json %s: %v: %s", n, err, bytes.TrimSpace(b))
 			}
 			fmt.Fprintf(out, "%s: registered in Claude Code\n", n)
 		}
@@ -216,7 +221,7 @@ func registerServers(harness, home, exe string, env map[string]string, names []s
 			}
 			args = append(args, "--", exe, "mcp", "connection", n)
 			if b, err := exec.Command("codex", args...).CombinedOutput(); err != nil {
-				return fmt.Errorf("codex mcp add %s: %v: %s", n, err, bytes.TrimSpace(b))
+				return nil, fmt.Errorf("codex mcp add %s: %v: %s", n, err, bytes.TrimSpace(b))
 			}
 			fmt.Fprintf(out, "%s: registered in Codex\n", n)
 		}
@@ -227,7 +232,7 @@ func registerServers(harness, home, exe string, env map[string]string, names []s
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // codexApprovals: Codex asks before every MCP tool call unless the tool is approved; a Fleet tool is approved as Fleet
@@ -256,6 +261,60 @@ func codexApprovals(harness, home string, specs []any) error {
 		return nil
 	}
 	return os.WriteFile(path, append(old, add.String()...), 0o600)
+}
+
+// antigravityAllow: Antigravity asks before every MCP tool call, and its headless mode refuses one it cannot ask about;
+// a Fleet server's tools are allowed as Fleet runs approve them, by one permissions.allow rule mcp(<server>/*) per Fleet
+// server in its CLI settings; the rule of a Fleet server this run removed goes with it. Every other key and rule stays (owner, 2026-11-26: only Fleet's servers).
+func antigravityAllow(harness, path string, names, removed []string) error {
+	if harness != "antigravity" {
+		return nil
+	}
+	doc := map[string]json.RawMessage{}
+	if b, err := os.ReadFile(path); err == nil && len(bytes.TrimSpace(b)) > 0 {
+		if err := json.Unmarshal(b, &doc); err != nil {
+			return fmt.Errorf("%s is not JSON: %w", path, err)
+		}
+	}
+	perms := map[string]json.RawMessage{}
+	if raw, ok := doc["permissions"]; ok {
+		if err := json.Unmarshal(raw, &perms); err != nil {
+			return fmt.Errorf("%s permissions: %w", path, err)
+		}
+	}
+	var allow []string
+	if raw, ok := perms["allow"]; ok {
+		if err := json.Unmarshal(raw, &allow); err != nil {
+			return fmt.Errorf("%s permissions.allow: %w", path, err)
+		}
+	}
+	changed := false
+	allow = slices.DeleteFunc(allow, func(r string) bool {
+		gone := slices.ContainsFunc(removed, func(n string) bool { return r == "mcp("+n+"/*)" })
+		changed = changed || gone
+		return gone
+	})
+	for _, n := range names {
+		if rule := "mcp(" + n + "/*)"; !slices.Contains(allow, rule) {
+			allow, changed = append(allow, rule), true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	perms["allow"], _ = json.Marshal(allow)
+	doc["permissions"], _ = json.Marshal(perms)
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if old, err := os.ReadFile(path); err == nil && !fileExists(path+".before-fleet") {
+		_ = os.WriteFile(path+".before-fleet", old, 0o600)
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o600)
 }
 
 // claudeFleetServers: the user-scope servers of ~/.claude.json that run fleet-executor mcp connection.
@@ -301,13 +360,14 @@ func codexFleetServers() []string {
 }
 
 // antigravityServers rewrites the Fleet entries of Antigravity's MCP settings file, keeping every other entry and key.
-func antigravityServers(path, exe string, env map[string]string, names []string, out io.Writer) error {
+func antigravityServers(path, exe string, env map[string]string, names []string, out io.Writer) ([]string, error) {
 	doc := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil && len(bytes.TrimSpace(b)) > 0 {
 		if err := json.Unmarshal(b, &doc); err != nil {
-			return fmt.Errorf("%s is not JSON: %w", path, err)
+			return nil, fmt.Errorf("%s is not JSON: %w", path, err)
 		}
 	}
+	var removed []string
 	servers, _ := doc["mcpServers"].(map[string]any)
 	if servers == nil {
 		servers = map[string]any{}
@@ -320,6 +380,7 @@ func antigravityServers(path, exe string, env map[string]string, names []string,
 		_ = json.Unmarshal(raw, &args)
 		if strings.HasSuffix(cmd, "fleet-executor") && len(args) >= 3 && args[0] == "mcp" && args[1] == "connection" && !slices.Contains(names, n) {
 			delete(servers, n)
+			removed = append(removed, n)
 			fmt.Fprintf(out, "%s: removed from Antigravity (the token no longer names it)\n", n)
 		}
 	}
@@ -330,13 +391,13 @@ func antigravityServers(path, exe string, env map[string]string, names []string,
 	doc["mcpServers"] = servers
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	if old, err := os.ReadFile(path); err == nil && !fileExists(path+".before-fleet") {
 		_ = os.WriteFile(path+".before-fleet", old, 0o600) // the file as it was before Fleet first wrote it
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o600)
+	return removed, os.WriteFile(path, append(b, '\n'), 0o600)
 }
