@@ -1058,6 +1058,28 @@
    "status": "approved"
   },
   {
+   "id": "3f9c5c1783f22edf",
+   "canvas": "screens/host-disk",
+   "name": "System › Hosts · Disk section, 1440 (approved 27 Nov)",
+   "page": "host-disk",
+   "width": 1440,
+   "frameWidth": 1440,
+   "theme": "dark",
+   "component": false,
+   "status": "approved"
+  },
+  {
+   "id": "5555f5ea53378d44",
+   "canvas": "screens/host-disk",
+   "name": "System › Hosts · Disk section, 390 (approved 27 Nov)",
+   "page": "host-disk",
+   "width": 390,
+   "frameWidth": 390,
+   "theme": "dark",
+   "component": false,
+   "status": "approved"
+  },
+  {
    "id": "aae08fb7ff0748f2",
    "canvas": "screens/host-updates",
    "name": "1A · Changes: grouped by kind (recommended)",
