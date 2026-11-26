@@ -40,6 +40,9 @@ func (e *labExperiment) decider() string {
 	return "agent:unknown" // legacy provenance (migration 37): nobody to ask
 }
 
+// labGateDecider: decided_by of a gate's own decision.
+const labGateDecider = "lab:gate"
+
 // labGateCause: the problem a failed gate raises, owned by the duty bot.
 func labGateCause(id string) string { return "lab-gate:" + id }
 
@@ -51,7 +54,9 @@ func labGateDecide(q *Request, id string) error {
 	if err != nil {
 		return err
 	}
-	if !row.Gate || row.State != "done" && row.State != "stopped" || row.Decision != nil && *row.Decision != "pending" {
+	// Its own earlier decision is redone (a retried gate closes again); a person's is kept.
+	own := row.DecidedBy != nil && *row.DecidedBy == labGateDecider
+	if !row.Gate || row.State != "done" && row.State != "stopped" || row.Decision != nil && *row.Decision != "pending" && !own {
 		return nil
 	}
 	e, err := expOf(row)
@@ -81,7 +86,7 @@ func labGateDecide(q *Request, id string) error {
 			reason += ": " + strings.Join(st.Failures[:min(len(st.Failures), 3)], "; ")
 		}
 	}
-	if err := q.db().LabExperimentDecide(q.ctx(), db.LabExperimentDecideParams{ID: id, Decision: &decision, DecisionReason: &reason, DecidedBy: ptr("lab:gate")}); err != nil {
+	if err := q.db().LabExperimentDecide(q.ctx(), db.LabExperimentDecideParams{ID: id, Decision: &decision, DecisionReason: &reason, DecidedBy: ptr(labGateDecider)}); err != nil {
 		return err
 	}
 	if row.PipelineID == pinsQualifyPipeline {
@@ -117,12 +122,12 @@ func labViewDecisions(q *Request, exps []contract.LabExperimentRecord) (waiting 
 		pending := (x.State == "done" || x.State == "stopped") && deref(x.Decision) == "pending"
 		failedGate := x.Gate && deref(x.Decision) == "failed"
 		switch {
-		case pending && x.Decider == me && len(x.Variants) >= 2:
+		case pending && x.Decider == me && len(x.Variants) >= 2: // a choice between variants (owner, 2026-11-27)
 			waiting = append(waiting, x.Id)
 		case failedGate || pending && strings.HasPrefix(x.Decider, "execution:") || pending && strings.HasPrefix(x.Decider, "agent:"):
 			owner, ok := names[x.Decider]
 			if !ok {
-				if owner, err = labDeciderName(q, x.Decider, failedGate); err != nil {
+				if owner, err = labDeciderName(q, x.Decider, x.ProjectId, failedGate); err != nil {
 					return nil, nil, err
 				}
 				names[x.Decider] = owner
@@ -135,9 +140,9 @@ func labViewDecisions(q *Request, exps []contract.LabExperimentRecord) (waiting 
 
 // labDeciderName: the name the Lab shows for an agent decider: the bot of the run, else its session's title; a machine
 // identity by its name; a failed gate's problem by the duty bot that owns it.
-func labDeciderName(q *Request, decider string, gate bool) (string, error) {
+func labDeciderName(q *Request, decider, projectID string, gate bool) (string, error) {
 	if gate {
-		owner, err := problemOwner(q, "")
+		owner, err := problemOwner(q, projectID)
 		if err != nil || owner == nil {
 			return "duty bot", err
 		}
@@ -148,8 +153,11 @@ func labDeciderName(q *Request, decider string, gate bool) (string, error) {
 	}
 	id := strings.TrimPrefix(decider, "execution:")
 	ex, err := q.db().ExecutionByID(q.ctx(), id)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "agent", nil // the run is gone: its decision stays an agent's
+	}
+	if err != nil {
+		return "", err
 	}
 	if ex.BotID != nil && *ex.BotID != "" {
 		return botName(q, *ex.BotID)

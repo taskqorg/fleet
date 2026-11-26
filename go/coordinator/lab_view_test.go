@@ -252,4 +252,18 @@ func TestLabDecider(t *testing.T) {
 	if decision != "failed" || by != "lab:gate" || problems != 1 {
 		t.Fatalf("gate: decision %q by %q, %d open problems", decision, by, problems)
 	}
+	// Retried, it closes again and decides again: its own decision is never stale.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `UPDATE experiment SET state = 'running', decision_reason = 'old' WHERE id = 'ld-gate'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		_, err := experimentTransition(q, "ld-gate", experimentEvent{To: "done", From: []string{"running"}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var reason string
+	if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT decision_reason FROM experiment WHERE id = 'ld-gate'`).Scan(&reason); err != nil || reason == "old" {
+		t.Fatalf("retried gate kept its old decision: %q %v", reason, err)
+	}
 }
