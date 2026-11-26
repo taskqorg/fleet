@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +143,29 @@ func TestPublishingProviderDetectionAndBoundary(t *testing.T) {
 	}
 	if _, _, ok := contract.ParseForgeRepoEntry("gitlab.ufobe.com/*"); ok {
 		t.Fatal("host-wide grant accepted")
+	}
+}
+
+// Requirement: the GitLab token comes from `glab config get token --host`; risk: glab 1.112 reads -h as --help, so the
+// usage text became the token and every host lost GitLab publishing (2026-11-26).
+func TestGlabCredentialUsesHostFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -h ] && { echo 'USAGE glab config get <key> [--flags]'; exit 0; }; done\n" +
+		"[ \"$5\" = gitlab.example.com ] && [ \"$4\" = --host ] && echo glpat-fixture\n"
+	if err := os.WriteFile(filepath.Join(bin, "glab"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if got := forgeCredential(forgeContext{Provider: "gitlab", Host: "gitlab.example.com", Store: t.TempDir()}, "gitlab", "gitlab.example.com"); got != "glpat-fixture" {
+		t.Fatalf("token %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "glab"), []byte("#!/bin/sh\necho 'USAGE glab config get <key>'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := forgeCredential(forgeContext{Provider: "gitlab", Host: "gitlab.example.com", Store: t.TempDir()}, "gitlab", "gitlab.example.com"); got != "" {
+		t.Fatalf("usage text taken as token %q", got)
 	}
 }
