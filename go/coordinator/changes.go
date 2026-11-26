@@ -5,6 +5,7 @@ package main
 
 import (
 	"sort"
+	"time"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -29,6 +30,7 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 		RepositoryChanged: []contract.SystemChangeDefinition{},
 		Ahead:             []contract.SystemChangeDefinition{},
 		StoreOnly:         []contract.SystemChangeDefinition{},
+		Experiments:       []contract.SystemChangeExperiment{},
 		HarnessDrift:      []contract.SystemChangeHostHarness{},
 		Components:        []contract.SystemChangeKind{},
 	}
@@ -51,6 +53,11 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 	for _, p := range published {
 		sent[p.Kind+"/"+p.ID] = p
 	}
+	prs, err := publishTaskPRs(q, published)
+	if err != nil {
+		return out, err
+	}
+	experiments := map[string]bool{}
 	for _, d := range defs {
 		st := d.state()
 		if st == contract.DefinitionStateSynced || d.Kind == "project" {
@@ -72,9 +79,18 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 			Head:    d.Head,
 			RepoSha: d.RepoSha,
 			Runs30d: runs,
+			At:      ptr(d.At.UTC().Format(time.RFC3339)),
 		}
+		if d.Message != "" {
+			item.Summary = ptr(d.Message)
+		}
+		// A conflict (repository-changed) needs a person even while an earlier publish is open: the repository changed
+		// under it.
 		if p, ok := sent[d.Kind+"/"+d.ID]; ok && int64(p.Revision) == d.Head && st != contract.DefinitionStateRepositoryChanged {
-			item.PublishTaskId = &p.TaskID
+			item.Publish = &contract.SystemChangePublish{TaskId: p.TaskID, Code: p.Code, State: p.State}
+			if pr, ok := prs[p.TaskID]; ok {
+				item.Publish.Pr = &contract.SystemChangePublishPR{Number: pr.Number, Url: pr.Url, Stage: pr.Stage, Since: pr.Since}
+			}
 		}
 		if st == contract.DefinitionStateStoreOnly {
 			exps, err := q.db().DefExperimentsNaming(q.ctx(), d.ID)
@@ -82,7 +98,11 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 				return out, err
 			}
 			if len(exps) > 0 {
-				item.Experiment = &exps[0]
+				item.Experiment = &exps[0].ID
+				if !experiments[exps[0].ID] {
+					experiments[exps[0].ID] = true
+					out.Experiments = append(out.Experiments, contract.SystemChangeExperiment{Id: exps[0].ID, Title: exps[0].Title, State: exps[0].State, At: exps[0].CreatedAt.UTC().Format(time.RFC3339)})
+				}
 			}
 		}
 		switch st {
@@ -132,5 +152,33 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 		}
 		return out.HarnessDrift[i].Harness < out.HarnessDrift[j].Harness
 	})
+	return out, nil
+}
+
+// publishTaskPRs: each publish task's latest pull request (publishing_status of the tasks' projects, by task).
+func publishTaskPRs(q *Request, published []db.DefPublishTasksRow) (map[string]contract.DeliveryItem, error) {
+	allowed, tasks := map[string]bool{}, map[string]bool{}
+	for _, p := range published {
+		if p.ProjectID != "" {
+			allowed[p.ProjectID], tasks[p.TaskID] = true, true
+		}
+	}
+	out := map[string]contract.DeliveryItem{}
+	if len(allowed) == 0 {
+		return out, nil
+	}
+	_, items, _, err := publishingItems(q, &contract.PublishingStatusRequest{}, allowed, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		task := deref(it.TaskId)
+		if !tasks[task] {
+			continue
+		}
+		if prev, ok := out[task]; !ok || prev.Number < it.Number {
+			out[task] = it
+		}
+	}
 	return out, nil
 }

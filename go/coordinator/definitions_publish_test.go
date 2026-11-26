@@ -36,11 +36,11 @@ func TestSaveSendsTheEditToTheRepository(t *testing.T) {
 			row = &changes.Ahead[i]
 		}
 	}
-	if row == nil || row.PublishTaskId == nil {
+	if row == nil || row.Publish == nil || row.Publish.Code == "" {
 		t.Fatalf("a saved hotfix names its publish task: %+v", changes.Ahead)
 	}
 	var task contract.TaskDetail
-	e.opInto(t, "task_get", map[string]any{"taskId": *row.PublishTaskId}, e.ownerHeaders(), &task)
+	e.opInto(t, "task_get", map[string]any{"taskId": row.Publish.TaskId}, e.ownerHeaders(), &task)
 	if b, _ := json.Marshal(task); !strings.Contains(string(b), "Hotfix in Fleet.") || !strings.Contains(string(b), "fleet-repo") {
 		t.Fatalf("the task carries the file in the Fleet repository's project: %s", b)
 	}
@@ -50,6 +50,30 @@ func TestSaveSendsTheEditToTheRepository(t *testing.T) {
 	e.opInto(t, "definition_publish", map[string]any{"keys": []any{map[string]any{"kind": "pipeline", "id": "search-basic"}}, "preview": false}, e.ownerHeaders(), &again)
 	if again.TaskId != nil || again.Items[0].Status != contract.BulkOpStatusSkipped {
 		t.Fatalf("a sent revision is skipped: %+v", again)
+	}
+
+	// The repository changes the file under the hotfix: a conflict, with no publish shown, until the person keeps theirs.
+	files, broken := shippedDefinitions()
+	for i, f := range files {
+		if f.kind == "pipeline" && f.id == "search-basic" {
+			var d map[string]any
+			json.Unmarshal(f.raw, &d)
+			d["description"] = "Changed in the repository."
+			files[i].raw, _ = json.Marshal(d)
+		}
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error { return reconcileDefinitions(q, files, broken, "test-conflict") }); err != nil {
+		t.Fatal(err)
+	}
+	e.opInto(t, "system_changes", map[string]any{}, e.ownerHeaders(), &changes)
+	if len(changes.RepositoryChanged) != 1 || changes.RepositoryChanged[0].Publish != nil {
+		t.Fatalf("a conflict needs a person: %+v", changes.RepositoryChanged)
+	}
+	var kept contract.DefinitionPublishReply
+	e.opInto(t, "definition_publish", map[string]any{"keys": []any{map[string]any{"kind": "pipeline", "id": "search-basic"}}, "preview": false, "keep": true}, e.ownerHeaders(), &kept)
+	e.opInto(t, "system_changes", map[string]any{}, e.ownerHeaders(), &changes)
+	if kept.TaskId == nil || len(changes.RepositoryChanged) != 0 || len(changes.Ahead) != 1 || changes.Ahead[0].Publish == nil || changes.Ahead[0].Publish.TaskId != *kept.TaskId {
+		t.Fatalf("keep mine sends the Fleet version over the repository's: %+v, %+v", kept, changes)
 	}
 
 	// A store-only definition a live experiment names is a Lab variant: not sent.
@@ -63,5 +87,9 @@ func TestSaveSendsTheEditToTheRepository(t *testing.T) {
 	e.opInto(t, "definition_publish", map[string]any{"keys": []any{map[string]any{"kind": "pipeline", "id": "pub-variant"}}, "preview": false}, e.ownerHeaders(), &lab)
 	if lab.TaskId != nil || lab.Items[0].Reason == nil || !strings.Contains(*lab.Items[0].Reason, "Lab variant") {
 		t.Fatalf("a live Lab variant is not sent: %+v", lab)
+	}
+	e.opInto(t, "system_changes", map[string]any{}, e.ownerHeaders(), &changes)
+	if len(changes.Experiments) != 1 || changes.Experiments[0].Id != "pub-x" || len(changes.StoreOnly) != 1 || deref(changes.StoreOnly[0].Experiment) != "pub-x" {
+		t.Fatalf("Changes shows the variant under its experiment: %+v, %+v", changes.Experiments, changes.StoreOnly)
 	}
 }

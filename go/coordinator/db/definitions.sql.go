@@ -109,24 +109,36 @@ func (q *Queries) DefDraftPut(ctx context.Context, arg DefDraftPutParams) error 
 }
 
 const defExperimentsNaming = `-- name: DefExperimentsNaming :many
-SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL
+SELECT id, coalesce(nullif(goal,''), pipeline_id)::text AS title, state, created_at FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL
  AND jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text)) ORDER BY id
 `
 
+type DefExperimentsNamingRow struct {
+	ID        string
+	Title     string
+	State     string
+	CreatedAt time.Time
+}
+
 // Live experiments naming the id anywhere in their variants (a Lab variant's experiment).
-func (q *Queries) DefExperimentsNaming(ctx context.Context, id string) ([]string, error) {
+func (q *Queries) DefExperimentsNaming(ctx context.Context, id string) ([]DefExperimentsNamingRow, error) {
 	rows, err := q.db.Query(ctx, defExperimentsNaming, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []DefExperimentsNamingRow
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var i DefExperimentsNamingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.State,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -660,17 +672,21 @@ func (q *Queries) DefPublishInsert(ctx context.Context, arg DefPublishInsertPara
 }
 
 const defPublishTasks = `-- name: DefPublishTasks :many
-SELECT DISTINCT ON (kind, id) kind, id, revision, task_id FROM definition_publish ORDER BY kind, id, revision DESC
+SELECT DISTINCT ON (p.kind, p.id) p.kind, p.id, p.revision, p.task_id, coalesce(t.code,'')::text AS code, coalesce(t.state::text,'')::text AS state, coalesce(t.project_id,'')::text AS project_id
+FROM definition_publish p LEFT JOIN task t ON t.id=p.task_id ORDER BY p.kind, p.id, p.revision DESC
 `
 
 type DefPublishTasksRow struct {
-	Kind     string
-	ID       string
-	Revision int32
-	TaskID   string
+	Kind      string
+	ID        string
+	Revision  int32
+	TaskID    string
+	Code      string
+	State     string
+	ProjectID string
 }
 
-// The latest publish of every definition: its revision and task.
+// The latest publish of every definition: its revision and task, with the task's code and state.
 func (q *Queries) DefPublishTasks(ctx context.Context) ([]DefPublishTasksRow, error) {
 	rows, err := q.db.Query(ctx, defPublishTasks)
 	if err != nil {
@@ -685,6 +701,9 @@ func (q *Queries) DefPublishTasks(ctx context.Context) ([]DefPublishTasksRow, er
 			&i.ID,
 			&i.Revision,
 			&i.TaskID,
+			&i.Code,
+			&i.State,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}

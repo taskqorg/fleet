@@ -57,6 +57,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [figure-tile](figure-tile.md) | One headline figure with its trend |
 | [host-band](host-band.md) | One host: health, slots, runs |
 | [worker-slot](worker-slot.md) | What runs in one worker slot |
+| [change-row](change-row.md) | One definition change or Lab experiment on Library › Changes |
 | [live-row](live-row.md) | A project, task in work, pull request, runner or event on Live |
 | [work-facts](work-facts.md) | Attempts, time in work and agent; latest attempt and time in state on hover: one row anatomy for work |
 | [matrix-cell](matrix-cell.md) | One example × variant of a Lab experiment |
@@ -87,6 +88,7 @@ The screens of the conversation-first interface, and the catalogues and opened i
 | Gauge | [fill bar, gauge](fill-bar.md#gauge) | `Gauge` (the fill bar's gauge form) | Live |
 | Worker slot | [worker-slot](worker-slot.md) | `WorkerSlot` | Live |
 | Run strip | [time strip, run strip](time-strip.md#run-strip) | `RunStrip` (the time strip's run strip form) | Live |
+| Change row | [change-row](change-row.md) | `ChangeRow` | Changes |
 | Live row | [live-row](live-row.md) | `LiveRow`, stage by `StageChip` | Live |
 | Work facts | [work-facts](work-facts.md) | `WorkFacts`, `peerFence` | Live; next Tasks, Conversations, Results, Runners |
 | Catalogue row, state icon, list group | [data list](data-list.md#board) | `CatalogueTree` leaf and folder rows | Catalogues in the control column |

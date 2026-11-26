@@ -21,13 +21,13 @@ func init() {
 		if len(r.Keys) == 0 {
 			return contract.DefinitionPublishReply{Items: []contract.DefinitionBulkResult{}}, fail(400, "keys must not be empty")
 		}
-		return publishDefinitions(q, r.Keys, r.Preview)
+		return publishDefinitions(q, r.Keys, r.Preview, r.Keep != nil && *r.Keep)
 	})
 }
 
 // publishDefinitions: one task for the keys that are a Fleet edit not yet sent (ahead or store-only, not a live Lab
 // variant, head revision not published before); the rest are skipped with the reason.
-func publishDefinitions(q *Request, keys []contract.DefinitionKey, preview bool) (contract.DefinitionPublishReply, error) {
+func publishDefinitions(q *Request, keys []contract.DefinitionKey, preview, keepMine bool) (contract.DefinitionPublishReply, error) {
 	out := contract.DefinitionPublishReply{Items: []contract.DefinitionBulkResult{}}
 	sent, err := publishedRevisions(q)
 	if err != nil {
@@ -53,11 +53,22 @@ func publishDefinitions(q *Request, keys []contract.DefinitionKey, preview bool)
 			out.Items = append(out.Items, contract.DefinitionBulkResult{Kind: k.Kind, Id: k.Id, Status: contract.BulkOpStatusError, Reason: ptr("Unknown definition")})
 			continue
 		}
-		// A repository-changed head is a conflict: the person keeps theirs (a save with repoSha, then it is ahead) or
-		// takes the repository's; publishing it would undo the repository's change.
-		if st := h.state(); st != contract.DefinitionStateAhead && st != contract.DefinitionStateStoreOnly {
+		// A repository-changed head is a conflict: the person keeps theirs (keep: a revision of the same content on the
+		// repository file it replaces, then it is ahead) or takes the repository's; publishing it without keep would undo
+		// the repository's change unseen.
+		st := h.state()
+		keep := st == contract.DefinitionStateRepositoryChanged && keepMine
+		if st != contract.DefinitionStateAhead && st != contract.DefinitionStateStoreOnly && !keep {
 			skip(k, "state is "+string(st))
 			continue
+		}
+		if keep && !preview {
+			if _, err := appendRevision(q, h.Kind, h.ID, h.Head, ptr(string(h.Content)), h.RepoSha, "editor", "Keep the Fleet version over the repository's change"); err != nil {
+				return out, err
+			}
+			if h, err = headOf(q, string(k.Kind), k.Id, true); err != nil {
+				return out, err
+			}
 		}
 		if sent[string(k.Kind)+"/"+k.Id] >= h.Head {
 			skip(k, fmt.Sprintf("r%d is already on its way", h.Head))
@@ -66,7 +77,7 @@ func publishDefinitions(q *Request, keys []contract.DefinitionKey, preview bool)
 		if exps, err := q.db().DefExperimentsNaming(q.ctx(), k.Id); err != nil {
 			return out, err
 		} else if len(exps) > 0 && h.state() == contract.DefinitionStateStoreOnly {
-			skip(k, "a Lab variant of experiment "+exps[0])
+			skip(k, "a Lab variant of experiment "+exps[0].ID)
 			continue
 		}
 		heads = append(heads, h)
@@ -118,7 +129,7 @@ func publishAfterSave(q *Request, keys ...contract.DefinitionKey) error {
 	if len(send) == 0 || definitionsProject(q) == "" {
 		return nil
 	}
-	_, err := publishDefinitions(q, send, false)
+	_, err := publishDefinitions(q, send, false, false)
 	return err
 }
 
@@ -201,6 +212,6 @@ func publishPromoted(q *Request, method []byte) error {
 			}
 		}
 	}
-	_, err := publishDefinitions(q, keys, false)
+	_, err := publishDefinitions(q, keys, false, false)
 	return err
 }
