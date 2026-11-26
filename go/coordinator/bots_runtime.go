@@ -212,6 +212,10 @@ func botConversation(q *Request, b *botFull, subject string) (agentSession, erro
 	if err := sessionPut(q, &s); err != nil {
 		return agentSession{}, err
 	}
+	// A wake over several subjects holds earlier subjects' session locks already (triggerSend); this session is new.
+	if err := acquireNewObjectLock(q, "session:"+s.ID); err != nil {
+		return agentSession{}, err
+	}
 	title, titleBy := b.Settings.Name, "bot"
 	if subject != "" {
 		if err := q.db().SessionSetSubject(q.ctx(), db.SessionSetSubjectParams{ID: s.ID, Subject: &subject}); err != nil {
