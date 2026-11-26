@@ -260,6 +260,7 @@ One rules pass in the coordinator runs every minute (`pass.rules`). Each rule is
 | `error-burn` | 2 | 1-hour and 5-minute error ratios both above 14.4 x the operation's 7-day ratio | operation | `problem:error-burn:<service>:<name>` |
 | `latency` | 2 | 1-hour p95 above 2 x the 7-day p95, at least 20 calls | operation | `problem:latency:<service>:<name>` |
 | `cost` | 2 | tokens or credits per task, per experiment, per hour above 3 x the 7-day median; a subscription limit projected to run out before reset | project or subscription | `problem:cost:<subject>` |
+| `disk-growth`, `leftovers`, `personal-output`, `cleanup-failing`, `run-frequency` | 1 | as in [host cleanup, section 13](fleet-host-cleanup.md#13-rules) | host, project or subject | `problem:host:<id>:disk-growth`, `problem:host:<id>:leftovers`, `problem:project:<id>:personal-output`, `problem:host:<id>:cleanup-failing`, `problem:frequency:<subject>` |
 
 All new keys start with `problem:` so the dispatch sweep, which withdraws any `host:`, `execution:`, `subscription:`, `placement:` or `budget:…:reached` cause it did not compute, never touches them. Rule results feed [Problems](fleet-system-management.md#problems-anomalies-with-a-bot-owner), which turns them into questions, groups them and closes them. `stuck` uses 30 minutes until stage 2 replaces it with the execution kind's own 7-day p99. A rule with no baseline yet (cold start: less than 7 days of rollup) does not fire.
 
