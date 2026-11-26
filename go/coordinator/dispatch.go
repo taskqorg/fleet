@@ -351,6 +351,30 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	return k, err
 }
 
+// boundElsewhere: where the usable subscriptions are bound when none is bound to host ("claude-owner on windows"); ""
+// when one is bound to host or there are none.
+func boundElsewhere(subs []*dispatchAccountRec, host string) string {
+	parts := []string{}
+	for _, s := range subs {
+		hosts := []string{}
+		for _, b := range s.parsedBindings {
+			if b.HostID == nil {
+				continue
+			}
+			if *b.HostID == host {
+				return ""
+			}
+			if !slices.Contains(hosts, *b.HostID) {
+				hosts = append(hosts, *b.HostID)
+			}
+		}
+		if len(hosts) > 0 {
+			parts = append(parts, deref(s.Name)+" on "+strings.Join(hosts, ", "))
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
 func nonNilStrings(xs []string) []string {
 	if xs == nil {
 		return []string{}
@@ -671,6 +695,10 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 	}
 	out := []*candidate{}
 	var subs []*dispatchAccountRec
+	// ranked: the director's usable subscriptions of this harness; when none is bound to a host, that host's wait names
+	// where they are bound (live 2026-11-26: a read-only review pinned to pds18-native waited on "no claude subscription
+	// of site-agents" while claude-owner is bound to windows only).
+	var ranked []*dispatchAccountRec
 	if acc := deref(x.Account); acc != "" {
 		s := find(k.accounts, named(acc))
 		if s != nil && accountHarness(*s) != harness {
@@ -712,7 +740,7 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			}
 			return w
 		}
-		ranked := []*dispatchAccountRec{}
+		ranked = []*dispatchAccountRec{}
 		for i := range accounts {
 			if mine(&accounts[i]) {
 				ranked = append(ranked, &accounts[i])
@@ -862,6 +890,10 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				}
 			} else {
 				if harness != "codex" && deref(x.Account) == "" {
+					if elsewhere := boundElsewhere(ranked, id); elsewhere != "" {
+						skip(fmt.Sprintf("no %s subscription of %v is bound to %s (%s); run it there or without a host", harness, jsText(e.DirectedBy), id, elsewhere), "host:"+id+":subscription:"+harness)
+						continue
+					}
 					skip(fmt.Sprintf("no %s subscription of %v applies", harness, jsText(e.DirectedBy)), fmt.Sprintf("director:%v:%s", jsText(e.DirectedBy), harness))
 					continue
 				}
