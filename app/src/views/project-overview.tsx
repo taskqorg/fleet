@@ -184,10 +184,11 @@ export function ProjectOverview(props: { projectId: string }) {
   );
 }
 
-/** A task in work (board P-A1): its state icon, title and code, then the state word with who works on it, and the age. */
+/** A task in work (board P-A1): its state icon, title and code, then the state word with who works on it (for a held
+ *  task, who held it; the agent when the holder is unknown), and the age. */
 function TaskLine(props: { t: ProjectView['inWork'][number]; projectId: string }) {
   const state = (): StateOf<'task'> => (props.t.pauseReason === 'held' ? 'held' : props.t.state in states.task ? props.t.state as StateOf<'task'> : 'queued');
-  const who = () => props.t.agent ?? props.t.lastAgent;
+  const who = () => (state() === 'held' && props.t.heldByName) || props.t.agent || props.t.lastAgent;
   return (
     <Go to={`/tasks/${enc(props.t.code ?? props.t.id)}?project=${enc(props.projectId)}`} cls="pw-line">
       <StateBadge family="task" state={state()} compact />

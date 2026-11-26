@@ -1827,6 +1827,8 @@ type Task struct {
 	CreatedBySessionID     *string
 	CreatedByExecutionID   *string
 	TombstonedAt           *time.Time
+	HeldBy                 *string
+	HeldByName             *string
 }
 
 type TaskDependency struct {

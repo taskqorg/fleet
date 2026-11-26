@@ -312,8 +312,53 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 	}
 	if trigger == "hold" {
 		set.PauseReason = strPtr("held")
+		if set.HeldBy, set.HeldByName, err = taskHolder(q); err != nil {
+			return "", err
+		}
 	}
 	return to, q.db().TaskSetState(q.ctx(), set)
+}
+
+// taskHolder: who holds a task now and the name to show for it (fleet-pm-agent.md §4): the calling agent execution
+// (its bot's name, else its profile, else its harness), else the request person; nil for the coordinator. Any other
+// transition clears both with pause_reason (TaskSetState).
+func taskHolder(q *Request) (*string, *string, error) {
+	if eid := strings.TrimPrefix(q.agent, "execution:"); eid != "" {
+		// The holder's own run and bot, whatever the request person may see (as createTask reads its session).
+		name, err := unscoped(q, func() (string, error) {
+			name := "agent"
+			e, err := q.db().ExecutionByID(q.ctx(), eid)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return name, nil
+			}
+			if err != nil {
+				return "", err
+			}
+			if deref(e.ProfileID) != "" {
+				name = *e.ProfileID
+			} else if deref(e.Harness) != "" {
+				name = *e.Harness
+			}
+			if deref(e.BotID) != "" {
+				b, err := q.db().BotGet(q.ctx(), *e.BotID)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return "", err
+				}
+				if err == nil && b.Name != "" {
+					name = b.Name
+				}
+			}
+			return name, nil
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return strPtr(q.agent), &name, nil
+	}
+	if q.person != nil {
+		return strPtr(q.person.Email), strPtr(personName(q.person)), nil
+	}
+	return nil, nil, nil
 }
 
 // taskAllowsWork fences a new task-bound turn against a concurrent cancellation.
@@ -1118,8 +1163,16 @@ func createTask(q *Request, v newTask) (string, error) {
 			return "", err
 		}
 	}
+	var heldBy, heldByName *string
+	if v.Held {
+		var err error
+		if heldBy, heldByName, err = taskHolder(q); err != nil {
+			return "", err
+		}
+	}
 	if err := q.db().TaskInsert(q.ctx(), db.TaskInsertParams{ID: id, ProjectID: v.ProjectID, Title: v.Title, ExpectedOutcome: v.ExpectedOutcome, CompletionRequirements: cr,
 		ResultDestination: v.ResultDestination, CreatedBy: strPtr(v.CreatedBy), CreatedByExecutionID: createdByExec, CreatedBySessionID: createdBySess, Held: v.Held,
+		HeldBy: heldBy, HeldByName: heldByName,
 		DirectedBy: strPtr(v.DirectedBy), Priority: priority}); err != nil {
 		return "", err
 	}
@@ -1222,7 +1275,7 @@ func taskItem(t db.Task, count *int64, byState, open []byte) contract.TaskListIt
 		WaitReason: t.WaitReason, Priority: t.Priority, CompletionRequirements: rawJSON(t.CompletionRequirements), ResultDestination: t.ResultDestination,
 		DeliveryMethod: rawJSON(t.DeliveryMethod), AcceptedBy: t.AcceptedBy, AcceptedAt: optTime(t.AcceptedAt), AcceptedArtifactIds: t.AcceptedArtifactIds,
 		CreatedBy: t.CreatedBy, DirectedBy: t.DirectedBy, RequestedBy: t.RequestedBy, TakenFrom: t.TakenFrom, CreatedAt: timeText(t.CreatedAt),
-		UpdatedAt: timeText(t.UpdatedAt), PauseReason: t.PauseReason,
+		UpdatedAt: timeText(t.UpdatedAt), PauseReason: t.PauseReason, HeldBy: t.HeldBy, HeldByName: t.HeldByName,
 		Progress: contract.TaskProgress{Executions: rawJSON(jsonBytes(count)), ByState: rawJSON(byState)}, OpenQuestions: rawJSON(open)}
 }
 
@@ -1283,6 +1336,7 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 		Priority: it.Priority, CompletionRequirements: it.CompletionRequirements, ResultDestination: it.ResultDestination, DeliveryMethod: it.DeliveryMethod,
 		AcceptedBy: it.AcceptedBy, AcceptedAt: it.AcceptedAt, AcceptedArtifactIds: it.AcceptedArtifactIds, CreatedBy: it.CreatedBy, DirectedBy: it.DirectedBy,
 		RequestedBy: it.RequestedBy, TakenFrom: it.TakenFrom, CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt, PauseReason: it.PauseReason,
+		HeldBy: it.HeldBy, HeldByName: it.HeldByName,
 		Progress: it.Progress, OpenQuestions: it.OpenQuestions, LatestResult: rawJSON(v.LatestResult)}
 	missingReport, err := taskCompletionReportMissing(q, t)
 	if err != nil {
@@ -1371,6 +1425,8 @@ type taskListDBRow struct {
 	Title             string  `db:"title"`
 	State             string  `db:"state"`
 	PauseReason       *string `db:"pause_reason"`
+	HeldBy            *string `db:"held_by"`
+	HeldByName        *string `db:"held_by_name"`
 	WaitReason        *string `db:"wait_reason"`
 	Priority          string  `db:"priority"`
 	CreatedAt         string  `db:"created_at"`
@@ -1395,7 +1451,7 @@ type taskListDBRow struct {
 func (x taskListDBRow) row() contract.TaskRow {
 	stalled := x.ActiveStalled
 	return contract.TaskRow{Id: x.ID, Code: x.Code, ProjectId: x.ProjectID, Title: x.Title, State: x.State, PauseReason: x.PauseReason,
-		WaitReason: x.WaitReason, Priority: x.Priority, Agent: x.Agent, Host: x.Host, StartedAt: x.StartedAt, CreatedAt: x.CreatedAt,
+		HeldBy: x.HeldBy, HeldByName: x.HeldByName, WaitReason: x.WaitReason, Priority: x.Priority, Agent: x.Agent, Host: x.Host, StartedAt: x.StartedAt, CreatedAt: x.CreatedAt,
 		UpdatedAt: x.UpdatedAt, OpenQuestions: x.OpenQuestions, StateAt: x.StateAt, Executions: x.Executions, LastAgent: x.LastAgent, LastStartedAt: x.LastStartedAt,
 		ActiveState: x.ActiveState, ActiveStartedAt: x.ActiveStartedAt, ActiveObservation: x.ActiveObservation,
 		ActiveLastSeenAt: x.ActiveLastSeenAt, ActiveStalled: &stalled, SortKey: sortKey(x.G, x.Sk, x.ID)}

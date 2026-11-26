@@ -28,7 +28,7 @@ SELECT EXISTS (SELECT 1 FROM execution WHERE task_id=$1 AND state<>'preparing'):
 
 -- name: TaskSetState :exec
 UPDATE task SET state= @state,wait_reason=sqlc.narg(wait_reason),state_before_pause=sqlc.narg(state_before_pause),
- pause_reason=sqlc.narg(pause_reason),updated_at=now() WHERE id= @id;
+ pause_reason=sqlc.narg(pause_reason),held_by=sqlc.narg(held_by),held_by_name=sqlc.narg(held_by_name),updated_at=now() WHERE id= @id;
 
 -- name: TaskCancelLinkedExecutions :many
 -- The open runs of a task (its own, those of its sessions, delegated children and pipeline steps of its runs), runs
@@ -276,11 +276,12 @@ SELECT count(*)::bigint FROM task;
 -- name: TaskInsert :exec
 -- A new task, queued, or with held paused before its first queue (fleet-pm-agent.md §4).
 INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,created_by_execution_id,created_by_session_id,
- state,state_before_pause,pause_reason,directed_by,requested_by,priority)
+ state,state_before_pause,pause_reason,held_by,held_by_name,directed_by,requested_by,priority)
 VALUES(@id,sqlc.narg(project_id),@title,sqlc.narg(expected_outcome),@completion_requirements,sqlc.narg(result_destination),sqlc.narg(created_by),
  sqlc.narg(created_by_execution_id),sqlc.narg(created_by_session_id),
  CASE WHEN @held::boolean THEN 'paused' ELSE 'queued' END::task_state,CASE WHEN @held::boolean THEN 'queued' END::task_state,
- CASE WHEN @held::boolean THEN 'held' END,sqlc.narg(directed_by),sqlc.narg(directed_by),@priority);
+ CASE WHEN @held::boolean THEN 'held' END,CASE WHEN @held::boolean THEN sqlc.narg(held_by)::text END,
+ CASE WHEN @held::boolean THEN sqlc.narg(held_by_name)::text END,sqlc.narg(directed_by),sqlc.narg(directed_by),@priority);
 
 -- name: TaskDependencyAdd :exec
 INSERT INTO task_dependency(task_id,depends_on_task_id,kind,project_id) VALUES(@task_id,@depends_on,'blocks',sqlc.narg(project_id)) ON CONFLICT DO NOTHING;
