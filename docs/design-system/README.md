@@ -35,6 +35,15 @@ The board has one home, like a shared design file: the persistent board worktree
 
 [index.json](board/index.json) lists every committed frame (id, canvas, page, width, theme, status); `pnpm run board:index` regenerates it and the code map. A task names its frame by id; an agent finds it there without opening a canvas. In [code-map.json](board/code-map.json), `blocks` lists each master the screens are drawn with (board/masters.bl): its axes, the `packages/ui` export it stands for, the book section masters that render it, and every screen frame that uses it (`usedIn`), so a build agent goes from a frame's `inst(...)` rows straight to the import and the props.
 
+### Board layout
+
+Brilliant draws each top-level frame's name just above the frame, so a frame placed against another hides that name, and a frame placed on another hides its content. On every canvas:
+
+* Top-level frames stand in rows and columns, never on each other, with at least 40 px between neighbours on both axes (160 px is the usual gap). A note about a frame is part of that frame or stands in the grid as a frame of its own.
+* Every child stays inside its frame. A row whose texts do not fit is shortened (an ellipsis, as the product truncates), not left to run past the edge. Two exceptions draw nothing under anything: a floating overlay (a menu, a popover, a tooltip) is an `abs` child drawn on top on purpose, and a list longer than its panel clips (`clip`), as the scrolling panel does in the product.
+
+`pnpm run board:lint` reports top-level frames that overlap or stand closer than 40 px, children past their frame's edge, and texts drawn on a sibling where no auto layout places them; `-- <board dir> --drafts` checks the board home with its drafts. It is a report that reads the saved `.bl` files, never a gate. Run it after drawing and fix what it names on the canvases you touched.
+
 How a screen moves through the board:
 
 1. **Audit.** Capture what runs and mark the problems. Screenshots are working papers: they go into the pull request, not the tree. Board frames carry illustrative data, so compare each frame with the same page on prod and mark every difference as code (the UI lacks it), data (the UI is right, prod data differs) or missing field (the model has no such field); `node scripts/ui-context.ts <page>` lists the frames (owner, 2026-11-26).
