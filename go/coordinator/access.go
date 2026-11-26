@@ -694,7 +694,7 @@ func accessOnboardKey(q *Request, r *contract.AccessOnboardRequest) (contract.Ac
 			return no, err
 		}
 		switch {
-		case empty != nil && r.Connection == nil:
+		case empty != nil && (r.Connection == nil || *r.Connection == provider):
 			c = empty
 		case empty != nil:
 			return no, fail(409, "Connection "+empty.Name+" of "+provider+" has no key yet: add the key there, or pass second: true for a second connection")
@@ -707,6 +707,10 @@ func accessOnboardKey(q *Request, r *contract.AccessOnboardRequest) (contract.Ac
 		}
 		v, err := connectionsCreate(q, &contract.ConnectionsCreateRequest{Name: name, Provider: provider})
 		if err != nil {
+			// A concurrent onboard made it meanwhile: answer that connection.
+			if again, rerr := apiConnectionMaybe(q, "connection:"+name); rerr == nil && again != nil && again.Provider == provider {
+				return accessOnboardKey(q, r)
+			}
 			return no, err
 		}
 		nc := v.(apiConnection)
