@@ -11,7 +11,7 @@ Perform authorized work directly with native tools when useful; delegation is op
 2. Write the task with `task_create`: a short title; `expectedOutcome` says what is done, why, how to check it and where the result goes (`resultDestination`). An agent's task starts Held. If creation returns a pending request key, read the original outcome with `agent_tool_result {requestKey}` and do not repeat the mutation while its outcome is unknown. After creation is confirmed:
 
    - In a taskless non-bot conversation that belongs on the task thread, use `session_task_attach {taskId}`. Creation alone does not attach the conversation.
-   - In a bot conversation, Fleet already links tasks the bot creates. Use `bot_task_link` for existing managed work when needed. In a problem conversation, record the task code or pull request URL with `problem_update {id, work}`. All bot conversations are ineligible for task attachment.
+   - In a bot conversation, Fleet links tasks created in the bot's project to its managed tasks. Use `bot_task_link` for existing work in that project when needed. In a problem conversation, record the task code or pull request URL with `problem_update {id, work}`. All bot conversations are ineligible for task attachment.
 
 3. Refine the task with `task_update` (title, expectedOutcome, priority, resultDestination) while it is Held.
 4. Release authorized work with `task_release` without redundant confirmation. Preserve explicit holds; ask when a substantive decision or missing authority requires it. Use `task_hold`, `task_release` and `task_cancel` for execution control; cancelling keeps the history. Acceptance is separate (step 8).
