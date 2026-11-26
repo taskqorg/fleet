@@ -1107,8 +1107,9 @@ type dispatchStall struct{ reason, director, ask, projectID string }
 
 // dispatchStalls: the stall causes of one pass in the order it raised them.
 type dispatchStalls struct {
-	causes map[string]dispatchStall
-	order  []string
+	causes  map[string]dispatchStall
+	order   []string
+	skipped bool // a placement was skipped for a busy session: its cause is unknown this pass
 }
 
 func (st *dispatchStalls) add(cause string, s dispatchStall) {
@@ -1190,6 +1191,9 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 				// Tried, not waited for: a wait here would hold DISPATCH (and every write queued behind it) until the session's
 				// writer commits; that writer wakes dispatch when it does, and the fallback pass comes back anyway.
 				if busy, err := trySessionLock(q, sid); err != nil || busy {
+					if busy {
+						st.skipped = true
+					}
 					return err
 				}
 				// Re-read after acquiring the session lock so any concurrent session write is visible (a stop does not take it:
@@ -1438,6 +1442,26 @@ func dispatchStallsSet(q *Request, st *dispatchStalls) error {
 			tail = fmt.Sprintf(" Ask %v, or change the setting.", c.ask)
 		}
 		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: c.projectID})
+	}
+	if st.skipped {
+		// A placement skipped for a busy session raised no cause: closing the causes this pass did not raise would close
+		// its stall and open it again next pass. Raise the new ones, close none.
+		held, err := q.db().ProblemsOpenOf(q.ctx(), db.ProblemsOpenOfParams{Pattern: ptr(dispatchStallCauses)})
+		if err != nil {
+			return err
+		}
+		have := map[string]bool{}
+		for _, h := range held {
+			have[h.Cause] = true
+		}
+		for _, p := range stalls {
+			if !have[p.Cause] {
+				if err := problemRaise(q, "", p); err != nil {
+					return fmt.Errorf("problem %s: %w", p.Cause, err)
+				}
+			}
+		}
+		return nil
 	}
 	return problemsSet(q, "", dispatchStallCauses, stalls)
 }
