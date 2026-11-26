@@ -1250,24 +1250,30 @@ func (q *Queries) DispWaitReason(ctx context.Context, arg DispWaitReasonParams) 
 }
 
 const hostsDraining = `-- name: HostsDraining :many
-SELECT id FROM host_observation WHERE jsonb_typeof(payload->'drain') = 'object'
+SELECT id, coalesce(jsonb_array_length(CASE WHEN jsonb_typeof(payload->'activeExecutions') = 'array' THEN payload->'activeExecutions' END), 0)::int AS runs
+FROM host_observation WHERE jsonb_typeof(payload->'drain') = 'object'
  AND last_seen_at > now() - make_interval(secs => $1::float8) ORDER BY seq
 `
 
+type HostsDrainingRow struct {
+	ID   string
+	Runs int32
+}
+
 // The hosts whose last poll, within secs, reported an update drain: the rolling-update turn across a coordinator restart.
-func (q *Queries) HostsDraining(ctx context.Context, secs float64) ([]string, error) {
+func (q *Queries) HostsDraining(ctx context.Context, secs float64) ([]HostsDrainingRow, error) {
 	rows, err := q.db.Query(ctx, hostsDraining, secs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []HostsDrainingRow
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var i HostsDrainingRow
+		if err := rows.Scan(&i.ID, &i.Runs); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -336,5 +336,6 @@ UPDATE task SET wait_reason=sqlc.narg(wait_reason), updated_at=now() WHERE id= @
 
 -- name: HostsDraining :many
 -- The hosts whose last poll, within secs, reported an update drain: the rolling-update turn across a coordinator restart.
-SELECT id FROM host_observation WHERE jsonb_typeof(payload->'drain') = 'object'
+SELECT id, coalesce(jsonb_array_length(CASE WHEN jsonb_typeof(payload->'activeExecutions') = 'array' THEN payload->'activeExecutions' END), 0)::int AS runs
+FROM host_observation WHERE jsonb_typeof(payload->'drain') = 'object'
  AND last_seen_at > now() - make_interval(secs => @secs::float8) ORDER BY seq;
