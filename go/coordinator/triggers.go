@@ -584,13 +584,13 @@ func triggerPass(ctx context.Context, a *App, now time.Time) error {
 		if t.BotID != nil {
 			lock = "bot:" + *t.BotID
 		}
-		var later []laterWake
+		var later laterPass
 		err := a.store.Write(ctx, nil, []string{lock}, func(q *Request) error {
-			later = later[:0]
-			q.laterWakes = &later
+			later = laterPass{}
+			q.later = &later
 			return triggerOne(q, t.ID, now)
 		})
-		if err == nil {
+		if err == nil && len(later.wakes) > 0 {
 			err = sendLaterWakes(ctx, a, lock, later)
 		}
 		if err != nil {
@@ -710,14 +710,22 @@ func triggerCheck(q *Request, t db.Trigger, target triggerTarget, now time.Time,
 	if sent { // a paused bot's skipped wake is in the trigger's log (trigger_log), not a fire
 		st.Fires, st.LastFireAt, st.QuietChecks, st.QuietSince = st.Fires+1, &now, 0, nil
 	}
-	if err := q.db().TriggerState(q.ctx(), st); err != nil {
-		return false, err
+	share := len(t.IfChanged) > 0
+	sessionID, botID := target.ref()
+	commit := func(q *Request) error {
+		if err := q.db().TriggerState(q.ctx(), st); err != nil {
+			return err
+		}
+		if !share {
+			return nil
+		}
+		return q.db().TriggerShareCursor(q.ctx(), db.TriggerShareCursorParams{ChangeCursor: cursor, ID: t.ID, SessionID: sessionID, BotID: botID})
 	}
-	if len(t.IfChanged) > 0 {
-		sessionID, botID := target.ref()
-		err = q.db().TriggerShareCursor(q.ctx(), db.TriggerShareCursorParams{ChangeCursor: cursor, ID: t.ID, SessionID: sessionID, BotID: botID})
+	if q.later != nil && len(q.later.wakes) > 0 {
+		q.later.state = commit // after the wakes (sendLaterWakes)
+		return sent, nil
 	}
-	return sent, err
+	return sent, commit(q)
 }
 
 // triggerTargetChanges: t widened to every enabled change trigger of its target: the union of their kinds from the
@@ -760,13 +768,14 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, al
 		return triggerSendOne(q, t, target, slot, nil, "", manual)
 	}
 	keys, lines := threadGroups(all)
-	if target.bot != nil && len(keys) > 1 && q.laterWakes != nil {
+	if target.bot != nil && len(keys) > 1 && q.later != nil {
 		// A pass waking a bot on several subjects (48 problems after a duty) sends each in its own transaction after
 		// this one commits: one transaction for all held the bot's and every conversation's locks and a pool
 		// connection for minutes (pass.triggers 334 s on prod, 2026-11-26), and the bot's own tool calls waited on
-		// them. Each wake has its dedup key, so a send that runs twice records one turn.
+		// them. The trigger's state commits after the last of them (laterPass.state): a restart in between finds the same
+		// changes and the same slot again, and each wake's dedup key makes a resend one turn.
 		for _, k := range keys {
-			*q.laterWakes = append(*q.laterWakes, laterWake{trigger: t, botID: target.bot.Id, slot: slot, parts: lines[k], thread: k, manual: manual})
+			q.later.wakes = append(q.later.wakes, laterWake{trigger: t, botID: target.bot.Id, slot: slot, parts: lines[k], thread: k, manual: manual})
 		}
 		return true, nil
 	}
@@ -804,7 +813,13 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, al
 	return sent, nil
 }
 
-// laterWake: one subject's wake of a pass, sent after the pass commits (sendLaterWakes).
+// laterPass: a pass's wakes to send one transaction each, then its trigger state.
+type laterPass struct {
+	wakes []laterWake
+	state func(*Request) error
+}
+
+// laterWake: one subject's wake of a pass, sent after the pass's own transaction (sendLaterWakes).
 type laterWake struct {
 	trigger     db.Trigger
 	botID, slot string
@@ -813,11 +828,12 @@ type laterWake struct {
 	manual      bool
 }
 
-// sendLaterWakes: each subject's wake in its own transaction under the bot's lock; a failed one is logged and the
-// others still go (its subject comes back: a problem stays unstarted, a change shows in the conversation's next wake).
-func sendLaterWakes(ctx context.Context, a *App, lock string, later []laterWake) error {
+// sendLaterWakes: each subject's wake in its own transaction under the bot's lock, then the trigger's state. A failed
+// wake (or a restart) leaves the state as it was, so the next pass finds the same changes and slot and resends; the
+// wakes already sent are the same turns again (their dedup keys), the rest go.
+func sendLaterWakes(ctx context.Context, a *App, lock string, later laterPass) error {
 	var errs error
-	for _, w := range later {
+	for _, w := range later.wakes {
 		err := a.store.Write(ctx, nil, []string{lock}, func(q *Request) error {
 			target, err := triggerTargetOfRow(q, w.trigger)
 			if errors.Is(err, errNotFound) {
@@ -833,7 +849,10 @@ func sendLaterWakes(ctx context.Context, a *App, lock string, later []laterWake)
 			errs = errors.Join(errs, fmt.Errorf("wake %s: %w", w.thread, err))
 		}
 	}
-	return errs
+	if errs != nil || later.state == nil {
+		return errs // the state stays: the next pass sends the same wakes again, each once (dedup key)
+	}
+	return a.store.Write(ctx, nil, []string{lock}, later.state)
 }
 
 // triggerSendOne: the trigger's message to its target for one thread ("" the main thread).
