@@ -92,9 +92,12 @@ export type EntityForm = 'code' | 'chip' | 'full';
 
 // The one shown card (one at a time): which reference, the code it hangs from, whether a key opened it, and whether it is
 // a peek (hover; it hides when the pointer leaves) or pinned (a click, a tap, a key).
-type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean; peek: boolean };
+// Peek is its own signal: pinning a peek keeps the same card (the layer is keyed by the shown reference).
+type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
 const [shown, setShown] = createSignal<Shown | null>(null, { ownedWrite: true });
-const showCard = (s: Shown | null) => { clearTimeout(hideTimer); setShown(s); };
+const [peeking, setPeeking] = createSignal(false, { ownedWrite: true });
+const showCard = (s: Shown | null, peek = false) => { clearTimeout(hideTimer); setPeeking(peek); setShown(s); };
+const pin = () => { clearTimeout(hideTimer); setPeeking(false); };
 const CARD_ID = 'entity-card';
 /** Hover timings (entity-card.md "Behaviour"): rest to peek, to move to another reference while one shows, grace on leaving. */
 export const PEEK_MS = 500, PEEK_NEXT_MS = 150, PEEK_HIDE_MS = 300;
@@ -104,9 +107,9 @@ const finePointer = () => typeof matchMedia === 'function' && matchMedia('(hover
 function leavePeek() {
   clearTimeout(peekTimer);
   const s = untrack(shown);
-  if (!s?.peek) return;
+  if (!s || !untrack(peeking)) return;
   clearTimeout(hideTimer);
-  hideTimer = setTimeout(() => { if (untrack(shown) === s) setShown(null); }, PEEK_HIDE_MS);
+  hideTimer = setTimeout(() => { if (untrack(shown) === s && untrack(peeking)) showCard(null); }, PEEK_HIDE_MS);
 }
 const keepPeek = () => clearTimeout(hideTimer);
 
@@ -150,8 +153,10 @@ export function EntityCode(p: {
   const title = () => live()?.title ?? p.title ?? undefined;
   // OR-6: a state that changes while shown tints the reference briefly; success and failure in their tones, others neutral.
   const [flash, setFlash] = createSignal<string | null>(null);
+  // Only a change between two loaded live values tints: the first reply after mount is not a change.
   let lastState: string | null | undefined, flashTimer: ReturnType<typeof setTimeout> | undefined;
-  createEffect(() => st()?.state ?? null, now => {
+  createEffect(() => live() === undefined ? undefined : st()?.state ?? null, now => {
+    if (now === undefined) return;
     if (lastState !== undefined && now !== lastState) {
       const tone = st()?.tone;
       setFlash(tone === 'success' || tone === 'danger' ? tone : 'neutral');
@@ -169,17 +174,17 @@ export function EntityCode(p: {
     // The open card is read now, not from the last render: a second click before a re-render still closes it; a click on a
     // peek pins it. A click from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
     const cur = untrack(shown);
-    if (cur?.anchor === e.currentTarget && cur.peek && e.detail !== 0) { showCard({ ...cur, peek: false }); return; }
-    showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0, peek: false });
+    if (cur?.anchor === e.currentTarget && untrack(peeking) && e.detail !== 0) { pin(); return; }
+    showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0 });
   };
   const enter = (e: PointerEvent & { currentTarget: HTMLButtonElement }) => {
     if (e.pointerType === 'touch' || !finePointer()) return;
     const anchor = e.currentTarget, r = ref(), cur = untrack(shown);
     if (!r) return;
     if (cur?.anchor === anchor) { keepPeek(); return; }
-    if (cur && !cur.peek) return; // a pinned card stays until it is closed
+    if (cur && !untrack(peeking)) return; // a pinned card stays until it is closed
     clearTimeout(peekTimer);
-    peekTimer = setTimeout(() => { if (anchor.isConnected && anchor.matches(':hover')) showCard({ ref: r, anchor, keyboard: false, peek: true }); }, cur ? PEEK_NEXT_MS : PEEK_MS);
+    peekTimer = setTimeout(() => { if (anchor.isConnected && anchor.matches(':hover')) showCard({ ref: r, anchor, keyboard: false }, true); }, cur ? PEEK_NEXT_MS : PEEK_MS);
   };
   const what = () => entityKinds[k()!].label;
   const name = () => `${what()}${code() ? ' ' + code() : ''}${st() ? ', ' + st()!.label.toLowerCase() : ''}${live() === null ? ', not visible' : ''}: show details`;
@@ -328,10 +333,10 @@ function EntityCardDialog(p: { cur: Shown }) {
       {...popoverAttr('manual')}
       class={['ecard', theme()]}
       data-ui="entity-card" role="dialog"
-      data-peek={p.cur.peek ? '' : undefined}
+      data-peek={peeking() ? '' : undefined}
       onPointerEnter={keepPeek}
       onPointerLeave={e => { if (e.pointerType !== 'touch') leavePeek(); }}
-      onPointerDown={() => { if (p.cur.peek) showCard({ ...p.cur, peek: false }); }}
+      onPointerDown={() => { if (untrack(peeking)) pin(); }}
       aria-label={`${k().label}${p.cur.ref.code ? ' ' + p.cur.ref.code : ''}`}
     >
       <CardBody

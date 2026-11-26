@@ -1014,6 +1014,61 @@
    "status": "approved"
   },
   {
+   "id": "7b61fbeef906e017",
+   "canvas": "screens/entity-references",
+   "name": "ER-1 Forms and live state · 1440 dark",
+   "page": "entity-references",
+   "width": 1440,
+   "frameWidth": 1440,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "ec036c0d2ada347f",
+   "canvas": "screens/entity-references",
+   "name": "ER-5 Live state change in place · 1440 dark",
+   "page": "entity-references",
+   "width": 1440,
+   "frameWidth": 1440,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "53b9705aec066278",
+   "canvas": "screens/entity-references",
+   "name": "ER-2 Hover card: pull request · 1440 dark",
+   "page": "entity-references",
+   "width": 1440,
+   "frameWidth": 1440,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "1a73ca7c9cff93df",
+   "canvas": "screens/entity-references",
+   "name": "ER-3 Hover card: image result with preview · 1440 dark",
+   "page": "entity-references",
+   "width": 1440,
+   "frameWidth": 1440,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "bbba79650d6c04ce",
+   "canvas": "screens/entity-references",
+   "name": "ER-4 Tap opens the card · 390 dark",
+   "page": "entity-references",
+   "width": 390,
+   "frameWidth": 390,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
    "id": "903c60d389c41101",
    "canvas": "screens/flow",
    "name": "Flow: where everything is and how one moves · J1–J5",

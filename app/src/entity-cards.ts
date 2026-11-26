@@ -55,6 +55,7 @@ async function read(batch: Entry[]) {
     } catch {
       // A failed read keeps what each reference showed; the next change or resync reads it again.
       part.forEach(e => dirty.add(e));
+      scheduleDirty();
     }
   }
 }
@@ -182,4 +183,4 @@ export const entityCards = (go: (path: string) => void): EntityCardSource => ({
 });
 
 /** For tests and the load check: how many entries the registry holds and the entity keys it matches changes against. */
-export const liveRegistry = { size: () => entries.size, entities: () => byEntity.size, onChanges, flush: () => { flushFresh(); flushDirty(); } };
+export const liveRegistry = { size: () => entries.size, entities: () => byEntity.size, onChanges };

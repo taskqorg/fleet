@@ -987,6 +987,11 @@
    "spec": "docs/design-system/controls/entity-card.md",
    "imports": [
     {
+     "name": "Button",
+     "from": "packages/ui/src/index.ts",
+     "file": "packages/ui/src/controls/primitives.tsx"
+    },
+    {
      "name": "EntityCode",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/overlays.tsx"
@@ -997,7 +1002,48 @@
      "file": "packages/ui/src/controls/thread.tsx"
     }
    ],
-   "usedIn": []
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
   },
   {
    "master": "State badge",
@@ -2846,6 +2892,7 @@
     "Spotlight palette",
     "Focus chip in the shell header",
     "Button",
+    "Entity reference and card",
     "Numbers, totals, age chips",
     "Updating list: pending counters and rows, row checks",
     "Task list view: views, state counters, grouping, filters, virtual list",
