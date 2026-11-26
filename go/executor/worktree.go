@@ -445,8 +445,11 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 	}
 	w := filepath.Join(dir, "worktree")
 	if opt.dropOutput {
+		// Only untracked results: a repository that tracks files under output/ keeps them.
 		if st, err := os.Lstat(filepath.Join(w, "output")); err == nil && st.IsDir() {
-			_ = removeTree(filepath.Join(w, "output"))
+			if tracked, err := hardenedGit("-C", w, "ls-files", "--", "output").Output(); err == nil && len(tracked) == 0 {
+				_ = removeTree(filepath.Join(w, "output"))
+			}
 		}
 	}
 	removeProjectEnv(session) // the dev environment is disposable; env_exec starts it again for a kept worktree

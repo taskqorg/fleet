@@ -77,8 +77,9 @@ SELECT d.id::text AS id,
   EXISTS(SELECT 1 FROM question x WHERE x.session_id = d.id AND x.state = 'open')::bool AS asking,
   EXISTS(SELECT 1 FROM artifact a JOIN execution e ON e.id = a.execution_id WHERE e.session_id = d.id AND a.state = 'pending')::bool AS uploading,
   NOT EXISTS(SELECT 1 FROM artifact a JOIN execution e ON e.id = a.execution_id WHERE e.session_id = d.id AND a.state IN ('pending', 'failed'))::bool AS outputs_stored,
-  EXISTS(SELECT 1 FROM command c WHERE c.session_id = d.id AND c.kind = 'teardown' AND c.status = 'completed'
-    AND c.updated_at >= coalesce((SELECT max(coalesce(e.ended_at, e.updated_at)) FROM execution e WHERE e.session_id = d.id), '-infinity'))::bool AS torn
+  EXISTS(SELECT 1 FROM event ev JOIN execution e ON e.id = ev.execution_id WHERE e.session_id = d.id AND ev.type = 'teardown'
+    AND ev.payload->'data'->>'reason' IN ('uncommitted', 'unpushed', 'teardown-failed')
+    AND ev.at >= coalesce((SELECT max(coalesce(x.ended_at, x.updated_at)) FROM execution x WHERE x.session_id = d.id), '-infinity'))::bool AS torn
 FROM unnest($1::text[]) AS d(id)
 LEFT JOIN session s ON s.id = d.id
 LEFT JOIN task t ON t.id = s.task_id
