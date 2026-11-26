@@ -6,7 +6,7 @@
 
 **Anatomy.** An ordered list in a bordered block. Each line: the step number `n.` (muted mono), the step id (mono, medium weight) and what the step does (normal text, wraps). A nested step (`depth` 1) is indented one step; a condition line has no number and is in the attention tone.
 
-**Behaviour.** The data is the server's `outline` (`PipelineOutlineLine[]`: `n`, `step`, `text`, `depth`, `condition`). The same text at 1440 and 390 px: lines wrap and never scroll sideways ([OR-66](../owner-rules.md)).
+**Behaviour.** The data is the server's `outline` (`PipelineOutlineLine[]`: `n`, `step`, `text`, `depth`, `condition`). The same text at 1440 and 390 px: lines wrap and never scroll sideways ([OR-66](../patterns/no-horizontal-scroll.md#rules-kept-here)).
 
 **Used in.** A project's pipeline page: Overview ("How it works") and Definition ([Projects](../pages/projects.md)).
 

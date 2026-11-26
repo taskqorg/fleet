@@ -28,8 +28,15 @@
 
 ## Diff row
 
-How a configuration shows only what differs from its base ([OR-45](../owner-rules.md)). Built: `DiffRow` and `InheritedRows` in `packages/ui` (`src/controls/diff-row.tsx`); demo: [book](../book/index.html#diff-row). Master `Diff row` on [blocks.bl](../board/blocks.bl), board *Data*:
+How a configuration shows only what differs from its base ([OR-45](#rules-kept-here)). Built: `DiffRow` and `InheritedRows` in `packages/ui` (`src/controls/diff-row.tsx`); demo: [book](../book/index.html#diff-row). Master `Diff row` on [blocks.bl](../board/blocks.bl), board *Data*:
 * `changed`: the field in mono and its value; the base default is in the tooltip only, never as a second value or an arrow on the row ([OR-7](../owner-rules.md), [OR-20](../owner-rules.md)).
 * `inherited`: the folded "Inherited defaults (N)" row, which opens the unchanged fields in place.
 
 Text names: `field`, `value`, `label`. Used in the Library definition editor, a project's Setup and a Lab variant.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-45 Diff from default.** Configuration and comparison views (agents, projects, pipelines, Lab variants) show identity plus **only** fields that differ from their base default (harness default, `variantOf` base profile, shared project defaults, or Lab baseline). Unchanged inherited defaults stay collapsed in a single expandable `Inherited defaults (N)` row so differences stand out at a glance. No `override`, `overridden`, or `custom` badges or words, and no `t-attention` tone on normal configuration values; show the base default only in a tooltip if useful (OR-20).
+* **UR-65.** (merged with OR-45) Configuration and comparison views show only what differs from the default ([OR-45](#rules-kept-here)). *Check:* Review.

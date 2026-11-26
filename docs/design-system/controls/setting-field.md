@@ -21,3 +21,9 @@
 ## Board
 
 Master `Setting field` on [blocks.bl](../board/blocks.bl), board *Sections*, variants `applied`, `editing`, `pending` and `error`; the apply status takes the dot-and-word form with the tones of the setting family in the [state badge](state-badge.md) mapping (Applied, Pending, Apply error), not the session words. Text names `label`, `value`, `help`.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **UR-33.** A setting shows "applied 10:42", "pending" or "apply error: …" next to its value. *Check:* Browser: change a host setting, expect "pending", then "applied".

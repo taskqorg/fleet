@@ -28,4 +28,10 @@
 
 ## Board
 
-Masters on [blocks.bl](../board/blocks.bl), board *Sections*: `Filter bar` composes `Search` ([OR-31](../owner-rules.md), variants `icon` and `open`), `View chip` (saved views, [OR-33](../owner-rules.md), variants `default` and `active`), the count "84 of 1,240" shown only while a filter narrows the list, `State counters` ([OR-29](../owner-rules.md)), then Group and Sort as icons ([OR-35](../owner-rules.md)). There is no Filter button ([OR-36](../owner-rules.md)).
+Masters on [blocks.bl](../board/blocks.bl), board *Sections*: `Filter bar` composes `Search` ([OR-31](search.md#rules-kept-here), variants `icon` and `open`), `View chip` (saved views, [OR-33](../patterns/list-view.md#rules-kept-here), variants `default` and `active`), the count "84 of 1,240" shown only while a filter narrows the list, `State counters` ([OR-29](state-counters.md#rules-kept-here)), then Group and Sort as icons ([OR-35](../patterns/list-view.md#rules-kept-here)). There is no Filter button ([OR-36](../owner-rules.md)).
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **UR-17.** Active filters show as removable terms with a count ("84 of 1,240") and one clear action ([OR-11](../patterns/list-view.md#rules-kept-here), [OR-36](../owner-rules.md)). *Check:* Browser: apply a filter, expect the count and the clear action.

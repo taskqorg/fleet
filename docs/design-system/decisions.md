@@ -602,7 +602,7 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Choice:** one shared part, [work facts](controls/work-facts.md) (`WorkFacts`), form B: `×N` attempts, time in work, agent mark; the latest attempt and the time in state in the tooltip of the time in work. Parts show by meaning: `×N` from two attempts, time in work always when known. Outliers by (c), `peerFence`: tried on prod data, (b) marked every `×2` and `×3`, because most tasks have one attempt and the spread is zero; (c) marks `×207` and leaves `×2` and `×3` plain.
 * **Built into Live:** worker slots (attempts, time in work, agent mark in place of the harness name and tokens), a new In work list of every open task, Delivery rows (time since opened and in the stage), Just now (repeats as one event with `×N`, named by the task or the conversation), and `+K more` that opens the rest in place. Reads: `task_page` adds `lastStartedAt`, `executions_runners` adds `sessionTitle`; agents read both through ops and MCP.
 * **Next adopters:** Tasks (its row facts become `WorkFacts`), Conversations (agent mark and time in state), Results and Runners (time and agent), Home cards (time in state).
-* **Rule:** [OR-63](owner-rules.md).
+* **Rule:** [OR-63](controls/work-facts.md#rules-kept-here).
 * **Board (OR-62):** options A, B and C drawn on `drafts/live-rows`; the owner picked B, now in [screens/live.bl](board/screens/live.bl).
 
 ## 2026-11-25: Tasks rows use the work facts
@@ -614,16 +614,16 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 
 * **Question (owner):** bring the [work facts](controls/work-facts.md) to the Conversations, Results, Runners and Home lists, drawn first.
 * **Options** (board home, `drafts/workfacts-rest.bl`): Conversations A, the waiting time as its own fact, or B, inside the question chip; Home A, the facts on the meta line, or B, in the card head.
-* **Owner's answer:** "the time always on the far right, so it lines up and reads well". The rule is [OR-64](owner-rules.md): in every row and card the time is the rightmost fact. Conversations take A and Home takes A, each with the time last; the B options are dropped.
+* **Owner's answer:** "the time always on the far right, so it lines up and reads well". The rule is [OR-64](controls/work-facts.md#rules-kept-here): in every row and card the time is the rightmost fact. Conversations take A and Home takes A, each with the time last; the B options are dropped.
 * **Choice per list:** Conversations: the now line and the question chip, then the agent mark, then the wait for you (the oldest open question), else the current run's time in work, else for a failing start its failed starts (`×N`) and the latest one, else the last activity; a conversation is not one task, so its runs are no `×N`. Results: the codes, project and size, then the attempts of the result's task and the agent of the run that made it, then the Created age. Runners: the resources, then which attempt of its task the run is, the agent mark (moved out of the title), then the time in work against the page's runs (the fixed two-hour alert is removed) or the duration. Home: the work facts at the right end of the meta line, no agent mark. Live and Tasks change to the same order: the agent mark before the time, the delivery stage chip before the facts, the Just now age after them, the Tasks spend before the work facts.
 * **Reads:** `sessions_list` adds `waitingSince`, `runStartedAt`, `lastStartedAt` and `failedStarts`; `executions_runners` adds `attempt`; `artifact_list` adds `taskAttempts` and `harness`. Agents read them through ops and MCP.
-* **Rule:** [OR-64](owner-rules.md), next to [OR-63](owner-rules.md).
+* **Rule:** [OR-64](controls/work-facts.md#rules-kept-here), next to [OR-63](controls/work-facts.md#rules-kept-here).
 * **Board (OR-62):** the approved frames are on [screens/conversations.bl](board/screens/conversations.bl), [screens/projects.bl](board/screens/projects.bl) (Results), [screens/system.bl](board/screens/system.bl) (Runners) and [screens/home.bl](board/screens/home.bl); the `Work facts` block and the Live rows frame are reordered to the time-last order.
 
 ## 2026-11-25: Lists load on scroll
 
 * **Owner's answer:** pagination that shows some rows, then `+K` and Show less, is out; every list loads on scroll and wastes nothing. Loading row: A, three faint skeleton rows.
-* **Rule:** [OR-65](owner-rules.md); [OR-30](owner-rules.md) now means a fixed preview whose title opens the full list.
+* **Rule:** [OR-65](patterns/infinite-list.md#rules-kept-here); [OR-30](patterns/infinite-list.md#rules-kept-here) now means a fixed preview whose title opens the full list.
 * **Pattern:** [infinite list](patterns/infinite-list.md): one sentinel per list, cursor pages, one request in flight, an abort on close, a danger row with Retry, nothing after the last row.
 * **Board (OR-62):** [infinite-lists.bl](board/infinite-lists.bl), 1440 and 390.
 ## 2026-11-25: A person's Telegram is set on the person card
@@ -657,3 +657,8 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Options:** the zone as drawn on the board ([board](board/screens/shell.bl), frame "Shell · rail Pinned zone (approved)"): one pin per object, pinned from the object itself, rows in the person's order with Move up and Move down; or a simpler order (bots, then conversations) with no reordering.
 * **Choice (owner, "как есть"):** as drawn, with Move up and Move down. The switch is the person setting `railPinned` (the `railBots` switch carried over, migration 119); the pins stay the Conversations and Library pins, so existing bot pins show at once; the order is `rowPins.nav`. Active and recent bots no longer show on their own. Recorded in [nav-rail](controls/nav-rail.md) (**Pinned**).
 * **Amendment (owner, 26 Nov, "без стрелок ап-даун, порядок можно менять драгон дропом"):** no Move up / Move down anywhere pins are ordered. The rail's Pinned zone, its pinned sections and the Pinned group of lists reorder by drag, by keyboard (Space, arrows, Space) and by long press on touch, through one primitive (`useReorder`). The Pinned group of a list keeps the person's order (its `rowPins` list) instead of the list's sort. Board: `drafts/rail-pinned.bl`, frame "drag to reorder".
+
+## 2026-11-26: Each rule has one fate
+
+* **Question (owner):** the rule lists grew to 70 owner rules and 93 usability rules, many of them repeated in the control and pattern specs or enforced by a script, so an agent reads the same rule two or three times.
+* **Choice (owner, one pass, not waves):** every rule gets one fate. *Component:* a control or pattern spec carries it in full; its text moves into that spec's "Rules kept here" (an owner rule keeps the owner's words). *Check:* an existing script enforces it; the check is named in the rule table. *Judgment:* it stays in [owner-rules.md](owner-rules.md#rules) or [principles.md](principles.md), merged with its duplicates. No rule is new, no check is added, and every id stays: [owner rules](owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](principles.md#rules-kept-elsewhere) say where each moved id lives. `node scripts/ui-context.ts <page>` prints the judgment rules a page cites in full and one line per spec or check for the rest.

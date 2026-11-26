@@ -6,7 +6,7 @@
 
 **Anatomy.** A tile in the [host band](host-band.md)'s slot row, height `size-row-2` plus one line:
 * a 3 px bar on the left edge in the project's colour;
-* first line: a running dot, the task title in `font-weight-medium`, the elapsed time in mono on the right ([OR-2](../owner-rules.md));
+* first line: a running dot, the task title in `font-weight-medium`, the elapsed time in mono on the right ([OR-2](number.md#rules-kept-here));
 * second line in `font-size-xs`, `fg-muted`: the [entity code](entity-card.md) and project, then the [work facts](work-facts.md) on the right: `×N` attempts of the task, its time in work since the first attempt (when that is earlier than this run), and the agent mark. Tokens are left out: the slot answers how the work goes, not what it costs ([OR-54](../owner-rules.md)). Without work facts (the book's older demo) the second line keeps the harness name and tokens.
 
 **States.**
@@ -15,11 +15,11 @@
 * *Failing:* a `danger-fg` border; the first line says what fails and when it retries; the second line the cause ([OR-56](../owner-rules.md)), then `×N` failed starts ([OR-58](../owner-rules.md)) and the time since the latest one (the slot has no time in work).
 
 **Behaviour.**
-* A busy or failing slot opens its session view ([OR-26](../owner-rules.md)); an idle slot opens nothing. In wall mode nothing opens.
+* A busy or failing slot opens its session view ([OR-26](../patterns/app-shell.md#rules-kept-here)); an idle slot opens nothing. In wall mode nothing opens.
 * Slots keep their order; a slot that frees up becomes idle in place ([OR-23](../owner-rules.md)).
 
 **Accessibility.** Named "Slot 2: Fix receipt factory, T-FLT-51, running 12 minutes"; an idle slot "Slot 4, idle"; a counted one "23 slots idle".
 
-**Do.** Keep the title the widest part ([OR-21](../owner-rules.md)). **Don't.** Show model or cost ([OR-54](../owner-rules.md)).
+**Do.** Keep the title the widest part ([OR-21](data-list.md#rules-kept-here)). **Don't.** Show model or cost ([OR-54](../owner-rules.md)).
 
 **Used in.** [Host band](host-band.md) on [Live](../pages/live.md).

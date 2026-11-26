@@ -29,4 +29,14 @@ The work area scrolls as a whole. A conversation is the exception: its transcrip
 
 ## Board
 
-The top of the work area is `DetailHead` (`src/controls/detail-head.tsx`; `DefinitionEditor` uses it; demo: [book](../book/index.html#detail-head)), the `Detail head` master on [blocks.bl](../board/blocks.bl), board *Sections*: Close icon ([OR-15](../owner-rules.md)), `project · code` in mono, the primary action (the board shows one button; the built head uses the [split button](../controls/split-button.md)) and Share, then the title and the state line ([OR-39](../owner-rules.md)). The opened item fills the work area ([OR-27](../owner-rules.md)). Facets of the item sit under it in the [tab bar](../controls/tab-bar.md); stacked areas use the [detail section](../controls/detail-section.md#board).
+The top of the work area is `DetailHead` (`src/controls/detail-head.tsx`; `DefinitionEditor` uses it; demo: [book](../book/index.html#detail-head)), the `Detail head` master on [blocks.bl](../board/blocks.bl), board *Sections*: Close icon ([OR-15](#rules-kept-here)), `project · code` in mono, the primary action (the board shows one button; the built head uses the [split button](../controls/split-button.md)) and Share, then the title and the state line ([OR-39](#rules-kept-here)). The opened item fills the work area ([OR-27](#rules-kept-here)). Facets of the item sit under it in the [tab bar](../controls/tab-bar.md); stacked areas use the [detail section](../controls/detail-section.md#board).
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-15 Return by icon.** A return action is an icon with a tooltip, and only where browser Back does not already serve.
+* **OR-27 Open in the work area.** A task, conversation, result, host or any other opened item fills the work area; a session opened from Home fills the area right of the navigation. It is never a floating, sticky or overlaid panel, at any width. Narrow work areas follow the [device rules](../principles.md#narrow-work-areas).
+* **OR-39 Detail shows the story.** A detail page shows the statement, lifecycle, result and decision. Technical ids appear only where truly needed, as an icon with tooltip and click-to-copy. No large empty fields.
+* **UR-35.** An empty area says why it is empty and what to do, and an idle work area shows a useful summary, never "Pick a row" ([list-detail](../patterns/list-detail.md)). *Check:* Browser: open each section with nothing selected, expect no "Pick" or "Select" placeholder text.
+* **UR-88.** A list and its opened item are separate screens, and Back returns to the list at the same place. *Check:* Browser: open an item at 390 px, go Back, compare scroll position.

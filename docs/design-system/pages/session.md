@@ -19,12 +19,12 @@ From top to bottom, then the context panel on the right:
    * the avatar (a bot's mark, or `P` in the project's colour for a PM), the session's name and its project chip;
    * the [state dot and word](../controls/state-badge.md#dot-and-word) (OR-55);
    * while the session has a timer, the [timer chip](../controls/context-panel.md#timer-chip) (`5m · in 3m`, `paused · 5m`); a click opens Context (owner pick A, 2026-11-25);
-   * on the right, as icons: Search in the transcript, Stop (only while a run works), the pin (pressed while pinned: the conversation is in the Conversations Pinned group and the navigation's [Pinned zone](../controls/nav-rail.md)), Fork, the row menu (Pin to navigation or Unpin, Archive, Copy link, Details) and Close in Conversations ([OR-1](../owner-rules.md), [OR-15](../owner-rules.md)). The Context toggle is in the shell header, after search ([side panel](../controls/side-panel.md)).
+   * on the right, as icons: Search in the transcript, Stop (only while a run works), the pin (pressed while pinned: the conversation is in the Conversations Pinned group and the navigation's [Pinned zone](../controls/nav-rail.md)), Fork, the row menu (Pin to navigation or Unpin, Archive, Copy link, Details) and Close in Conversations ([OR-1](../owner-rules.md), [OR-15](../patterns/list-detail.md#rules-kept-here)). The Context toggle is in the shell header, after search ([side panel](../controls/side-panel.md)).
    * No model badge, tokens, cost or ids ([OR-54](../owner-rules.md)). Details opens them in place, folded under the head ([OR-19](../owner-rules.md)).
-2. **Open question** (only while one is open): the [question card](../controls/decision-block.md#card) pinned above the transcript, its choices as buttons and a free-text answer ([OR-53](../owner-rules.md)). A confirmation card for a risky action names its scope and the way back ([OR-61](../owner-rules.md)). The answer edits the card in place (UR-58); answered cards stay in the transcript at the point they were asked.
+2. **Open question** (only while one is open): the [question card](../controls/decision-block.md#card) pinned above the transcript, its choices as buttons and a free-text answer ([OR-53](../controls/decision-block.md#rules-kept-here)). A confirmation card for a risky action names its scope and the way back ([OR-61](../owner-rules.md)). The answer edits the card in place (UR-58); answered cards stay in the transcript at the point they were asked.
 3. **Transcript**, oldest at the top, the newest at the bottom:
-   * a [message](../controls/transcript-viewer.md) per person or agent turn: author line and the age (OR-2), then the body as prose; codes become [entity cards](../controls/entity-card.md) ([OR-44](../owner-rules.md), UR-61);
-   * consecutive tool calls and system events as one [tool line](../controls/tool-line.md): one chip per kind of call with its count, failures and time; a chip opens its calls, a call its input and output ([OR-52](../owner-rules.md), UR-57; Conversations v2, owner pick c2);
+   * a [message](../controls/transcript-viewer.md) per person or agent turn: author line and the age (OR-2), then the body as prose; codes become [entity cards](../controls/entity-card.md) ([OR-44](../controls/entity-card.md#rules-kept-here), UR-61);
+   * consecutive tool calls and system events as one [tool line](../controls/tool-line.md): one chip per kind of call with its count, failures and time; a chip opens its calls, a call its input and output ([OR-52](../controls/tool-line.md#rules-kept-here), UR-57; Conversations v2, owner pick c2);
    * a run's results: pictures and videos as tiles with their preview, other files as chips; previews and diagnostic files never show ([transcript viewer](../controls/transcript-viewer.md); owner pick a2);
    * heartbeats, repeated attachments and internal notices are never shown.
 4. **Composer** at the bottom, always reachable (UR-59). While a run works it says whether Enter queues the message or steers the run; Stop sits beside it. A `/trigger` command in it shows its preview above the text and applies instead of sending ([commands](../controls/composer.md#commands)).
@@ -33,18 +33,18 @@ From top to bottom, then the context panel on the right:
 
 **One line of work.** A conversation shows one transcript and the composer writes into it; a bot's other lines of work are other conversations ([conversation model](../../designs/fleet-conversations.md#conversation-model)).
 
-**Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), a [side panel](../controls/side-panel.md) right of the transcript, its own scroller ([OR-25](../owner-rules.md)):
-* Plan with done items checked, Timers (pause or resume, edit, cancel), Automations, Swarm members with their steps done, related Tasks; each section hidden when empty ([OR-29](../owner-rules.md)).
+**Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), a [side panel](../controls/side-panel.md) right of the transcript, its own scroller ([OR-25](../patterns/app-shell.md#rules-kept-here)):
+* Plan with done items checked, Timers (pause or resume, edit, cancel), Automations, Swarm members with their steps done, related Tasks; each section hidden when empty ([OR-29](../controls/state-counters.md#rules-kept-here)).
 * A quiet last line: "Model, tokens, cost and ids: Details".
-* Open or closed and its width are stored per person (`panels.session-context`, `widths.session-context`), the same for every session ([OR-41](../owner-rules.md)). An open panel with every section empty shows only the Details line, so it never comes and goes with the data.
+* Open or closed and its width are stored per person (`panels.session-context`, `widths.session-context`), the same for every session ([OR-41](../controls/side-panel.md#rules-kept-here)). An open panel with every section empty shows only the Details line, so it never comes and goes with the data.
 
 ## Frames
 
 | Opened from | URL | Frame |
 |---|---|---|
-| Home (a session card, the composer, Wake) | `/home/C-…` | Full width right of the navigation; the shell header title is the session's name; Back returns to Home with its scroll ([OR-27](../owner-rules.md), UR-64). |
-| Conversations, a project's Sessions facet, a link, Spotlight | `/conversations/C-…` | The work area of Conversations, the session list stays in the control column with the row selected ([OR-24](../owner-rules.md), [OR-47](../owner-rules.md)). |
-| A phone (390 px) | either | The view fills the screen above the bottom bar; the context panel is a sheet opened from the Context toggle in the shell header ([OR-60](../owner-rules.md)). |
+| Home (a session card, the composer, Wake) | `/home/C-…` | Full width right of the navigation; the shell header title is the session's name; Back returns to Home with its scroll ([OR-27](../patterns/list-detail.md#rules-kept-here), UR-64). |
+| Conversations, a project's Sessions facet, a link, Spotlight | `/conversations/C-…` | The work area of Conversations, the session list stays in the control column with the row selected ([OR-24](../patterns/app-shell.md#rules-kept-here), [OR-47](../patterns/navigation-and-columns.md#rules-kept-here)). |
+| A phone (390 px) | either | The view fills the screen above the bottom bar; the context panel is a sheet opened from the Context toggle in the shell header ([OR-60](../patterns/app-shell.md#rules-kept-here)). |
 
 ## States
 
@@ -92,7 +92,7 @@ Decided by the owner on 2026-11-25 ([decisions](../decisions.md)):
 Checked against the [product map](../product-map.md) rows for one conversation.
 * **Keep:** transcript paging and search (a search icon in the session head, `thread_search`), copy of a message or a selection, attachments, Fork and Start fresh with context, handoff to another agent or account, Stop, steer or queue, Archive and Unarchive, the start picker of `/conversations/new`.
 * **Change:** decision blocks become the question card above the transcript; tool rows fold into one line per run of tools.
-* **Drop:** the metrics header and the inline resource summary (cost and tokens are not the question here, [OR-54](../owner-rules.md); they stay one click away in Details); per-boundary resource rows in the transcript (same reason); repeated attachments, heartbeats and internal notices ([OR-52](../owner-rules.md)).
+* **Drop:** the metrics header and the inline resource summary (cost and tokens are not the question here, [OR-54](../owner-rules.md); they stay one click away in Details); per-boundary resource rows in the transcript (same reason); repeated attachments, heartbeats and internal notices ([OR-52](../controls/tool-line.md#rules-kept-here)).
 
 ## Tool lines
 

@@ -45,4 +45,18 @@ At phone width (760 px and below) the toggle hides, the section actions, the foc
 
 ## Board
 
-The shell header is the `Shell header` master on [blocks.bl](../board/blocks.bl): collapse toggle, section title, focus chip and search icon, the Home and Live form of [OR-43](../owner-rules.md).
+The shell header is the `Shell header` master on [blocks.bl](../board/blocks.bl): collapse toggle, section title, focus chip and search icon, the Home and Live form of [OR-43](#rules-kept-here).
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-24 Three columns.** Catalogue sections (Conversations, Projects, Lab, Library, System) have three columns: navigation (collapses to icons), the control column (the section's catalogue with search, filters and counters) and the work area (the opened item, or the section's page). Home and Live are full-width pages right of the navigation; an open session is the conversation with an optional context panel (OR-51). No bar spans the whole window: the product name and the "need you" count sit in the navigation, and the area right of it has one shell header (OR-43). *Target* for Home and Live; until then the Overview's catalogue is the Needs-you inbox, and Runners and Spend have no control column.
+* **OR-25 One scroll per column.** A column has at most one vertical scroller, and it is a plain browser scroller. A scroller never sits inside another one, and the page itself does not scroll. Nothing scrolls sideways (OR-66).
+* **OR-26 The whole row opens.** A click anywhere on a list row opens the item. Controls inside the row (pin, checkbox, menu) act on their own. Never make the person aim at the title.
+* **OR-43 One shell header.** One header spans the area right of the navigation, above the control column and the work area, whatever page is below. Left to right: the collapse toggle (OR-42) and the section title, the page's only top heading (a column has no heading of its own), then the section's own actions as icons (Conversations: New conversation); on the right the focus chip (OR-34) and the search icon (OR-31). A right-panel toggle goes after search once a right panel exists. At phone width it keeps icons only and never scrolls sideways. Its height contains the full hit targets for the active input mode. On Home and Live the header holds only the section title, the focus chip and the search icon.
+* **OR-60 Phone first-class.** At phone width the rail becomes a bottom bar of five: Home, Live, Conversations, Projects and More. *Target:* a row title keeps at least 60% of the row width; service fields wrap below it or fold.
+* **UR-49.** (merged with OR-24) Desktop layouts serve 1280 to 1920 px: catalogue sections in three columns ([OR-24](#rules-kept-here)), Home and Live full width right of the navigation. *Check:* Browser: at 1280 and 1920 px, expect the section's columns and no page scroll sideways.
+* **UR-71.** (merged with OR-43) The shell header names where the person is with one title ([OR-43](#rules-kept-here)); the title matches the highlighted rail item or names the opened item inside it. *Check:* Browser: compare the `h1` with the rail item that has `aria-current`.
+* **UR-86.** (merged with OR-60) At 390 px the rail is a bottom bar of five: Home, Live, Conversations, Projects, More ([OR-60](#rules-kept-here)). *Check:* Browser: at 390 × 844, expect five items in the bottom bar.
+* **UR-89.** (merged with OR-60) A row title keeps at least 60 % of the row width; service fields wrap below or fold ([OR-60](#rules-kept-here)). *Check:* Browser: measure the title's share of the row width.

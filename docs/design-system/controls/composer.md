@@ -53,6 +53,13 @@ Submission metadata freezes the complete message/start body and SHA-256, includi
 On [Home](../pages/home.md) the composer starts with a target chip that picks who to talk to.
 
 * **Chip.** The target's avatar and name (`PM · fleet`) with a caret, first in the box, left of the text. It starts on the last session the person talked to from Home.
-* **Picker.** Opens under the chip as an informational floating list ([OR-14](../owner-rules.md), [OR-16](../owner-rules.md)) with a search field first. Groups in order: project PMs, bots with their [state](state-badge.md#dot-and-word), then "New session with a preset…" ([start picker](start-picker.md)). Typing filters by name and project; arrow keys move, `Enter` picks, `Escape` closes.
+* **Picker.** Opens under the chip as an informational floating list ([OR-14](../owner-rules.md), [OR-16](../owner-rules.md#rules)) with a search field first. Groups in order: project PMs, bots with their [state](state-badge.md#dot-and-word), then "New session with a preset…" ([start picker](start-picker.md)). Typing filters by name and project; arrow keys move, `Enter` picks, `Escape` closes.
 * **Send.** `Enter` sends and opens that session. A message to an asleep bot wakes it with its memory; a message to a project PM without an open session starts one from the project's PM preset.
 * **Same as Telegram.** The picker is the one Telegram uses for `/pm` and `@bot` ([FLT-31](https://youtrack.ufobe.com/issue/FLT-31)).
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **UR-59.** The composer is always reachable in an open session and sends with `Enter`; a message to a busy agent is queued or steers it, and says which. *Check:* Browser: send while the agent runs, expect "queued" or "sent" on the message.
+* **UR-90.** The composer stays visible above the on-screen keyboard and a question answers in place. *Check:* Browser: focus the composer at 390 px, expect it inside the visual viewport.

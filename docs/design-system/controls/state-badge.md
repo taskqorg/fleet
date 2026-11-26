@@ -31,7 +31,7 @@
 
 ## Dot and word
 
-`StateDot` in `packages/ui` ([OR-55](../owner-rules.md)); the vocabulary is `states.life` and the mapping `lifeOf` in `registry.ts`. Board: [blocks.bl](../board/blocks.bl), master `State`. Demo: [book](../book/index.html#state-dot).
+`StateDot` in `packages/ui` ([OR-55](#rules-kept-here)); the vocabulary is `states.life` and the mapping `lifeOf` in `registry.ts`. Board: [blocks.bl](../board/blocks.bl), master `State`. Demo: [book](../book/index.html#state-dot).
 
 The form sessions, bots, tasks and runs share on cards, slots and the context panel: a 6 px dot and the state word in `font-size-sm`, both in the state's `-fg` tone, no fill. One word, icon and tone per state:
 
@@ -48,3 +48,10 @@ The form sessions, bots, tasks and runs share on cards, slots and the context pa
 Synonyms map to this set and never show: Succeeded and Completed are Done, Cancelled is Stopped, Idle is Asleep, Preparing and Running are Working; a held task is Waiting for you, a paused task and a skipped bot run are Stopped. Until this form is built, the mapping table above stays what the app shows.
 
 Code reads a state's word only through the registry (`packages/ui/src/states.ts`, re-exported by `registry.ts`): `life(family, state)` (a state it does not know yet is Asleep, never Working), `statesOf(family, lives)` for a list filter of words, `finishedStates`, `isFinished` and `openStates` for open and finished work (a paused task is Stopped but open). Views keep no state lists of their own.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-55 One state vocabulary.** *Target.* Sessions, bots, tasks and runs use one set of states with one word, icon and colour each: Working, Waiting for you, Queued, Done, Failed, Stopped, Asleep. Synonyms such as Succeeded, Completed, Cancelled leave the interface.
+* **UR-30.** A state shows its word and icon, not only a colour, from the one vocabulary ([OR-55](#rules-kept-here)), and its reason on the same row or on hover. *Check:* Browser: every state badge has text or an accessible name.

@@ -23,7 +23,7 @@ Each item has a registry icon (OR-3), a name, an optional counter (**Counters** 
 * Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Every icon (the mark, section icons, the avatar) keeps its exact position: the paddings do not change and the collapsed rail is just its icon column wide. The user block keeps its avatar. The toggle shows `panel-left-close` expanded and `panel-left-open` collapsed.
 * The rail is the left [side panel](side-panel.md): its toggle, divider and stored state are that control's. The divider on the rail's right edge resizes it (OR-41): drag, or focus it and press Left and Right; a double-click resets the width. Collapsed, the rail has no divider.
 * The collapse button shrinks the rail to icons: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20).
-* At phone width (760 px and below) the bottom bar of five replaces the rail ([OR-60](../owner-rules.md), [app shell](../patterns/app-shell.md)): Home, Live, History, Conversations and More, whose short menu holds the Pinned zone when it is on, Projects, Lab, Library, System and the user block.
+* At phone width (760 px and below) the bottom bar of five replaces the rail ([OR-60](../patterns/app-shell.md#rules-kept-here), [app shell](../patterns/app-shell.md)): Home, Live, History, Conversations and More, whose short menu holds the Pinned zone when it is on, Projects, Lab, Library, System and the user block.
 
 **Counters.** A section's counter counts its *counter view*, a person setting (`navCounters` in `person_settings_get`/`person_settings_set`; agents write it too):
 
@@ -82,4 +82,12 @@ Collapsed, the strip keeps its row with only its button over the avatar column (
 
 ## Board
 
-The user block, the update strip, the version overview and their states (expanded, collapsed, phone): [screens/shell.bl](../board/screens/shell.bl). Masters on [blocks.bl](../board/blocks.bl): `Nav rail` (with the "N need you" chip in its head) (the eight sections of [OR-46](../owner-rules.md), built from `Nav item`, whose `current` variant marks the open section), and the phone `Bottom bar` of five `Tab item`s ([OR-60](../owner-rules.md)). A screen sets its section by switching the nested item to `current`.
+The user block, the update strip, the version overview and their states (expanded, collapsed, phone): [screens/shell.bl](../board/screens/shell.bl). Masters on [blocks.bl](../board/blocks.bl): `Nav rail` (with the "N need you" chip in its head) (the eight sections of [OR-46](../patterns/navigation-and-columns.md#rules-kept-here), built from `Nav item`, whose `current` variant marks the open section), and the phone `Bottom bar` of five `Tab item`s ([OR-60](../patterns/app-shell.md#rules-kept-here)). A screen sets its section by switching the nested item to `current`.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-42 Collapse without a jump.** The navigation collapse toggle is the first item of the shell header (OR-43), right after the navigation. Collapsed and expanded navigation map 1:1: same icons, same heights, only labels change (OR-23). The navigation ends with the current user block (avatar and name, avatar only when collapsed); a click opens a context menu with Logout (Cloudflare Access logout).
+* **UR-23.** `g` and one letter open each rail section, and `?` lists every shortcut; today `g o` Overview, `g t` Tasks, `g r` Results, `g h` Hosts, `g l` Laboratory, and the seven-section letters are set when that rail is built. *Check:* Browser: press `?`, expect one `g` shortcut per rail section.
+* **UR-93.** The last filter set per list is remembered per person on the server, and saved views are one-click choices ([OR-33](../patterns/list-view.md#rules-kept-here)). *Check:* Browser: set a filter, open another section, come back without the URL query, expect the filter.

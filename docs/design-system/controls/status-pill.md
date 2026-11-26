@@ -28,4 +28,4 @@
 
 ## Status bar
 
-The top line of [Live](../pages/live.md), master `Status bar` on [blocks.bl](../board/blocks.bl): the product mark, the status pill, then on the right the focus ([OR-34](../owner-rules.md)) and the clock in mono. Its variants follow the pill: `working` and `problem`. In wall mode it is the only chrome.
+The top line of [Live](../pages/live.md), master `Status bar` on [blocks.bl](../board/blocks.bl): the product mark, the status pill, then on the right the focus ([OR-34](focus-control.md#rules-kept-here)) and the clock in mono. Its variants follow the pill: `working` and `problem`. In wall mode it is the only chrome.

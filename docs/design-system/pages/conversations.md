@@ -10,13 +10,13 @@
 
 ### Layout
 
-Three columns ([OR-24](../owner-rules.md)): navigation, control column, work area. The shell header holds the title, New conversation (`plus`), the focus chip and search ([OR-43](../owner-rules.md)).
+Three columns ([OR-24](../patterns/app-shell.md#rules-kept-here)): navigation, control column, work area. The shell header holds the title, New conversation (`plus`), the focus chip and search ([OR-43](../patterns/app-shell.md#rules-kept-here)).
 
-* **Control column** (`ListPagePanel`, [OR-48](../owner-rules.md)):
-  1. List header: the count (`84 of 1,240`, [OR-11](../owner-rules.md)), the search icon ([OR-31](../owner-rules.md)) and the saved views: system presets Needs me, Running, and the person's own ([OR-33](../owner-rules.md)).
-  2. Group and Sort as icons ([OR-35](../owner-rules.md)). Grouping, sorting and saved views stay set by each person, as in the current build ([owner decision](#owner-decision-target)); the default view groups Waiting for you first, then by project. Group Agent follows the [conversation model](../../designs/fleet-conversations.md#entities) (board D1): a bot's conversations under the bot's name, then each PM under "PM · <project>", then each Telegram room, then the others; Group Room groups by the Telegram room alone. The Group icon opens a short menu: project, state in attention order, agent, none.
-  3. Rows: pin, state icon, the session's name (bot or PM name, else the first message) taking the free width, its code after it as a pair ([OR-22](../owner-rules.md)); a row not pinned shows its pin after the code on hover and keyboard focus (pinning puts it in the Pinned group and the navigation's [Pinned zone](../controls/nav-rail.md)); pinned rows keep the person's order and reorder by drag or keyboard (Space, arrows, Space); the right zone: an open question in the attention tone, then the [work facts](../controls/work-facts.md) with the time last ([OR-37](../owner-rules.md), [OR-64](../owner-rules.md)). The whole row opens the session ([OR-26](../owner-rules.md)).
-* **Work area, idle** ([useful idle work area](../patterns/list-detail.md)): what needs the person first (sessions waiting for an answer, as question cards answered in place, [OR-53](../owner-rules.md)), then a summary by project and state as counters ([OR-29](../owner-rules.md)), then the latest finished sessions with their outcome line. Never a second copy of the list.
+* **Control column** (`ListPagePanel`, [OR-48](../patterns/navigation-and-columns.md#rules-kept-here)):
+  1. List header: the count (`84 of 1,240`, [OR-11](../patterns/list-view.md#rules-kept-here)), the search icon ([OR-31](../controls/search.md#rules-kept-here)) and the saved views: system presets Needs me, Running, and the person's own ([OR-33](../patterns/list-view.md#rules-kept-here)).
+  2. Group and Sort as icons ([OR-35](../patterns/list-view.md#rules-kept-here)). Grouping, sorting and saved views stay set by each person, as in the current build ([owner decision](#owner-decision-target)); the default view groups Waiting for you first, then by project. Group Agent follows the [conversation model](../../designs/fleet-conversations.md#entities) (board D1): a bot's conversations under the bot's name, then each PM under "PM · <project>", then each Telegram room, then the others; Group Room groups by the Telegram room alone. The Group icon opens a short menu: project, state in attention order, agent, none.
+  3. Rows: pin, state icon, the session's name (bot or PM name, else the first message) taking the free width, its code after it as a pair ([OR-22](../controls/data-list.md#rules-kept-here)); a row not pinned shows its pin after the code on hover and keyboard focus (pinning puts it in the Pinned group and the navigation's [Pinned zone](../controls/nav-rail.md)); pinned rows keep the person's order and reorder by drag or keyboard (Space, arrows, Space); the right zone: an open question in the attention tone, then the [work facts](../controls/work-facts.md) with the time last ([OR-37](../patterns/list-view.md#rules-kept-here), [OR-64](../controls/work-facts.md#rules-kept-here)). The whole row opens the session ([OR-26](../patterns/app-shell.md#rules-kept-here)).
+* **Work area, idle** ([useful idle work area](../patterns/list-detail.md)): what needs the person first (sessions waiting for an answer, as question cards answered in place, [OR-53](../controls/decision-block.md#rules-kept-here)), then a summary by project and state as counters ([OR-29](../controls/state-counters.md#rules-kept-here)), then the latest finished sessions with their outcome line. Never a second copy of the list.
 * **Work area, a session open:** the [session view](session.md) in its Conversations frame.
 * **Work area, new:** the [start picker](../controls/start-picker.md) and the composer, as built today.
 
@@ -24,21 +24,21 @@ Three columns ([OR-24](../owner-rules.md)): navigation, control column, work are
 
 * **Empty filter:** the list says what the filter hides and offers to clear it.
 * **Archived:** the archive toggle in the list header, as built.
-* **Phone (390 px):** with nothing open, the Waiting for you question cards lead, answered in place, and the list follows under them (the work area is hidden at this width, so the cards move to the top of the list; board state 5). A row opens the session full screen; the bottom bar keeps Conversations highlighted ([OR-60](../owner-rules.md)).
-* **Phone row (owner "строка ок", 2026-11-26):** the title takes the row's width and wraps to two lines; the time stays rightmost on line 1 ([OR-64](../owner-rules.md)); line 2 holds the agent mark (under the state icon) and the now line; the code is not shown on the phone (it is in the session head and in search).
+* **Phone (390 px):** with nothing open, the Waiting for you question cards lead, answered in place, and the list follows under them (the work area is hidden at this width, so the cards move to the top of the list; board state 5). A row opens the session full screen; the bottom bar keeps Conversations highlighted ([OR-60](../patterns/app-shell.md#rules-kept-here)).
+* **Phone row (owner "строка ок", 2026-11-26):** the title takes the row's width and wraps to two lines; the time stays rightmost on line 1 ([OR-64](../controls/work-facts.md#rules-kept-here)); line 2 holds the agent mark (under the state icon) and the now line; the code is not shown on the phone (it is in the session head and in search).
 * **Started by, Steps and the subject (owner "ok" F1, F2, 2026-11-26; board [`screens/conversation-fields.bl`](../board/screens/conversation-fields.bl)):** the list leads with the Started by chips: All, then each origin (Person, Telegram, Trigger, Task, Bot, Fork) with its count, the origin filter left out of the counts (`sessions_list` `origins`; view key `origin`). Steps, a quiet toggle beside Archived with the hidden count (`hiddenCount`; view key `steps`), lists the pipeline and Lab agent steps instead (`listed: false`); their rows carry a Pipeline or Lab mark, and the chips then count Lab and Pipeline. A row with a subject shows its kind (`host`, `task`, `pr`) as a quiet mono mark before the now line.
 * **A bot's conversations:** each line of a bot's work is its own row, grouped under the bot (group Agent); there are no threads under a row ([conversation model](../../designs/fleet-conversations.md#conversation-model)).
 
 ### Owner decision (target)
 
-Grouping is not fixed by the design: grouping, sorting and saved views stay configurable per person, as they are today ([OR-33](../owner-rules.md), [OR-35](../owner-rules.md); owner, 2026-11-25). The default view is Waiting for you first, then by project.
+Grouping is not fixed by the design: grouping, sorting and saved views stay configurable per person, as they are today ([OR-33](../patterns/list-view.md#rules-kept-here), [OR-35](../patterns/list-view.md#rules-kept-here); owner, 2026-11-25). The default view is Waiting for you first, then by project.
 
 ### Review of the current build
 
 Checked against the [product map](../product-map.md) rows for Conversations.
 * **Keep:** the filter bar with query search, saved views and the presets Needs me and Running, Group and Sort with direction set per person, the Archived toggle, pins and the Pinned group, selection mode with its bar, the row menu, `p` and `x`, New conversation with the start picker.
 * **Change:** the row title is the bot or PM name, else the first message, with the code after it as a pair; the idle work area leads with questions instead of the summary table.
-* **Drop:** the code on its own second line (it sits after the title, [OR-22](../owner-rules.md)).
+* **Drop:** the code on its own second line (it sits after the title, [OR-22](../controls/data-list.md#rules-kept-here)).
 
 ### Blocks
 

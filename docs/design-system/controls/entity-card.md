@@ -56,3 +56,9 @@ Not covered, by decision:
 **Do.** Render every reference to another object with `EntityCode` and its `kind`, so it gets the card. **Don't.** Show a UUID or hash as text (OR-38); open the row from the code; put inputs in the card.
 
 **Used in.** List rows (Tasks, Conversations, Delivery), task detail (code, result, dependencies), conversation header (code, active run), transcript boundary rows (conversation, run), agent messages, Results rows (task), Resources (spawned tasks), Hosts (runs), Runners (parent run), Lab (experiment, trial), Delivery detail (release).
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-44 Entity card.** Every reference to another object (a code such as `T-FLT-42`, `#643`, a release tag, or a kind icon for objects without a code) is one control, `EntityCode`. A click, tap, Enter or Space opens its card: kind and code, state, bold title, project, agent and compact time, a few facts, then Open first and the copy actions; it never navigates by itself and never opens on hover. Escape, a click outside or the code again close it. It is an informational floating layer (OR-14, OR-16), one at a time, and moves nothing (OR-23). A human code has a copy icon in a reserved slot, shown on hover, focus or touch. See [entity card](../controls/entity-card.md).

@@ -1,6 +1,6 @@
 # Infinite list
 
-A list loads its next page as its end scrolls near; there are no Show more, Show less, `+K more`, Older or Newer buttons and no page numbers ([OR-65](../owner-rules.md)). A short preview inside a card shows a fixed number of rows and its title opens the full list ([OR-30](../owner-rules.md)). Code: `packages/ui/src/infinite.tsx`; the app's operation pages: `app/src/op-pages.ts`. Board: [infinite-lists.bl](../board/infinite-lists.bl), approved 2026-11-25 with loading row A (three faint skeleton rows).
+A list loads its next page as its end scrolls near; there are no Show more, Show less, `+K more`, Older or Newer buttons and no page numbers ([OR-65](#rules-kept-here)). A short preview inside a card shows a fixed number of rows and its title opens the full list ([OR-30](#rules-kept-here)). Code: `packages/ui/src/infinite.tsx`; the app's operation pages: `app/src/op-pages.ts`. Board: [infinite-lists.bl](../board/infinite-lists.bl), approved 2026-11-25 with loading row A (three faint skeleton rows).
 
 ## Parts
 
@@ -17,3 +17,11 @@ A section that previews a longer list (Latest finished, Waiting for you, a bot's
 ## Phone
 
 The same parts; the loading and error rows are 44 px, and Retry is a full hit target.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-30 Latest N, then the full list.** A block inside a card shows its N latest items and nothing else; its title, with the count, opens the full list (OR-65). A block never grows past the page; it never pushes the rest of the column out of view. A row of chips that does not fit folds the rest into a `+K` count, which expands nothing.
+* **OR-65 Lists load on scroll.** No list has Show more, Show less, `+K more`, Older and Newer buttons, page numbers or a fixed row cap with no way to the rest. A list loads its next page as its end scrolls within a few rows of view, through one shared primitive ([infinite list](../patterns/infinite-list.md)): a quiet loading row while a page is in flight, one danger row with Retry when it fails, nothing after the last row. It stays efficient: cursor pages from the operation, one request in flight, an abort when the list closes, loaded pages never read again, new rows merged at the top, and rows past the first screen skip layout until they scroll near. A short preview inside a card follows OR-30.
+* **UR-15.** Older rows load as the person nears the end, and a loading row shows only after 300 ms. *Check:* Browser: scroll to the end with a slowed network.

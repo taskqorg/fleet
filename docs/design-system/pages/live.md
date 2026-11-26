@@ -8,7 +8,7 @@
 
 ## Layout
 
-A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall mode the page fills the screen. From top to bottom:
+A full-width page right of the navigation ([OR-24](../patterns/app-shell.md#rules-kept-here)); in wall mode the page fills the screen. From top to bottom:
 
 1. **Status bar.**
    * The product mark and the fleet status pill: "All systems working" in the success tone, or the first problem in words in the danger tone, with a count when there are more ([OR-56](../owner-rules.md)).
@@ -27,7 +27,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * Gauges for CPU, memory and disk.
    * The day's runs and active time.
    * One tile per worker slot:
-     * A busy slot shows the task title, code, project colour on the left edge and this run's elapsed time, then the [work facts](../controls/work-facts.md): the task's attempts (`×N`), the agent mark and its time in work, last ([OR-64](../owner-rules.md)).
+     * A busy slot shows the task title, code, project colour on the left edge and this run's elapsed time, then the [work facts](../controls/work-facts.md): the task's attempts (`×N`), the agent mark and its time in work, last ([OR-64](../controls/work-facts.md#rules-kept-here)).
      * A free slot is a dashed "idle" tile; past three free slots, one tile counts them (`23 idle`).
      * A host whose update waits for running work takes no new start (the `updating` host problem): its free slots are one failing tile (`10 slots take no new start`) with the reason, never "idle", and a start handed to it earlier shows `Waits for the update`.
      * A failing slot is outlined in the danger tone and says what fails, how many times (`×N`), how long ago the latest failed start was, and when it retries.

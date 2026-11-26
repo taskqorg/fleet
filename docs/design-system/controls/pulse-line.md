@@ -6,13 +6,13 @@
 
 **Anatomy.** One line in `font-size-sm`, read left to right:
 
-1. **Counts.** Working, queued, done today: a dot in the state's tone, the count in mono and `font-weight-medium`, the word in `fg-muted`. A zero count is hidden ([OR-29](../owner-rules.md)).
+1. **Counts.** Working, queued, done today: a dot in the state's tone, the count in mono and `font-weight-medium`, the word in `fg-muted`. A zero count is hidden ([OR-29](state-counters.md#rules-kept-here)).
 2. **Blocker chips.** One per cause: a `danger-bg` pill with a danger dot, the cause in words and `×N` ([OR-56](../owner-rules.md), [OR-58](../owner-rules.md)).
 3. **`Live ›`** at the end, in `fg-muted`.
 
 **States.**
 * *Normal:* counts, no chips.
-* *Blocked:* one chip per cause, newest cause first; chips that do not fit the line fold into `+K` ([OR-30](../owner-rules.md)).
+* *Blocked:* one chip per cause, newest cause first; chips that do not fit the line fold into `+K` ([OR-30](../patterns/infinite-list.md#rules-kept-here)).
 * *Stale:* the counts keep their last value with the [offline marker](offline-marker.md) age.
 
 **Behaviour.**

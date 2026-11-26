@@ -2,7 +2,7 @@
 
 **Code.** `SidePanel`, `PanelToggle`, `ResizeDivider`, `PanelSheet` and the `SidePanels` store in `packages/ui/src/controls/side-panel.tsx`. `AppShell` provides the store and builds the navigation rail from the same parts.
 
-**Purpose.** Every column that opens and closes beside the page is one side panel, so all of them behave the same way. Today there are two: the navigation rail on the left and the session's [context panel](context-panel.md) on the right ([OR-41](../owner-rules.md), [OR-42](../owner-rules.md)).
+**Purpose.** Every column that opens and closes beside the page is one side panel, so all of them behave the same way. Today there are two: the navigation rail on the left and the session's [context panel](context-panel.md) on the right ([OR-41](#rules-kept-here), [OR-42](nav-rail.md#rules-kept-here)).
 
 **Anatomy.**
 
@@ -29,3 +29,9 @@
 **Do.** Build every new panel beside the page from `SidePanel` with its own key. **Don't.** Put a panel's toggle inside the panel or the page head, keep its state in the browser or in the page, or give it a resize of its own.
 
 **Used in.** The navigation rail ([nav rail](nav-rail.md)) and the session view's context panel ([session](../pages/session.md)).
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-41 Resizable columns.** The navigation and the control column resize by dragging their divider. Widths are stored on the server per person; a double-click on the divider resets the width. Every column that opens and closes beside the page (the navigation, the session's context panel, any later one) is one [side panel](../controls/side-panel.md): its toggle at a fixed place in the shell header, a divider, and open or closed and the width stored on the server per person by panel key. No panel is built apart from it.
