@@ -88,6 +88,7 @@ The three independent fixed-header reads use one ordered batch under the same pr
 - [`accounts.go`](accounts.go) couples account-host connectivity to the actual inspection destination: a fresh eligible native execution host takes precedence, a configured inspector remains the permitted fallback, and observations must match the configured holder. Discovery inspects an existing registry without authenticating or moving credentials.
 
 - [`execution_trace.go`](execution_trace.go) retains originating trace metadata in execution/queued-message records, records one durable dispatch edge per command, and supplies optional command run attribution; `telemetry_trace` resolves execution IDs under PostgreSQL RLS before querying spans.
+- The agent-tool and project-operation HTTP spans join the executor's delivery attempts through `traceparent`. Command and execution proof scopes their operation metadata. Durable agent mutation receipt timings distinguish lookup, insert and commit return, and mark a reused receipt. Agent gaps read original pending tool responses, including Code Mode failures, and skip repeated local pending lookups.
 
 - The service requires `FLEET_PEOPLE_FILE` and `FLEET_DATABASE_URL`; [`setPeople`](./main.go) requires exactly one owner and rejects duplicate people or conflicting service-token common names.
 - HTTP request headers, bodies and idle connections have 10 s, 30 s and 90 s timeouts; streaming responses have no global write timeout.

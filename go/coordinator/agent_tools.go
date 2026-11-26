@@ -299,6 +299,9 @@ func init() {
 			if c.ExecutionID != executionID || c.HostID != b.HostId {
 				return fail(403, "Command rejected")
 			}
+			if rpc.Method == "tools/call" {
+				bindToolHTTPSpan(q, executionID, e.ProjectID, rpc.Params.Name)
+			}
 			if sid := e.SessionID; sid != "" {
 				if s, err := sessionMaybe(q, sid); err != nil {
 					return err

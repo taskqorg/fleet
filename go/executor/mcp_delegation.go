@@ -538,18 +538,26 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 	}
 	raw := enc(body)
 	// Acquire the writer before reading: a deferred WAL read cannot upgrade after a concurrent host reply.
-	if err := journalOnce(db, key, raw, route); err != nil {
-		return nil, err
-	}
+	execution, _ := c.execution()
+	laneExecution := execution
 	seconds := 8
 	if agent {
-		seconds = agentToolReplySeconds + boardReadWaitSeconds(name, q)
+		boardWait := boardReadWaitSeconds(name, q)
+		seconds = agentToolReplySeconds + boardWait
+		if boardWait > 0 {
+			laneExecution = "" // a waiting board read has its own lane
+		}
 	}
+	if err := journalOnce(db, key, raw, route, laneExecution); err != nil {
+		return nil, err
+	}
+	waitStart := time.Now()
 	r, err := wait(db, "delegation_requests", key, seconds, false)
 	if err != nil {
 		return nil, err
 	}
 	if r == nil && name != "request_child" {
+		recordToolPending(db, str0(c.HostId), str0(c.CommandId), execution, route, name, key, waitStart)
 		return mcpText(M{"status": "pending", "requestKey": key, "instruction": "Outcome unknown; use agent_tool_result with this requestKey. Do not repeat the mutation."}, &yes), nil
 	}
 	if agent {
@@ -574,7 +582,7 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 }
 
 // journalOnce records the request and its outbox row in one immediate transaction; a repeat with the same body is a no-op.
-func journalOnce(db *sql.DB, key, body, route string) error {
+func journalOnce(db *sql.DB, key, body, route, laneExecution string) error {
 	ctx := context.Background()
 	c, err := db.Conn(ctx)
 	if err != nil {
@@ -597,7 +605,16 @@ func journalOnce(db *sql.DB, key, body, route string) error {
 		if _, err := c.ExecContext(ctx, "INSERT INTO delegation_requests(id,body) VALUES(?,?)", key, body); err != nil {
 			return fail(dbe(fmt.Errorf("insert journal request: %w", err)))
 		}
-		if _, err := c.ExecContext(ctx, "INSERT INTO outbox(route,body) VALUES(?,?)", route, body); err != nil {
+		// This is the FIFO predecessor observation at enqueue, before the row exists.
+		if route != contract.RouteAgentTools.Path && route != contract.RouteProjectOperations.Path {
+			if _, err := c.ExecContext(ctx, "INSERT INTO outbox(route,body) VALUES(?,?)", route, body); err != nil {
+				return fail(dbe(fmt.Errorf("insert request outbox row: %w", err)))
+			}
+		} else if _, err := c.ExecContext(ctx, `INSERT INTO outbox(route,body,tool_queued_at,tool_queued_behind)
+			VALUES(?,?,?,CASE WHEN ?='' THEN 0 ELSE coalesce((SELECT 1 FROM outbox WHERE route<>? AND
+				CASE WHEN json_valid(body) THEN json_extract(body,'$.executionId')=? ELSE 0 END
+				AND (`+outboxBoardWaitSQL+`)=0 ORDER BY rowid DESC LIMIT 1),0) END)`,
+			route, body, nowMs(), laneExecution, spansRoute, laneExecution, contract.RouteAgentTools.Path, contract.BoardReadMaxWaitSeconds); err != nil {
 			return fail(dbe(fmt.Errorf("insert request outbox row: %w", err)))
 		}
 	default:

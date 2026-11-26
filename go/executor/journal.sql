@@ -25,3 +25,8 @@ CREATE TABLE mcp_groups(execution TEXT NOT NULL,pid INTEGER NOT NULL,identity TE
 -- version 4
 -- Detached run workers stream progress via events.jsonl; worker_seq commits the last applied worker event monotonically.
 ALTER TABLE launches ADD COLUMN worker_seq INTEGER NOT NULL DEFAULT 0;
+
+-- version 5
+-- Tool delivery timing. NULL means the row predates observation or is not a tool request.
+ALTER TABLE outbox ADD COLUMN tool_queued_at INTEGER;
+ALTER TABLE outbox ADD COLUMN tool_queued_behind INTEGER;

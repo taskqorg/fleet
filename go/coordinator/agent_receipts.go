@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 // The executor already journals this identity before sending. Commit its acknowledgment with the mutation.
@@ -16,7 +19,10 @@ func agentReceipt(q *Request, key *string, execution, operation string, payload 
 		return run()
 	} // Older hosts did not send identities.
 	digest := frameHash(payload)
+	span := obs.From(q.ctx())
+	lookup := time.Now()
 	prior, err := q.db().ReceiptOf(q.ctx(), *key)
+	span.Set("fleet.coordinator_receipt_lookup_ms", strconv.FormatInt(time.Since(lookup).Milliseconds(), 10))
 	if err == nil {
 		if prior.ExecutionID != execution || prior.DirectingEmail != q.person.Email || prior.Operation != operation || prior.PayloadSha != digest {
 			return nil, fail(409, "Agent tool request identity conflict")
@@ -28,6 +34,7 @@ func agentReceipt(q *Request, key *string, execution, operation string, payload 
 		if !receiptAuthority(q.person, &previous) {
 			return nil, fail(403, "Request already committed; current authority no longer permits its acknowledgment. Do not repeat the mutation")
 		}
+		span.Set("fleet.coordinator_receipt", "reused")
 		return json.RawMessage(prior.Result), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -37,8 +44,21 @@ func agentReceipt(q *Request, key *string, execution, operation string, payload 
 	if err != nil {
 		return nil, err
 	}
-	return out, q.db().ReceiptInsert(q.ctx(), db.ReceiptInsertParams{ID: *key, ExecutionID: execution, DirectingEmail: q.person.Email, Operation: operation,
+	write := time.Now()
+	err = q.db().ReceiptInsert(q.ctx(), db.ReceiptInsertParams{ID: *key, ExecutionID: execution, DirectingEmail: q.person.Email, Operation: operation,
 		PayloadSha: digest, Result: jsonBytes(out), Authority: jsonBytes(q.person)})
+	span.Set("fleet.coordinator_receipt_write_ms", strconv.FormatInt(time.Since(write).Milliseconds(), 10))
+	if err != nil {
+		span.Set("fleet.coordinator_receipt", "write_failed")
+	} else if span != nil {
+		written := time.Now()
+		span.Set("fleet.coordinator_receipt", "unconfirmed")
+		afterCommit(q, func() {
+			span.Set("fleet.coordinator_receipt_commit_ms", strconv.FormatInt(time.Since(written).Milliseconds(), 10))
+			span.Set("fleet.coordinator_receipt", "committed")
+		})
+	}
+	return out, err
 }
 
 // Withhold old data after a revocation, even for an operation whose target is implicit in its body.

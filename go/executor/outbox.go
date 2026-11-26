@@ -24,6 +24,7 @@ import (
 
 	"fleet/contract"
 	"fleet/errtrack"
+	"fleet/obs"
 )
 
 // requeueUnauthorized: a 401 is a credential condition of the host, not of the row: at start those rows go back to the
@@ -363,6 +364,9 @@ func postJSONCtx(ctx context.Context, c *http.Client, url, token string, v any) 
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	if parent := obs.Traceparent(ctx); parent != "" {
+		req.Header.Set("traceparent", parent)
+	}
 	return c.Do(req)
 }
 
@@ -447,6 +451,8 @@ type outboxRow struct {
 	route, body, execution, ln string
 	boardWait                  int
 	loaded                     bool // its body was read: still queued
+	queuedAt                   sql.NullInt64
+	queuedBehind               sql.NullBool
 }
 
 // laneBusy: lanes with a delivery in flight, by journal. A scan skips them; their newer rows go with their next run, in
@@ -548,6 +554,14 @@ func (p *outboxPass) routeHeld(route string) bool {
 	return p.routes[route]
 }
 
+// Positive board waits use a dedicated lane, both during enqueue observation and delivery.
+const outboxBoardWaitSQL = `CASE WHEN route=? AND json_valid(body) THEN CASE
+			WHEN json_extract(body,'$.request.method')='tools/call'
+			AND json_extract(body,'$.request.params.name')='board_read'
+			AND typeof(json_extract(body,'$.request.params.arguments.waitSeconds'))='integer'
+			THEN max(0,min(?,json_extract(body,'$.request.params.arguments.waitSeconds')))
+			ELSE 0 END ELSE 0 END`
+
 // startFlush scans the outbox and starts every idle lane on its own goroutine. wait returns once they finish: it sets
 // the delivery interval (heldOnly) and reports the pass's error. A 4xx row is moved to outbox_failed and reported as an
 // executor event; the lane's following rows keep flowing. A row with an edge answer stays queued and holds, for this
@@ -564,12 +578,7 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	// A span batch (up to 1000 spans) has no execution: its body is not parsed on every scan.
 	rs, err := db.Query(`SELECT rowid,route,CASE WHEN route=? THEN '' WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
 		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END,
-		CASE WHEN route=? AND json_valid(body) THEN CASE
-			WHEN json_extract(body,'$.request.method')='tools/call'
-			AND json_extract(body,'$.request.params.name')='board_read'
-			AND typeof(json_extract(body,'$.request.params.arguments.waitSeconds'))='integer'
-			THEN max(0,min(?,json_extract(body,'$.request.params.arguments.waitSeconds')))
-			ELSE 0 END ELSE 0 END
+		`+outboxBoardWaitSQL+`, tool_queued_at, tool_queued_behind
 		FROM outbox ORDER BY rowid`, contract.RouteSpans.Path, contract.RouteAgentTools.Path, contract.BoardReadMaxWaitSeconds)
 	if err != nil {
 		laneMu.Unlock()
@@ -580,7 +589,7 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	empty := true
 	for rs.Next() {
 		var r outboxRow
-		if err := rs.Scan(&r.n, &r.route, &r.execution, &r.boardWait); err != nil {
+		if err := rs.Scan(&r.n, &r.route, &r.execution, &r.boardWait, &r.queuedAt, &r.queuedBehind); err != nil {
 			rs.Close()
 			laneMu.Unlock()
 			return nil, err
@@ -758,7 +767,12 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			hold(false)
 			return nil
 		}
-		a := sendWithClient(context.Background(), outboxDeliveryClient(r.boardWait), p.url, p.token, r.route, r.route, value)
+		ctx, span := toolDeliverySpan(db, r, value)
+		httpStart := time.Now()
+		a := sendWithClient(ctx, outboxDeliveryClient(r.boardWait), p.url, p.token, r.route, r.route, value)
+		if span != nil {
+			observeToolAnswer(span, a, r.route, time.Since(httpStart))
+		}
 		// A span batch the telemetry store refuses for now (429, 503) holds only its own lane, never the coordinator as a
 		// whole; it says nothing about the coordinator either, so a probe it was stays open for the next request.
 		busy := a.kind == answerRetry && (a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)
@@ -771,6 +785,9 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 		serverFailed := a.kind == answerRetry && !stop && len(batch) == 1 && serverFailedLong(r.n, a)
 		if serverFailed {
 			a.kind = answerReject // set aside below, reported as outbox.failed on its execution
+		}
+		if a.kind != answerOK && a.kind != answerReject {
+			span.End(nil)
 		}
 		var response any
 		switch a.kind {
@@ -814,6 +831,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 				if serverFailed {
 					// The waiting agent gets the error; the owner sees the set-aside row on the run (outbox.failed).
 					if err := p.poisoned(r, value, a, reason+" (server error on every retry for 30 minutes)"); err != nil {
+						span.End(err)
 						return err
 					}
 				}
@@ -850,11 +868,31 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			}
 		}
 		if hasKey {
-			if _, err := db.Exec("UPDATE delegation_requests SET response=? WHERE id=?", enc(response), k); err != nil {
+			writeStart := time.Now()
+			result, err := db.Exec("UPDATE delegation_requests SET response=? WHERE id=?", enc(response), k)
+			if span != nil {
+				span.Set("fleet.receipt_write_ms", durationMs(time.Since(writeStart)))
+				state := "write_failed"
+				if err == nil {
+					state = "missing_row"
+					if n, _ := result.RowsAffected(); n > 0 {
+						state = "written"
+					}
+				}
+				span.Set("fleet.local_receipt", state)
+			}
+			if err != nil {
+				span.Fail("internal")
+				span.End(nil)
 				return err
 			}
+			wakeStart := time.Now()
 			wake(db, k)
+			if span != nil {
+				span.Set("fleet.receipt_signal_ms", durationMs(time.Since(wakeStart)))
+			}
 		}
+		span.End(nil)
 		for _, b := range batch {
 			if _, err := db.Exec("DELETE FROM outbox WHERE rowid=?", b.n); err != nil {
 				return err

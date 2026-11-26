@@ -1,13 +1,17 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"fleet/contract"
+	"fleet/obs"
 )
 
 // Risk: a provider charge is reported as a plain error (or the reverse), so an agent repeats a paid call
@@ -117,27 +121,108 @@ func TestProjectToolSchemas(t *testing.T) {
 // R1; risk: an opaque rejection prevents correction of invalid model arguments.
 // A coordinator validation refusal must survive the actual outbox instead of becoming an opaque grant error.
 func TestAgentRejectionKeepsValidation(t *testing.T) {
+	resetRetryRows(t)
 	db := journal(t)
 	defer db.Close()
-	key := "command:agent:validation"
-	body := M{"agentToolKey": key, "commandId": "command"}
-	if err := journalOnce(db, key, enc(body), "/api/hosts/agent-tools"); err != nil {
+	const traceparent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+	cmd := contract.StartCommand{Id: "command", ExecutionId: "execution", Kind: "start", Traceparent: optStr(traceparent)}
+	if _, err := db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cmd.Id, enc(cmd)); err != nil {
 		t.Fatal(err)
 	}
+	// An earlier row in the caller's execution must still leave before its tool request.
+	if err := queue(db, contract.RouteEvents.Path, M{"executionId": "execution", "events": []any{M{"id": "earlier"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var spans []*obs.Span
+	obs.SetSink(func(s *obs.Span) { spans = append(spans, s) })
+	defer obs.SetSink(nil)
+	var attempts atomic.Int32
+	attemptKeys := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == contract.RouteEvents.Path {
+			io.WriteString(w, "{}")
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		attemptKeys <- jStr(decM(string(b)), "agentToolKey")
+		trace, parent, ok := obs.ParseTraceparent(r.Header.Get("traceparent"))
+		if !ok || trace != strings.Split(traceparent, "-")[1] || parent == strings.Split(traceparent, "-")[2] {
+			t.Errorf("HTTP did not carry a child of the execution trace: %q", r.Header.Get("traceparent"))
+		}
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			io.WriteString(w, "{}")
+			return
+		}
 		w.WriteHeader(400)
 		w.Write([]byte(`{"message":"Expected id","rawPayload":"must not be retained"}`))
 	}))
 	defer server.Close()
+	type result struct {
+		value any
+		err   error
+	}
+	caller := make(chan result, 1)
+	go func() {
+		v, err := delegationCall("message_send", M{"text": "invented private argument"}, M{"hostId": "host", "commandId": cmd.Id, "executionId": cmd.ExecutionId}, db)
+		caller <- result{v, err}
+	}()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticks := time.NewTicker(5 * time.Millisecond)
+	defer ticks.Stop()
+	var row int64
+	for row == 0 {
+		select {
+		case <-deadline.C:
+			t.Fatal("agent tool did not enter the outbox")
+		case <-ticks.C:
+			db.QueryRow("SELECT rowid FROM outbox WHERE route=?", contract.RouteAgentTools.Path).Scan(&row)
+		}
+	}
+	if err := flush(db, server.URL, "token", "host"); err == nil || attempts.Load() != 1 {
+		t.Fatalf("expected retryable response from first attempt: %v", err)
+	}
+	key := <-attemptKeys
+	var receipt string
+	if err := db.QueryRow("SELECT coalesce(response,'') FROM delegation_requests WHERE id=?", key).Scan(&receipt); err != nil || receipt != "" {
+		t.Fatalf("retry settled the request: %q, %v", receipt, err)
+	}
+	retryDone(row) // exercise the next attempt without waiting out backoff, covered by TestRetryingRowBacksOff
 	if err := flush(db, server.URL, "token", "host"); err != nil {
 		t.Fatal(err)
 	}
-	var response string
-	if err := db.QueryRow("SELECT response FROM delegation_requests WHERE id=?", key).Scan(&response); err != nil {
+	select {
+	case <-deadline.C:
+		t.Fatal("agent did not receive the definitive rejection")
+	case r := <-caller:
+		if r.err != nil || jAt(r.value, "isError") != true || !strings.Contains(enc(r.value), "Expected id") {
+			t.Fatalf("bad direct tool reply: %+v", r)
+		}
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("expected two attempts, got %d", attempts.Load())
+	}
+	if retryKey := <-attemptKeys; key == "" || key != retryKey {
+		t.Fatalf("retry changed the request identity: %q, %q", key, retryKey)
+	}
+	if len(spans) != 2 || spans[0].Attrs["fleet.transport"] != "retry" || spans[0].Attrs["fleet.local_receipt"] != "" ||
+		spans[1].Attrs["fleet.transport"] != "rejected" || spans[1].Attrs["fleet.local_receipt"] != "written" {
+		t.Fatalf("expected a retry then rejection with local receipt, got %+v", spans)
+	}
+	for _, s := range spans {
+		if s.Name != "fleet.tool.delivery" || s.ExecutionID == nil || *s.ExecutionID != cmd.ExecutionId ||
+			s.Attrs["fleet.operation"] != "message_send" || s.Attrs["fleet.request"] != wakeName(key) ||
+			s.Attrs["fleet.queue_ms"] == "" || s.Attrs["fleet.queued_behind_execution_row"] != "true" ||
+			strings.Contains(enc(s), "invented private argument") || strings.Contains(enc(s), "Expected id") {
+			t.Fatalf("incorrect or unsafe transport evidence: %+v", s)
+		}
+	}
+	if err := db.QueryRow("SELECT response FROM delegation_requests WHERE id=?", key).Scan(&receipt); err != nil {
 		t.Fatal(err)
 	}
-	r := decM(response)
-	if jStr(r, "message") != "Expected id" || jAt(r, "statusCode") == nil || strings.Contains(response, "rawPayload") {
-		t.Fatal(response)
+	r := decM(receipt)
+	if jStr(r, "message") != "Expected id" || jAt(r, "statusCode") == nil || strings.Contains(receipt, "rawPayload") {
+		t.Fatal(receipt)
 	}
 }
