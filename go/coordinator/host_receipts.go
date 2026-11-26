@@ -379,16 +379,9 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 			return nil, "", err
 		}
 		if e.terminal() {
-			if txHasLock(q.tx, DISPATCH) || txHasLock(q.tx, GLOBAL) {
-				if err := agentPromoteOnly(q, e.SessionID); err != nil {
-					return nil, "", err
-				}
-				afterCommit(q, func() { a.wakeDispatch() }) // the other sessions' queued messages
-			} else {
-				afterCommit(q, func() {
-					a.wakeDispatch()
-				})
-			}
+			// The dispatch pass promotes the session's next message, never this transaction: under GLOBAL+DISPATCH a
+			// promotion's board checks held every writer behind it (2026-11-26: promote.terminal-check 28 s).
+			afterCommit(q, func() { a.wakeDispatch() })
 		}
 	}
 	if lost {
