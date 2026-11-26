@@ -2,71 +2,115 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  Button, DataTable, DetailSection, DiffText, Empty, EntityCode, ErrorBanner, Num, OfflineMarker,
-  Icon, LiveRow, ProblemRow, ShellStatus, StateBadge, timeOf, type IconName, type Life, type StateOf,
+  Button, ChangeRow, DataTable, DetailSection, Empty, ErrorBanner, OfflineMarker,
+  Icon, LiveRow, ProblemRow, ShellStatus, timeOf, type IconName, type Life, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useOp } from '../store.ts';
 import type {
-  ComponentKind, DefinitionKey, DefinitionState, PinsStage, SystemChangeComponent, SystemChangeComponentHost, SystemChangeDefinition,
-  SystemChangeKind, SystemPinsProposal, SystemVersionsReply,
+  ComponentKind, DeliveryStage, PinsStage, SystemChangeComponent, SystemChangeComponentHost, SystemChangeDefinition,
+  SystemChangeKind, SystemChangesReply, SystemPinsProposal, SystemVersionsReply,
 } from '../../../contracts/generated/ops.ts';
 import type { UpdateResult } from '../../../contracts/generated/host-protocol.ts';
 
 const defRoute = (d: SystemChangeDefinition) =>
   `/library/${d.kind === 'agent' ? 'agents' : d.kind === 'pipeline' ? 'pipelines' : 'methods'}/${encodeURIComponent(d.id)}`;
+const taskRoute = (id: string) => `/tasks/${encodeURIComponent(id)}`;
+const ms = (t?: string) => t ? Date.parse(t) : undefined;
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-const changeState = (s: DefinitionState): { state: StateOf<'source'>; reason?: string } => {
-  switch (s) {
-    case 'synced': return { state: 'current' };
-    case 'repository-changed': return { state: 'changed', reason: 'Repository' };
-    case 'ahead': return { state: 'changed', reason: 'Ahead' };
-    case 'store-only': return { state: 'unavailable', reason: 'Store only' };
-    case 'repository-deleted': return { state: 'missing', reason: 'Repo deleted' };
-  }
+/** Where a Fleet edit's pull request stands (the publish task's latest pull request, DeliveryStage). */
+const PR_STAGE: Record<DeliveryStage, { text: string; tone: Tone } | 'failed'> = {
+  pr_open: { text: 'open', tone: 'neutral' },
+  pr_ci: { text: 'CI running', tone: 'running' },
+  pr_failed: 'failed',
+  mq_wait: { text: 'waits to merge', tone: 'running' },
+  mq_ci: { text: 'merging', tone: 'running' },
+  mq_failed: 'failed',
+  merged: { text: 'merged · waits for release', tone: 'success' },
+  releasing: { text: 'merged · releasing', tone: 'success' },
+  installing: { text: 'merged · installing', tone: 'success' },
+  installed: { text: 'released', tone: 'success' },
 };
+const TASK_STATE: Record<string, { text: string; tone: Tone }> = {
+  queued: { text: 'queued', tone: 'neutral' },
+  in_progress: { text: 'worker on it', tone: 'running' },
+  waiting: { text: 'waits', tone: 'attention' },
+  paused: { text: 'paused', tone: 'attention' },
+  completed: { text: 'done', tone: 'success' },
+};
+
+/** A definition row's look: the frame's on-its-way, conflict, failed and made-in-Fleet rows (pages/changes.md). */
+type RowView = { summary?: string; chip: { text: string; tone: Tone; tip?: string }; tone?: 'attention' | 'danger'; need: boolean; onWay: boolean;
+  actions: { label: string; primary?: boolean; act: 'compare' | 'keep' | 'take' | 'task' | 'publish' }[] };
+const rowView = (d: SystemChangeDefinition): RowView => {
+  const runs = d.runs30d > 0 ? `${d.runs30d} runs in 30 d` : '';
+  const said = [d.summary && `"${d.summary}"`, runs].filter(Boolean).join(' · ') || undefined;
+  if (d.state === 'repository-changed') return { tone: 'attention', need: true, onWay: false, chip: { text: 'Conflict', tone: 'attention' },
+    summary: `the repository changed it under your edit r${d.head}`,
+    actions: [{ label: 'Compare', act: 'compare' }, { label: 'Keep mine', act: 'keep' }, { label: 'Take repository', primary: true, act: 'take' }] };
+  if (d.state === 'repository-deleted') return { tone: 'attention', need: true, onWay: false, chip: { text: 'Deleted in repository', tone: 'attention' },
+    summary: 'the repository removed its file; open it to delete or keep it', actions: [] };
+  const pub = d.publish;
+  if (pub?.pr) {
+    const st = PR_STAGE[pub.pr.stage] ?? { text: pub.pr.stage, tone: 'neutral' };
+    if (st === 'failed') return { tone: 'danger', need: true, onWay: false, chip: { text: 'Failed', tone: 'danger' },
+      summary: `PR #${pub.pr.number} failed ${pub.pr.stage === 'mq_failed' ? 'in the merge queue' : 'its checks'}`, actions: [{ label: 'Open task', primary: true, act: 'task' }] };
+    return { need: false, onWay: true, chip: { text: `PR #${pub.pr.number} · ${st.text}`, tone: st.tone }, summary: said, actions: [] };
+  }
+  if (pub) {
+    const st = TASK_STATE[pub.state];
+    if (!st) return { tone: 'danger', need: true, onWay: false, chip: { text: 'Failed', tone: 'danger' },
+      summary: `${pub.code || 'its task'} ${pub.state || 'ended'} without a pull request`, actions: [{ label: 'Open task', primary: true, act: 'task' }] };
+    return { need: false, onWay: true, chip: { text: `${pub.code} · ${st.text}`, tone: st.tone }, summary: said, actions: [] };
+  }
+  if (d.state === 'store-only') return { need: false, onWay: false, chip: { text: 'New in Fleet', tone: 'neutral' },
+    summary: [d.summary && `"${d.summary}"`, 'made in Fleet, not named by any experiment'].filter(Boolean).join(' · '), actions: [{ label: 'Publish', primary: true, act: 'publish' }] };
+  return { need: false, onWay: false, chip: { text: 'Edited in Fleet', tone: 'neutral' }, summary: said, actions: [{ label: 'Publish', primary: true, act: 'publish' }] };
+};
+
+/** The rows that need a person: conflicts and failed pull requests (the Library catalogue's Changes counter). */
+export const changesNeedingYou = (c: SystemChangesReply) =>
+  [...c.repositoryChanged, ...c.ahead, ...c.storeOnly].filter(d => !d.experiment && rowView(d).need).length;
 
 export function Changes(props: { onClose?: () => void } = {}) {
   const [, go] = useLocation();
   // Host observations touch system_changes every few seconds; reread it at most every 30 s (FLT-38).
   const changesOp = useOp('system_changes', {}, { quiet: 30_000 });
-  const [previewTake, setPreviewTake] = createSignal<DefinitionKey[] | null>(null);
-  const [busy, setBusy] = createSignal(false);
+  const [busy, setBusy] = createSignal<string | null>(null);
   const [notice, setNotice] = createSignal<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
-  const [exportKeys, setExportKeys] = createSignal<DefinitionKey[] | null>(null);
 
-  const exportRead = useOp('definition_export', () => {
-    const keys = exportKeys();
-    return keys ? { keys } : null;
-  });
-
-  const runTakeRepo = async (keys: DefinitionKey[], preview: boolean) => {
-    setBusy(true);
+  // One row's action; the change stream rereads the view.
+  const act = async (d: SystemChangeDefinition, a: RowView['actions'][number]['act']) => {
+    const key = { kind: d.kind, id: d.id };
+    if (a === 'compare') return go(defRoute(d));
+    if (a === 'task') return d.publish && go(taskRoute(d.publish.taskId));
+    setBusy(`${d.kind}/${d.id}`);
     setNotice(null);
     try {
-      const r = await op('definition_take_repository', { keys, preview, message: 'Take repository version from Changes view' });
-      if (preview) {
-        setPreviewTake(keys);
-        const readyCount = r.items.filter(i => i.status === 'would-apply').length;
-        setNotice({ severity: 'warning', title: `Preview: take repository version for ${readyCount} of ${keys.length} definitions`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}${i.reason ? ` (${i.reason})` : ''}`).join(' · ') });
-      } else {
-        setPreviewTake(null);
-        setNotice({ severity: 'warning', title: `Applied ${r.applied} repository update${r.applied === 1 ? '' : 's'}`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}${i.revision ? ` r${i.revision}` : ''}`).join(' · ') });
-        await changesOp.reload();
-      }
+      const items = a === 'take'
+        ? (await op('definition_take_repository', { keys: [key], preview: false, message: 'Take repository version from Changes' })).items
+        : (await op('definition_publish', { keys: [key], preview: false, keep: a === 'keep' })).items;
+      const bad = items.filter(i => i.status !== 'applied');
+      if (bad.length) setNotice({ severity: 'warning', title: `${d.name} was not changed`, facts: bad.map(i => i.reason ?? i.status).join(' · ') });
+      await changesOp.reload();
     } catch (e) {
-      setNotice({ severity: 'failure', title: 'Repository sync failed', facts: e instanceof Error ? e.message : String(e) });
+      setNotice({ severity: 'failure', title: `${d.name} could not be changed`, facts: e instanceof Error ? e.message : String(e) });
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
-  const takeableKeys = createMemo<DefinitionKey[]>(() =>
-    (changesOp.data?.repositoryChanged ?? []).filter(d => d.state === 'repository-changed').map(d => ({ kind: d.kind, id: d.id })),
-  );
-  const exportableKeys = createMemo<DefinitionKey[]>(() =>
-    changesOp.data ? [...changesOp.data.ahead, ...changesOp.data.storeOnly].map(d => ({ kind: d.kind, id: d.id })) : [],
-  );
+  const definitions = createMemo(() => {
+    const c = changesOp.data;
+    if (!c) return [];
+    const rows = [...c.repositoryChanged, ...c.ahead, ...c.storeOnly].filter(d => !d.experiment).map(d => ({ d, v: rowView(d) }));
+    // On their way first, then what needs a person, then what is made in Fleet; newest first in each.
+    const rank = (v: RowView) => v.onWay ? 0 : v.need ? 1 : 2;
+    return rows.toSorted((a, b) => rank(a.v) - rank(b.v) || (ms(b.d.at) ?? 0) - (ms(a.d.at) ?? 0));
+  });
+  const variantsOf = (exp: string) => changesOp.data?.storeOnly.filter(d => d.experiment === exp) ?? [];
+
   const behindHosts = createMemo(() => changesOp.data?.versions.hosts.filter(h => h.behind) ?? []);
   const behindHarnesses = createMemo(() => changesOp.data?.harnessDrift.filter(h => h.behind) ?? []);
   const failedProposals = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'failed').length ?? 0);
@@ -74,20 +118,23 @@ export function Changes(props: { onClose?: () => void } = {}) {
   const installing = createMemo(() => (changesOp.data?.versions.hosts ?? []).filter(h => updateOf(h.update)?.state === 'pending' && updateOf(h.update)?.version === offered()));
   const installingBehind = createMemo(() => behindHosts().filter(h => installing().includes(h)).length);
   const reverting = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'reverting').length ?? 0);
-  // The summary line of frame 1A: what moves or is stuck first, in its tone; the definitions last, quiet.
+  // The summary line: the definitions first (on their way, need you, Lab experiments), then the hosts, each in its tone.
   const driftParts = createMemo<{ text: string; tone: string }[]>(() => {
     const data = changesOp.data;
     if (!data) return [];
-    const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-    const made = data.storeOnly.length + data.ahead.length;
-    return [
+    const onWay = definitions().filter(r => r.v.onWay).length, need = definitions().filter(r => r.v.need).length;
+    const hosts = [
       installing().length > 0 && { text: `${plural(installing().length, 'host', 'hosts')} installing`, tone: 't-running' },
       behindHosts().length > installingBehind() && { text: `${plural(behindHosts().length - installingBehind(), 'host', 'hosts')} behind`, tone: 't-attention' },
       failedProposals() > 0 && { text: `${failedProposals()} qualification failed`, tone: 't-danger' },
       reverting() > 0 && { text: `${plural(reverting(), 'revert', 'reverts')} in flight`, tone: 't-attention' },
       behindHarnesses().length > 0 && { text: `${behindHarnesses().length} harness pins drifting`, tone: 't-attention' },
-      data.repositoryChanged.length > 0 && { text: `${plural(data.repositoryChanged.length, 'definition waits', 'definitions wait')} for the repository`, tone: 'muted' },
-      made > 0 && { text: `${made} made in Fleet`, tone: 'muted' },
+    ].filter((x): x is { text: string; tone: string } => !!x);
+    return [
+      onWay > 0 && { text: `${plural(onWay, 'definition', 'definitions')} on ${onWay === 1 ? 'its' : 'their'} way to the repository`, tone: 'muted' },
+      need > 0 && { text: `${need} need${need === 1 ? 's' : ''} you`, tone: 't-attention' },
+      data.experiments.length > 0 && { text: plural(data.experiments.length, 'Lab experiment', 'Lab experiments'), tone: 'muted' },
+      ...(hosts.length ? hosts : [{ text: 'hosts aligned', tone: 'muted' }]),
     ].filter((x): x is { text: string; tone: string } => !!x);
   });
 
@@ -97,9 +144,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
       <header class="detail-h">
         <Show when={props.onClose}>{onClose => <Button label="Close" icon="x" iconOnly onClick={onClose()} />}</Show>
         <span class="pins-summary">{changesOp.data
-          ? (driftParts().length
-            ? <For each={driftParts()}>{(p, i) => <><Show when={i() > 0}><span class="muted"> · </span></Show><span class={['pins-tone', p.tone]}>{p.text}</span></>}</For>
-            : <span class="muted">All aligned</span>)
+          ? <For each={driftParts()}>{(p, i) => <><Show when={i() > 0}><span class="muted"> · </span></Show><span class={['pins-tone', p.tone]}>{p.text}</span></>}</For>
           : <span class="muted">Checking repository and host drift…</span>}</span>
         <span class="grow" />
         <Button label="Refresh" icon="rotate-ccw" iconOnly kind="quiet" onClick={changesOp.reload} />
@@ -108,102 +153,37 @@ export function Changes(props: { onClose?: () => void } = {}) {
       <Show when={changesOp.error} fallback={
         <Show when={changesOp.data} fallback={<Empty text="Checking repository and host drift…" />}>{data => <>
           <Show when={notice()}>{n => (
-            <ProblemRow
-              severity={n().severity}
-              title={n().title}
-              facts={n().facts}
-              actions={previewTake()
-                ? [
-                    { label: `Apply ${previewTake()!.length}`, primary: true, onClick: () => void runTakeRepo(previewTake()!, false) },
-                    { label: 'Dismiss', onClick: () => { setPreviewTake(null); setNotice(null); } },
-                  ]
-                : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
-            />
+            <ProblemRow severity={n().severity} title={n().title} facts={n().facts} actions={[{ label: 'Dismiss', onClick: () => setNotice(null) }]} />
           )}</Show>
 
+          <Show when={definitions().length}>
+            <DetailSection title="Definitions" count={definitions().length} action={<span class="muted">a save in Fleet opens its pull request; unedited ones follow each release</span>}>
+              <ul class="change-rows" aria-label="Definitions">
+                <For each={definitions()}>{r => (
+                  <ChangeRow name={r.d.name} kind={r.d.kind} summary={r.v.summary} chip={r.v.chip} tone={r.v.tone} at={ms(r.d.at)}
+                    href={defRoute(r.d)} onOpen={() => go(defRoute(r.d))}
+                    actions={r.v.actions.map(a => ({ label: a.label, primary: a.primary, busy: busy() === `${r.d.kind}/${r.d.id}`, onClick: () => void act(r.d, a.act) }))} />
+                )}</For>
+              </ul>
+            </DetailSection>
+          </Show>
+
+          <Show when={data().experiments.length}>
+            <DetailSection title="Lab variants" count={data().experiments.length} action={<span class="muted">they leave when their experiment is decided</span>}>
+              <ul class="change-rows" aria-label="Lab variants">
+                <For each={data().experiments}>{x => {
+                  const ids = () => variantsOf(x.id).map(d => d.id);
+                  return <ChangeRow name={x.title} chip={{ text: x.state[0].toUpperCase() + x.state.slice(1), tone: x.state === 'running' ? 'running' : 'neutral' }}
+                    summary={`${plural(ids().length, 'variant', 'variants')}: ${ids().join(', ')}`} at={ms(x.at)}
+                    href={`/lab/${encodeURIComponent(x.id)}`} onOpen={() => go(`/lab/${encodeURIComponent(x.id)}`)} />;
+                }}</For>
+              </ul>
+            </DetailSection>
+          </Show>
 
           <ReleaseRow versions={data().versions} onHost={go} />
 
           <For each={data().components}>{k => <ComponentGroup group={k} onHost={go} />}</For>
-
-          <section class="panel">
-            <header class="panel-h">
-              <h2>Shipped definitions changed in repository</h2>
-              <span class="grow" />
-              <Show when={takeableKeys().length > 0}>
-                <Button label={`Preview take all (${takeableKeys().length})`} icon="download" busy={busy()} onClick={() => void runTakeRepo(takeableKeys(), true)} />
-              </Show>
-            </header>
-            <Show when={data().repositoryChanged.length} fallback={<Empty text="All shipped definitions match the active store." />}>
-              <DataTable
-                label="Repository changed definitions"
-                head={<tr><th scope="col">Kind</th><th scope="col">ID</th><th scope="col">State</th><th scope="col" class="num">Store rev</th><th scope="col" class="num">30d runs</th><th scope="col">Action</th></tr>}>
-                <For each={data().repositoryChanged}>{d => {
-                  const badge = changeState(d.state);
-                  return (
-                    <tr>
-                      <td>{d.kind}</td>
-                      <th scope="row">
-                        {d.kind === 'agent' || d.kind === 'pipeline'
-                          ? <EntityCode code={d.id} id={d.id} kind={d.kind} />
-                          : <a class="row-link" href={defRoute(d)} onClick={e => { e.preventDefault(); go(defRoute(d)); }}>{d.id}</a>}
-                      </th>
-                      <td><StateBadge family="source" state={badge.state} reason={badge.reason} /></td>
-                      <td class="num mono">r{d.head}</td>
-                      <td class="num"><Num m={{ value: d.runs30d, basis: 'measured' }} kind="count" /></td>
-                      <td>
-                        <span class="acts">
-                          <Button label="Open" icon="external-link" kind="quiet" onClick={() => go(defRoute(d))} />
-                          {d.state === 'repository-changed' && (
-                            <Button label="Take repo" icon="download" kind="quiet" busy={busy()} onClick={() => void runTakeRepo([{ kind: d.kind, id: d.id }], true)} />
-                          )}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                }}</For>
-              </DataTable>
-            </Show>
-          </section>
-
-          <section class="panel">
-            <header class="panel-h">
-              <h2>Made in Fleet, not in repository</h2>
-              <span class="grow" />
-              <Show when={exportableKeys().length > 0}>
-                <span class="acts">
-                  <Show when={exportKeys()}><Button label="Refresh export patch" icon="rotate-cw" iconOnly kind="quiet" onClick={() => { setExportKeys(exportableKeys()); exportRead.reload(); }} /></Show>
-                  <Button label={exportKeys() ? 'Hide patch' : `Export patch (${exportableKeys().length})`} icon={exportKeys() ? 'x' : 'download'} kind={exportKeys() ? 'quiet' : 'default'}
-                    onClick={() => setExportKeys(exportKeys() ? null : exportableKeys())} />
-                </span>
-              </Show>
-            </header>
-            <Show when={exportableKeys().length} fallback={<Empty text="No store-only or ahead definitions." />}>
-              <DataTable
-                label="Ahead and store-only definitions"
-                head={<tr><th scope="col">Kind</th><th scope="col">ID</th><th scope="col">State</th><th scope="col" class="num">Store rev</th><th scope="col" class="num">30d runs</th><th scope="col">Path</th></tr>}>
-                <For each={[...data().storeOnly, ...data().ahead]}>{d => {
-                  const badge = changeState(d.state);
-                  return (
-                    <tr>
-                      <td>{d.kind}</td>
-                      <th scope="row">
-                        {d.kind === 'agent' || d.kind === 'pipeline'
-                          ? <EntityCode code={d.id} id={d.id} kind={d.kind} />
-                          : <a class="row-link" href={defRoute(d)} onClick={e => { e.preventDefault(); go(defRoute(d)); }}>{d.id}</a>}
-                      </th>
-                      <td><StateBadge family="source" state={badge.state} reason={badge.reason} /></td>
-                      <td class="num mono">r{d.head}</td>
-                      <td class="num"><Num m={{ value: d.runs30d, basis: 'measured' }} kind="count" /></td>
-                      <td class="mono">{d.path}</td>
-                    </tr>
-                  );
-                }}</For>
-              </DataTable>
-            </Show>
-            <Show when={exportRead.data}>{exp => <DetailSection title={`Git patch (${exp().files.length} files)`}><DiffText label="Exported git patch" text={exp().patch || 'Empty patch'} /></DetailSection>}</Show>
-            <Show when={exportRead.error}>{err => <ErrorBanner text={err()} onRetry={exportRead.reload} />}</Show>
-          </section>
         </>}</Show>
       }>{err => <ErrorBanner text={`Changes could not be read: ${err()}`} onRetry={changesOp.reload} />}</Show>
     </article>

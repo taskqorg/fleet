@@ -3,7 +3,7 @@
 import { createSignal, For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, DetailHead, DiffRow, InheritedRows, MatrixCell,
+  StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, ChangeRow, DetailHead, DiffRow, InheritedRows, MatrixCell,
   CatalogueTree, FilterBar, StateCounters, Presets, SearchBox, GroupControl, SortControl, DetailSection, KvRow, TabBar,
   DataTable, TableRow, TableName, StateBadge, ShareBar, ProblemRow, Button, SplitButton, WorkFacts, peerFence,
   InfiniteList, Preview, StateDot, createPages, type Page,
@@ -114,6 +114,21 @@ function LiveRowDemo() {
     <LiveRow kind="event" at={NOW - 2 * min} state="done" text="Nightly digest finished" onOpen={() => {}} facts={<WorkFacts attempts={207} agent="codex" />} />
     <LiveRow kind="runner" name="self-hosted pds18" fact="offline 12m" trouble onOpen={() => {}} />
     <LiveRow kind="event" at={NOW - 9 * min} state="done" text="Stale row: last read 9m ago" stale />
+  </ul>;
+}
+
+function ChangeRowDemo() {
+  const open = () => {};
+  return <ul class="change-rows">
+    <ChangeRow name="codex-designer" kind="agent" summary={'"Use GPT-6.2 Sol at medium"'} chip={{ text: 'PR #1102 · CI running', tone: 'running' }} at={NOW - 4 * min} href="#" onOpen={open} />
+    <ChangeRow name="worker-agent" kind="pipeline" summary="196 runs in 30 d" chip={{ text: 'PR #1095 · merged · waits for release', tone: 'success' }} at={NOW - 25 * min} href="#" onOpen={open} />
+    <ChangeRow name="doc-recognize-agent" kind="pipeline" tone="attention" summary="the repository changed it under your edit r9" chip={{ text: 'Conflict', tone: 'attention' }} at={NOW - 26 * hr} href="#" onOpen={open}
+      actions={[{ label: 'Compare', onClick: open }, { label: 'Keep mine', onClick: open }, { label: 'Take repository', primary: true, onClick: open }]} />
+    <ChangeRow name="connections-probe" kind="pipeline" tone="danger" summary="PR #1099 failed its checks" chip={{ text: 'Failed', tone: 'danger' }} at={NOW - 2 * hr} href="#" onOpen={open}
+      actions={[{ label: 'Open task', primary: true, onClick: open }]} />
+    <ChangeRow name="cs-review-helper" kind="agent" summary="made in Fleet, not named by any experiment" chip={{ text: 'New in Fleet', tone: 'neutral' }} at={NOW - 3 * hr} href="#" onOpen={open}
+      actions={[{ label: 'Publish', primary: true, onClick: open }]} />
+    <ChangeRow name="Antigravity researcher, code mode" chip={{ text: 'Draft', tone: 'neutral' }} summary="3 variants: antigravity-researcher, -code-only, -code-add" at={NOW - 50 * hr} href="#" onOpen={open} />
   </ul>;
 }
 
@@ -256,6 +271,7 @@ export const BLOCK_SECTIONS: Entry[] = [
   ['run-strip', 'Live: run strip', 'time-strip', () => <RunStripDemo />, () => <>One host's last 24 hours: a tick per run in the running tone, failures in danger.</>],
   ['worker-slot', 'Live: worker slot', 'worker-slot', () => <SlotDemo />, () => <>Busy (pulsing dot, elapsed time, project colour bar), idle (dashed, opens nothing), failing (what fails ×N, retry countdown, cause). The title takes the width and truncates. With work facts the second line shows code · project, then ×N, time in work and the agent mark; a failing slot shows its cause, ×N and the time since the latest failed start.</>],
   ['host-band', 'Live: host band', 'host-band', () => <HostDemo />, () => <>Normal, problem (danger border and glow, one problem line), offline (last values dimmed with the age), loading. Narrow bands stack the slots and move the gauges under the name (container query).</>],
+  ['change-row', 'Changes: change rows', 'change-row', () => <ChangeRowDemo />, () => <>A definition on its way (its pull request), a conflict and a failure that need a person, one made in Fleet, a Lab experiment; narrow, each row stacks with the time on its first line.</>],
   ['live-row', 'Live: live rows', 'live-row', () => <LiveRowDemo />, () => <>Project, task in work, delivery, runner, event; work rows carry the work facts; repeats are one event with ×N; trouble turns the dot and the fact red; stale rows are dimmed and open nothing.</>],
   ['work-facts', 'Rows: work facts', 'work-facts', () => <WorkFactsDemo />, () => <>Quiet form (owner pick B): ×N attempts from two, time in work, agent mark; the latest attempt and the time in the state are in the tooltip of the time in work. Peers: attempts 1, 1, 2, 1, 3, 500 and hours 1, 2, 3, 2, 1, 40, so ×500 and 40h take the attention tone (ten times the median or more).</>],
   ['catalogue-row', 'Sections: catalogue rows and list groups', 'catalogue-tree', () => <CatalogueDemo />, () => <>The catalogue row is CatalogueTree's leaf: state icon, title and code, facts on the right; selected with the accent bar; pinned with the pin first. Groups fold with their count.</>],

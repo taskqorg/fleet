@@ -149,4 +149,35 @@
   .shell[data-wall] > .shell-col { grid-row: 1; }
   .live[data-wall] { padding: var(--space-6) var(--space-7); }
   @media (max-width: 760px) { .live[data-wall] { padding: var(--space-5) var(--space-4); } }
+
+  /* Change rows (controls/change-row.md): Library › Changes. One row per definition change or Lab experiment; each row
+     is its own size container, so the row stacks in a narrow pane (OR-66) with the time last on its first line (OR-64). */
+  .change-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .chrow-w { container-type: inline-size; }
+  .chrow {
+    position: relative; display: grid; align-items: center; gap: var(--space-1) var(--space-3);
+    grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto auto 4ch; grid-template-areas: "name sum chip acts at";
+    padding: var(--space-2) var(--space-3); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--surface);
+  }
+  .chrow.t-attention { border-color: var(--attention-fg); background: var(--attention-soft); }
+  .chrow.t-danger { border-color: var(--danger-fg); background: var(--danger-bg); }
+  .chrow:has(.chrow-link:hover) { background: var(--hover); }
+  .chrow:has(.chrow-link:focus-visible) { outline: var(--size-focus-ring) solid var(--accent); outline-offset: calc(-1 * var(--size-focus-ring)); }
+  .chrow > header { grid-area: name; min-width: 0; display: flex; flex-direction: column; }
+  .chrow h3 { margin: 0; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+  .chrow-link { color: var(--fg); text-decoration: none; }
+  .chrow-link:focus-visible { outline: none; }
+  .chrow-link::after { content: ""; position: absolute; inset: 0; }
+  .chrow :is(button, a:not(.chrow-link), [data-tip]) { position: relative; z-index: 1; }
+  .chrow-kind { color: var(--fg-muted); font-size: var(--font-size-sm); }
+  .chrow > p { grid-area: sum; margin: 0; min-width: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+  .chrow > .badge { grid-area: chip; justify-self: start; }
+  .chrow > footer { grid-area: acts; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+  .chrow > .when { grid-area: at; justify-self: end; color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--font-size-sm); }
+  @container (width < 40rem) {
+    .chrow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name at" "chip chip" "sum sum" "acts acts"; }
+    .chrow > header { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); }
+    .chrow > footer { justify-content: flex-start; }
+    .chrow > .when { align-self: start; }
+  }
 }

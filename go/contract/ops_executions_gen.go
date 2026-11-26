@@ -3112,17 +3112,18 @@ func (v *SystemChangeComponentHost) Validate() error {
 }
 
 type SystemChangeDefinition struct {
-	Experiment    *string         `json:"experiment,omitempty"`
-	Head          int64           `json:"head"`
-	Id            string          `json:"id"`
-	Kind          DefinitionKind  `json:"kind"`
-	Name          string          `json:"name"`
-	Path          string          `json:"path"`
-	PublishTaskId *string         `json:"publishTaskId,omitempty"`
-	RepoSha       *string         `json:"repoSha,omitempty"`
-	Runs30d       int64           `json:"runs30d"`
-	State         DefinitionState `json:"state"`
-	Summary       *string         `json:"summary,omitempty"`
+	At         *string              `json:"at,omitempty"`
+	Experiment *string              `json:"experiment,omitempty"`
+	Head       int64                `json:"head"`
+	Id         string               `json:"id"`
+	Kind       DefinitionKind       `json:"kind"`
+	Name       string               `json:"name"`
+	Path       string               `json:"path"`
+	Publish    *SystemChangePublish `json:"publish,omitempty"`
+	RepoSha    *string              `json:"repoSha,omitempty"`
+	Runs30d    int64                `json:"runs30d"`
+	State      DefinitionState      `json:"state"`
+	Summary    *string              `json:"summary,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -3130,9 +3131,27 @@ func (v *SystemChangeDefinition) Validate() error {
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
+	if v.Publish != nil {
+		if err := Check(v.Publish, "publish"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
 	}
+	return nil
+}
+
+// SystemChangeExperiment: A live Lab experiment whose variants are store-only definitions (SystemChangeDefinition.experiment).
+type SystemChangeExperiment struct {
+	At    string `json:"at"`
+	Id    string `json:"id"`
+	State string `json:"state"`
+	Title string `json:"title"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangeExperiment) Validate() error {
 	return nil
 }
 
@@ -3177,9 +3196,43 @@ func (v *SystemChangeKind) Validate() error {
 	return nil
 }
 
+// SystemChangePublish: The Fleet task that sends the head to the repository (definition_publish), and its latest pull request: the row's progress.
+type SystemChangePublish struct {
+	Code   string                 `json:"code"`
+	Pr     *SystemChangePublishPR `json:"pr,omitempty"`
+	State  string                 `json:"state"`
+	TaskId string                 `json:"taskId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangePublish) Validate() error {
+	if v.Pr != nil {
+		if err := Check(v.Pr, "pr"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SystemChangePublishPR struct {
+	Number int64         `json:"number"`
+	Since  string        `json:"since"`
+	Stage  DeliveryStage `json:"stage"`
+	Url    string        `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangePublishPR) Validate() error {
+	if err := Check(&v.Stage, "stage"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type SystemChangesReply struct {
 	Ahead             []SystemChangeDefinition  `json:"ahead"`
 	Components        []SystemChangeKind        `json:"components"`
+	Experiments       []SystemChangeExperiment  `json:"experiments"`
 	HarnessDrift      []SystemChangeHostHarness `json:"harnessDrift"`
 	RepositoryChanged []SystemChangeDefinition  `json:"repositoryChanged"`
 	StoreOnly         []SystemChangeDefinition  `json:"storeOnly"`
@@ -3201,6 +3254,14 @@ func (v *SystemChangesReply) Validate() error {
 	}
 	for i := range v.Components {
 		if err := Check(&v.Components[i], "components"); err != nil {
+			return err
+		}
+	}
+	if v.Experiments == nil {
+		return Missing("experiments")
+	}
+	for i := range v.Experiments {
+		if err := Check(&v.Experiments[i], "experiments"); err != nil {
 			return err
 		}
 	}

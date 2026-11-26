@@ -31,6 +31,7 @@ export * from './controls/run-strip.tsx';
 export * from './controls/worker-slot.tsx';
 export * from './controls/host-band.tsx';
 export * from './controls/live-row.tsx';
+export * from './controls/change-row.tsx';
 export * from './controls/detail-head.tsx';
 export * from './controls/diff-row.tsx';
 export * from './controls/matrix-cell.tsx';

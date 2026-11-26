@@ -236,10 +236,11 @@ GROUP BY d->>'kind', d->>'id';
 INSERT INTO definition_publish(kind, id, revision, task_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING;
 
 -- name: DefPublishTasks :many
--- The latest publish of every definition: its revision and task.
-SELECT DISTINCT ON (kind, id) kind, id, revision, task_id FROM definition_publish ORDER BY kind, id, revision DESC;
+-- The latest publish of every definition: its revision and task, with the task's code and state.
+SELECT DISTINCT ON (p.kind, p.id) p.kind, p.id, p.revision, p.task_id, coalesce(t.code,'')::text AS code, coalesce(t.state::text,'')::text AS state, coalesce(t.project_id,'')::text AS project_id
+FROM definition_publish p LEFT JOIN task t ON t.id=p.task_id ORDER BY p.kind, p.id, p.revision DESC;
 
 -- name: DefExperimentsNaming :many
 -- Live experiments naming the id anywhere in their variants (a Lab variant's experiment).
-SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL
+SELECT id, coalesce(nullif(goal,''), pipeline_id)::text AS title, state, created_at FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL
  AND jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',sqlc.arg(id)::text)) ORDER BY id;

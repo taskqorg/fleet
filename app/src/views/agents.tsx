@@ -16,7 +16,7 @@ import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, prefs, prefsRead, scopeIds, setListGroups, usePins } from '../prefs.ts';
 import { useOp, useView } from '../store.ts';
 import { parseMs as ms } from '../task-facts.ts';
-import { Changes } from './changes.tsx';
+import { Changes, changesNeedingYou } from './changes.tsx';
 import { BotCreateForm, BotDetail, botPath } from './bots.tsx';
 import { botAvatarState, botPicture } from '../bot-view.ts';
 import { DefinitionDetail, baseAgentDefaults } from './definitions.tsx';
@@ -214,8 +214,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
   const driftCount = createMemo(() => {
     const c = changesOp.data;
     if (!c) return 0;
-    return c.repositoryChanged.length + c.storeOnly.length + c.ahead.length
-      + c.versions.hosts.filter(h => h.behind).length + c.harnessDrift.filter(h => h.behind).length;
+    return changesNeedingYou(c) + c.versions.hosts.filter(h => h.behind).length + c.harnessDrift.filter(h => h.behind).length;
   });
 
   const libraryTreeNodes = createMemo<CatalogueTreeNode[]>(() => {
@@ -310,7 +309,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
       // Changes is one page, not a folder: its drift count is the root's counter (OR-29, hidden at zero).
       {
         id: CHANGES_ID, label: 'Changes', icon: 'git-pull-request', href: '/library/changes', searchText: 'changes drift repository store hosts',
-        right: driftCount() > 0 ? <span class="badge t-attention" data-tip="Definitions, hosts and harness pins out of line">{driftCount()}</span> : undefined,
+        right: driftCount() > 0 ? <span class="t-attention" data-tip="Conflicts, failed pull requests, hosts and harness pins out of line">{driftCount()} need{driftCount() === 1 ? 's' : ''} you</span> : undefined,
       },
     ];
   });
@@ -429,7 +428,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
   };
 
   const takeable = createMemo(() => (changesOp.data?.repositoryChanged ?? []).filter(d => d.state === 'repository-changed'));
-  const notInRepo = createMemo(() => changesOp.data ? [...changesOp.data.storeOnly, ...changesOp.data.ahead] : []);
+  const notInRepo = createMemo(() => changesOp.data ? [...changesOp.data.storeOnly, ...changesOp.data.ahead].filter(d => !d.publish && !d.experiment) : []);
   const kindWord = (xs: readonly { kind: string }[]) => {
     const kinds = new Set(xs.map(x => x.kind));
     return kinds.size === 1 ? (kinds.has('agent') ? 'agent' : kinds.has('pipeline') ? 'pipeline' : 'definition') : 'definition';
@@ -479,7 +478,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
               severity="warning"
               title={`${plural(notInRepo().length, kindWord(notInRepo()))} made in Fleet ${notInRepo().length === 1 ? 'is' : 'are'} not in the repository`}
               facts={namesFact(notInRepo())}
-              actions={[{ label: 'Save to repository', icon: 'git-merge', onClick: () => go('/library/changes') }]}
+              actions={[{ label: 'Publish in Changes', icon: 'git-merge', onClick: () => go('/library/changes') }]}
             />
           </Show>
         </DetailSection>
