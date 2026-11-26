@@ -27,3 +27,9 @@ test('a step error shows its message, not the JSON of the error object', () => {
   assert.equal(stepErrorText('plain'), 'plain');
   assert.equal(stepErrorText(null), undefined);
 });
+
+test('the key that names a record leads the columns, so the row header is the file, not a sorted first key', () => {
+  const rows = [{ alias: null, dob: '2000-01-01', file: 'a.jpg', type: 'id_card' }, { alias: null, dob: null, file: 'b.jpg', type: 'model_release' }];
+  assert.deepEqual(recordColumns(rows), ['file', 'dob', 'type']);
+  assert.deepEqual(recordColumns([{ b: 1, a: 2 }]), ['b', 'a']);
+});

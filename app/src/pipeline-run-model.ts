@@ -27,11 +27,17 @@ export function resultRecords(out: unknown): Rec[] | null {
   return null;
 }
 
-/** The columns of records: keys holding plain values, in first-seen order, without a column that is empty in every record. */
+/** Keys that name a record, the first found leads the row (the row header): a result's keys come in any order, often sorted. */
+const NAME_KEYS = ['file', 'path', 'name', 'title', 'id'];
+
+/** The columns of records: keys holding plain values, in first-seen order, without a column that is empty in every
+ * record; the key that names a record (NAME_KEYS) comes first, so the row header is the file, never a value such as a date. */
 export function recordColumns(rows: Rec[]): string[] {
   const keys: string[] = [];
   for (const r of rows) for (const [k, v] of Object.entries(r)) if (!keys.includes(k) && (v == null || typeof v !== 'object')) keys.push(k);
-  return keys.filter(k => rows.some(r => r[k] != null && r[k] !== ''));
+  const filled = keys.filter(k => rows.some(r => r[k] != null && r[k] !== ''));
+  const lead = NAME_KEYS.find(k => filled.includes(k));
+  return lead ? [lead, ...filled.filter(k => k !== lead)] : filled;
 }
 
 /** A step's error as a person reads it: its message (a `{code, message}` object shows the message, not its JSON). */
