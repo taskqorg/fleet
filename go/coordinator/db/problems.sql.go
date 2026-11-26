@@ -241,6 +241,18 @@ func (q *Queries) ProblemOpenGet(ctx context.Context, cause string) (Problem, er
 	return i, err
 }
 
+const problemOwnerName = `-- name: ProblemOwnerName :one
+SELECT s.name FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision WHERE b.id = $1
+`
+
+// A problem owner's display name (problemOut): one light read, not the bot page's.
+func (q *Queries) ProblemOwnerName(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, problemOwnerName, id)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const problemPresent = `-- name: ProblemPresent :exec
 UPDATE problem SET misses = 0, seen_at = now(), text = coalesce($1, text) WHERE id = $2
 `
