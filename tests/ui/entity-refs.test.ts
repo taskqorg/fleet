@@ -80,7 +80,8 @@ test('pull requests in agent text: a GitHub URL and owner/repo#n, never a path o
 
 test('a link to a Fleet page of one entity is its reference, not a raw URL (OR-38)', async () => {
   const { APP_URL_REF } = await import('../../packages/ui/src/markdown.ts');
-  const ids = (t: string) => [...t.matchAll(APP_URL_REF)].map(m => m[1]);
+  const ids = (t: string) => [...t.matchAll(APP_URL_REF)].map(m => m[1] ?? m[2]);
+  assert.deepEqual(ids('continue in https://fleet.ufobe.com/conversations/C-FLT-884.'), ['C-FLT-884']);
   assert.deepEqual(ids('send a continuation in https://fleet.ufobe.com/conversations/02c02b71-b565-4d2e-8053-a0e52f19b9dc asking'), ['02c02b71-b565-4d2e-8053-a0e52f19b9dc']);
   assert.deepEqual(ids('https://storage.example.com/objects/02c02b71-b565-4d2e-8053-a0e52f19b9dc/file.tar'), []);
 });

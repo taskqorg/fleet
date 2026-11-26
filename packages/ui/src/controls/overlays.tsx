@@ -268,7 +268,7 @@ export function linkCodes(text: string, _key: number, literal = (value: string, 
   const out: JSX.Element[] = []; let last = 0;
   const found = [
     ...[...(uuidOnly ? [] : text.matchAll(ENTITY_CODE))].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode code={m[0]} cls="inline" /> })),
-    ...[...text.matchAll(APP_URL_REF)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode id={m[1].toLowerCase()} cls="inline" /> })),
+    ...[...text.matchAll(APP_URL_REF)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => m[1] ? <EntityCode id={m[1].toLowerCase()} cls="inline" /> : <EntityCode code={m[2]} cls="inline" /> })),
     ...[...text.matchAll(UUID_REF)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode id={m[0].toLowerCase()} cls="inline" /> })),
     ...[...(uuidOnly ? [] : text.matchAll(PR_REF))].map(m => {
       const owner = m[1] ?? m[4], repo = m[2] ?? m[5], n = m[3] ?? m[6];
