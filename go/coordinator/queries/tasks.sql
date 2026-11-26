@@ -387,6 +387,10 @@ LEFT JOIN session_summary ss ON ss.session_id = s.id
 WHERE t.id = $1 AND s.tombstoned_at IS NULL AND coalesce(s.actor, '') <> 'program-worker'
 ORDER BY s.seq;
 
+-- name: TaskManagedBy :one
+-- Whether the bot created or manages the task (any of its links), so its runs may act on the task's sessions.
+SELECT EXISTS (SELECT 1 FROM bot_task WHERE task_id = sqlc.arg(task_id) AND bot_id = sqlc.arg(bot_id) AND link_kind IN ('created', 'managed') AND tombstoned_at IS NULL);
+
 -- name: TaskManagingBot :one
 -- The bot that created or manages a task: a question in the task goes to it, not to a person (askQuestionAs).
 SELECT bot_id FROM bot_task WHERE task_id = $1 AND link_kind IN ('created', 'managed') AND tombstoned_at IS NULL
