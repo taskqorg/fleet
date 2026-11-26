@@ -66,6 +66,8 @@ type view struct {
 	Sort     string            `json:"sort,omitempty"`
 	State    []string          `json:"state,omitempty"`
 	Archived bool              `json:"archived,omitempty"`
+	Steps    bool              `json:"steps,omitempty"`  // conversations: the hidden pipeline and Lab steps (filter.listed false)
+	Origin   []string          `json:"origin,omitempty"` // conversations: how they began (filter.origin)
 	Extra    map[string]string `json:"extra,omitempty"`
 }
 
@@ -233,9 +235,19 @@ func viewProblem(v any) string {
 			if _, ok := jsonString(x); !ok {
 				return k + " must be a string"
 			}
-		case k == "archived":
+		case k == "archived" || k == "steps":
 			if t := string(bytes.TrimSpace(x)); t != "true" && t != "false" {
-				return "archived must be true or false"
+				return k + " must be true or false"
+			}
+		case k == "origin":
+			xs, ok := strs(x)
+			if ok {
+				for _, i := range xs {
+					ok = ok && slices.Contains(sessionOrigins, i)
+				}
+			}
+			if !ok {
+				return "origin must be a list of: " + strings.Join(sessionOrigins, ", ")
 			}
 		}
 	}
@@ -322,6 +334,20 @@ func parseView(input, origin string) (view, bool) {
 			if raw == "1" {
 				v.Archived = true
 			}
+		case "steps":
+			if raw == "1" {
+				v.Steps = true
+			}
+		case "origin":
+			xs := []string{}
+			for _, x := range items(raw) {
+				if slices.Contains(sessionOrigins, x) {
+					xs = append(xs, x)
+				}
+			}
+			if len(xs) > 0 {
+				v.Origin = sortedSet(append(v.Origin, xs...))
+			}
 		case "sel":
 			if xs := items(raw); len(xs) > 0 {
 				v.Sel = sortedSet(append(v.Sel, xs...))
@@ -398,6 +424,12 @@ func formatView(v view) string {
 	}
 	if has("archived") && v.Archived {
 		ps["archived"] = "1"
+	}
+	if has("steps") && v.Steps {
+		ps["steps"] = "1"
+	}
+	if has("origin") && len(v.Origin) > 0 {
+		ps["origin"] = join(v.Origin)
 	}
 	if has("sel") && len(v.Sel) > 0 {
 		ps["sel"] = join(v.Sel)

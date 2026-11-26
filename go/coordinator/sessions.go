@@ -30,6 +30,7 @@ type sessionListDBRow struct {
 	ProjectID     *string  `db:"project_id"`
 	BotID         *string  `db:"bot_id"`
 	Origin        string   `db:"origin"`
+	Subject       *string  `db:"subject"`
 	Listed        bool     `db:"listed"`
 	CreatedAt     *float64 `db:"created_ms"`
 	ArchivedAt    *float64 `db:"archived_ms"`
@@ -57,7 +58,7 @@ func (x sessionListDBRow) row() contract.SessionRow {
 		harness = x.AgentHarness
 	}
 	return contract.SessionRow{Id: x.ID, Code: x.Code, Title: title, State: x.State, Harness: harness, ProfileId: x.ProfileID, ProjectId: x.ProjectID, BotId: x.BotID,
-		Origin: ptr(contract.SessionOrigin(x.Origin)), Listed: &x.Listed,
+		Origin: ptr(contract.SessionOrigin(x.Origin)), Listed: &x.Listed, Subject: x.Subject,
 		CreatedAt: x.CreatedAt, ActivityAt: x.ActivityAt, Now: nowLine(deref(x.NowText), deref(x.TaskTitle)), Executions: x.Executions, OpenQuestions: x.OpenQuestions, ArchivedAt: x.ArchivedAt,
 		WaitingSince: x.WaitingSince, RunStartedAt: x.RunStartedAt, LastStartedAt: x.LastStartedAt, FailedStarts: &x.FailedStarts,
 		SortKey: sortKey(x.G, x.Sk, x.ID)}
@@ -239,7 +240,37 @@ func sessionsPageOf(q *Request, r *contract.SessionsListRequest, filter json.Raw
 		out.NextAfter = jsonBytes(out.Sessions[len(out.Sessions)-1].SortKey)
 	}
 	out.Total = total(out.Counts)
+	if after == nil { // the first page carries the Started by and Steps counts
+		if out.Origins, out.HiddenCount, err = sessionOriginCounts(q, f); err != nil {
+			return out, err
+		}
+	}
 	return out, nil
+}
+
+// sessionOriginCounts: the conversations of the filter by origin (the origin filter left out) and the hidden ones.
+func sessionOriginCounts(q *Request, f rowFilter) (map[string]int64, *int64, error) {
+	sql, p, err := sqlSessionOrigins(f)
+	if err != nil {
+		return nil, nil, err
+	}
+	type row struct {
+		Origin string `db:"origin"`
+		N      int64  `db:"n"`
+	}
+	rs, err := typedRows[row](q, sql, p)
+	if err != nil {
+		return nil, nil, err
+	}
+	out, hidden := map[string]int64{}, int64(0)
+	for _, r := range rs {
+		if r.Origin == "" {
+			hidden = r.N
+		} else {
+			out[r.Origin] = r.N
+		}
+	}
+	return out, &hidden, nil
 }
 
 // related: a delegation record with the states of its parent, child and continuation runs.

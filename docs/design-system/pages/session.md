@@ -29,6 +29,8 @@ From top to bottom, then the context panel on the right:
    * heartbeats, repeated attachments and internal notices are never shown.
 4. **Composer** at the bottom, always reachable (UR-59). While a run works it says whether Enter queues the message or steers the run; Stop sits beside it. A `/trigger` command in it shows its preview above the text and applies instead of sending ([commands](../controls/composer.md#commands)).
 
+**Head, second line** (owner "ok" F1, 2026-11-26): Started by (the origin in words), About (the subject's title, a link to its task or host page) and Projects: the conversation's project set as chips and a `+` menu of the person's projects to check in or out (`session_update`); the first is the default for new tasks.
+
 **One line of work.** A conversation shows one transcript and the composer writes into it; a bot's other lines of work are other conversations ([conversation model](../../designs/fleet-conversations.md#conversation-model)).
 
 **Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), a [side panel](../controls/side-panel.md) right of the transcript, its own scroller ([OR-25](../owner-rules.md)):

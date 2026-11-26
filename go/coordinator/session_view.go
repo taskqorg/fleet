@@ -179,6 +179,28 @@ func sessionViewHead(q *Request, s *agentSession, rows []db.SessionViewExecution
 	}
 	h.Title = title.Title
 	h.ProjectCode = optStr(title.ProjectCode)
+	// The conversation model fields (fleet-conversations.md#entities): how it began, what it is about, its projects.
+	type model struct {
+		Subject *string `db:"subject"`
+		Origin  string  `db:"origin"`
+	}
+	sql, p := sqlSessionModel(s.ID)
+	ms, err := typedRows[model](q, sql, p)
+	if err != nil {
+		return h, err
+	}
+	if len(ms) == 1 {
+		o := contract.SessionOrigin(ms[0].Origin)
+		h.Origin, h.Subject = &o, ms[0].Subject
+		if sub := deref(ms[0].Subject); sub != "" {
+			t, err := subjectTitle(q, sub)
+			if err != nil {
+				return h, err
+			}
+			h.SubjectTitle = &t
+		}
+	}
+	h.ProjectIds = sessionProjects(s)
 	res, err := sessionResourceRollup(q, s.ID)
 	if err != nil {
 		return h, err

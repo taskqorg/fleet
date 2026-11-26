@@ -8,7 +8,7 @@ import {
   OpsSummary, KvRow, Num, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, finishedStates,
   OpenQuestion, Preview, StateDot, statesOf, type Tone,
-  ShellStatus, ShellActions, WorkFacts, peerFence, useTick,
+  ShellStatus, ShellActions, WorkFacts, peerFence, useTick, FacetChips,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -16,7 +16,7 @@ import { NewConversation } from './conversation-new.tsx';
 import { SessionView } from './session.tsx';
 import { useOp } from '../store.ts';
 import type { SessionRow as ContractSessionRow } from '../../../contracts/generated/ops.ts';
-import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
+import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT, SESSION_ORIGINS, type SessionOrigin } from '../../../packages/view-url/view-url.ts';
 import { nextUrl } from '../url.ts';
 import { prefs, prefsRead, scopeIds, noProject } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
@@ -29,6 +29,10 @@ type SessionRow = ContractSessionRow & { state: StateOf<'session'> };
 const TERMINAL: readonly string[] = finishedStates.session;
 const WAITING = statesOf('session', ['waiting']) as string[];
 const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
+/** How a conversation began, in words (Started by, owner "ok" F1, 2026-11-26). */
+const ORIGIN_LABEL: Record<SessionOrigin, string> = { person: 'Person', telegram: 'Telegram', trigger: 'Trigger', task: 'Task', bot: 'Bot', fork: 'Fork', pipeline: 'Pipeline', lab: 'Lab' };
+/** A subject's kind as the row shows it (host, task, pr, ...); the head names it in full. */
+const subjectKind = (s: string | null | undefined) => (s ? s.slice(0, Math.max(0, s.indexOf(':'))) || s : '');
 
 export function Conversations(props: { id?: string }) {
   // Pinned conversations stay whatever the filter, search or grouping (OR-12): read by id with no filter but the archived
@@ -41,8 +45,9 @@ export function Conversations(props: { id?: string }) {
     // The list names a group by its label; the waiting group's label is "waiting" (sessions_list), no project's name.
     groupLabel: (g, label) => (g === 'project' && label === 'waiting' ? 'Waiting for you' : groupLabel(g, label)),
     pinRead: v => ({ filter: { archived: !!v.archived } }),
-    saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
-    listId: v => !!v.archived,
+    saveExtra: v => ({ archived: v.archived, steps: v.steps, origin: v.origin }), pickExtra: sv => ({ archived: sv.archived, steps: sv.steps, origin: sv.origin }),
+    // Archived and the hidden steps are lists of their own: switching ends selection mode (list-page.tsx).
+    listId: v => `${!!v.archived}:${!!v.steps}`,
   });
   const { set } = page;
   const search = useSearch();
@@ -53,6 +58,17 @@ export function Conversations(props: { id?: string }) {
   const archive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_archive', { sessionId: s.id }), 'not archived');
   const unarchive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_unarchive', { sessionId: s.id, reason: 'Unarchived from the Conversations list' }), 'not unarchived');
   const toggleArchived = () => set({ archived: archived() ? undefined : true, sel: undefined, preset: undefined });
+  // Steps: the hidden pipeline and Lab agent steps instead of the list (listed false); Started by: origin chips with the
+  // first page's counts (owner "ok" F1, F2, 2026-11-26). Both are view keys, so saved views and links keep them.
+  const steps = () => !!page.view.steps;
+  const toggleSteps = () => set({ steps: steps() ? undefined : true, origin: undefined, sel: undefined, preset: undefined });
+  const origins = () => (page.view.origin ?? []) as SessionOrigin[];
+  const toggleOrigin = (o: string) => { const cur = origins(); set({ origin: cur.includes(o as SessionOrigin) ? cur.filter(x => x !== o) : [...cur, o as SessionOrigin], preset: undefined }); };
+  const facets = () => page.list.facets;
+  const startedBy = (
+    <FacetChips label="Started by" active={origins()} onAll={() => set({ origin: undefined, preset: undefined })} onToggle={toggleOrigin}
+      items={SESSION_ORIGINS.map(o => ({ key: o, label: ORIGIN_LABEL[o], count: facets()?.origins[o] ?? 0 }))} />
+  );
   const now = () => Date.now();
   // Work facts' outliers stand out against the loaded conversations (peerFence), never against a fixed number.
   const tick = useTick(30_000);
@@ -88,14 +104,17 @@ export function Conversations(props: { id?: string }) {
         page={page}
         cls="conv-list"
         dynamic
-        lead={!props.id && !isNew() ? <div class="narrow-lead"><WaitingCards page={page} archived={archived()} /></div> : undefined}
+        lead={<>{startedBy}{!props.id && !isNew() && !steps() ? <div class="narrow-lead"><WaitingCards page={page} archived={archived()} /></div> : undefined}</>}
         noun="Conversations"
         placeholder="Search conversations"
         family="session"
         groups={GROUPS}
         sorts={SORTS}
         focused={isNew() ? undefined : props.id}
-        tools={<Button label="Archived" icon="archive" iconOnly kind="quiet" pressed={archived()} onClick={toggleArchived} />}
+        tools={<>
+          <Button label={facets() ? `Steps ${facets()!.hidden.toLocaleString('en')}` : 'Steps'} kind="quiet" pressed={steps()} tip="Pipeline and Lab agent steps: they open from their run too" onClick={toggleSteps} />
+          <Button label="Archived" icon="archive" iconOnly kind="quiet" pressed={archived()} onClick={toggleArchived} />
+        </>}
         actions={() => [
           archived()
             ? { label: 'Unarchive', icon: 'archive-restore', onClick: () => unarchive(page.chosen), disabledReason: page.off }
@@ -303,6 +322,12 @@ function SessionFacts(props: { s: SessionRow; fences: SessionFences }) {
   return (
     <WorkFacts
       before={<>
+        <Show when={subjectKind(props.s.subject)}>
+          {k => <span class="row-subject" data-tip={props.s.subject ?? ''}>{k()}</span>}
+        </Show>
+        <Show when={props.s.listed === false && props.s.origin}>
+          {o => <span class="chip">{ORIGIN_LABEL[o() as SessionOrigin] ?? o()}</span>}
+        </Show>
         <Show when={props.s.now} keyed>
           {now => <span class="row-now" data-tip={now}>{now}</span>}
         </Show>

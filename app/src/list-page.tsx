@@ -316,6 +316,7 @@ function localList(l: Accessor<LocalList<ListRow>>, view: Accessor<View>) {
     get counts() { return l().counts; },
     get total() { return l().total; },
     get groups() { return l().groups; },
+    facets: undefined,
     at: 0,
     get error() { return l().error; },
     get pending() { return l().pending; },

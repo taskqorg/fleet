@@ -721,6 +721,7 @@ type SessionRow struct {
 	RunStartedAt  *string        `json:"runStartedAt,omitempty"`
 	SortKey       []SortKeyPart  `json:"sortKey"`
 	State         string         `json:"state"`
+	Subject       *string        `json:"subject,omitempty"`
 	Title         *string        `json:"title"`
 	WaitingSince  *string        `json:"waitingSince,omitempty"`
 }

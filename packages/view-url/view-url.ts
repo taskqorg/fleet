@@ -4,17 +4,22 @@ import vocabulary from '../../contracts/vocabulary.json' with { type: 'json' };
 export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results' | 'projects' | 'delivery';
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
-  q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string | undefined>;
+  q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean;
+  /** Conversations: the hidden pipeline and Lab steps instead of the list (filter.listed false); how they began (filter.origin). */
+  steps?: boolean; origin?: string[]; extra?: Record<string, string | undefined>;
   /** Not in the URL: projects the list leaves out (the person's ignored ones, OR-34; null is no project). Part of listKey and toPageParams. */
   exclude?: (string | null)[];
 };
-export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; excludeProjectId?: (string | null)[]; archived?: boolean }; group?: string; sort?: string };
+export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; excludeProjectId?: (string | null)[]; archived?: boolean; listed?: boolean; origin?: SessionOrigin[] }; group?: string; sort?: string };
 
 // The one source of these lists is contracts/vocabulary.json; the coordinator reads the same file (go/contract Vocabulary).
 const L = vocabulary.lists;
 export const TASK_STATES = L.tasks.states;
 export type TaskState = string;
 export const SESSION_STATES = L.conversations.states;
+/** How a conversation began (sessions_list origin, contract SessionOrigin). */
+export type SessionOrigin = 'person' | 'trigger' | 'task' | 'telegram' | 'fork' | 'pipeline' | 'lab' | 'bot';
+export const SESSION_ORIGINS = L.conversations.origins as SessionOrigin[];
 export type SessionState = string;
 export const TASK_GROUPS = L.tasks.groups;
 /** Tasks are grouped by project unless the view says otherwise (owner, 2026-11-16). */
@@ -67,7 +72,7 @@ type Key = {
   list: boolean;
 };
 const items = (raw: string) => raw.split(',').map(x => dec(x, true)).filter(Boolean);
-const listKey_ = (field: 'state' | 'sel', allowed?: readonly string[]): Key => ({
+const listKey_ = (field: 'state' | 'sel' | 'origin', allowed?: readonly string[]): Key => ({
   parse: (v, raw) => { const xs = items(raw).filter(x => !allowed || allowed.includes(x)); if (xs.length) v[field] = sorted([...(v[field] ?? []), ...xs]); },
   format: v => v[field]?.length ? sorted(v[field]!).map(enc).join(',') : undefined,
   list: field !== 'sel',
@@ -104,6 +109,8 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   },
   conversations: {
     archived: { parse: (v, raw) => { if (raw === '1') v.archived = true; }, format: v => v.archived ? '1' : undefined, list: true },
+    steps: { parse: (v, raw) => { if (raw === '1') v.steps = true; }, format: v => v.steps ? '1' : undefined, list: true },
+    origin: listKey_('origin', SESSION_ORIGINS),
     group: choice('group', SESSION_GROUPS, DEFAULT_SESSION_GROUP),
     preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', SESSION_STATES),
     sort: choice('sort', SESSION_SORTS, DEFAULT_SESSION_SORT),
@@ -147,7 +154,8 @@ export function viewProblem(v: unknown): string | null {
     else if (k === 'project') { if (!Array.isArray(x) || !x.every(i => i === null || (typeof i === 'string' && i !== ''))) return 'project must be a list of project ids or null'; }
     else if (k === 'sel') { if (!strs(x)) return 'sel must be a list of ids'; }
     else if (k === 'q' || k === 'preset') { if (typeof x !== 'string') return k + ' must be a string'; }
-    else if (k === 'archived') { if (typeof x !== 'boolean') return 'archived must be true or false'; }
+    else if (k === 'archived' || k === 'steps') { if (typeof x !== 'boolean') return k + ' must be true or false'; }
+    else if (k === 'origin') { if (!strs(x) || !(x as string[]).every(i => (SESSION_ORIGINS as string[]).includes(i))) return 'origin must be a list of: ' + SESSION_ORIGINS.join(', '); }
   }
   return null;
 }
@@ -207,7 +215,11 @@ export function toPageParams(v: View): PageParams {
   if (v.q) filter.search = v.q;
   if (v.project?.length) filter.projectId = sortProjects(v.project);
   if (v.exclude?.length) filter.excludeProjectId = sortProjects(v.exclude);
-  if (v.view === 'conversations') filter.archived = !!v.archived;
+  if (v.view === 'conversations') {
+    filter.archived = !!v.archived;
+    if (v.steps) filter.listed = false;
+    if (v.origin?.length) filter.origin = sorted(v.origin) as SessionOrigin[];
+  }
   const o = ORDER[v.view];
   return o ? { filter, group: v.group ?? o.group, sort: v.sort ?? o.sort } : { filter };
 }

@@ -311,6 +311,7 @@ export function Results(props: { id?: string; project?: string; frame?: Frame })
       get counts() { return basePage.list.counts; },
       get total() { return basePage.list.total; },
       get groups() { return basePage.list.groups; },
+      get facets() { return basePage.list.facets; },
       get at() { return basePage.list.at; },
       get error() { return basePage.list.error; },
       get pending() { return basePage.list.pending; },

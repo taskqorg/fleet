@@ -22,7 +22,9 @@ export type Kind = 'tasks' | 'sessions';
 type Params = ReturnType<typeof toPageParams>;
 type Group = ListGroup;
 /** restored: the state came from the read mirror (persist.ts) and no read of this page has replaced it yet. */
-export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null; restored?: boolean };
+/** Conversations: the first page's Started by counts (origin left out) and its hidden steps (sessions_list origins, hiddenCount). */
+export type ListFacets = { origins: Record<string, number>; hidden: number };
+export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null; restored?: boolean; facets?: ListFacets };
 type Entry = {
   kind: Kind; view: View; params: Params; state: Cell<ListState | null>; busy: Cell<boolean>;
   started: number; mounted: number; loading: boolean; dirty: boolean; paging: boolean; cursorReset: boolean;
@@ -118,6 +120,12 @@ type ListRead = { signal?: AbortSignal; quiet?: boolean; cursorReset?: boolean; 
 const PAGE_SIZE = 100;
 
 /** Replace the authorized snapshot. Quiet recovery keeps the loaded extent in one state update. */
+/** The first page's facets, when its list answers them (sessions_list). */
+function facetsOf(page: unknown): ListFacets | undefined {
+  const p = page as { origins?: Record<string, number>; hiddenCount?: number };
+  return p.origins ? { origins: p.origins, hidden: p.hiddenCount ?? 0 } : undefined;
+}
+
 export async function loadList(kind: Kind, key: string, view: View, opts: ListRead = {}) {
   const e = entry(kind, key, view), read = ++e.started, generation = accessGeneration();
   const extent = opts.quiet || opts.preserveExtent ? e.state.peek()?.rows.length ?? 0 : 0;
@@ -145,7 +153,7 @@ export async function loadList(kind: Kind, key: string, view: View, opts: ListRe
     const now = Date.now();
     // A reread keeps the row objects that did not change (share.ts), so rows on screen are not rebuilt.
     const was = e.state.peek();
-    e.state.value = { rows: share(was?.rows ?? rows, rows), counts: share(was?.counts ?? first.counts, first.counts), total: first.total, groups: share(was?.groups ?? first.groups ?? [], first.groups ?? []), nextAfter, at: now, error: null };
+    e.state.value = { rows: share(was?.rows ?? rows, rows), counts: share(was?.counts ?? first.counts, first.counts), total: first.total, groups: share(was?.groups ?? first.groups ?? [], first.groups ?? []), nextAfter, at: now, error: null, facets: facetsOf(first) };
     persist('list:' + key, e.state.peek());
     e.fetchedAt = now;
     e.pageError = false;
@@ -397,6 +405,7 @@ export function useList<K extends Kind>(kind: K, urlViewInput: MaybeAccessor<Vie
     get counts() { return cur()?.counts ?? {}; },
     get total() { return cur()?.total ?? 0; },
     get groups() { return cur()?.groups ?? []; },
+    get facets() { return cur()?.facets; },
     get at() { return cur()?.at ?? 0; },
     get error() { return cur()?.error ?? null; },
     get pending() { return !prefsRead.value || shown() !== key() || currentEntry().busy.value; },

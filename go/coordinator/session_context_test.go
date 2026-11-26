@@ -115,6 +115,16 @@ func TestSessionListConversationFields(t *testing.T) {
 			t.Errorf("filter %v: %v, want %v", c.filter, got, c.want)
 		}
 	}
+	// The first page counts the Started by chips (the origin filter left out) and the Steps toggle (hidden of the filter).
+	var facets contract.SessionsListReply
+	e.opInto(t, "sessions_list", doc{"filter": doc{"origin": []string{"telegram"}}, "group": "none"}, e.ownerHeaders(), &facets)
+	if facets.Origins["telegram"] < 1 || facets.Origins["fork"] < 1 || facets.HiddenCount == nil || *facets.HiddenCount < 2 {
+		t.Errorf("origins %v hidden %v: the origin filter is left out of both", facets.Origins, facets.HiddenCount)
+	}
+	e.opInto(t, "sessions_list", doc{"filter": doc{}, "group": "none"}, e.ownerHeaders(), &facets)
+	if facets.HiddenCount == nil || *facets.HiddenCount < 2 {
+		t.Errorf("hidden %v, want the pipeline and Lab steps", facets.HiddenCount)
+	}
 	if code, _ := e.callJSON(t, "POST", "/api/ops/sessions_list", doc{"filter": doc{"origin": []string{"nope"}}}, e.ownerHeaders()); code != 400 {
 		t.Errorf("an unknown origin answers %d, want 400", code)
 	}
