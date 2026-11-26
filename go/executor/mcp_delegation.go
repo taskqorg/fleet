@@ -100,7 +100,7 @@ type toolSchema struct {
 	Required []string `json:"required"`
 }
 
-// mcpToolEntry: one entry of mcp-tools.json: its name, its schema and the entry as written (the listing publishes it).
+// mcpToolEntry holds an embedded tool's name, input schema and raw metadata.
 type mcpToolEntry struct {
 	Name        string     `json:"name"`
 	InputSchema toolSchema `json:"inputSchema"`
@@ -213,7 +213,7 @@ func mcpTools(ctx any) M {
 	out := []any{}
 	names := []string{}
 	for _, t := range mcpToolEntries {
-		entry, _ := dec(t.raw)
+		entry := decM(t.raw)
 		if t.Name == "request_child" {
 			if len(c.profiles()) == 0 {
 				continue
@@ -221,6 +221,9 @@ func mcpTools(ctx any) M {
 			jAt(entry, "inputSchema", "properties", "profileId").(M)["enum"] = c.profiles() // the static entry's own shape
 		} else if slices.Contains(projectTools, t.Name) && str0(c.ProjectId) == "" || slices.Contains(artifactTools, t.Name) && str0(c.Workdir) == "" {
 			continue
+		}
+		if _, ok := entry["description"]; !ok {
+			entry["description"] = contract.Operations[t.Name].Description
 		}
 		out, names = append(out, entry), append(names, t.Name)
 	}

@@ -662,7 +662,6 @@
   },
   {
     "name": "message_send",
-    "description": "Fleet agent session tool message_send (bound to this session by the host)",
     "inputSchema": {
       "type": "object",
       "properties": {
