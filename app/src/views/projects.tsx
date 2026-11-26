@@ -127,6 +127,9 @@ export function Projects(props: { screen: Screen; id?: string }) {
  */
 const useProjectsView = () => useView('projects_view', () => (prefsRead.value ? scopeIds() : null), { quiet: 5000 });
 
+/** The colour a project's tile shows: its settings color, else the stored automatic one (OR-72). */
+const tint = (raw?: Record<string, unknown>) => str(raw?.color) || str(raw?.autoColor);
+
 type CatalogueEntry = { id: string; name: string; code: string; raw: Record<string, unknown> };
 
 /** The control column: one row per project with readiness, name and code, and its live facts (OR-22, OR-29). */
@@ -166,7 +169,7 @@ function Catalogue(props: {
                   const desc = [str(p.raw.description).trim(), str(p.raw.domain).trim()].filter(Boolean).join(' · ');
                   return (
                     <>
-                      <span class="lead"><ProjectTile code={p.code} color={str(p.raw.color)} pattern={str(p.raw.pattern)} label={p.code || undefined} /></span>
+                      <span class="lead"><ProjectTile code={p.code} color={tint(p.raw)} pattern={str(p.raw.pattern)} label={p.code || undefined} /></span>
                       <span class="tt pcat-tt">
                         <a class="title row-link" href={'/projects/' + encodeURIComponent(projectSegment(p.id))} onClick={e => { e.preventDefault(); props.onOpen(p.id); }}>{p.name}</a>
                         <Show when={desc}><span class="pcat-desc">{desc}</span></Show>
@@ -250,7 +253,7 @@ function Summary(props: { names: Map<string, string>; rows: Map<string, Catalogu
           <For each={lines()}>
             {l => (
               <KvRow
-                lead={<ProjectTile code={code(l.id)} color={str(raw(l.id)?.color)} pattern={str(raw(l.id)?.pattern)} size="sm" />}
+                lead={<ProjectTile code={code(l.id)} color={tint(raw(l.id))} pattern={str(raw(l.id)?.pattern)} size="sm" />}
                 label={name(l.id)}
                 meta={<FactCounts facts={{ working: l.working, inFlight: l.tasks }} />}
                 value={<Button label="Open" icon="arrow-right" iconOnly kind="quiet" onClick={() => go('/projects/' + encodeURIComponent(l.id))} />}
@@ -314,7 +317,7 @@ function ProjectWork(props: {
   return (
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
-        lead={<ProjectTile code={props.p?.code ?? ''} color={str(props.p?.raw.color)} pattern={str(props.p?.raw.pattern)} size="lg" label={props.p?.code || undefined} />}
+        lead={<ProjectTile code={props.p?.code ?? ''} color={tint(props.p?.raw)} pattern={str(props.p?.raw.pattern)} size="lg" label={props.p?.code || undefined} />}
         title={title()}
         aside={aside() || undefined}
         onClose={props.onClose}
@@ -410,7 +413,7 @@ function ProjectSetup(props: { projectId: string; name: string; raw?: Record<str
   const edit = () => <Button label="Edit" icon="pencil" iconOnly kind="quiet" onClick={() => setEditing(true)} />;
   return (
     <Show when={!editing()} fallback={
-      <ProjectEditor id={props.projectId} code={str(props.raw?.code)} embedded onName={props.onName} onClose={close} onSaved={() => { doc.reload(); close(); }} />
+      <ProjectEditor id={props.projectId} code={str(props.raw?.code)} autoColor={str(props.raw?.autoColor)} embedded onName={props.onName} onClose={close} onSaved={() => { doc.reload(); close(); }} />
     }>
       <article class="detail" data-ui="project-setup" tabindex={-1} aria-label="Setup">
         <Show when={ready()?.reason}>{r => <p class="t-attention pw-tone pw-setup-alert">{r()}</p>}</Show>
@@ -420,7 +423,7 @@ function ProjectSetup(props: { projectId: string; name: string; raw?: Record<str
           <Match when={doc.data}>
             <DetailSection title="About" action={edit()}>
               <div class="pw-list">
-                  <div class="pw-line"><span class="pw-k">Colour</span><span class="pw-line-m"><ProjectTile code={str(props.raw?.code)} color={str(doc.data?.color)} pattern={str(doc.data?.pattern)} size="sm" /> {str(doc.data?.color) || 'auto'}{str(doc.data?.pattern) === 'hatch' ? ' · hatched' : ''}</span></div>
+                  <div class="pw-line"><span class="pw-k">Colour</span><span class="pw-line-m"><ProjectTile code={str(props.raw?.code)} color={str(doc.data?.color) || str(props.raw?.autoColor)} pattern={str(doc.data?.pattern)} size="sm" /> {str(doc.data?.color) || `${str(props.raw?.autoColor) || 'auto'} (auto)`}{str(doc.data?.pattern) === 'hatch' ? ' · hatched' : ''}</span></div>
                   <Show when={str(doc.data?.description).trim()}>{d => <div class="pw-line"><span class="pw-k">Description</span><span class="pw-line-m">{d()}</span></div>}</Show>
                   <Show when={str(doc.data?.domain).trim()}>{d => <div class="pw-line"><span class="pw-k">Domain</span><span class="pw-line-m">{d()}</span></div>}</Show>
               </div>

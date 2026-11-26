@@ -633,6 +633,14 @@ func init() {
 		for _, row := range codes {
 			currentCode[row.ProjectID] = row.Code
 		}
+		colours, err := q.db().IdentityColours(q.ctx(), "project")
+		if err != nil {
+			return contract.ProjectListReply{}, err
+		}
+		autoColour := map[string]string{}
+		for _, row := range colours {
+			autoColour[row.ID] = row.Colour
+		}
 		for _, id := range ids {
 			if q.person != nil && !mayAccessProjectID(q.person, id) {
 				continue
@@ -643,6 +651,9 @@ func init() {
 			}
 			if code := currentCode[id]; code != "" {
 				p["code"] = jsonBytes(code)
+			}
+			if c := autoColour[id]; c != "" { // the stored automatic colour; settings color overrides it (OR-72)
+				p["autoColor"] = jsonBytes(c)
 			}
 			out = append(out, p)
 		}
