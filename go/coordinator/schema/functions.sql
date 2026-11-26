@@ -424,7 +424,10 @@ BEGIN
  IF TG_TABLE_NAME = 'definition' THEN IF NEW.kind <> 'project' THEN RETURN NULL; END IF; END IF;
  PERFORM pg_advisory_xact_lock(hashtext('fleet_identity_assign'));
  SELECT u.p INTO c FROM unnest(ARRAY['rose', 'violet', 'sky', 'teal', 'lime', 'sand', 'coral', 'slate']) WITH ORDINALITY AS u(p, o)
-  LEFT JOIN identity_colour i ON i.kind = k AND i.colour = u.p GROUP BY u.p, u.o ORDER BY count(i.id), u.o LIMIT 1;
+  LEFT JOIN identity_colour i ON i.kind = k AND i.colour = u.p AND i.id <> NEW.id
+   AND (EXISTS (SELECT 1 FROM definition d WHERE k = 'project' AND d.kind = 'project' AND d.id = i.id AND d.retired_at IS NULL)
+    OR EXISTS (SELECT 1 FROM bot b WHERE k = 'bot' AND b.id = i.id AND b.tombstoned_at IS NULL))
+  GROUP BY u.p, u.o ORDER BY count(i.id), u.o LIMIT 1;
  INSERT INTO identity_colour(kind, id, colour) VALUES (k, NEW.id, c) ON CONFLICT DO NOTHING;
  RETURN NULL;
 END $function$;
