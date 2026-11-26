@@ -3,7 +3,7 @@
 import { createSignal, For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, ChangeRow, DriftRow, DetailHead, DiffRow, InheritedRows, MatrixCell,
+  StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, ChangeRow, DriftRow, GapRow, StepTrail, GapCompare, DetailHead, DiffRow, InheritedRows, MatrixCell,
   CatalogueTree, FilterBar, StateCounters, Presets, SearchBox, GroupControl, SortControl, DetailSection, KvRow, TabBar,
   DataTable, TableRow, TableName, StateBadge, ShareBar, ProblemRow, Button, SplitButton, WorkFacts, peerFence,
   InfiniteList, Preview, StateDot, createPages, type Page,
@@ -125,6 +125,19 @@ function DriftRowDemo() {
     <DriftRow name="python" detail="3.13.1 · on 2 of 3 hosts" chip={{ text: 'Missing on pds18', tone: 'attention' }} href="#" onOpen={() => {}} />
     <DriftRow name="Codex: coding-worker" detail="no sandbox on writable runs · network on" chip={{ text: 'Applied on 3 hosts', tone: 'success' }} fact="release v1.261126.11" />
   </ul>;
+}
+
+function GapRowDemo() {
+  return <div class="stack">
+    <ul class="gap-rows">
+      <GapRow name="Sandbox blocks writes" detail="743 runs · 3 hosts · codex, claude, antigravity" days={[60, 180, 120, 217, 210, 30, 18]} changeAt={5} chip={{ text: 'Watching · #1133 on hosts', tone: 'running' }} fact="09:40" href="#" onOpen={() => {}} />
+      <GapRow name="python missing" detail="17 runs · pds18, windows · codex" days={[0, 0, 0, 0, 17, 0, 0]} chip={{ text: 'Investigating', tone: 'running' }} fact="25 Nov" href="#" current onOpen={() => {}} />
+      <GapRow name="jq missing" detail="9 runs · pds18 · codex" days={[0, 0, 0, 0, 8, 1, 0]} chip={{ text: 'Open', tone: 'attention' }} fact="25 Nov" href="#" onOpen={() => {}} />
+      <GapRow name="Network blocked" detail="8 runs · owner-mac, pds18 · claude, codex" days={[0, 1, 0, 2, 4, 1, 0]} chip={{ text: 'Below threshold', tone: 'neutral' }} fact="25 Nov" href="#" onOpen={() => {}} />
+    </ul>
+    <StepTrail label="Where the finding stands" steps={[{ label: 'Found', state: 'done' }, { label: 'Investigating', state: 'done' }, { label: 'Change', state: 'done' }, { label: 'On hosts', state: 'done' }, { label: 'Watching', state: 'current' }, { label: 'Fixed', state: 'todo' }]} />
+    <GapCompare label="Sandbox blocks writes: before and after" before={{ value: '217 failures a day', label: 'before, 25 Nov' }} after={{ value: '18', label: 'after, from 09:40', tone: 'success' }} days={[60, 180, 120, 217, 210, 30, 18]} changeAt={5} note="The change reached every host 26 Nov 09:40 (v1.261126.16)." />
+  </div>;
 }
 
 function ChangeRowDemo() {
@@ -282,6 +295,7 @@ export const BLOCK_SECTIONS: Entry[] = [
   ['worker-slot', 'Live: worker slot', 'worker-slot', () => <SlotDemo />, () => <>Busy (pulsing dot, elapsed time, project colour bar), idle (dashed, opens nothing), failing (what fails ×N, retry countdown, cause). The title takes the width and truncates. With work facts the second line shows code · project, then ×N, time in work and the agent mark; a failing slot shows its cause, ×N and the time since the latest failed start.</>],
   ['host-band', 'Live: host band', 'host-band', () => <HostDemo />, () => <>Normal, problem (danger border and glow, one problem line), offline (last values dimmed with the age), loading. Narrow bands stack the slots and move the gauges under the name (container query).</>],
   ['drift-row', 'Changes: drift rows', 'drift-row', () => <DriftRowDemo />, () => <>Agent environment: in sync, missing grants (the tool and who uses it in the tooltip), no failover, a host tool missing on a host (opens it), a sandbox group; narrow, each row stacks with the state on its first line.</>],
+  ['gap-row', 'System › Agents: gap rows', 'gap-row', () => <GapRowDemo />, () => <>Watching a change (bars after it in success, a marker at the change), investigating (the open class), open, below threshold; the step trail of a watched finding; before and after the change. Narrow, each row puts sparkline, state and time on one line under the detail.</>],
   ['change-row', 'Changes: change rows', 'change-row', () => <ChangeRowDemo />, () => <>A definition on its way (its pull request), a conflict and a failure that need a person, one made in Fleet, a Lab experiment; narrow, each row stacks with the time on its first line.</>],
   ['live-row', 'Live: live rows', 'live-row', () => <LiveRowDemo />, () => <>Project, task in work, delivery, runner, event; work rows carry the work facts; repeats are one event with ×N; trouble turns the dot and the fact red; stale rows are dimmed and open nothing.</>],
   ['work-facts', 'Rows: work facts', 'work-facts', () => <WorkFactsDemo />, () => <>Quiet form (owner pick B): ×N attempts from two, time in work, agent mark; the latest attempt and the time in the state are in the tooltip of the time in work. Peers: attempts 1, 1, 2, 1, 3, 500 and hours 1, 2, 3, 2, 1, 40, so ×500 and 40h take the attention tone (ten times the median or more).</>],

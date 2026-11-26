@@ -351,6 +351,7 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
     if ((x = one(/^\/hosts\/limits(?:\/([^/]+))?\/?$/))) return { section: 'limits', id: x[1] ? decodeSegment(x[1]) : undefined };
     if ((x = one(/^\/(hosts|keys|humans)(?:\/([^/]+))?\/?$/))) return { section: x[1] === 'humans' ? 'people' : x[1] as InfraSection, id: x[2] ? decodeSegment(x[2]) : undefined };
     if ((x = one(/^\/(runners|spend|access)\/?$/))) return { section: x[1] as InfraSection };
+    if ((x = one(/^\/agent-gaps(?:\/([^/]+))?\/?$/))) return { section: 'agents', id: x[1] ? decodeSegment(x[1]) : undefined };
     return null;
   });
   const libSection = createMemo(() => { const m = libMatch(); return m ? (m[1] ?? 'idle') as LibrarySection : null; });

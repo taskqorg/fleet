@@ -7,14 +7,16 @@ import { Num } from './primitives.tsx';
  * Bars of one figure over a range, the latest last. A null bar is a gap (no reading), drawn as a dot on the base.
  * `alertFrom` turns the bars from that index on to the danger tone.
  */
-export function Sparkline(p: { values: readonly (number | null)[]; label: string; alertFrom?: number }) {
+export function Sparkline(p: { values: readonly (number | null)[]; label: string; alertFrom?: number;
+  /** A change at this index: a marker before its bar, and the bars from it on in the success tone (agent gaps after a fix). */
+  changeAt?: number }) {
   const max = createMemo(() => Math.max(1, ...p.values.map(v => v ?? 0)));
   return (
     <span class="spark" data-ui="sparkline" role="img" aria-label={p.label}>
       <For each={p.values}>
         {(v, i) => (
           <i
-            class={{ gap: v === null, alert: p.alertFrom !== undefined && i() >= p.alertFrom }}
+            class={{ gap: v === null, alert: p.alertFrom !== undefined && i() >= p.alertFrom, after: p.changeAt !== undefined && i() >= p.changeAt, mark: p.changeAt === i() }}
             style={{ height: v === null ? undefined : `${Math.max(8, v / max() * 100)}%` }}
           />
         )}

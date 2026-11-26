@@ -26,13 +26,14 @@ import { Runners } from './runners.tsx';
 import { Spend, spendRequest, usdOf } from './spend.tsx';
 import { Humans } from './humans.tsx';
 import { Access } from './access.tsx';
+import { AgentGaps } from './agent-gaps.tsx';
 import { FINDING, SystemIdle, hostFailures } from './system-idle.tsx';
 import { modelsText, useCompatProfiles } from './accounts.tsx';
 import { ConnectionAdd, HostAdd } from './system-add.tsx';
 import { HostUpdates } from './host-updates.tsx';
 import { profileGaps, type CompatAccount } from '../compat.ts';
 
-export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people' | 'access';
+export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people' | 'access' | 'agents';
 
 const INFRA_PINS = 'infrastructure';
 const INFRA_TREE_GROUPS = 'infrastructure:tree';
@@ -43,6 +44,7 @@ const ROOT_PEOPLE_ID = 'root:people';
 const NAV_RUNNERS_ID = 'nav:runners';
 const NAV_ACCESS_ID = 'nav:access';
 const NAV_SPEND_ID = 'nav:spend';
+const NAV_AGENTS_ID = 'nav:agents';
 const DAY = 864e5;
 
 const ms = (s: string) => timeOf(s, 0);
@@ -209,6 +211,8 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
       { id: ROOT_ACCOUNTS_ID, label: 'Accounts & limits', icon: 'gauge', defaultCollapsed: false, href: '/hosts/limits', children: accountLeaves },
       { id: ROOT_KEYS_ID, label: 'Connections & keys', icon: 'shield', sub: holder ? `held by ${person(holder)}` : undefined, defaultCollapsed: true, href: '/keys', children: keyLeaves },
       // Runners and Spend are roots without children: a click opens their page; no state slot (open item of PR 844).
+      // Agents (board drafts/agent-garden): what agents could not do and what fixes it; a root without children.
+      { id: NAV_AGENTS_ID, label: 'Agents', icon: 'bot', root: true, href: '/agent-gaps', searchText: 'agents gaps failures findings tools sandbox' },
       { id: NAV_RUNNERS_ID, label: 'Runners', icon: 'play', root: true, href: '/runners', searchText: 'runners executions ci' },
       { id: NAV_SPEND_ID, label: 'Spend', icon: 'chart-no-axes-column', root: true, href: '/spend', searchText: 'spend cost money',
         right: spendToday != null ? <Fact tip="Spend today (UTC)"><span class="muted">{money(spendToday).text} today</span></Fact> : undefined },
@@ -219,6 +223,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
   const selectedTreeId = createMemo(() => {
     const sec = section();
     if (sec === 'runners') return NAV_RUNNERS_ID;
+    if (sec === 'agents') return NAV_AGENTS_ID;
     if (sec === 'spend') return NAV_SPEND_ID;
     if (sec === 'access') return NAV_ACCESS_ID;
     if (sec === 'keys') return props.id ? `key:${props.id}` : ROOT_KEYS_ID;
@@ -336,7 +341,9 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
     return props.id ? `host:${props.id}` : undefined;
   });
 
+  // Agents is a list and detail of its own (frames 1 and 2): its classes take the list column.
   return (
+    <Show when={section() !== 'agents'} fallback={<AgentGaps id={props.id} onOpen={go} />}>
     <ListDetail
       list={listPane}
       detailKey={detailKey()}
@@ -383,6 +390,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
         )
       }
     />
+    </Show>
   );
 }
 

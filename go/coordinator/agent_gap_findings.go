@@ -153,9 +153,7 @@ func agentGapFindingsPass(q *Request, rules *gapRules, now time.Time) error {
 	for _, c := range reply.Classes {
 		classes[c.Class] = c
 	}
-	above := func(c contract.AgentGapClass) bool {
-		return c.Class != "other" && c.Count >= fr.MinCount && c.Executions >= fr.MinExecutions
-	}
+	above := func(c contract.AgentGapClass) bool { return c.AboveThreshold != nil && *c.AboveThreshold }
 	stored, err := q.db().AgentGapFindings(q.ctx())
 	if err != nil {
 		return err
