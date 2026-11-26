@@ -152,12 +152,6 @@ SELECT (
   OR EXISTS (SELECT 1 FROM change ch WHERE ch.actor = 'execution:' || @execution_id::text AND ch.kind IN ('task', 'question', 'session', 'bot', 'board', 'delivery'))
 )::boolean AS mutated;
 
--- name: BotOwnExecutions :many
-SELECT e.id
-FROM execution e
-WHERE e.session_id = $1
-   OR e.session_id IN (SELECT s.id FROM session s WHERE s.created_by_session_id = $1);
-
 -- name: BotLastSessionDispatch :one
 SELECT id,
        coalesce(project_id, data->'dispatch'->>'projectId', '')::text AS project_id,

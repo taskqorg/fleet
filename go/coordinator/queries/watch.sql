@@ -4,10 +4,10 @@
 SELECT EXISTS (SELECT 1 FROM task WHERE id=$1 AND state='cancelled');
 
 -- name: SessionExecutionIDs :many
-SELECT id FROM execution WHERE session_id=$1;
+SELECT id FROM execution WHERE session_id = ANY(@session_ids::text[]);
 
 -- name: ChildSessionIDs :many
-SELECT id FROM session WHERE created_by_session_id=$1;
+SELECT id FROM session WHERE created_by_session_id = ANY(@session_ids::text[]);
 
 -- name: TaskWatchState :one
 -- A task's state and whether change row seq recorded a change of it: state_at is the time of the task's latest state,
