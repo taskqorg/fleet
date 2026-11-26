@@ -60,8 +60,13 @@ export function Problems(p: { id?: string; onOpen: (path: string) => void }) {
   const now = () => tick();
   const rows = createMemo(() => read.data?.problems ?? []);
   const groups = createMemo(() => groupsOf(rows()));
-  const [folded, setFolded] = createSignal<Record<string, boolean>>({ new: true });
-  const open = createMemo(() => rows().find(x => x.code === p.id || x.id === p.id));
+  // New folds once other groups show; while it is the only group it stays open.
+  const [folded, setFolded] = createSignal<Record<string, boolean>>({});
+  const isFolded = (id: string) => folded()[id] ?? (id === 'new' && groups().length > 1);
+  const listed = createMemo(() => rows().find(x => x.code === p.id || x.id === p.id));
+  // A closed problem (a link from a conversation or History) is read on its own.
+  const single = useOp('problem_get', () => (p.id && read.data && !listed() ? { id: p.id } : null));
+  const open = createMemo(() => listed() ?? single.data?.problem);
   const idle = createMemo(() => rows().find(x => x.phase === 'stuck') ?? rows().find(x => x.phase === 'working' || x.phase === 'review') ?? rows()[0]);
   const when = (s: string) => { const at = t(s); return dayStart(at) === dayStart(now()) ? moment(at, now()) : day(at, now()); };
 
@@ -75,9 +80,9 @@ export function Problems(p: { id?: string; onOpen: (path: string) => void }) {
           <Show when={rows().length} fallback={<Empty text="No open problem: nothing is failing that a bot does not already handle." />}>
             <For each={groups()}>{g => (
               <div class="stack">
-                <GroupHeader icon="circle-alert" label={g.label} count={g.rows.length} tone={g.tone} open={!folded()[g.id]}
-                  onToggle={() => setFolded(f => ({ ...f, [g.id]: !f[g.id] }))} />
-                <Show when={!folded()[g.id]}>
+                <GroupHeader icon="circle-alert" label={g.label} count={g.rows.length} tone={g.tone} open={!isFolded(g.id)}
+                  onToggle={() => setFolded(f => ({ ...f, [g.id]: !isFolded(g.id) }))} />
+                <Show when={!isFolded(g.id)}>
                   <ul class="gap-rows" aria-label={g.label}>
                     <For each={g.rows}>{x => (
                       <GapRow name={x.count > 1 ? `${firstSentence(x.text)} ×${x.count}` : firstSentence(x.text)} detail={x.note || subjectOf(x)}
@@ -102,7 +107,7 @@ export function Problems(p: { id?: string; onOpen: (path: string) => void }) {
         <Show when={open()} fallback={
           <article class="detail stack" data-ui="detail" tabindex={-1} aria-label={p.id}>
             <DetailHead crumb="system · problems" title={p.id} onClose={() => p.onOpen('/problems')} />
-            <Show when={read.data} fallback={<Skeleton rows={6} />}><Empty text={`${p.id} is closed or not yours to see.`} /></Show>
+            <Show when={read.data && (single.data || single.error)} fallback={<Skeleton rows={6} />}><Empty text={`${p.id} is not yours to see.`} /></Show>
           </article>
         }>{x => <ProblemDetail p={x()} onClose={() => p.onOpen('/problems')} reload={read.reload} />}</Show>
       ) : undefined}
@@ -144,12 +149,13 @@ function ProblemDetail(props: { p: ProblemRow; onClose?: () => void; reload: () 
   return (
     <article class="detail stack" data-ui="detail" tabindex={-1} aria-label={p().code}>
       <DetailHead crumb={`system · problems · ${p().code}`} title={p().count > 1 ? `${firstSentence(p().text)} ×${p().count}` : firstSentence(p().text)} onClose={props.onClose} />
-      <KvRow icon="bot" label={p().ownerName ?? 'No bot owns it'} meta={<span class="muted">{p().note}</span>} value={<span>{phaseOf(p()).text}</span>} />
+      <KvRow icon="bot" label={p().ownerName ?? 'No bot owns it'} meta={<span class="muted">{p().note}</span>}
+        value={<span>{p().state === 'closed' ? `Closed · ${p().closeReason ?? 'cleared'}` : phaseOf(p()).text}</span>} />
       <Show when={err()}><ErrorBanner text={err()} /></Show>
       <Show when={conv()} fallback={
         <DetailSection title="Conversation">
           <p class="muted">{p().text}</p>
-          <Show when={p().ownerBotId} fallback={<p class="muted">Give a bot the problems duty and it takes this one.</p>}>
+          <Show when={p().ownerBotId && p().state === 'open'} fallback={<p class="muted">{p().state === 'closed' ? 'Closed: nothing to tell its bot.' : 'Give a bot the problems duty and it takes this one.'}</p>}>
             <Composer placeholder={`Tell ${p().ownerName ?? 'the bot'}…`} disabledReason={busy() ? 'Sending' : undefined} draftKey={`problem:${p().id}`} onSend={send} />
           </Show>
         </DetailSection>
