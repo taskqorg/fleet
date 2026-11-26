@@ -114,8 +114,10 @@ type shutdownTimeouts struct {
 	store      time.Duration
 }
 
+// The three add up to under fleet.service's TimeoutStopSec (30 s): requests in flight (an agent's tool call, a host's
+// poll) get 20 s to finish across a release, so a restart drops none that answers within that.
 var defaultShutdownTimeouts = shutdownTimeouts{
-	http:       10 * time.Second,
+	http:       20 * time.Second,
 	background: 5 * time.Second,
 	store:      3 * time.Second,
 }
@@ -482,9 +484,9 @@ type Request struct {
 	body         json.RawMessage
 	tx           pgx.Tx
 	accessTx     pgx.Tx // tx on which refreshRequestAccess already ran
-	// laterWakes: a trigger pass's bot wakes over several subjects, sent each in its own transaction after the pass
-	// (triggerPass); nil elsewhere, where they are sent in the caller's transaction.
-	laterWakes *[]laterWake
+	// later: a trigger pass's bot wakes over several subjects, sent each in its own transaction after the pass, and the
+	// trigger's state, committed after them (triggerPass); nil elsewhere, where they go in the caller's transaction.
+	later *laterPass
 }
 
 func (q *Request) baseCtx() context.Context {
