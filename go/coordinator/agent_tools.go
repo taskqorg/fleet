@@ -805,6 +805,26 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 			if s.CreatedBySessionID == own {
 				return nil
 			}
+			// A bot acts on its own sessions and on the work of the tasks it created or manages: on 2026-11-27 HAL0's
+			// problem conversation could not resume T-FLT-79's worker conversation and asked the owner instead.
+			x, err := q.db().ExecutionByID(q.ctx(), executionID)
+			if err != nil {
+				return err
+			}
+			if caller := deref(x.BotID); caller != "" {
+				if s.BotID == caller {
+					return nil
+				}
+				if s.TaskID != "" {
+					bot, err := q.db().TaskManagingBot(q.ctx(), s.TaskID)
+					if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+						return err
+					}
+					if err == nil && bot == caller {
+						return nil
+					}
+				}
+			}
 		}
 		return fail(403, "Session belongs to another agent")
 	}
