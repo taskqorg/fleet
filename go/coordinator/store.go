@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"fleet/coordinator/db"
+	"fleet/obs"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -409,7 +410,16 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []s
 			}
 		}
 		if write && len(sortedLocks) > 0 {
-			if err := acquireTxLocks(ctx, tx, sortedLocks...); err != nil {
+			// The wait for the shared write locks, a span of its own: the work of a transaction and its wait for GLOBAL or
+			// DISPATCH read apart (incident 2026-11-26: every write queued on them).
+			var span *obs.Span
+			if sortedLocks[0] == GLOBAL || sortedLocks[0] == DISPATCH {
+				name := map[string]string{GLOBAL: "tx.lock-wait.global", DISPATCH: "tx.lock-wait.dispatch"}[sortedLocks[0]]
+				_, span = obs.Start(ctx, name, obs.KindInternal)
+			}
+			err := acquireTxLocks(ctx, tx, sortedLocks...)
+			span.End(err)
+			if err != nil {
 				return err
 			}
 		}

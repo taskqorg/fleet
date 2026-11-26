@@ -11,6 +11,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -506,7 +507,10 @@ func agentPromoteOnly(q *Request, sessions ...string) error {
 		if !txHasLock(q.tx, "session:"+sid) {
 			continue
 		}
-		if skip, err := boardWakeTerminal(q, m); err != nil {
+		_, ts := obs.Start(q.ctx(), "promote.terminal-check", obs.KindInternal)
+		skip, err := boardWakeTerminal(q, m)
+		ts.End(err)
+		if err != nil {
 			return err
 		} else if skip {
 			m.State = "cancelled"
@@ -525,13 +529,17 @@ func agentPromoteOnly(q *Request, sessions ...string) error {
 		if earlier {
 			continue
 		}
-		if a, err := agentActive(q, sid); err != nil {
+		_, as := obs.Start(q.ctx(), "promote.active", obs.KindInternal)
+		a, err := agentActive(q, sid)
+		as.End(err)
+		if err != nil {
 			return err
 		} else if a != nil {
 			continue
 		}
 		var promotedBot *botFull
 		var isBotHome bool
+		_, es := obs.Start(q.ctx(), "promote.enqueue", obs.KindInternal)
 		e, err := func() (agentExecution, error) {
 			s, err := sessionLocked(q, sid)
 			if err != nil {
@@ -558,6 +566,7 @@ func agentPromoteOnly(q *Request, sessions ...string) error {
 			}
 			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, extra, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor, TriggerID: m.TriggerID})
 		}()
+		es.End(err)
 		if err != nil {
 			if pgCode(err) != "" {
 				return err
