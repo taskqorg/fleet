@@ -330,9 +330,29 @@ func accessConnections(q *Request, profiles []accessProfile) ([]contract.AccessI
 	if err != nil {
 		return nil, err
 	}
+	// Project access connections serve a grant, not keys (fleet-project-access.md#how-agents-use-a-grant): their row
+	// reads the grant, the newest per connection with a ready one first.
+	grants := map[string]accessGrant{}
+	rows, err := q.db().AccessGrantList(q.ctx(), "")
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		g := accessGrantOf(db.AccessGrantGetRow(r))
+		name := deref(g.connection())
+		if cur, seen := grants[name]; name != "" && (!seen || cur.State != "ready" && (g.State == "ready" || g.CreatedAt.After(cur.CreatedAt))) {
+			grants[name] = g
+		}
+	}
 	has := map[string]bool{}
 	out := []contract.AccessItem{}
 	for _, c := range conns {
+		if isAccessProvider(c.Provider) {
+			it := accessConnection(c, nil, last[c.Name], nil, profiles)
+			g, ok := grants[c.Name]
+			out = append(out, accessGrantItem(it, g, ok))
+			continue
+		}
 		has[c.Provider] = true
 		ks := slices.DeleteFunc(slices.Clone(keys), func(k connKey) bool { return k.ConnectionID != c.Name })
 		var b *contract.Budget
@@ -480,6 +500,27 @@ func accessConnection(c apiConnection, keys []connKey, call db.AccessLastCallsRo
 			text = fmt.Sprintf("%s of %s", strconv.FormatFloat(*b.Spend.Value, 'f', 0, 64), text)
 		}
 		it.Limit = &contract.AccessLimit{Text: text, Budget: &v}
+	}
+	return it
+}
+
+// accessGrantItem: a project access connection's row from its grant: kind grant, no keys, the grant's state; a ready
+// grant whose last call failed reads failing, as a key's does.
+func accessGrantItem(it contract.AccessItem, g accessGrant, ok bool) contract.AccessItem {
+	it.Kind, it.Keys, it.Next = "grant", nil, nil
+	switch {
+	case !ok:
+		it.State, it.StateText = contract.AccessStateFailing, "No grant serves it: ask one with access_grant_ask"
+	case g.State == "ready" && it.LastCheck != nil && !it.LastCheck.Ok:
+		it.State, it.StateText = contract.AccessStateFailing, "Grant ready on "+g.ServerID+"; last call failed: "+it.LastCheck.Text
+	case g.State == "ready":
+		it.State, it.StateText = contract.AccessStateWorks, "Grant ready on "+g.ServerID+" ("+g.Level+")"
+	case g.State == "provisioning" || g.State == "asked":
+		it.State, it.StateText = contract.AccessStateUnknown, "Grant "+g.State+" on "+g.ServerID
+	case g.State == "failed":
+		it.State, it.StateText = contract.AccessStateFailing, "Grant failed on "+g.ServerID+": "+g.Error
+	default:
+		it.State, it.StateText = contract.AccessStatePaused, "Grant "+g.State+" on "+g.ServerID+": takes no calls"
 	}
 	return it
 }
