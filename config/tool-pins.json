@@ -39,8 +39,8 @@
       },
       "python": {
         "version": "3.15.2",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261124/cpython-3.15.2%2B20261124-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
-        "sha256": "d94bcba1ca1c63f591fa63109c3eeaacc76ee6796844ac7bdf2ae10715646f05",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261124/cpython-3.15.2%2B20261124-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "sha256": "9fbcb18c390909c3f30542d097a14443bee7a5c678d4b06b5b63cc7a9af624d3",
         "entry": "python/bin/python"
       },
       "playwright": {
@@ -94,8 +94,8 @@
       },
       "python": {
         "version": "3.15.2",
-        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261124/cpython-3.15.2%2B20261124-aarch64-apple-darwin-install_only_stripped.tar.gz",
-        "sha256": "2cc8874f034f7a0deff879530020108ebe6d318f5e8c6689673a866ab5fb7fdc",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261124/cpython-3.15.2%2B20261124-aarch64-apple-darwin-install_only.tar.gz",
+        "sha256": "ca5a25ce351817d7c6fcc7c2f2c327ec28c540f728d2a5c8b4e380ed92c68936",
         "entry": "python/bin/python"
       },
       "playwright": {
