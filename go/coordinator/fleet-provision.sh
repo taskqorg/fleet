@@ -5,7 +5,7 @@
 # refuses anything else. Secrets (a database password) come on standard input, never as arguments.
 set -euo pipefail
 umask 022
-FLEET_PROVISION_VERSION=2
+FLEET_PROVISION_VERSION=3
 SELF=/usr/local/sbin/fleet-provision
 KEYS=/etc/ssh/fleet-keys
 ROOTS=/srv/fleet
@@ -24,6 +24,27 @@ P_TARGET='^[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$'
 P_LABEL='^[a-z0-9@._-]{1,64}$'
 P_LEVEL='^(read|write)$'
 P_PW='^[A-Za-z0-9]{24,64}$'
+# PostgreSQL tables: names, or * followed by -name exclusions (every table of public but those).
+P_PGTABLES='^(\*(,-[a-z_][a-z0-9_]{0,62}){0,199}|[a-z_][a-z0-9_]{0,62}(,[a-z_][a-z0-9_]{0,62}){0,199})$'
+P_PGNAME='^[a-z_][a-z0-9_]{0,62}$'
+PG_TIMEOUT=120s
+
+pg_root() { # the postgres superuser by peer authentication; SQL on standard input, never in arguments
+	(cd / && runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 "$@")
+}
+
+# pg_tables_split <tables>: sets PG_ALL (1 for *), PG_LIST (the named tables) and PG_EXCLUDE (the exclusions).
+pg_tables_split() {
+	PG_ALL=0; PG_LIST=(); PG_EXCLUDE=()
+	local items t; IFS=',' read -ra items <<< "$1"
+	for t in "${items[@]}"; do
+		case "$t" in
+			'*') PG_ALL=1 ;;
+			-*) PG_EXCLUDE+=("${t#-}") ;;
+			*) PG_LIST+=("$t") ;;
+		esac
+	done
+}
 
 mysql_root() { # the server's administrative login: Debian's maintenance file when present, else root by socket
 	if [[ -r /etc/mysql/debian.cnf ]]; then mysql --defaults-file=/etc/mysql/debian.cnf "$@"; else mysql "$@"; fi
@@ -159,6 +180,119 @@ r_mysql_databases() {
 	mysql_root -N -B -e "SHOW DATABASES" | grep -Ev '^(information_schema|performance_schema|mysql|sys)$' | sed 's/^/database /'
 }
 
+# pg-databases: the server's PostgreSQL database names (no templates, no schema or data).
+r_pg_databases() {
+	command -v psql >/dev/null && id -u postgres >/dev/null 2>&1 || { echo "no postgresql"; return 0; }
+	echo "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY 1" | pg_root -A -t | sed 's/^/pgdatabase /'
+}
+
+# pg_hba_set <dbuser> <database|->: the user's two pg_hba.conf lines at the top (none for -), then a reload; a rules
+# error restores the file.
+pg_hba_set() {
+	local u=$1 database=$2 hba
+	hba=$(echo "SHOW hba_file" | pg_root -A -t)
+	[[ -f "$hba" ]] || die "no pg_hba.conf at $hba"
+	cp -p "$hba" "$hba.fleet-backup"
+	{
+		if [[ "$database" != - ]]; then
+			printf 'host %s %s 127.0.0.1/32 scram-sha-256 # fleet:%s\n' "$database" "$u" "$u"
+			printf 'host all %s all reject # fleet:%s\n' "$u" "$u"
+		fi
+		grep -v " # fleet:$u\$" "$hba.fleet-backup" || true
+	} > "$hba"
+	echo "SELECT pg_reload_conf()" | pg_root -A -t >/dev/null
+	local bad; bad=$(echo "SELECT count(*) FROM pg_hba_file_rules WHERE error IS NOT NULL" | pg_root -A -t)
+	if [[ "$bad" != 0 ]]; then
+		cp -p "$hba.fleet-backup" "$hba"; echo "SELECT pg_reload_conf()" | pg_root -A -t >/dev/null
+		die "pg_hba.conf rules failed for $u; restored"
+	fi
+	rm -f "$hba.fleet-backup"
+}
+
+# pg-user <dbuser> <database> <tables> <level>: the password on stdin; a login role that reads whole tables (BYPASSRLS:
+# row policies scope the application's people, not a grant), read-only by default, with exactly SELECT (read) or
+# SELECT, INSERT, UPDATE, DELETE (write) on the tables of schema public, nothing else.
+r_pg_user() {
+	local u=$1 database=$2 tables=$3 level=$4
+	want "$u" "$P_DBUSER" "database user"; want "$database" "$P_PGNAME" database; want "$tables" "$P_PGTABLES" tables; want "$level" "$P_LEVEL" level
+	local pw; pw=$(read_password)
+	local privs="SELECT" ro=on t; [[ "$level" == write ]] && { privs="SELECT, INSERT, UPDATE, DELETE"; ro=off; }
+	pg_tables_split "$tables"
+	local grants=""
+	if [[ $PG_ALL == 1 ]]; then
+		grants="GRANT $privs ON ALL TABLES IN SCHEMA public TO $u;"
+		for t in "${PG_EXCLUDE[@]+"${PG_EXCLUDE[@]}"}"; do grants+=$'\n'"REVOKE ALL ON TABLE public.\"$t\" FROM $u;"; done
+	else
+		for t in "${PG_LIST[@]}"; do grants+=$'\n'"GRANT $privs ON TABLE public.\"$t\" TO $u;"; done
+	fi
+	pg_root <<SQL
+SET password_encryption = 'scram-sha-256';
+SELECT 'CREATE ROLE $u LOGIN' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$u') \gexec
+ALTER ROLE $u WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT BYPASSRLS PASSWORD '$pw';
+ALTER ROLE $u SET default_transaction_read_only = $ro;
+ALTER ROLE $u SET statement_timeout = '$PG_TIMEOUT';
+GRANT CONNECT ON DATABASE "$database" TO $u;
+\connect "$database"
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM $u;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM $u;
+GRANT USAGE ON SCHEMA public TO $u;
+$grants
+SQL
+	pg_hba_set "$u" "$database"
+	echo "ok pg-user $u"
+}
+
+# probe-pg <dbuser> <database> <tables> <level>: as the user over 127.0.0.1: reading the first granted table works; for
+# read, an insert of no rows in a read-write transaction is refused by privilege; each excluded table is refused.
+r_probe_pg() {
+	local u=$1 database=$2 tables=$3 level=$4
+	want "$u" "$P_DBUSER" "database user"; want "$database" "$P_PGNAME" database; want "$tables" "$P_PGTABLES" tables; want "$level" "$P_LEVEL" level
+	local pw; pw=$(read_password)
+	PROBE_PASS=$(mktemp); chmod 0600 "$PROBE_PASS"
+	trap 'rm -f "$PROBE_PASS"' RETURN
+	printf '127.0.0.1:5432:%s:%s:%s\n' "$database" "$u" "$pw" > "$PROBE_PASS"
+	as_user() { (cd / && PGPASSFILE="$PROBE_PASS" psql -X -q -A -t -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U "$u" -d "$database" -w "$@"); }
+	pg_tables_split "$tables"
+	local table t
+	if [[ $PG_ALL == 1 ]]; then
+		table=$(echo "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND has_table_privilege(c.oid, 'SELECT') ORDER BY 1 LIMIT 1" | as_user) \
+			|| die "probe: $u cannot log in to $database"
+		[[ -n "$table" ]] || die "probe: $u sees no table in $database"
+	else
+		table=${PG_LIST[0]}
+	fi
+	want "$table" "$P_PGNAME" table
+	echo "SELECT 1 FROM public.\"$table\" LIMIT 1" | as_user >/dev/null || die "probe: $u cannot read $database.$table"
+	echo "read ok $database.$table"
+	if [[ "$level" == read ]]; then
+		if printf 'BEGIN READ WRITE;\nINSERT INTO public."%s" SELECT * FROM public."%s" WHERE false;\nROLLBACK;\n' "$table" "$table" | as_user 2>/dev/null; then
+			die "probe: $u may write $database.$table"
+		fi
+		echo "write refused $database.$table"
+	fi
+	for t in "${PG_EXCLUDE[@]+"${PG_EXCLUDE[@]}"}"; do
+		if echo "SELECT 1 FROM public.\"$t\" LIMIT 1" | as_user >/dev/null 2>&1; then die "probe: $u may read excluded $database.$t"; fi
+		echo "excluded refused $database.$t"
+	done
+	echo "ok probe-pg $u"
+}
+
+# revoke-pg <dbuser> <database>: ends the user's sessions, drops its privileges and role, removes its pg_hba.conf lines.
+r_revoke_pg() {
+	local u=$1 database=$2
+	want "$u" "$P_DBUSER" "database user"; want "$database" "$P_PGNAME" database
+	if [[ -n "$(echo "SELECT 1 FROM pg_roles WHERE rolname = '$u'" | pg_root -A -t)" ]]; then
+		pg_root -A -t >/dev/null <<SQL
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = '$u';
+\connect "$database"
+DROP OWNED BY $u;
+DROP ROLE $u;
+SQL
+	fi
+	pg_hba_set "$u" -
+	echo "ok revoke-pg $u"
+}
+
 r_revoke_mysql() {
 	local u=$1
 	want "$u" "$P_DBUSER" "database user"
@@ -265,6 +399,11 @@ self_test() {
 	t 1 'ro:/home/revilio/revilio.com/web/uploads' "$P_PATHS"; t 1 - "$P_PATHS"; t 0 'ro:/a b' "$P_PATHS"; t 0 '/a' "$P_PATHS"; t 0 'ro:/a;id' "$P_PATHS"
 	t 1 '192.168.60.9:22' "$P_TARGET"; t 0 '192.168.60.9' "$P_TARGET"
 	t 1 AbCd1234AbCd1234AbCd1234 "$P_PW"; t 0 "AbCd1234AbCd1234AbCd123'" "$P_PW"
+	t 1 '*' "$P_PGTABLES"; t 1 '*,-host,-run_token' "$P_PGTABLES"; t 1 'task,session' "$P_PGTABLES"; t 0 'task,-host' "$P_PGTABLES"
+	t 0 '-host' "$P_PGTABLES"; t 0 'Task' "$P_PGTABLES"; t 0 'a"b' "$P_PGTABLES"; t 0 '*,-a;drop' "$P_PGTABLES"; t 0 '*,*' "$P_PGTABLES"
+	t 1 fleet "$P_PGNAME"; t 0 'fleet"' "$P_PGNAME"; t 0 'Fleet' "$P_PGNAME"
+	pg_tables_split '*,-host,-run_token'
+	if [[ "$PG_ALL ${#PG_LIST[@]} ${PG_EXCLUDE[*]}" == "1 0 host run_token" ]]; then ok=$((ok+1)); else bad=$((bad+1)); echo "FAIL pg_tables_split"; fi
 	echo "self-test: $ok ok, $bad failed"
 	[[ $bad == 0 ]]
 }
@@ -282,6 +421,10 @@ case "${cmd[0]}" in
 	revoke-os-user) [[ ${#cmd[@]} == 2 ]] || die "revoke-os-user <user>"; r_revoke_os_user "${cmd[1]}" ;;
 	mysql-user) [[ ${#cmd[@]} == 5 ]] || die "mysql-user <dbuser> <database> <tables> <level>"; r_mysql_user "${cmd[1]}" "${cmd[2]}" "${cmd[3]}" "${cmd[4]}" ;;
 	mysql-databases) [[ ${#cmd[@]} == 1 ]] || die "mysql-databases"; r_mysql_databases ;;
+	pg-databases) [[ ${#cmd[@]} == 1 ]] || die "pg-databases"; r_pg_databases ;;
+	pg-user) [[ ${#cmd[@]} == 5 ]] || die "pg-user <dbuser> <database> <tables> <level>"; r_pg_user "${cmd[1]}" "${cmd[2]}" "${cmd[3]}" "${cmd[4]}" ;;
+	probe-pg) [[ ${#cmd[@]} == 5 ]] || die "probe-pg <dbuser> <database> <tables> <level>"; r_probe_pg "${cmd[1]}" "${cmd[2]}" "${cmd[3]}" "${cmd[4]}" ;;
+	revoke-pg) [[ ${#cmd[@]} == 3 ]] || die "revoke-pg <dbuser> <database>"; r_revoke_pg "${cmd[1]}" "${cmd[2]}" ;;
 	revoke-mysql) [[ ${#cmd[@]} == 2 ]] || die "revoke-mysql <dbuser>"; r_revoke_mysql "${cmd[1]}" ;;
 	probe-mysql) [[ ${#cmd[@]} == 5 ]] || die "probe-mysql <dbuser> <database> <table> <level>"; r_probe_mysql "${cmd[1]}" "${cmd[2]}" "${cmd[3]}" "${cmd[4]}" ;;
 	probe-files) [[ ${#cmd[@]} == 3 ]] || die "probe-files <user> <mode:path>"; r_probe_files "${cmd[1]}" "${cmd[2]}" ;;

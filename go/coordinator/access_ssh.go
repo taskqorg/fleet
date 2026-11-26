@@ -310,6 +310,28 @@ func accessProbeForward(c *accessConn, addr string) (string, error) {
 	return string(version), nil
 }
 
+// accessProbePostgres: a forwarded connection to addr answers a PostgreSQL SSL request ('S' or 'N'); PostgreSQL
+// sends no greeting of its own.
+func accessProbePostgres(c *accessConn, addr string) error {
+	conn, err := c.client.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("forward to %s: %w", addr, err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+	if _, err := conn.Write([]byte{0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f}); err != nil { // length 8, code 80877103
+		return fmt.Errorf("SSL request to %s: %w", addr, err)
+	}
+	b := make([]byte, 1)
+	if _, err := io.ReadFull(conn, b); err != nil {
+		return fmt.Errorf("answer from %s: %w", addr, err)
+	}
+	if b[0] != 'S' && b[0] != 'N' {
+		return fmt.Errorf("%s answered no PostgreSQL SSL reply", addr)
+	}
+	return nil
+}
+
 // accessEnrollCommand: what the owner runs as root on a server once: it writes fleet-provision and lets the
 // provisioner's key run only that command.
 func accessEnrollCommand(provisionerBody string) string {

@@ -36,6 +36,7 @@ var (
 	accessAddress    = regexp.MustCompile(`^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$`)
 	accessDBName     = regexp.MustCompile(`^[A-Za-z0-9_$]{1,64}$`)
 	accessPath       = regexp.MustCompile(`^/[A-Za-z0-9._/@+-]{1,255}$`)
+	accessPGName     = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 	accessNameStrip  = regexp.MustCompile(`[^a-z0-9]+`)
 	accessCallBudget = 3 * time.Minute
 )
@@ -108,6 +109,18 @@ func accessPathItems(level string, scope contract.AccessScope) []string {
 	return out
 }
 
+// accessPGTables: a postgres scope's tables as fleet-provision takes them: names, or * followed by -name exclusions.
+func accessPGTables(scope contract.AccessScope) string {
+	if len(scope.Tables) == 1 && scope.Tables[0] == "*" {
+		out := "*"
+		for _, t := range scope.Exclude {
+			out += ",-" + t
+		}
+		return out
+	}
+	return strings.Join(scope.Tables, ",")
+}
+
 // accessRecipe: what the provisioner runs for g, as the card and access_grants show it.
 func accessRecipe(g accessGrant, via string) []string {
 	user := accessOSUser(g.ProjectID)
@@ -134,6 +147,22 @@ func accessRecipe(g accessGrant, via string) []string {
 		out = append(out,
 			fmt.Sprintf("On %s: OS user %s, no shell, may forward only to 127.0.0.1:3306", g.ServerID, user),
 			fmt.Sprintf("MySQL: CREATE USER %s@127.0.0.1; GRANT %s ON %s; nothing else", accessDBUser(g.ProjectID, g.ID), privs, strings.Join(on, ", ")))
+	case "postgres":
+		privs, ro := "SELECT", ", read-only by default"
+		if g.Level == "write" {
+			privs, ro = "SELECT, INSERT, UPDATE, DELETE", ""
+		}
+		on := deref(g.Scope.Database) + ".public." + strings.Join(g.Scope.Tables, ", ")
+		if strings.HasPrefix(accessPGTables(g.Scope), "*") {
+			on = "every table of " + deref(g.Scope.Database) + ".public that exists at provisioning"
+			if len(g.Scope.Exclude) > 0 {
+				on += " except " + strings.Join(g.Scope.Exclude, ", ")
+			}
+		}
+		out = append(out,
+			fmt.Sprintf("On %s: OS user %s, no shell, may forward only to 127.0.0.1:5432", g.ServerID, user),
+			fmt.Sprintf("PostgreSQL: role %s (login from 127.0.0.1 to %s only, reads whole tables past row policies%s, statement timeout); GRANT %s ON %s; nothing else",
+				accessDBUser(g.ProjectID, g.ID), deref(g.Scope.Database), ro, privs, on))
 	}
 	probe := "Probe: reading works"
 	if g.Level == "read" {
@@ -317,10 +346,17 @@ func accessServerCheck(q *Request, r *contract.AccessServerCheckRequest) (contra
 			if *res.Version != fleetProvisionVersion() {
 				res.Steps = []string{"fleet-provision " + *res.Version + " is installed, " + fleetProvisionVersion() + " is current: run the enroll command again"}
 			}
-			if out, err := accessRun(c, []string{"mysql-databases"}, ""); err == nil {
+			for _, recipe := range []string{"mysql-databases", "pg-databases"} {
+				out, err := accessRun(c, []string{recipe}, "")
+				if err != nil {
+					continue // an older fleet-provision has no pg-databases
+				}
 				for _, line := range strings.Split(out, "\n") {
-					if name, ok := strings.CutPrefix(strings.TrimSpace(line), "database "); ok {
+					line = strings.TrimSpace(line)
+					if name, ok := strings.CutPrefix(line, "database "); ok {
 						res.Databases = append(res.Databases, name)
+					} else if name, ok := strings.CutPrefix(line, "pgdatabase "); ok {
+						res.Databases = append(res.Databases, "postgres:"+name)
 					}
 				}
 			}
@@ -398,7 +434,7 @@ func accessGrants(q *Request, r *contract.AccessGrantsRequest) (contract.AccessG
 func accessScopeCheck(kind string, s *contract.AccessScope) error {
 	switch kind {
 	case "mysql":
-		if s.Database == nil || !accessDBName.MatchString(*s.Database) || len(s.Tables) == 0 || len(s.Tables) > 200 || len(s.Paths) > 0 {
+		if s.Database == nil || !accessDBName.MatchString(*s.Database) || len(s.Tables) == 0 || len(s.Tables) > 200 || len(s.Paths) > 0 || len(s.Exclude) > 0 {
 			return fail(400, "A mysql scope names database and tables (table names, or [\"*\"] for every table)")
 		}
 		for _, t := range s.Tables {
@@ -409,8 +445,26 @@ func accessScopeCheck(kind string, s *contract.AccessScope) error {
 				return fail(400, "Bad table name "+t)
 			}
 		}
+	case "postgres":
+		if s.Database == nil || !accessPGName.MatchString(*s.Database) || len(s.Tables) == 0 || len(s.Tables) > 200 || len(s.Paths) > 0 || len(s.Exclude) > 199 {
+			return fail(400, "A postgres scope names database and tables (lowercase table names, or [\"*\"] with an optional exclude list)")
+		}
+		all := len(s.Tables) == 1 && s.Tables[0] == "*"
+		if len(s.Exclude) > 0 && !all {
+			return fail(400, "exclude goes with tables [\"*\"] only")
+		}
+		for _, t := range s.Exclude {
+			if !accessPGName.MatchString(t) {
+				return fail(400, "Bad table name "+t)
+			}
+		}
+		for _, t := range s.Tables {
+			if !all && !accessPGName.MatchString(t) {
+				return fail(400, "Bad table name "+t)
+			}
+		}
 	case "files":
-		if len(s.Paths) == 0 || len(s.Paths) > 50 || s.Database != nil || len(s.Tables) > 0 {
+		if len(s.Paths) == 0 || len(s.Paths) > 50 || s.Database != nil || len(s.Tables) > 0 || len(s.Exclude) > 0 {
 			return fail(400, "A files scope names absolute paths")
 		}
 		for _, p := range s.Paths {
@@ -425,7 +479,7 @@ func accessScopeCheck(kind string, s *contract.AccessScope) error {
 }
 
 func sameScope(a, b contract.AccessScope) bool {
-	return deref(a.Database) == deref(b.Database) && slices.Equal(a.Tables, b.Tables) && slices.Equal(a.Paths, b.Paths)
+	return deref(a.Database) == deref(b.Database) && slices.Equal(a.Tables, b.Tables) && slices.Equal(a.Paths, b.Paths) && slices.Equal(a.Exclude, b.Exclude)
 }
 
 // accessGrantAsk creates a grant asked with its approval card, or reads it again by requestId.
@@ -608,6 +662,12 @@ func accessGrantCheck(q *Request, r *contract.AccessGrantCheckRequest) (contract
 	}
 	switch g.State {
 	case "ready":
+		if g.Kind == "postgres" && strings.HasPrefix(accessPGTables(g.Scope), "*") {
+			// Every table "that exists at provisioning": provisioning again reaches the tables added since. The grant
+			// stays ready meanwhile, so its connection keeps serving; the outcome moves it to ready or failed.
+			err = accessQueue(q, g.ID, "", "provision")
+			break
+		}
 		err = accessQueue(q, g.ID, "", "probe")
 	case "failed":
 		err = accessQueue(q, g.ID, "provisioning", "provision")

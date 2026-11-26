@@ -532,12 +532,13 @@ func (v *GatewayTool) Validate() error {
 type GatewayTransport string
 
 const (
-	GatewayTransportMysql GatewayTransport = "mysql"
-	GatewayTransportFiles GatewayTransport = "files"
+	GatewayTransportMysql    GatewayTransport = "mysql"
+	GatewayTransportPostgres GatewayTransport = "postgres"
+	GatewayTransportFiles    GatewayTransport = "files"
 )
 
 // GatewayTransportValues lists every GatewayTransport in schema order.
-var GatewayTransportValues = []GatewayTransport{GatewayTransportMysql, GatewayTransportFiles}
+var GatewayTransportValues = []GatewayTransport{GatewayTransportMysql, GatewayTransportPostgres, GatewayTransportFiles}
 
 // Valid: v is one of the schema's values.
 func (v GatewayTransport) Valid() bool {

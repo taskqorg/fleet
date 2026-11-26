@@ -1547,6 +1547,27 @@ const providersJSON = `
    }
   }
  },
+ "project-postgres": {
+  "baseUrl": "ssh://project-server",
+  "transport": "postgres",
+  "instructions": "Read access to a project's production PostgreSQL, granted by the owner (docs/designs/fleet-project-access.md). The gateway runs your query as the grant's database user on the project's server: only the granted tables, SELECT privileges only for a read grant, one statement per call, inside a read-only transaction with a statement timeout; tables with secret material are not granted. Every query is recorded with its text and row count. Start with sql_schema, then sql_query with explicit columns and a LIMIT; page with LIMIT/OFFSET. The data can be personal (people, messages): keep it inside Fleet, never paste it into another service, and quote only what the task needs.",
+  "tools": {
+   "sql_schema": {
+    "path": "/sql/schema",
+    "unit": "queries",
+    "idempotent": true,
+    "description": "Tables and columns this grant may read: table, column, type, nullable.",
+    "inputSchema": {"type": "object", "properties": {}}
+   },
+   "sql_query": {
+    "path": "/sql/query",
+    "unit": "queries",
+    "idempotent": true,
+    "description": "Runs one SELECT, SHOW, EXPLAIN or WITH statement and answers columns and rows (values as text, NULL as null). truncated is true when maxRows or the reply size limit stopped it.",
+    "inputSchema": {"type": "object", "required": ["sql"], "properties": {"sql": {"type": "string", "description": "one statement"}, "maxRows": {"type": "integer", "description": "stop after this many rows (optional)"}}}
+   }
+  }
+ },
  "project-files": {
   "baseUrl": "ssh://project-server",
   "transport": "files",
