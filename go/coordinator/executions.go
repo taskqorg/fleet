@@ -1460,7 +1460,11 @@ func reconcileLostExecutions(ctx context.Context, a *App) error {
 				return err
 			}
 			publish(q)
-			if err := agentPromote(q); err != nil {
+			e, err := executionGetAs[dispatchExecution](q, c.ID)
+			if err != nil {
+				return err
+			}
+			if err := agentPromoteOnly(q, e.SessionID); err != nil { // other sessions: the woken dispatch pass
 				return err
 			}
 			afterCommit(q, func() {
