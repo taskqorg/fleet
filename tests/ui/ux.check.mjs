@@ -3,8 +3,8 @@
 // status shown by colour only (WCAG 1.4.1, OR-18), truncated important text (OR-19), detail/outcome
 // outside the viewport at 600 and 1100 px (OR-19), JS size and interaction latency against targets, zero in a state chip
 // (OR-29), an unfocused empty search field (OR-31), Group as a word (OR-35), a Filter button (OR-36), row affordances
-// shown without hover (OR-37).
-// Proof mode: UX_INJECT=repeat|touch|colour|truncate|offscreen|latency|size injects one defect into the page.
+// shown without hover (OR-37), text under 4.5:1 (large text under 3:1) and icons under 3:1 in light and dark (UR-42).
+// Proof mode: UX_INJECT=repeat|touch|colour|truncate|offscreen|latency|size|contrast injects one defect into the page.
 // Screenshots of each route go to design-report/shots/ (for CI artifacts).
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
@@ -20,6 +20,47 @@ const INJECT = process.env.UX_INJECT || '';
 const TARGET_JS = 200 * 1024, TARGET_MS = 100;
 const warn = [];
 
+// UR-42 on the rendered page: each visible text and icon against the colour behind it. An element behind a background image,
+// inside a translucent ancestor, or disabled (WCAG exempts inactive controls) is skipped, so a finding is a real pair.
+const contrastFindings = p => p.evaluate(() => {
+  const cv = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const rgba = c => { cv.clearRect(0, 0, 1, 1); cv.fillStyle = '#000'; cv.fillStyle = c; cv.fillRect(0, 0, 1, 1); const d = cv.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (top, under) => top.slice(0, 3).map((v, i) => v * top[3] + under[i] * (1 - top[3])).concat(1);
+  const lum = c => { const [r, g, b] = c.slice(0, 3).map(v => v / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * r + .7152 * g + .0722 * b; };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + .05) / (y + .05); };
+  const behind = el => {
+    const layers = [];
+    for (let a = el; a; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      if (s.backgroundImage !== 'none' || Number(s.opacity) < 1) return null;
+      const c = rgba(s.backgroundColor);
+      if (c[3] > 0) layers.push(c);
+      if (c[3] === 1) return layers.reduceRight((under, top) => over(top, under));
+    }
+    return null;
+  };
+  const shown = e => { const s = getComputedStyle(e); const rc = e.getBoundingClientRect(); return s.visibility !== 'hidden' && s.display !== 'none' && rc.width > 1 && rc.height > 1; };
+  const name = e => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\s+/).slice(0, 2).join('.') : '');
+  const out = new Map();
+  const check = (el, need, what, text) => {
+    if (!shown(el) || el.closest(':disabled, [aria-disabled=true], [inert]')) return;
+    const bg = behind(el); if (!bg) return;
+    const r = ratio(over(rgba(getComputedStyle(el).color), bg), bg);
+    if (r < need) out.set(`${what}|${name(el)}`, `UR-42 ${what} contrast ${r.toFixed(2)}:1 (needs ${need}:1) in ${name(el)}: "${text.slice(0, 40)}"; use a token pair that passes (tokens.json)`);
+  };
+  const seen = new Set();
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n.parentElement;
+    if (!el || seen.has(el) || !n.textContent.trim() || el.closest('script, style, svg, [aria-hidden=true]')) continue;
+    seen.add(el);
+    const s = getComputedStyle(el), px = parseFloat(s.fontSize), bold = Number(s.fontWeight) >= 700;
+    check(el, px >= 24 || (bold && px >= 18.66) ? 3 : 4.5, 'text', el.innerText.trim().replace(/\s+/g, ' '));
+  }
+  for (const el of document.querySelectorAll('.icon')) check(el, 3, 'icon', el.getAttribute('aria-label') || el.closest('[aria-label]')?.getAttribute('aria-label') || '');
+  return [...out.values()];
+});
+
 async function inject(p, what) {
   if (INJECT !== what) return;
   await p.evaluate(kind => {
@@ -28,6 +69,7 @@ async function inject(p, what) {
     if (kind === 'repeat') { const r = document.querySelector('.vl-row:not(.grp) .title'); if (r) r.textContent += ' windows windows'; }
     if (kind === 'touch') add('<button type="button" style="width:20px;height:20px">x</button>');
     if (kind === 'colour') add('<span class="chip-age t-danger alert">13h</span>');
+    if (kind === 'contrast') add('<span class="injected-contrast" style="color:#c8c8c8;background:#ffffff">low contrast</span>');
     if (kind === 'truncate') add('<span data-important style="display:inline-block;width:40px;overflow:hidden;white-space:nowrap">18 GB free, warning at 25 GB</span>');
     if (kind === 'size') { const s = document.createElement('script'); s.type = 'text/plain'; s.textContent = 'x'.repeat(250 * 1024); document.body.append(s); }
     if (kind === 'latency') document.addEventListener('click', () => { const t = performance.now(); while (performance.now() - t < 150) { /* busy */ } }, true);
@@ -41,7 +83,7 @@ try {
   for (const r of ROUTES) {
     const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
     await p.goto(`${page}#${r}`); await p.waitForTimeout(200);
-    for (const k of ['repeat', 'colour', 'truncate']) await inject(p, k);
+    for (const k of ['repeat', 'colour', 'truncate', 'contrast']) await inject(p, k);
     const found = await p.evaluate(() => {
       const out = [];
       const visible = e => { const s = getComputedStyle(e); const rc = e.getBoundingClientRect(); return s.visibility !== 'hidden' && s.display !== 'none' && rc.width > 0 && rc.height > 0; };
@@ -59,7 +101,7 @@ try {
       for (const el of document.querySelectorAll('input[type=search]')) if (visible(el) && !el.value && el !== document.activeElement) out.push(`OR-31 empty search field shown unfocused: "${el.getAttribute('aria-label')}"`);
       // OR-35, OR-36: Group is an icon, not a word; there is no Filter button.
       for (const el of document.querySelectorAll('.seg-label')) if (visible(el) && /\bgroup\b/i.test(el.innerText)) out.push('OR-35 "Group" written as a word; use the registry icon with a tooltip');
-      for (const el of document.querySelectorAll('button')) if (visible(el) && /^filter$/i.test((el.getAttribute('aria-label') || el.innerText).trim())) out.push('OR-36 Filter button; filters are typed in search');
+      for (const el of document.querySelectorAll('button')) if (visible(el) && /^(?!clear\b|remove\b)(?:.*\s)?filters?$/i.test((el.getAttribute('aria-label') || el.innerText).trim())) out.push(`OR-36 Filter button "${(el.getAttribute('aria-label') || el.innerText).trim()}"; filters are typed in search with the query syntax (OR-32)`);
       // OR-37: a list row has no hover-only buttons; row actions live in the row menu and the selection bar.
       for (const el of document.querySelectorAll('.vl-row [data-ui=button][aria-label="Pin"], .vl-row [data-ui=button][aria-label="Unpin"]')) if (visible(el)) { out.push('OR-37 pin button in a list row; pin from the row menu'); break; }
       // WCAG 1.4.1 / OR-18: attention or danger tone with no icon and no meaning in text or name.
@@ -83,9 +125,11 @@ try {
       return out;
     });
     found.forEach(f => warn.push(`#${r}  ${f}`));
+    (await contrastFindings(p)).forEach(f => warn.push(`#${r} light  ${f}`));
     await p.screenshot({ path: new URL(`${r.slice(1).replace('/', '-')}-1440.png`, shots).pathname, fullPage: true });
     // The owner works in the dark theme: every route is also shot in it.
     await p.emulateMedia({ colorScheme: 'dark' });
+    (await contrastFindings(p)).forEach(f => warn.push(`#${r} dark  ${f}`));
     await p.screenshot({ path: new URL(`${r.slice(1).replace('/', '-')}-1440-dark.png`, shots).pathname });
     // Layout rules (OR-24 to OR-27, OR-41, OR-42); last, because the row click navigates.
     (await layoutFindings(p)).forEach(f => warn.push(`#${r}  ${f}`));

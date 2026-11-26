@@ -1,4 +1,5 @@
-// Turns tokens.json into CSS custom properties (with light-dark()) and checks text contrast pairs (WCAG 4.5:1).
+// Turns tokens.json into CSS custom properties (with light-dark()) and checks contrast pairs (UR-42, WCAG 2.1 AA): text 4.5:1,
+// UI parts (focus ring, status and chart marks) 3:1.
 import { readFileSync } from 'node:fs';
 export const tokens = JSON.parse(readFileSync(new URL('../tokens.json', import.meta.url)));
 
@@ -28,8 +29,14 @@ export const PAIRS = [['fg', 'surface'], ['fg-muted', 'surface'], ['fg-muted', '
   ['attention-fg', 'attention-bg'], ['attention-fg', 'attention-soft'], ['fg', 'attention-soft'], ['fg-muted', 'attention-soft'], ['danger-fg', 'danger-bg'], ['fg-muted', 'danger-bg'], ['fg', 'danger-bg'], ['danger-fg', 'surface'], ['danger-fg', 'attention-soft'], ['running-fg', 'running-bg'],
   ['success-fg', 'success-bg'], ['success-fg', 'surface'], ['neutral-fg', 'neutral-bg'], ['estimated-fg', 'surface'], ['fg', 'float'],
   ['data-1-ink', 'data-1'], ['data-2-ink', 'data-2'], ['data-3-ink', 'data-3'], ['data-4-ink', 'data-4']];
+// UI parts on the surfaces they sit on (WCAG 1.4.11): the focus ring, status tones of icons and outlines, chart series.
+export const UI_PAIRS = [['accent', 'surface'], ['accent', 'bg'], ['accent', 'float'], ['attention-fg', 'surface'], ['danger-fg', 'surface'], ['running-fg', 'surface'], ['success-fg', 'surface'],
+  ['data-1', 'surface'], ['data-2', 'surface'], ['data-3', 'surface'], ['data-4', 'surface']];
 export function contrastProblems(t = tokens) {
   const out = [];
-  for (const th of ['light', 'dark']) for (const [f, b] of PAIRS) { const r = ratio(t.color[th][f], t.color[th][b]); if (r < 4.5) out.push(`${th}: ${f} on ${b} = ${r.toFixed(2)}:1`); }
+  for (const [pairs, need, what] of [[PAIRS, 4.5, 'text'], [UI_PAIRS, 3, 'UI part']]) for (const th of ['light', 'dark']) for (const [f, b] of pairs) {
+    const r = ratio(t.color[th][f], t.color[th][b]);
+    if (r < need) out.push(`${th}: ${what} ${f} on ${b} = ${r.toFixed(2)}:1 (needs ${need}:1)`);
+  }
   return out;
 }
