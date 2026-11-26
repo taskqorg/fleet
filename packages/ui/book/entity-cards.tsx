@@ -83,6 +83,6 @@ export function EntityCardDemo() {
     <div class="ec-demo"><For each={CARDS}>{c => <span class="ec-demo-i"><span class="muted">{c.kind.replace('_', ' ')}</span><EntityCode kind={c.kind} id={c.id} code={c.code ?? (c.uuid ? undefined : c.id)} /></span>}</For>
       <span class="ec-demo-i"><span class="muted">loading</span><EntityCode kind="task" id="slow" code="T-FLT-1" /></span>
       <span class="ec-demo-i"><span class="muted">no access</span><EntityCode kind="task" id="gone" code="T-ABC-9" /></span></div>
-    <Markdown text={'Done with **T-FLT-42**; the open decision is Q-FLT-7, discussed in C-FLT-311; run 00000000-0000-4000-8000-000000000900 failed. `T-FLT-42` in code stays text.'} />
+    <Markdown text={'Done with **T-FLT-42**; the open decision is Q-FLT-7, discussed in C-FLT-311; run 00000000-0000-4000-8000-000000000900 failed (`00000000-0000-4000-8000-000000000900` in code too). `T-FLT-42` in code stays text.'} />
   </div>;
 }

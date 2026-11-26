@@ -3,8 +3,9 @@ import { Dynamic, type JSX } from '@solidjs/web';
 import { type MdBlock, type MdText, sliceText, SAFE_LINK as SAFE } from './markdown.ts';
 export { parse } from './markdown.ts';
 
-/** Render a literal fragment, with optional entity linking outside code and markdown links. */
-export type TextHook = (text: MdText, key: number, linkEntities: boolean) => JSX.Element;
+/** Render a literal fragment, with optional entity linking outside code and markdown links; 'uuid' (inline code): only
+ *  UUIDs become references, since a UUID is never shown (OR-38) while codes in code stay literal. */
+export type TextHook = (text: MdText, key: number, linkEntities: boolean | 'uuid') => JSX.Element;
 
 /** Inline spans: code first (its content is literal), then links, bold, italic, strike. */
 function inline(source: MdText, text: TextHook, depth = 0, linkEntities = true): JSX.Element[] {
@@ -20,7 +21,7 @@ function inline(source: MdText, text: TextHook, depth = 0, linkEntities = true):
     if (m[2] !== undefined) {
       const [start, end] = indices[2]!;
       const padded = /^ (.*) $/.test(m[2]);
-      out.push(<code>{text(sliceText(source, start + Number(padded), end - Number(padded)), 0, false)}</code>);
+      out.push(<code>{text(sliceText(source, start + Number(padded), end - Number(padded)), 0, linkEntities ? 'uuid' : false)}</code>);
     } else if (m[3] !== undefined) out.push(SAFE.test(m[4]) ? <a href={m[4]} target="_blank" rel="noopener noreferrer">{nested(3, false)}</a> : <span>{nested(3, false)}</span>);
     else if (m[5] !== undefined) out.push(<a href={m[5]} target="_blank" rel="noopener noreferrer">{text(group(5), 0, false)}</a>);
     else if (m[6] !== undefined || m[7] !== undefined) out.push(<strong>{nested(m[6] === undefined ? 7 : 6)}</strong>);
