@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -778,9 +779,6 @@ func problemTriggerParts(q *Request, bot string, seen, owned map[string]bool) ([
 		if err := q.db().ProblemQuietWake(q.ctx(), db.ProblemQuietWakeParams{Ids: woken, StuckWakes: problemStuckWakes}); err != nil {
 			return nil, err
 		}
-		if err := q.db().ProblemsWoken(q.ctx(), woken); err != nil {
-			return nil, err
-		}
 	}
 	if len(parts) > 0 || len(woken) > 0 {
 		parts = append(parts, threadPart{problemsSubject, "Work these here: problem_get for the evidence, then problem_update (phase, note, work) or problem_escalate; open a problem's own conversation only for a long investigation."})
@@ -828,9 +826,28 @@ func botBreaker(q *Request, now time.Time) error {
 			return err
 		}
 		usual := max(b.Median, 1)
-		tripped := b.Recent >= breakerFloor && float64(b.Recent) > breakerFactor*usual
+		recent := int(b.Recent)
+		if held != nil && st.Probation != "" {
+			// On probation only the runs since the resume count, not the burst it paused for.
+			until, _ := time.Parse(time.RFC3339, st.Probation)
+			since := until.Add(-breakerWindowMin * time.Minute)
+			n, err := q.db().BotRunsSince(q.ctx(), db.BotRunsSinceParams{Bot: b.ID, Since: tsOf(&since)})
+			if err != nil {
+				return err
+			}
+			recent = int(n)
+		}
+		tripped := recent >= breakerFloor && float64(recent) > breakerFactor*usual
 		ours := b.Paused && b.PausedBy == "fleet:burst"
 		switch {
+		case ours && held == nil:
+			// Its burst problem went (closed by a person): the breaker's pause goes with it.
+			if err := q.db().BotBreakerPause(q.ctx(), db.BotBreakerPauseParams{ID: b.ID, Paused: false}); err != nil {
+				return err
+			}
+			if err := audit(q, "bot:"+b.ID, "paused", true, false, auditExtra{Reason: "burst problem closed"}); err != nil {
+				return err
+			}
 		case tripped && !b.Paused:
 			cool := breakerCoolMinutes
 			if held != nil && st.Probation != "" {
@@ -842,9 +859,9 @@ func botBreaker(q *Request, now time.Time) error {
 			if err := audit(q, "bot:"+b.ID, "paused", false, true, auditExtra{Reason: "burst"}); err != nil {
 				return err
 			}
-			st = burstData{Bot: b.ID, Recent: int(b.Recent), Median: b.Median, CoolMin: cool, PausedAt: now.UTC().Format(time.RFC3339)}
+			st = burstData{Bot: b.ID, Recent: recent, Median: b.Median, CoolMin: cool, PausedAt: now.UTC().Format(time.RFC3339)}
 			text := fmt.Sprintf("%s started %d runs in the last hour, %.0f times its usual %.0f: Fleet paused it for %d minutes. Its running turns finish; resume it on its page or tell a PM.",
-				b.Name, b.Recent, float64(b.Recent)/usual, usual, cool)
+				b.Name, recent, float64(recent)/usual, usual, cool)
 			if _, err := problemRaiseID(q, "breaker", Problem{Cause: cause, Text: text, RefreshText: true, Unowned: true, Data: st}); err != nil {
 				return err
 			}
@@ -907,4 +924,22 @@ func botFailures(q *Request) error {
 		current = append(current, *agg[k])
 	}
 	return problemsSet(q, "bot-failures", "^run-failed:", current)
+}
+
+var problemCodeRe = regexp.MustCompile(`\bP-(\d+)\b`)
+
+// problemsMarkWoken: the problems a sent batch names (by code) are woken for their owner bot.
+func problemsMarkWoken(q *Request, bot string, parts []string) error {
+	var seqs []int64
+	for _, p := range parts {
+		for _, m := range problemCodeRe.FindAllStringSubmatch(p, -1) {
+			if n, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+				seqs = append(seqs, n)
+			}
+		}
+	}
+	if len(seqs) == 0 {
+		return nil
+	}
+	return q.db().ProblemsWokenBySeq(q.ctx(), db.ProblemsWokenBySeqParams{Seqs: seqs, Bot: bot})
 }

@@ -191,4 +191,11 @@ func TestProblemLifecycle(t *testing.T) {
 	if err := tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state = 'open'").Scan(&questions); err != nil || questions != 0 {
 		t.Fatalf("the breaker asked %d questions (%v)", questions, err)
 	}
+	// On probation only runs since the resume count: the burst it paused for does not pause it again.
+	if err := botBreaker(q, now.Add(32*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT paused FROM bot WHERE id = 'hal'").Scan(&paused); err != nil || paused {
+		t.Fatalf("bot paused again on probation by the old burst (%v)", err)
+	}
 }

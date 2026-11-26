@@ -127,6 +127,23 @@ func (q *Queries) BotRunRates(ctx context.Context, windowMinutes int32) ([]BotRu
 	return items, nil
 }
 
+const botRunsSince = `-- name: BotRunsSince :one
+SELECT count(*)::int FROM execution e WHERE e.bot_id = $1::text AND e.kind = 'agent_run'
+ AND coalesce(to_timestamp((e.data->>'createdAt')::float8 / 1000), e.started_at, e.updated_at) > $2::timestamptz
+`
+
+type BotRunsSinceParams struct {
+	Bot   string
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) BotRunsSince(ctx context.Context, arg BotRunsSinceParams) (int32, error) {
+	row := q.db.QueryRow(ctx, botRunsSince, arg.Bot, arg.Since)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const problemBySeq = `-- name: ProblemBySeq :one
 SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at, woken_at FROM problem WHERE seq = $1
 `
@@ -827,5 +844,19 @@ UPDATE problem SET woken_at = now() WHERE id = ANY($1::text[])
 
 func (q *Queries) ProblemsWoken(ctx context.Context, ids []string) error {
 	_, err := q.db.Exec(ctx, problemsWoken, ids)
+	return err
+}
+
+const problemsWokenBySeq = `-- name: ProblemsWokenBySeq :exec
+UPDATE problem SET woken_at = now() WHERE seq = ANY($1::bigint[]) AND owner_bot_id = $2::text
+`
+
+type ProblemsWokenBySeqParams struct {
+	Seqs []int64
+	Bot  string
+}
+
+func (q *Queries) ProblemsWokenBySeq(ctx context.Context, arg ProblemsWokenBySeqParams) error {
+	_, err := q.db.Exec(ctx, problemsWokenBySeq, arg.Seqs, arg.Bot)
 	return err
 }

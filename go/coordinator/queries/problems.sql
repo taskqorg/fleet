@@ -166,3 +166,10 @@ JOIN LATERAL (
 ) e ON true
 WHERE s.bot_id IS NOT NULL AND s.archived_at IS NULL AND s.tombstoned_at IS NULL AND e.state = 'failed' AND e.ended_at > now() - interval '1 day'
 GROUP BY 1, 2, 3 ORDER BY 1, 3;
+
+-- name: BotRunsSince :one
+SELECT count(*)::int FROM execution e WHERE e.bot_id = @bot::text AND e.kind = 'agent_run'
+ AND coalesce(to_timestamp((e.data->>'createdAt')::float8 / 1000), e.started_at, e.updated_at) > @since::timestamptz;
+
+-- name: ProblemsWokenBySeq :exec
+UPDATE problem SET woken_at = now() WHERE seq = ANY(@seqs::bigint[]) AND owner_bot_id = @bot::text;
