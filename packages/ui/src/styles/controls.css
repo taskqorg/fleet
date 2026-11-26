@@ -24,6 +24,7 @@
   .btn.danger { color: var(--danger-fg); border-color: var(--danger-fg); }
   .btn.attention { color: var(--attention-fg); border-color: var(--attention-line); }
   .btn.icon-only { width: var(--size-control); padding: 0; justify-content: center; color: var(--fg-muted); }
+  .btn.primary:where(.icon-only) { color: var(--on-accent); }
   .btn[aria-pressed=true] { background: var(--selected); color: var(--fg); }
   .btn[aria-disabled=true] { color: var(--fg-faint); cursor: not-allowed; background: var(--surface); }
   .btn.busy .icon { animation: spin 1s linear infinite; }
