@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"slices"
@@ -193,6 +194,10 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 		p.Stage = contract.PinsStageReverting
 	case pr.AutoMerge != nil || statuses["qualify-hosts"] == "success":
 		p.Stage = contract.PinsStageMerging
+		// Qualified, yet GitHub may hold it: a ruleset's required approval is not "merging".
+		if why := pinsBlocked(ctx, a, pr.Number, statuses); why != "" {
+			p.Stage, p.Blocked = contract.PinsStageBlocked, &why
+		}
 	case statuses["qualify-offline"] == "success":
 		p.Stage = contract.PinsStageHosts
 	default:
@@ -387,4 +392,31 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 		cell.State = contract.ComponentHostStateBehind
 	}
 	return cell
+}
+
+// pinsBlocked: why GitHub holds a qualified proposal, "" when it does not or the read fails. GitHub answers
+// mergeable_state blocked while a required check or review is missing; with every required check and the proposal's
+// statuses green, what is left is an approving review a ruleset requires (an unattributed bot commit).
+func pinsBlocked(ctx context.Context, a *App, number int64, statuses map[string]string) string {
+	b, _, err := githubRead(ctx, a, ciProject, "pull_get", map[string]string{"owner": ciOwner, "repo": ciRepo, "number": fmt.Sprint(number)})
+	if err != nil {
+		return ""
+	}
+	var pr struct {
+		MergeableState string `json:"mergeable_state"`
+	}
+	if json.Unmarshal(b, &pr) != nil || pr.MergeableState != "blocked" {
+		return ""
+	}
+	return pinsBlockedReason(statuses)
+}
+
+// pinsBlockedReason: the words for a blocked proposal by what its own statuses show.
+func pinsBlockedReason(statuses map[string]string) string {
+	for _, c := range []string{"qualify-offline", "qualify-hosts", "code-review"} {
+		if statuses[c] != "success" {
+			return "waits for " + c
+		}
+	}
+	return "needs owner approval (ruleset)"
 }
