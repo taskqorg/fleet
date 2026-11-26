@@ -75,63 +75,159 @@ export type EntityCardData = EntityCardReply;
 /** A reference: a kind with its id, or a D17 code alone (the card resolves it). */
 export type EntityRef = { kind: EntityKind; id?: string; code?: string };
 export type EntityCardRead = { data: EntityCardData | null; error: string | null; retry?: () => void };
-/** Where cards come from: the app reads `entity_card` through its store; the book serves fixtures. `useCard` is called once per open card; `open` goes to an in-app path (default: a full page load). */
-export type EntityCardSource = { useCard: (ref: EntityRef) => EntityCardRead; open?: (path: string) => void };
+/** The live state of a rendered reference: undefined while it loads, null when the entity is unknown or not visible. */
+export type EntityLive = { kind: EntityKind; id: string; code: string | null; state: string | null; title: string };
+/** Where cards come from: the app reads `entity_card` through its store; the book serves fixtures. `useCard` is called once per open card; `open` goes to an in-app path (default: a full page load).
+ *  `live` holds a rendered reference's live state (one batched registry, entity-card.md "Live state of many references"); `src` is the bytes URL of a result preview. */
+export type EntityCardSource = {
+  useCard: (ref: EntityRef) => EntityCardRead;
+  open?: (path: string) => void;
+  live?: (ref: EntityRef) => { read: () => EntityLive | null | undefined; release: () => void };
+  src?: (resultId: string) => string;
+};
 export const EntityCards = createContext<EntityCardSource | null>(null);
+/** The forms of a reference (entity-card.md "Forms"): code and copy; icon in its state's tone and code (default); icon, code, title and state. */
+export type EntityForm = 'code' | 'chip' | 'full';
 
-// The one open card (one at a time): which reference, the code it hangs from, and whether a key opened it.
-type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
+// The one shown card (one at a time): which reference, the code it hangs from, whether a key opened it, and whether it is
+// a peek (hover; it hides when the pointer leaves) or pinned (a click, a tap, a key).
+type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean; peek: boolean };
 const [shown, setShown] = createSignal<Shown | null>(null, { ownedWrite: true });
-const showCard = (s: Shown | null) => setShown(s);
+const showCard = (s: Shown | null) => { clearTimeout(hideTimer); setShown(s); };
 const CARD_ID = 'entity-card';
+/** Hover timings (entity-card.md "Behaviour"): rest to peek, to move to another reference while one shows, grace on leaving. */
+export const PEEK_MS = 500, PEEK_NEXT_MS = 150, PEEK_HIDE_MS = 300;
+let peekTimer: ReturnType<typeof setTimeout> | undefined, hideTimer: ReturnType<typeof setTimeout> | undefined;
+const finePointer = () => typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches;
+/** The pointer left the reference or a peek card: the peek hides after the grace unless the pointer comes back. */
+function leavePeek() {
+  clearTimeout(peekTimer);
+  const s = untrack(shown);
+  if (!s?.peek) return;
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => { if (untrack(shown) === s) setShown(null); }, PEEK_HIDE_MS);
+}
+const keepPeek = () => clearTimeout(hideTimer);
 
-/** The one formatter of an entity reference (D17, OR-38). A human code (`T-FLT-42`, a pull request's number, `v1.2.3`) in mono after the
- *  name; a kind without a code (run, result, experiment) as its kind icon. A click, tap, Enter or Space opens its
- *  EntityCard and never the row (OR-26); the same again closes it. The UUID is never shown: the card copies it. */
-export function EntityCode(p: { code?: string | null; id?: string | null; kind?: EntityKind; cls?: string; label?: boolean }) {
+/** The state word and tone of a reference's live state, null for kinds without a state or a state the registry lacks. */
+function stateOf(kind: EntityKind, state: string | null | undefined): { label: string; tone: string; state: string } | null {
+  const fam = entityKinds[kind].family;
+  if (!fam || !state || !(state in states[fam])) return null;
+  const d = (states[fam] as Record<string, { label: string; tone: string }>)[state];
+  return { label: d.label, tone: d.tone, state };
+}
+
+/** The one formatter of an entity reference (D17, OR-38, OR-44), in three forms (`form`): `code` (the code in mono and
+ *  the copy slot), `chip` (the kind icon in its live state's tone and the code; the default) and `full` (icon, code, title
+ *  and state badge). A kind without a code shows its kind icon (and the kind's word in `chip`). Its state is live (the
+ *  source's registry) and updates in place, tinting briefly (OR-6). Resting the pointer 500 ms shows its card, leaving
+ *  hides it, a click, tap, Enter or Space pins it; the click never opens the row (OR-26). The UUID is never shown. */
+export function EntityCode(p: {
+  code?: string | null; id?: string | null; kind?: EntityKind; cls?: string; label?: boolean; form?: EntityForm;
+  /** The title the parent already has (`full`), shown until the live state names it. */ title?: string | null;
+  /** The state the parent already has, shown until the live state arrives. */ state?: string | null;
+}) {
   let el: HTMLButtonElement | undefined;
-  onSettled(() => () => { if (el && untrack(shown)?.anchor === el) showCard(null); });
+  const source = useContext(EntityCards);
   const k = createMemo(() => p.kind ?? (p.code ? codeKind[p.code[0]] : undefined));
+  const ref = createMemo<EntityRef | null>(() => {
+    const kind = k();
+    if (!kind || !(p.id || p.code)) return null;
+    return p.id ? { kind, id: p.id, ...(p.code ? { code: p.code } : {}) } : { kind, code: p.code! };
+  });
+  // One registration per mounted reference and entity; released when it unmounts or names another entity.
+  const holder = createMemo(() => {
+    const r = ref();
+    return r && source?.live ? untrack(() => source.live!(r)) : null;
+  });
+  createEffect(holder, h => () => h?.release());
+  onSettled(() => () => { if (el && untrack(shown)?.anchor === el) showCard(null); });
+  const live = createMemo(() => holder()?.read());
+  const form = () => p.form ?? 'chip';
+  const st = createMemo(() => stateOf(k()!, live() === null ? null : live()?.state ?? p.state));
+  const code = () => live()?.code ?? p.code ?? undefined;
+  const title = () => live()?.title ?? p.title ?? undefined;
+  // OR-6: a state that changes while shown tints the reference briefly; success and failure in their tones, others neutral.
+  const [flash, setFlash] = createSignal<string | null>(null);
+  let lastState: string | null | undefined, flashTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(() => st()?.state ?? null, now => {
+    if (lastState !== undefined && now !== lastState) {
+      const tone = st()?.tone;
+      setFlash(tone === 'success' || tone === 'danger' ? tone : 'neutral');
+      clearTimeout(flashTimer); flashTimer = setTimeout(() => setFlash(null), parseInt(tokens.motion.highlight, 10));
+    }
+    lastState = now;
+  });
   const open = createMemo(() => { const s = shown(); return !!s && !!el && s.anchor === el; });
   const toggle = (e: MouseEvent & { currentTarget: HTMLButtonElement }) => {
     e.preventDefault();
     e.stopPropagation();
-    const kind = k();
-    if (!kind) return;
-    // The open card is read now, not from the last render: a second click before a re-render still closes it. A click
-    // from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
-    showCard(untrack(shown)?.anchor === e.currentTarget ? null : {
-      ref: p.id ? { kind, id: p.id, ...(p.code ? { code: p.code } : {}) } : { kind, code: p.code! },
-      anchor: e.currentTarget,
-      keyboard: e.detail === 0,
-    });
+    clearTimeout(peekTimer);
+    const r = ref();
+    if (!r) return;
+    // The open card is read now, not from the last render: a second click before a re-render still closes it; a click on a
+    // peek pins it. A click from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
+    const cur = untrack(shown);
+    if (cur?.anchor === e.currentTarget && cur.peek && e.detail !== 0) { showCard({ ...cur, peek: false }); return; }
+    showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0, peek: false });
   };
+  const enter = (e: PointerEvent & { currentTarget: HTMLButtonElement }) => {
+    if (e.pointerType === 'touch' || !finePointer()) return;
+    const anchor = e.currentTarget, r = ref(), cur = untrack(shown);
+    if (!r) return;
+    if (cur?.anchor === anchor) { keepPeek(); return; }
+    if (cur && !cur.peek) return; // a pinned card stays until it is closed
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => { if (anchor.isConnected && anchor.matches(':hover')) showCard({ ref: r, anchor, keyboard: false, peek: true }); }, cur ? PEEK_NEXT_MS : PEEK_MS);
+  };
+  const what = () => entityKinds[k()!].label;
+  const name = () => `${what()}${code() ? ' ' + code() : ''}${st() ? ', ' + st()!.label.toLowerCase() : ''}${live() === null ? ', not visible' : ''}: show details`;
+  const icon = () => <span class={['ec-ico', st() ? `t-${st()!.tone}` : 't-neutral']}><Icon name={entityKinds[k()!].icon} /></span>;
   return (
-    <Show when={k() && (p.id || p.code)}>
+    <Show when={ref()}>
       {(() => {
-        const what = () => entityKinds[k()!].label;
+        const inner = () => {
+          switch (form()) {
+            case 'code': return code() ?? <>{icon()}{p.label && what()}</>;
+            case 'full': return (
+              <>
+                {icon()}
+                <Show when={code()}><span class="ec-cd">{code()}</span></Show>
+                <Show when={(title() ?? what()) !== code()}><span class="ec-title">{title() ?? what()}</span></Show>
+                <Show when={st()} keyed>{s => <span class={['badge', `t-${s.tone}`]}>{s.label}</span>}</Show>
+              </>
+            );
+            default: return <>{icon()}{code() ? <span class="ec-cd">{code()}</span> : <span class="ec-word">{what()}</span>}</>;
+          }
+        };
         const trigger = (
           <button
             ref={node => { el = node; }}
             type="button"
-            class={[p.code ? 'id ec-code' : p.label ? 'btn quiet ec-code ec-label' : 'btn quiet icon-only ec-code', p.cls]}
+            class={[
+              'ec-code', `ec-${form()}`,
+              form() === 'code' ? (code() ? 'id' : p.label ? 'btn quiet ec-label' : 'btn quiet icon-only') : '',
+              flash() ? `ec-flash t-${flash()}` : '', p.cls,
+            ]}
             data-ui="entity-code"
+            data-state={st()?.state}
             aria-haspopup="dialog"
             aria-expanded={open() ? 'true' : 'false'}
             aria-controls={open() ? CARD_ID : undefined}
-            aria-label={`${what()}${p.code ? ' ' + p.code : ''}: show details`}
-            data-tip={open() ? undefined : 'Show details'}
+            aria-label={name()}
             onClick={toggle}
+            onPointerEnter={enter}
+            onPointerLeave={leavePeek}
           >
-            {p.code ?? <><Icon name={entityKinds[k()!].icon} />{p.label && what()}</>}
+            {inner()}
           </button>
         );
         return (
-          <Show when={p.code} fallback={trigger}>
+          <Show when={code() && form() !== 'full'} fallback={trigger}>
             <span class={p.cls === 'inline' ? 'ec-reference inline' : 'ec-reference'}>
               {trigger}
               <span class="ec-copy" onClick={e => e.stopPropagation()}>
-                <CopyButton label={`Copy ${p.code}`} value={p.code!} iconOnly />
+                <CopyButton label={`Copy ${code()}`} value={code()!} iconOnly />
               </span>
             </span>
           </Show>
@@ -222,6 +318,10 @@ function EntityCardDialog(p: { cur: Shown }) {
       {...popoverAttr('manual')}
       class={['ecard', theme()]}
       data-ui="entity-card" role="dialog"
+      data-peek={p.cur.peek ? '' : undefined}
+      onPointerEnter={keepPeek}
+      onPointerLeave={e => { if (e.pointerType !== 'touch') leavePeek(); }}
+      onPointerDown={() => { if (p.cur.peek) showCard({ ...p.cur, peek: false }); }}
       aria-label={`${k().label}${p.cur.ref.code ? ' ' + p.cur.ref.code : ''}`}
     >
       <CardBody
@@ -316,6 +416,14 @@ function CardBody(p: { r: EntityRef; onOpen: () => void }) {
                 <Show when={data.harness && data.harness in harnesses}><HarnessMark h={data.harness as Harness} /></Show>
                 <Show when={Number.isFinite(at())}><span>{data.atLabel ? data.atLabel + ' ' : ''}<Ago t={at()} /></span></Show>
               </p>
+            </Show>
+            <Show when={data.preview && source?.src ? data.preview : null} keyed>
+              {pv => (
+                <a class="ec-pv" href={data.path ?? undefined} onClick={go} aria-label={`Open ${data.title}`}>
+                  <img src={source!.src!(pv.resultId)} alt={data.title} loading="lazy" decoding="async" />
+                  <Show when={pv.view === 'video'}><Icon name="play" /></Show>
+                </a>
+              )}
             </Show>
             <Show when={data.facts.length > 0}>
               <dl class="ec-f">

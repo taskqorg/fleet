@@ -260,6 +260,10 @@
   }
   .ecard[popover]:popover-open { display: flex; }
   .ecard > * { flex: none; }
+  /* A result's picture (entity-card.md "Preview"): its box is reserved while it loads, never wider than the card. */
+  .ec-pv { position: relative; display: flex; align-items: center; justify-content: center; block-size: 160px; background: var(--surface-sunken); border-radius: var(--radius-md); overflow: hidden; }
+  .ec-pv img { max-inline-size: 100%; max-block-size: 100%; object-fit: contain; }
+  .ec-pv > .icon { position: absolute; width: var(--size-icon); height: var(--size-icon); color: var(--fg); }
   .ec-h { display: flex; align-items: center; gap: var(--space-2); min-height: var(--size-badge); color: var(--fg-muted); }
   .ec-h .id { margin: 0; }
   .ec-t { margin: 0; font-weight: var(--font-weight-bold); font-size: var(--font-size-lg); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }

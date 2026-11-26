@@ -286,7 +286,7 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
                   <a class="kv-row row-link" href={props.page.href({ focus: r.id })} onClick={e => { e.preventDefault(); open(r.id); }}>
                     <StateDot family="session" state={r.state} />
                     <span class="kv-line" data-tip={line}>{line}</span>
-                    <EntityCode code={r.code} id={r.id} kind="conversation" />
+                    <EntityCode code={r.code} id={r.id} kind="conversation" form="code" />
                     <Show when={!isNaN(at)}><AgeChip t={at} /></Show>
                   </a>
                 );

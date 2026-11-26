@@ -15,7 +15,7 @@ Times follow [OR-2](controls/number.md#rules-kept-here) (compact time), kept in 
 
 | Kind | Shown as | Long form (tooltip, accessible name) | Helper |
 |---|---|---|---|
-| Entity code | `T-FLT-42` mono, directly after the name (OR-22); never a UUID or hash (OR-38); a kind without a code as its kind icon | Its card on click (OR-44): details, Open, copy code and UUID | `EntityCode` |
+| Entity code | `T-FLT-42` mono, directly after the name (OR-22); never a UUID or hash (OR-38); a kind without a code as its kind icon | Three forms, `code`, `chip` (icon in the state's tone) and `full` (with title and state); the live state; its card on hover and pinned on click (OR-44): details, preview, Open, copy code and UUID | `EntityCode` |
 | Moment, in a list | Age: `now`, `40s`, `4m`, `2h`, `3d`, `12 Nov`, `12 Nov 2025`; plain, boxed only when it needs a look (OR-18) | `4 minutes ago`; exact time on hover | Live `Ago` / `AgeChip` |
 | Moment, in copied text | `11 Nov 14:03`, year added when not this year | — | `stamp` |
 | Duration | `120ms` (under a second), `40s`, `14m`, `1h 02m`, `3d 4h`; elapsed span (`elapsedMs`) and active execution wall time (`executionWallMs`) use the same formatter and carry distinct labels | words | `duration` |

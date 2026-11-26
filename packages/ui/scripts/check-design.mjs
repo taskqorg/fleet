@@ -38,6 +38,8 @@ const RULES = [
   { id: 'OR-9', re: /<select\b/g, where: f => /\.tsx$/.test(f), say: 'select; long collections use VirtualList or a searchable scope control' },
   { id: 'OR-38', re: /\b\w*[iI]d\)?\.slice\(0, ?\d+\)|>T-\{/g, where: f => /\.tsx$/.test(f), say: 'short UUID or hand-made code shown; render <EntityCode> (D17)' },
   // OR-36: a button or menu labelled Filter or "… filters" (Clear filters and Remove filter chips are allowed).
+  // OR-44: an entity named by hand (a code in an `id` or `mono` span) instead of EntityCode; a row that is itself a link to the entity (pw-line, live rows) keeps its code as text (help, not block).
+  { id: 'OR-44', re: /<(?:span|a|code|b|strong)\b[^>]*class=(?:"[^"]*\b(?:id|mono)\b[^"]*"|\{[^}]*['"](?:id|mono)['"][^}]*\})[^>]*>\s*\{[^}]*\b(?:\w+\.)?(?:code|taskCode|sessionCode|prNumber|number)\b[^}]*\}/g, where: f => /\.tsx$/.test(f) && !/controls\/overlays\.tsx$/.test(f) && !/\/book\//.test(f), skip: line => /pw-line-m|lr-main/.test(line), say: 'an entity reference made by hand; render <EntityCode kind form> for its live state and card (controls/entity-card.md)' },
   { id: 'OR-36', re: /<(?:Button|MenuTrigger|button)\b[^>]*?\b(?:aria-)?label=\{?["'`](?!Clear\b|Remove\b)(?:[^"'`]*\s)?filters?["'`]|<MenuTrigger\b[^>]*>\s*Filters?\s*</gi, where: f => /\.tsx$/.test(f), say: 'Filter button; filters are typed in search with the query syntax (OR-32)' },
   { id: 'OR-35', re: /seg-label">Group</g, where: f => /\.tsx$/.test(f), say: '"Group" as a word; use GroupControl (registry icon with tooltip)' },
   { id: 'OR-15', re: /Back to /g, where: f => /\.(tsx|html)$/.test(f), say: 'text back link; use an icon, or rely on browser Back' },

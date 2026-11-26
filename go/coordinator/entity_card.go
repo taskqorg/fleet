@@ -35,43 +35,115 @@ var codeKinds = map[string]contract.EntityKind{"T": contract.EntityKindTask, "Q"
 
 func init() {
 	op("entity_card", func(q *Request, r *contract.EntityCardRequest) (contract.EntityCardReply, error) {
-		kind, id := contract.EntityKind(""), strings.TrimSpace(deref(r.Id))
-		if r.Kind != nil {
-			kind = *r.Kind
+		kind, id, err := cardTarget(q, r, nil)
+		if err != nil {
+			return contract.EntityCardReply{}, err
 		}
-		switch {
-		case r.Code != nil && (r.Kind != nil || r.Id != nil):
-			return contract.EntityCardReply{}, fail(400, "Expected a code, or a kind with its id")
-		case r.Code != nil:
-			code := strings.ToUpper(strings.TrimSpace(*r.Code))
-			if m := codePattern.FindString(code); code == "" || m != code || codeKinds[code[:1]] == "" {
-				return contract.EntityCardReply{}, fail(400, "Expected a code such as T-FLT-42")
-			}
-			found, err := resolveCodes(q, []string{code})
-			if err != nil {
-				return contract.EntityCardReply{}, err
-			}
-			e, ok := found[code]
-			if !ok {
-				return contract.EntityCardReply{}, errNotFound
-			}
-			kind, id = codeKinds[e.Type], e.Id
-		case kind == "" || id == "":
-			return contract.EntityCardReply{}, fail(400, "Expected a code, or a kind with its id")
-		}
-		c, err := cardReaders[kind](q, id)
+		c, err := readCard(q, kind, id)
 		if err != nil {
 			return contract.EntityCardReply{}, err
 		}
 		if c == nil {
 			return contract.EntityCardReply{}, errNotFound
 		}
-		c.Kind = kind
-		if c.Facts == nil {
-			c.Facts = []contract.EntityFact{}
-		}
 		return *c, nil
 	})
+	// entity_refs: the live state of the references a screen renders (entity-card.md "Live state of many references"):
+	// one read for a batch, the codes resolved in one query, each entity read by its kind's card reader under the same
+	// grants. A reference the caller may not see, or a malformed one, is left out rather than failing the batch.
+	op("entity_refs", entityRefs)
+}
+
+func entityRefs(q *Request, r *contract.EntityRefsRequest) (contract.EntityRefsReply, error) {
+	if len(r.Refs) > maxEntityRefs {
+		return contract.EntityRefsReply{}, fail(400, fmt.Sprintf("At most %d references", maxEntityRefs))
+	}
+	var codes []string
+	for _, ref := range r.Refs {
+		if ref.Code != nil && ref.Kind == nil && ref.Id == nil {
+			codes = append(codes, strings.ToUpper(strings.TrimSpace(*ref.Code)))
+		}
+	}
+	found := map[string]contract.EntityCode{}
+	if len(codes) > 0 {
+		var err error
+		if found, err = resolveCodes(q, codes); err != nil {
+			return contract.EntityRefsReply{}, err
+		}
+	}
+	out := contract.EntityRefsReply{Items: []contract.EntityRefState{}}
+	seen := map[string]*contract.EntityCardReply{}
+	for i, ref := range r.Refs {
+		kind, id, err := cardTarget(q, &ref, found)
+		if err != nil {
+			continue
+		}
+		key := string(kind) + ":" + id
+		c, ok := seen[key]
+		if !ok {
+			if c, err = readCard(q, kind, id); err != nil && !isClientError(err) {
+				return contract.EntityRefsReply{}, err
+			}
+			seen[key] = c
+		}
+		if c != nil {
+			out.Items = append(out.Items, contract.EntityRefState{Ref: int64(i), Kind: c.Kind, Id: c.Id, Code: c.Code, State: c.State, Title: c.Title})
+		}
+	}
+	return out, nil
+}
+
+const maxEntityRefs = 200
+
+// cardTarget: the kind and id a card request names. A code resolves through found when the caller resolved a batch
+// (entity_refs), else on its own; an unknown or forbidden code is errNotFound.
+func cardTarget(q *Request, r *contract.EntityCardRequest, found map[string]contract.EntityCode) (contract.EntityKind, string, error) {
+	kind, id := contract.EntityKind(""), strings.TrimSpace(deref(r.Id))
+	if r.Kind != nil {
+		kind = *r.Kind
+	}
+	switch {
+	case r.Code != nil && (r.Kind != nil || r.Id != nil):
+		return "", "", fail(400, "Expected a code, or a kind with its id")
+	case r.Code != nil:
+		code := strings.ToUpper(strings.TrimSpace(*r.Code))
+		if m := codePattern.FindString(code); code == "" || m != code || codeKinds[code[:1]] == "" {
+			return "", "", fail(400, "Expected a code such as T-FLT-42")
+		}
+		if found == nil {
+			var err error
+			if found, err = resolveCodes(q, []string{code}); err != nil {
+				return "", "", err
+			}
+		}
+		e, ok := found[code]
+		if !ok {
+			return "", "", errNotFound
+		}
+		return codeKinds[e.Type], e.Id, nil
+	case kind == "" || id == "" || cardReaders[kind] == nil:
+		return "", "", fail(400, "Expected a code, or a kind with its id")
+	}
+	return kind, id, nil
+}
+
+// readCard: one entity's card, nil when the caller may not see it.
+func readCard(q *Request, kind contract.EntityKind, id string) (*contract.EntityCardReply, error) {
+	c, err := cardReaders[kind](q, id)
+	if c == nil || err != nil {
+		return nil, err
+	}
+	c.Kind = kind
+	if c.Facts == nil {
+		c.Facts = []contract.EntityFact{}
+	}
+	return c, nil
+}
+
+// isClientError: a 4xx failure (a malformed id), which entity_refs leaves out instead of failing the batch.
+func isClientError(err error) bool {
+	var e *HTTPError
+	return errors.As(err, &e) && e.Code >= 400 && e.Code < 500
 }
 
 func fact(label string, t contract.EntityFactType, value string) contract.EntityFact {
@@ -210,9 +282,36 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 		return nil, err
 	}
 	return &contract.EntityCardReply{Id: r.ID, Uuid: ptr(r.ID), Code: optStr(deref(r.Code)), Hash: optStr(r.ContentHash), Title: firstString(resultLabel(r.Name), "Result"), State: optStr(r.State),
+		Preview:   cardPreview(r.ID, r.MediaType, r.Size, r.PreviewID),
 		ProjectId: optStr(deref(r.ProjectID)), At: optStr(cardTime(&r.CreatedAt)), AtLabel: ptr("stored"), Path: itemPath("results", firstString(deref(r.Code), r.ID)),
 		Facts: facts(fact("Task", contract.EntityFactTypeCode, deref(r.TaskCode)), fact("Type", contract.EntityFactTypeCode, r.MediaType),
 			fact("Size", contract.EntityFactTypeBytes, count(r.Size)))}, nil
+}
+
+// previewMaxBytes: the largest image a card shows itself when it has no thumbnail.
+const previewMaxBytes = 4 << 20
+
+// cardPreview: the picture a result's card shows: its stored thumbnail or poster, else a small image itself; none
+// for other files.
+func cardPreview(id, media string, size int64, previewID string) *contract.EntityPreview {
+	view := contract.EntityPreviewView("")
+	switch {
+	case strings.HasPrefix(media, "image/"):
+		view = contract.EntityPreviewViewImage
+	case media == "application/pdf":
+		view = contract.EntityPreviewViewPdf
+	case strings.HasPrefix(media, "video/"):
+		view = contract.EntityPreviewViewVideo
+	default:
+		return nil
+	}
+	if previewID != "" {
+		return &contract.EntityPreview{ResultId: previewID, View: view}
+	}
+	if view == contract.EntityPreviewViewImage && size > 0 && size <= previewMaxBytes && media != "image/svg+xml" {
+		return &contract.EntityPreview{ResultId: id, View: view}
+	}
+	return nil
 }
 
 // resultLabel: a result's file name as people read it (OR-38): no UUID and no long hex run (a hash, a commit) in the

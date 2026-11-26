@@ -445,7 +445,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 
             <Show when={panel() === 'details'}>
               <section class="sv-panel" aria-label="Details">
-                <KvRow icon="messages-square" label="Session" value={<EntityCode code={s()!.code} id={props.id} kind="conversation" />} />
+                <KvRow icon="messages-square" label="Session" value={<EntityCode code={s()!.code} id={props.id} kind="conversation" form="code" />} />
                 <Show when={latest()} keyed>{e => <KvRow icon="activity" label="Latest run" value={<EntityCode id={e.id} kind="execution" />} />}</Show>
                 <Show when={detailsDoc.data} keyed fallback={<Show when={detailsDoc.error} fallback={<Skeleton rows={3} />}>{err => <ErrorBanner text={`Details did not load: ${err()}`} onRetry={detailsDoc.reload} />}</Show>}>
                   {d => <>
