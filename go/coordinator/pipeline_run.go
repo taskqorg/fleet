@@ -122,6 +122,20 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 		// The parent's dispatch director can be the subscription holder.
 		run.ParentExecutionID, run.TaskID, run.SessionID, run.DirectedBy = source, deref(parent.TaskID), deref(parent.SessionID), q.person.Email
 	}
+	if q.caller != nil {
+		// A project app runs only the pipelines it was approved for, as its approver (fleet-project-apps.md).
+		raw, err := q.db().ProjectAppPayload(q.ctx(), q.caller.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fail(403, "The app is not active")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !projectAppPayloadOf(raw).allowsPipeline(def.ID) {
+			return nil, fail(403, "The app may not run pipeline "+def.ID)
+		}
+		run.DirectedBy = q.person.Email
+	}
 	run.ExperimentID, run.Variant = o.ExperimentID, o.Variant
 	if len(o.Inputs) > 0 {
 		inputs := append([]fileRef{}, o.Inputs...)

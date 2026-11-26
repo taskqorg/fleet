@@ -299,6 +299,12 @@ func (a *App) registered() *http.ServeMux {
 			w, hr = withPhases(w, hr) // Server-Timing: the operation's marked phases (server_timing.go)
 			a.serve(w, hr, txNone, func(q *Request) (any, error) { return a.runOp(q, name, q.body, nil) })
 		})
+		// A project app's operations (fleet-project-apps.md): the same dispatcher behind the app key (authorizeApp).
+		mux.HandleFunc("POST /api/apps/ops/{name}", func(w http.ResponseWriter, hr *http.Request) {
+			name := hr.PathValue("name")
+			w, hr = withPhases(w, hr)
+			a.serve(w, hr, txNone, func(q *Request) (any, error) { return a.runOp(q, name, q.body, nil) })
+		})
 	}
 	return mux
 }
@@ -386,7 +392,7 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 
 // guard: the person gate of a REST route (routeGate); an operation's only rule is its declared auth, which runOp applies.
 func (a *App) guard(q *Request) error {
-	if strings.HasPrefix(q.r.URL.Path, "/api/ops/") {
+	if strings.HasPrefix(q.r.URL.Path, "/api/ops/") || strings.HasPrefix(q.r.URL.Path, "/api/apps/ops/") {
 		return nil
 	}
 	return routeGate(q)

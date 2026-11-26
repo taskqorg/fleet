@@ -758,6 +758,14 @@ func init() {
 		if err != nil {
 			return contract.PipelineGetReply{}, err
 		}
+		if q.caller != nil {
+			// An app reads only the runs it started.
+			var by pipelineRequester
+			lenientDecode(run["requestedBy"], &by)
+			if by.Kind != "app" || by.App != q.caller.ID {
+				return contract.PipelineGetReply{}, fail(404, "Unknown run")
+			}
+		}
 		if p := deref(r.ProjectId); p != "" {
 			if own, _ := jsonString(run["projectId"]); own != p {
 				return contract.PipelineGetReply{}, fail(403, "Pipeline belongs to another project")
@@ -768,7 +776,8 @@ func init() {
 	op("pipeline_history", pipelineHistory)
 	addProjectOps("project_detail", "project_resources", "project_resource_items", "project_list", "project_context", "catalogue",
 		"recommendation_set", "question_ask", "question_answer", "question_history", "pipeline_get", "pipeline_history",
-		"pipeline_run", "direct_search", "connections_key_request", "access_grants", "access_grant_ask")
+		"pipeline_run", "direct_search", "connections_key_request", "access_grants", "access_grant_ask",
+		"project_apps", "project_app_ask", "project_app_key_take", "apps_edge_status", "apps_edge_setup")
 	longRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
 }
 

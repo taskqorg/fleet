@@ -165,6 +165,9 @@ func refreshRequestAccess(q *Request) error {
 	if err != nil {
 		return err
 	}
+	if q.caller != nil {
+		p = q.caller.narrow(p)
+	}
 	q.person = p
 	if q.tx != nil {
 		sc := scopeOf(p)

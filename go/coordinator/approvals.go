@@ -26,11 +26,11 @@ var approvalRiskDefault = map[string]string{
 	"read": "free", "analyze": "free", "mockup": "free", "task": "free", "dev-branch": "free",
 	"dev-deploy": "reversible", "test-data": "reversible",
 	"live-deploy": "radical", "delete-accounts": "radical", "ban-accounts": "radical", "user-messages": "radical",
-	"keys": "radical", "access": "radical", "money": "radical", "data-drop": "radical", "other-radical": "radical",
+	"keys": "radical", "access": "radical", "app": "radical", "money": "radical", "data-drop": "radical", "other-radical": "radical",
 }
 
 // approvalOwnerOnly: actions only the owner approves unless settings.approvals names others.
-var approvalOwnerOnly = []string{"keys", "access", "money"}
+var approvalOwnerOnly = []string{"keys", "access", "app", "money"}
 
 const approvalYes, approvalNo = "Approve", "Not now"
 

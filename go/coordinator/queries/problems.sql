@@ -117,7 +117,3 @@ WHERE b.tombstoned_at IS NULL AND NOT b.paused AND s.duty ? 'problems' ORDER BY 
 
 -- name: ProblemQuestionOpen :one
 SELECT EXISTS(SELECT 1 FROM question WHERE id = $1 AND state = 'open');
-
--- name: ProblemOwnerName :one
--- A problem owner's display name (problemOut): one light read, not the bot page's.
-SELECT s.name FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision WHERE b.id = $1;

@@ -156,6 +156,7 @@ type pipelineStepError struct {
 type pipelineRequester struct {
 	Kind         string `json:"kind,omitempty"`
 	Email        string `json:"email,omitempty"`
+	App          string `json:"app,omitempty"` // kind app: the project app (fleet-project-apps.md)
 	ExperimentID string `json:"experimentId,omitempty"`
 }
 
@@ -452,6 +453,11 @@ func (run *runRecord) put(q *Request) error {
 		Variant: agentOpt(run.Variant), TaskID: taskID, BotID: botPtr, SessionID: sessID, DirectedBy: dir, PipelineID: pid, PipelineRevision: prev, ParentExecutionID: agentOpt(run.ParentExecutionID)})
 	if err != nil {
 		return err
+	}
+	if run.RequestedBy.Kind == "app" && run.RequestedBy.App != "" {
+		if err := q.db().ExecutionSetApp(q.ctx(), db.ExecutionSetAppParams{ID: run.ID, AppID: &run.RequestedBy.App}); err != nil {
+			return err
+		}
 	}
 	if !inserted {
 		if err := q.db().PipelineRunUpdate(q.ctx(), db.PipelineRunUpdateParams{ID: run.ID, Observation: o, ProjectID: project,
@@ -841,6 +847,9 @@ func runState(id, state, observation string) (string, string, error) {
 }
 
 func requester(q *Request) pipelineRequester {
+	if q.caller != nil {
+		return pipelineRequester{Kind: "app", App: q.caller.ID}
+	}
 	if q.person != nil {
 		return pipelineRequester{Kind: "person", Email: q.person.Email}
 	}

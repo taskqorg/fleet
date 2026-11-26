@@ -543,6 +543,23 @@ type ApiConnection struct {
 	TombstonedAt *time.Time
 }
 
+type AppsEdge struct {
+	ID         string
+	State      string
+	RequestID  *string
+	QuestionID *string
+	Rotate     bool
+	Payload    []byte
+	UpdatedAt  time.Time
+}
+
+type AppsEdgeWork struct {
+	ID            string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
 type Artifact struct {
 	ID                    string
 	ProjectID             *string
@@ -1047,6 +1064,7 @@ type Execution struct {
 	TombstonedAt      *time.Time
 	SystemActor       *string
 	BotID             *string
+	AppID             *string
 }
 
 type ExecutionSpend struct {
@@ -1443,6 +1461,34 @@ type ProblemDismissal struct {
 	Actor        string
 	At           time.Time
 	TombstonedAt *time.Time
+}
+
+type ProjectApp struct {
+	ID         string
+	ProjectID  string
+	Name       string
+	State      string
+	RequestID  string
+	AskedBy    string
+	ApprovedBy *string
+	QuestionID *string
+	Payload    []byte
+	LastUsedAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  *time.Time
+}
+
+type ProjectAppKey struct {
+	ID         string
+	AppID      string
+	ProjectID  string
+	DirectedBy string
+	Sha256     string
+	CreatedAt  time.Time
+	TakenAt    *time.Time
+	LastUsedAt *time.Time
+	RetiredAt  *time.Time
 }
 
 type ProjectCode struct {

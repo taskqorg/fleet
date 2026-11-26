@@ -278,7 +278,11 @@ func uploadBegin(q *Request, b *contract.ArtifactUploadBeginRequest) (contract.A
 		return none, err
 	}
 	sweepUploads(q.app)
-	return contract.ArtifactUploadBeginReply{UploadId: u.ID, Url: "/api/uploads/" + u.ID, PartBytes: part}, nil
+	base := "/api/uploads/"
+	if q.caller != nil {
+		base = "/api/apps/uploads/"
+	}
+	return contract.ArtifactUploadBeginReply{UploadId: u.ID, Url: base + u.ID, PartBytes: part}, nil
 }
 
 // upload: the upload row (migration 82, queries/uploads.sql): the fields a write guards or a reference names are
@@ -741,4 +745,5 @@ func init() {
 	})
 	op("artifact_upload_begin", uploadBegin)
 	rawRoute("PUT /api/uploads/{id}", (*App).uploadPart)
+	rawRoute("PUT /api/apps/uploads/{id}", (*App).uploadPart) // a project app's upload (fleet-project-apps.md)
 }

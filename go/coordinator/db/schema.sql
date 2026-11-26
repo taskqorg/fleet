@@ -153,6 +153,21 @@ CREATE TABLE api_connection (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE apps_edge (
+  "id" text NOT NULL,
+  "state" text NOT NULL,
+  "request_id" text,
+  "question_id" text,
+  "rotate" boolean NOT NULL,
+  "payload" jsonb NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL
+);
+CREATE TABLE apps_edge_work (
+  "id" text NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
 CREATE TABLE artifact (
   "id" text NOT NULL,
   "project_id" text,
@@ -619,7 +634,8 @@ CREATE TABLE execution (
   "step_id" text,
   "tombstoned_at" timestamp with time zone,
   "system_actor" text,
-  "bot_id" text
+  "bot_id" text,
+  "app_id" text
 );
 CREATE TABLE execution_spend (
   "execution_id" text NOT NULL,
@@ -990,6 +1006,32 @@ CREATE TABLE problem_dismissal (
   "actor" text NOT NULL,
   "at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE project_app (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "name" text NOT NULL,
+  "state" text NOT NULL,
+  "request_id" text NOT NULL,
+  "asked_by" text NOT NULL,
+  "approved_by" text,
+  "question_id" text,
+  "payload" jsonb NOT NULL,
+  "last_used_at" timestamp with time zone,
+  "created_at" timestamp with time zone NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "deleted_at" timestamp with time zone
+);
+CREATE TABLE project_app_key (
+  "id" text NOT NULL,
+  "app_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "directed_by" text NOT NULL,
+  "sha256" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "taken_at" timestamp with time zone,
+  "last_used_at" timestamp with time zone,
+  "retired_at" timestamp with time zone
 );
 CREATE TABLE project_code (
   "code" text NOT NULL,
@@ -1628,6 +1670,7 @@ CREATE FUNCTION fleet_exec_conn_meta(conn_name text, aid text) RETURNS TABLE(pro
 CREATE FUNCTION fleet_issue_code(p_type text, p_project text, p_entity text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_own_projectless_execution(eid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_project_app_id_taken(app text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_project_code(p_project text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_refresh_execution_spend_ids(eids text[]) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;

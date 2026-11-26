@@ -413,6 +413,13 @@ CREATE POLICY live ON problem_dismissal AS RESTRICTIVE FOR SELECT TO public USIN
 DROP POLICY IF EXISTS project_scope ON problem_dismissal;
 CREATE POLICY project_scope ON problem_dismissal FOR ALL TO public USING (fleet_visible(project_id));
 
+-- project_app
+ALTER TABLE project_app ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON project_app;
+CREATE POLICY live ON project_app AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((deleted_at IS NULL) AND (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))))));
+DROP POLICY IF EXISTS project_scope ON project_app;
+CREATE POLICY project_scope ON project_app FOR ALL TO public USING (fleet_visible(project_id));
+
 -- project_recommendation
 ALTER TABLE project_recommendation ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON project_recommendation;

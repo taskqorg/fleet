@@ -158,6 +158,9 @@ func authorizeOp(q *Request, name string) error {
 	if err := refreshRequestAccess(q); err != nil {
 		return err
 	}
+	if q.caller != nil && !appOps[name] {
+		return fail(403, "An app may only run its pipelines")
+	}
 	if err := declaredAuth(q, name); err != nil {
 		return err
 	}

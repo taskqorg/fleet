@@ -473,6 +473,7 @@ type Request struct {
 	peopleView *peopleSnapshot
 	host       *authHost
 	agent      string // execution:<id> when a host agent calls on behalf of person (its director)
+	caller     *appCaller // a project app on /api/apps (apps.go): person is its approver narrowed to the app's project
 	// unknownEmail: the email Access signed in for a person Fleet does not know, set only for boot (bootUnknownAllowed).
 	unknownEmail string
 	body         json.RawMessage
@@ -612,6 +613,9 @@ func (a *App) authorize(q *Request) error {
 	}
 	if a.browserSecret == "" || subtle.ConstantTimeCompare([]byte(supplied), []byte(a.browserSecret)) != 1 {
 		return fail(401, "Unauthorized")
+	}
+	if strings.HasPrefix(q.r.URL.Path, "/api/apps/") {
+		return a.authorizeApp(q, h.Get("X-Fleet-Person"), h.Get("X-Fleet-App-Key"))
 	}
 	email := h.Get("X-Fleet-Person")
 	if email == "" {

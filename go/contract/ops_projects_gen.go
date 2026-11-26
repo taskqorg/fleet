@@ -6,6 +6,289 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+type AppsEdgeSetupReply = AppsEdgeStatusReply
+
+type AppsEdgeSetupRequest struct {
+	RequestId string `json:"requestId"`
+	Rotate    *bool  `json:"rotate,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AppsEdgeSetupRequest) Validate() error {
+	return nil
+}
+
+type AppsEdgeState string
+
+const (
+	AppsEdgeStateMissing AppsEdgeState = "missing"
+	AppsEdgeStateAsked   AppsEdgeState = "asked"
+	AppsEdgeStateWorking AppsEdgeState = "working"
+	AppsEdgeStateReady   AppsEdgeState = "ready"
+	AppsEdgeStateFailed  AppsEdgeState = "failed"
+)
+
+// AppsEdgeStateValues lists every AppsEdgeState in schema order.
+var AppsEdgeStateValues = []AppsEdgeState{AppsEdgeStateMissing, AppsEdgeStateAsked, AppsEdgeStateWorking, AppsEdgeStateReady, AppsEdgeStateFailed}
+
+// Valid: v is one of the schema's values.
+func (v AppsEdgeState) Valid() bool {
+	for _, x := range AppsEdgeStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AppsEdgeStatusReply struct {
+	ApplicationId      *string       `json:"applicationId,omitempty"`
+	CheckedAt          *int64        `json:"checkedAt,omitempty"`
+	Configured         bool          `json:"configured"`
+	Error              *string       `json:"error,omitempty"`
+	ExpiresAt          *int64        `json:"expiresAt,omitempty"`
+	MissingPermissions []string      `json:"missingPermissions,omitempty"`
+	QuestionId         *string       `json:"questionId,omitempty"`
+	ServiceTokenId     *string       `json:"serviceTokenId,omitempty"`
+	State              AppsEdgeState `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AppsEdgeStatusReply) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type AppsEdgeStatusRequest = map[string]json.RawMessage
+
+type AppsPingReply struct {
+	App       string `json:"app"`
+	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AppsPingReply) Validate() error {
+	return nil
+}
+
+type AppsPingRequest = map[string]json.RawMessage
+
+type ProjectAppAskReply = ProjectAppView
+
+type ProjectAppAskRequest struct {
+	CallbackOrigins []string          `json:"callbackOrigins,omitempty"`
+	Id              string            `json:"id"`
+	Limits          *ProjectAppLimits `json:"limits,omitempty"`
+	Name            string            `json:"name"`
+	Pipelines       []string          `json:"pipelines,omitempty"`
+	ProjectId       string            `json:"projectId"`
+	Reason          string            `json:"reason"`
+	RequestId       string            `json:"requestId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppAskRequest) Validate() error {
+	if v.Limits != nil {
+		if err := Check(v.Limits, "limits"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectAppIdRequest struct {
+	AppId string `json:"appId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppIdRequest) Validate() error {
+	return nil
+}
+
+type ProjectAppKeyTakeReply struct {
+	AppId            string  `json:"appId"`
+	EdgeClientId     *string `json:"edgeClientId,omitempty"`
+	EdgeClientSecret *string `json:"edgeClientSecret,omitempty"`
+	Key              string  `json:"key"`
+	KeyId            string  `json:"keyId"`
+	Url              *string `json:"url,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppKeyTakeReply) Validate() error {
+	return nil
+}
+
+type ProjectAppKeyTakeRequest struct {
+	AppId     string  `json:"appId"`
+	RequestId *string `json:"requestId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppKeyTakeRequest) Validate() error {
+	return nil
+}
+
+type ProjectAppKeyView struct {
+	CreatedAt  int64  `json:"createdAt"`
+	Id         string `json:"id"`
+	LastUsedAt *int64 `json:"lastUsedAt,omitempty"`
+	RetiredAt  *int64 `json:"retiredAt,omitempty"`
+	TakenAt    *int64 `json:"takenAt,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppKeyView) Validate() error {
+	return nil
+}
+
+// ProjectAppLimits: Empty or absent: no limit.
+type ProjectAppLimits struct {
+	ConcurrentRuns *int64           `json:"concurrentRuns,omitempty"`
+	RunsPerDay     *int64           `json:"runsPerDay,omitempty"`
+	SpendPerMonth  *ProjectAppSpend `json:"spendPerMonth,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppLimits) Validate() error {
+	if v.SpendPerMonth != nil {
+		if err := Check(v.SpendPerMonth, "spendPerMonth"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectAppRevokeReply = ProjectAppView
+
+type ProjectAppRevokeRequest = ProjectAppIdRequest
+
+type ProjectAppRotateReply = ProjectAppView
+
+type ProjectAppRotateRequest = ProjectAppIdRequest
+
+type ProjectAppSetReply = ProjectAppView
+
+type ProjectAppSetRequest struct {
+	AppId           string            `json:"appId"`
+	CallbackOrigins []string          `json:"callbackOrigins,omitempty"`
+	Limits          *ProjectAppLimits `json:"limits,omitempty"`
+	Pipelines       []string          `json:"pipelines,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppSetRequest) Validate() error {
+	if v.Limits != nil {
+		if err := Check(v.Limits, "limits"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectAppSpend struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppSpend) Validate() error {
+	return nil
+}
+
+type ProjectAppState string
+
+const (
+	ProjectAppStateAsked    ProjectAppState = "asked"
+	ProjectAppStateActive   ProjectAppState = "active"
+	ProjectAppStateDeclined ProjectAppState = "declined"
+	ProjectAppStateRevoked  ProjectAppState = "revoked"
+)
+
+// ProjectAppStateValues lists every ProjectAppState in schema order.
+var ProjectAppStateValues = []ProjectAppState{ProjectAppStateAsked, ProjectAppStateActive, ProjectAppStateDeclined, ProjectAppStateRevoked}
+
+// Valid: v is one of the schema's values.
+func (v ProjectAppState) Valid() bool {
+	for _, x := range ProjectAppStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProjectAppView struct {
+	ApprovedBy      *string             `json:"approvedBy,omitempty"`
+	AskedBy         string              `json:"askedBy"`
+	CallbackOrigins []string            `json:"callbackOrigins"`
+	CreatedAt       int64               `json:"createdAt"`
+	Id              string              `json:"id"`
+	Keys            []ProjectAppKeyView `json:"keys"`
+	LastUsedAt      *int64              `json:"lastUsedAt,omitempty"`
+	Limits          ProjectAppLimits    `json:"limits"`
+	Name            string              `json:"name"`
+	Pipelines       []string            `json:"pipelines"`
+	ProjectId       string              `json:"projectId"`
+	QuestionId      *string             `json:"questionId,omitempty"`
+	Reason          string              `json:"reason"`
+	RequestId       string              `json:"requestId"`
+	State           ProjectAppState     `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppView) Validate() error {
+	if v.CallbackOrigins == nil {
+		return Missing("callbackOrigins")
+	}
+	if v.Keys == nil {
+		return Missing("keys")
+	}
+	for i := range v.Keys {
+		if err := Check(&v.Keys[i], "keys"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Limits, "limits"); err != nil {
+		return err
+	}
+	if v.Pipelines == nil {
+		return Missing("pipelines")
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProjectAppsReply struct {
+	Apps []ProjectAppView `json:"apps"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppsReply) Validate() error {
+	if v.Apps == nil {
+		return Missing("apps")
+	}
+	for i := range v.Apps {
+		if err := Check(&v.Apps[i], "apps"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectAppsRequest struct {
+	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppsRequest) Validate() error {
+	return nil
+}
+
 type ProjectArchiveReply struct {
 	Archived           bool     `json:"archived"`
 	ConnectionRemovals []string `json:"connectionRemovals"`
@@ -115,6 +398,15 @@ func (v *ProjectUpdateRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"apps_edge_setup":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Asks the owner (one approval card) to let Fleet create the Cloudflare service token fleet-apps and the Access application for fleet.ufobe.com/api/apps/* through the Cloudflare API, then probes it. requestId; rotate true refreshes the token's secret instead. Read the state with apps_edge_status.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"requestId\":{\"type\":\"string\"},\"rotate\":{\"type\":\"boolean\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},
+		"apps_edge_status":              {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "The Cloudflare edge for project apps (docs/designs/fleet-project-apps.md, Edge setup): ready, missing, asked, working or failed; the Access application and service token ids, the token's expiry, the last error and any missing Cloudflare permission.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
+		"apps_ping":                     {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "no", Description: "The calling app and its project: the probe of the /api/apps route.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
+		"project_app_ask":               {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Asks for a project app (docs/designs/fleet-project-apps.md): the project's own application calling its pipelines. projectId, requestId (the same id reads the app), id (a name such as dam-site), name, pipelines (default [\"*\"]), callbackOrigins, limits, reason. Creates the owner's approval card; once approved the app is active and project_app_key_take answers its key once.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"callbackOrigins\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"id\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"Empty or absent: no limit.\",\"additionalProperties\":false,\"properties\":{\"concurrentRuns\":{\"minimum\":1,\"type\":\"integer\"},\"runsPerDay\":{\"minimum\":1,\"type\":\"integer\"},\"spendPerMonth\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"currency\":{\"type\":\"string\"}},\"required\":[\"amount\",\"currency\"],\"type\":\"object\"}},\"type\":\"object\"},\"name\":{\"type\":\"string\"},\"pipelines\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"id\",\"name\",\"reason\"],\"type\":\"object\"}")},
+		"project_app_key_take":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Answers an active app's newest key once, with the Cloudflare edge token (clientId and secret) the app sends with it; a second call is 409. Store both in the app's own secret store; never print them.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
+		"project_app_revoke":            {Read: false, Long: false, Errors: []int{403, 404}, Auth: "owner", Agent: "tool", Description: "Owner or full access: retires every key of an app at once and revokes it (an asked app's card is withdrawn).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
+		"project_app_rotate":            {Read: false, Long: false, Errors: []int{403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full access: mints a new key for an active app; the previous key works until the new key's first use. Take it with project_app_key_take.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
+		"project_app_set":               {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full access: changes an active app's pipelines, callback origins or limits (each given field replaces the old one).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"},\"callbackOrigins\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limits\":{\"$comment\":\"Empty or absent: no limit.\",\"additionalProperties\":false,\"properties\":{\"concurrentRuns\":{\"minimum\":1,\"type\":\"integer\"},\"runsPerDay\":{\"minimum\":1,\"type\":\"integer\"},\"spendPerMonth\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"currency\":{\"type\":\"string\"}},\"required\":[\"amount\",\"currency\"],\"type\":\"object\"}},\"type\":\"object\"},\"pipelines\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
+		"project_apps":                  {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "The project's apps (docs/designs/fleet-project-apps.md): state, pipelines, callback origins, limits, keys (created, last use, taken, retired) and last use. Never a key value.", Changes: []string{"project-app"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_archive":               {Read: false, Long: false, Errors: []int{403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.\",\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create a project (requestId, id, content)", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
 		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Revoke a project's initial access grants (projectId, baseAccessVersion)", InputSchema: json.RawMessage("{\"properties\":{\"baseAccessVersion\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"baseAccessVersion\"],\"type\":\"object\"}")},
