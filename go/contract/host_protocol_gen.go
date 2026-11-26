@@ -306,10 +306,13 @@ func (v *ArtifactDeclareRequest) Validate() error {
 
 // ArtifactFailedRequest: POST /api/hosts/artifacts/failed: a transfer that cannot finish.
 type ArtifactFailedRequest struct {
-	ArtifactId string  `json:"artifactId"`
-	Error      string  `json:"error"`
-	HostId     string  `json:"hostId"`
-	StoreId    *string `json:"storeId,omitempty"`
+	ArtifactId  string  `json:"artifactId"`
+	Error       string  `json:"error"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	HostId      string  `json:"hostId"`
+	Name        *string `json:"name,omitempty"`
+	Refused     *bool   `json:"refused,omitempty"`
+	StoreId     *string `json:"storeId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1187,6 +1190,76 @@ func (v *ConnectionRemovePayload) Validate() error {
 	return nil
 }
 
+type DiagnosisCommand struct {
+	At          *int64  `json:"at,omitempty"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Id          string  `json:"id"`
+	Kind        *string `json:"kind,omitempty"`
+	State       string  `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiagnosisCommand) Validate() error {
+	return nil
+}
+
+type DiagnosisOutbox struct {
+	OldestAt *int64           `json:"oldestAt,omitempty"`
+	Routes   []DiagnosisRoute `json:"routes"`
+	Rows     int64            `json:"rows"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiagnosisOutbox) Validate() error {
+	if v.Routes == nil {
+		return Missing("routes")
+	}
+	for i := range v.Routes {
+		if err := Check(&v.Routes[i], "routes"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DiagnosisOutboxFailed struct {
+	ArtifactId  *string `json:"artifactId,omitempty"`
+	At          int64   `json:"at"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Reason      string  `json:"reason"`
+	Route       string  `json:"route"`
+	Status      int64   `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiagnosisOutboxFailed) Validate() error {
+	return nil
+}
+
+type DiagnosisRoute struct {
+	Route string `json:"route"`
+	Rows  int64  `json:"rows"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiagnosisRoute) Validate() error {
+	return nil
+}
+
+type DiagnosisTransfer struct {
+	At          int64   `json:"at"`
+	Error       string  `json:"error"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Id          string  `json:"id"`
+	Kind        string  `json:"kind"`
+	Name        *string `json:"name,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiagnosisTransfer) Validate() error {
+	return nil
+}
+
 type DrainReport struct {
 	Fenced   bool     `json:"fenced"`
 	ReopenAt *string  `json:"reopenAt,omitempty"`
@@ -1499,6 +1572,54 @@ func (v *HostConsumer) Validate() error {
 	return nil
 }
 
+// HostDiagnosis: What a person used to read on the host (docs/designs/fleet-system-management.md#hosts, host_diagnose): built by the executor (diagnose.go), credentials redacted.
+type HostDiagnosis struct {
+	At              int64                   `json:"at"`
+	Commands        []DiagnosisCommand      `json:"commands"`
+	LogPath         *string                 `json:"logPath,omitempty"`
+	LogTail         []string                `json:"logTail"`
+	Outbox          DiagnosisOutbox         `json:"outbox"`
+	OutboxFailed    []DiagnosisOutboxFailed `json:"outboxFailed"`
+	Pid             *int64                  `json:"pid,omitempty"`
+	StartedAt       *int64                  `json:"startedAt,omitempty"`
+	TransfersFailed []DiagnosisTransfer     `json:"transfersFailed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDiagnosis) Validate() error {
+	if v.Commands == nil {
+		return Missing("commands")
+	}
+	for i := range v.Commands {
+		if err := Check(&v.Commands[i], "commands"); err != nil {
+			return err
+		}
+	}
+	if v.LogTail == nil {
+		return Missing("logTail")
+	}
+	if err := Check(&v.Outbox, "outbox"); err != nil {
+		return err
+	}
+	if v.OutboxFailed == nil {
+		return Missing("outboxFailed")
+	}
+	for i := range v.OutboxFailed {
+		if err := Check(&v.OutboxFailed[i], "outboxFailed"); err != nil {
+			return err
+		}
+	}
+	if v.TransfersFailed == nil {
+		return Missing("transfersFailed")
+	}
+	for i := range v.TransfersFailed {
+		if err := Check(&v.TransfersFailed[i], "transfersFailed"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type HostEvent struct {
 	Data      json.RawMessage `json:"data"`
 	Id        string          `json:"id"`
@@ -1795,6 +1916,7 @@ func (v Platform) Valid() bool {
 type PollReply struct {
 	AutoUpdate *string   `json:"autoUpdate,omitempty"`
 	Commands   []Command `json:"commands"`
+	Diagnose   *bool     `json:"diagnose,omitempty"`
 	Target     *string   `json:"target,omitempty"`
 }
 
@@ -1814,6 +1936,7 @@ func (v *PollReply) Validate() error {
 type PollRequest struct {
 	ActiveExecutions []string         `json:"activeExecutions"`
 	Capabilities     []string         `json:"capabilities"`
+	Diagnosis        *HostDiagnosis   `json:"diagnosis,omitempty"`
 	Drain            *DrainReport     `json:"drain,omitempty"`
 	ForgeLogins      []ForgeLogin     `json:"forgeLogins,omitempty"`
 	GitConnections   []string         `json:"gitConnections"`
@@ -1837,6 +1960,11 @@ func (v *PollRequest) Validate() error {
 	}
 	if v.Capabilities == nil {
 		return Missing("capabilities")
+	}
+	if v.Diagnosis != nil {
+		if err := Check(v.Diagnosis, "diagnosis"); err != nil {
+			return err
+		}
 	}
 	if v.Drain != nil {
 		if err := Check(v.Drain, "drain"); err != nil {

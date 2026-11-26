@@ -148,6 +148,175 @@ func (q *Queries) HostAutoUpdate(ctx context.Context, id string) (string, error)
 	return column_1, err
 }
 
+const hostDiagnoseCommands = `-- name: HostDiagnoseCommands :many
+SELECT id, kind, execution_id, status::text AS status, updated_at FROM command
+WHERE host_id = $1::text AND status IN ('pending', 'accepted', 'started', 'unknown') AND tombstoned_at IS NULL
+ORDER BY seq LIMIT 50
+`
+
+type HostDiagnoseCommandsRow struct {
+	ID          string
+	Kind        string
+	ExecutionID *string
+	Status      string
+	UpdatedAt   time.Time
+}
+
+// host_diagnose: commands for the host it has not confirmed as settled, oldest first.
+func (q *Queries) HostDiagnoseCommands(ctx context.Context, hostID string) ([]HostDiagnoseCommandsRow, error) {
+	rows, err := q.db.Query(ctx, hostDiagnoseCommands, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostDiagnoseCommandsRow
+	for rows.Next() {
+		var i HostDiagnoseCommandsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ExecutionID,
+			&i.Status,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const hostDiagnoseObservation = `-- name: HostDiagnoseObservation :one
+SELECT holder, last_seen_at, payload FROM host_observation WHERE id = $1::text AND tombstoned_at IS NULL
+`
+
+type HostDiagnoseObservationRow struct {
+	Holder     *string
+	LastSeenAt *time.Time
+	Payload    []byte
+}
+
+// host_diagnose: the host's holder, last poll and observation payload.
+func (q *Queries) HostDiagnoseObservation(ctx context.Context, id string) (HostDiagnoseObservationRow, error) {
+	row := q.db.QueryRow(ctx, hostDiagnoseObservation, id)
+	var i HostDiagnoseObservationRow
+	err := row.Scan(&i.Holder, &i.LastSeenAt, &i.Payload)
+	return i, err
+}
+
+const hostDiagnoseWaiting = `-- name: HostDiagnoseWaiting :many
+SELECT e.id, e.session_id, e.project_id, e.wait_reason, coalesce(e.data->>'waitDetail', '')::text AS wait_detail, e.updated_at,
+ coalesce((SELECT (extract(epoch FROM min(r.at)) * 1000)::bigint FROM route_decision r WHERE r.execution_id = e.id), 0)::bigint AS first_ms,
+ coalesce((SELECT (extract(epoch FROM r.at) * 1000)::bigint FROM route_decision r WHERE r.execution_id = e.id ORDER BY r.id DESC LIMIT 1), 0)::bigint AS last_ms,
+ coalesce((SELECT r.candidates FROM route_decision r WHERE r.execution_id = e.id ORDER BY r.id DESC LIMIT 1), '[]'::jsonb)::jsonb AS candidates
+FROM execution e
+WHERE e.kind = 'agent_run' AND e.state = 'preparing' AND e.host_id IS NULL AND e.tombstoned_at IS NULL
+ORDER BY e.seq LIMIT 100
+`
+
+type HostDiagnoseWaitingRow struct {
+	ID         string
+	SessionID  *string
+	ProjectID  *string
+	WaitReason *string
+	WaitDetail string
+	UpdatedAt  time.Time
+	FirstMs    int64
+	LastMs     int64
+	Candidates []byte
+}
+
+// host_diagnose: queued agent runs no host took, with their first and latest dispatch decision (ms, 0: none).
+func (q *Queries) HostDiagnoseWaiting(ctx context.Context) ([]HostDiagnoseWaitingRow, error) {
+	rows, err := q.db.Query(ctx, hostDiagnoseWaiting)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostDiagnoseWaitingRow
+	for rows.Next() {
+		var i HostDiagnoseWaitingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.WaitReason,
+			&i.WaitDetail,
+			&i.UpdatedAt,
+			&i.FirstMs,
+			&i.LastMs,
+			&i.Candidates,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const hostDiagnosisAsk = `-- name: HostDiagnosisAsk :exec
+INSERT INTO host_diagnosis(host_id, requested_at) VALUES ($1::text, now())
+ON CONFLICT (host_id) DO UPDATE SET requested_at = now()
+`
+
+// host_diagnose asks the host for a report on its next poll (PollReply.diagnose).
+func (q *Queries) HostDiagnosisAsk(ctx context.Context, hostID string) error {
+	_, err := q.db.Exec(ctx, hostDiagnosisAsk, hostID)
+	return err
+}
+
+const hostDiagnosisGet = `-- name: HostDiagnosisGet :one
+SELECT host_id, requested_at, reported_at, report FROM host_diagnosis WHERE host_id = $1::text
+`
+
+func (q *Queries) HostDiagnosisGet(ctx context.Context, hostID string) (HostDiagnosis, error) {
+	row := q.db.QueryRow(ctx, hostDiagnosisGet, hostID)
+	var i HostDiagnosis
+	err := row.Scan(
+		&i.HostID,
+		&i.RequestedAt,
+		&i.ReportedAt,
+		&i.Report,
+	)
+	return i, err
+}
+
+const hostDiagnosisPut = `-- name: HostDiagnosisPut :exec
+INSERT INTO host_diagnosis(host_id, reported_at, report) VALUES ($1::text, now(), $2::jsonb)
+ON CONFLICT (host_id) DO UPDATE SET reported_at = now(), report = EXCLUDED.report
+`
+
+type HostDiagnosisPutParams struct {
+	HostID string
+	Report []byte
+}
+
+// The report a host sent in its poll (PollRequest.diagnosis).
+func (q *Queries) HostDiagnosisPut(ctx context.Context, arg HostDiagnosisPutParams) error {
+	_, err := q.db.Exec(ctx, hostDiagnosisPut, arg.HostID, arg.Report)
+	return err
+}
+
+const hostDiagnosisWanted = `-- name: HostDiagnosisWanted :one
+SELECT EXISTS (SELECT 1 FROM host_diagnosis WHERE host_id = $1::text AND requested_at > now() - interval '2 minutes'
+ AND (reported_at IS NULL OR reported_at < requested_at))::bool
+`
+
+// Whether a report was asked for after the latest one, in the last two minutes (an older executor never answers: its
+// polls must not stop waiting for ever).
+func (q *Queries) HostDiagnosisWanted(ctx context.Context, hostID string) (bool, error) {
+	row := q.db.QueryRow(ctx, hostDiagnosisWanted, hostID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const hostKnown = `-- name: HostKnown :one
 SELECT EXISTS (SELECT 1 FROM host WHERE host_id= $1::text UNION ALL SELECT 1 FROM host_observation WHERE id= $1::text)
 `

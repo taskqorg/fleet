@@ -1051,6 +1051,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 		}
 	}
 
+	if err := recordDiagnosis(q, host, b.Diagnosis); err != nil {
+		return contract.PollReply{}, err
+	}
 	wait := parsePollWait(q.r)
 	out := []contract.Command{}
 	var err error
@@ -1077,7 +1080,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 			if err != nil {
 				return contract.PollReply{}, err
 			}
-			if len(out) > 0 {
+			if len(out) > 0 || pollWantsDiagnosis(q, host) {
 				break
 			}
 			select {
@@ -1097,7 +1100,11 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 		}
 	}
 replyNow:
-	return contract.PollReply{Commands: out, Target: pace.target, AutoUpdate: ptr(autoUpdateOf(q.host))}, nil
+	reply := contract.PollReply{Commands: out, Target: pace.target, AutoUpdate: ptr(autoUpdateOf(q.host))}
+	if pollWantsDiagnosis(q, host) {
+		reply.Diagnose = ptr(true)
+	}
+	return reply, nil
 }
 
 func (a *App) invalidateEnvCache() {

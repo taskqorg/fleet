@@ -901,7 +901,12 @@ func artifactGate(q *Request, id string, declared []string) (rawObject, error) {
 		return nil, err
 	}
 	var gate any = struct{}{}
-	if len(r.Missing) > 0 || len(r.Failed) > 0 {
+	if re := r.refusedError(); re != nil {
+		gate = struct {
+			State string                 `json:"state"`
+			Error executionArtifactError `json:"error"`
+		}{"failed", *re}
+	} else if len(r.Missing) > 0 || len(r.Failed) > 0 {
 		gate = struct {
 			State string                 `json:"state"`
 			Error executionArtifactError `json:"error"`
@@ -959,7 +964,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		if expired == "" && r.stillUploading() {
 			return nil
 		}
-		failed := len(r.Failed) > 0 || len(r.Missing) > 0 || len(r.Pending) > 0
+		failed := len(r.Failed) > 0 || len(r.Missing) > 0 || len(r.Pending) > 0 || len(r.Refused) > 0
 		for _, k := range []string{"waitReason", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
 			delete(e, k)
 		}
@@ -972,6 +977,9 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 				msg = expired
 			}
 			e["error"] = jsonBytes(executionArtifactError{Code: "artifact-required", Message: msg, Missing: r.Missing, Failed: r.Failed, Pending: &r.Pending})
+			if re := r.refusedError(); re != nil {
+				e["error"] = jsonBytes(re)
+			}
 		}
 		if err := executionPut(q, &e); err != nil {
 			return err

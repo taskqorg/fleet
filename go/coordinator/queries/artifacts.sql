@@ -204,7 +204,8 @@ SELECT artifact_id,store_id,upload_id,staging_key FROM artifact_copy WHERE state
 -- name: ArtExecution :one
 -- The execution an artifact belongs to: its host, project, task, experiment and declared required names.
 SELECT id, coalesce(host_id,'')::text AS host_id, project_id, task_id, experiment_id,
- coalesce(data->'requiredArtifacts','[]'::jsonb)::jsonb AS required_artifacts
+ coalesce(data->'requiredArtifacts','[]'::jsonb)::jsonb AS required_artifacts,
+ coalesce(data->'refusedArtifacts','[]'::jsonb)::jsonb AS refused_artifacts
 FROM execution WHERE id=$1;
 
 -- name: ArtTaskArtifactRules :one

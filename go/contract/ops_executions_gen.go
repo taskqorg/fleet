@@ -1328,6 +1328,84 @@ func (v *GatewayVersion) Validate() error {
 	return nil
 }
 
+type HostDiagnoseCommand struct {
+	ExecutionId *string `json:"executionId,omitempty"`
+	Id          string  `json:"id"`
+	Kind        string  `json:"kind"`
+	State       string  `json:"state"`
+	UpdatedAt   int64   `json:"updatedAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDiagnoseCommand) Validate() error {
+	return nil
+}
+
+type HostDiagnoseReply struct {
+	CoordinatorCommands []HostDiagnoseCommand `json:"coordinatorCommands"`
+	Fresh               bool                  `json:"fresh"`
+	Host                string                `json:"host"`
+	LastSeenAt          *int64                `json:"lastSeenAt,omitempty"`
+	Online              bool                  `json:"online"`
+	Problems            []string              `json:"problems,omitempty"`
+	Report              *HostDiagnosis        `json:"report,omitempty"`
+	ReportedAt          *int64                `json:"reportedAt,omitempty"`
+	Version             *string               `json:"version,omitempty"`
+	Waiting             []HostDiagnoseWaiting `json:"waiting"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDiagnoseReply) Validate() error {
+	if v.CoordinatorCommands == nil {
+		return Missing("coordinatorCommands")
+	}
+	for i := range v.CoordinatorCommands {
+		if err := Check(&v.CoordinatorCommands[i], "coordinatorCommands"); err != nil {
+			return err
+		}
+	}
+	if v.Report != nil {
+		if err := Check(v.Report, "report"); err != nil {
+			return err
+		}
+	}
+	if v.Waiting == nil {
+		return Missing("waiting")
+	}
+	for i := range v.Waiting {
+		if err := Check(&v.Waiting[i], "waiting"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type HostDiagnoseRequest struct {
+	Host string `json:"host"`
+	Wait *int64 `json:"wait,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDiagnoseRequest) Validate() error {
+	return nil
+}
+
+type HostDiagnoseWaiting struct {
+	DecidedAt   *int64  `json:"decidedAt,omitempty"`
+	ExecutionId string  `json:"executionId"`
+	ProjectId   *string `json:"projectId,omitempty"`
+	SessionId   *string `json:"sessionId,omitempty"`
+	Since       int64   `json:"since"`
+	SkippedHere *string `json:"skippedHere,omitempty"`
+	WaitDetail  *string `json:"waitDetail,omitempty"`
+	WaitReason  *string `json:"waitReason,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDiagnoseWaiting) Validate() error {
+	return nil
+}
+
 type HostHarnessVersion struct {
 	Expected string  `json:"expected"`
 	Harness  string  `json:"harness"`
@@ -3575,6 +3653,7 @@ func init() {
 		"executions_list":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Read executions with optional project/task/session/parent/problem/needsYou filters; projectIds keeps those projects, excludeProjectIds leaves those out ('-' is no project). Fleet's own background calls (systemActor set) are left out unless system is include or only, or parentExecutionId names their parent. For bounded enumeration set limit (1..1000); reply has executions and hasMore, plus nextAfter when more rows exist. Repeat identical filters with after=nextAfter until hasMore=false. Order is seq,id; pages use fresh snapshots. Without limit returns the complete legacy executions wrapper, without paging metadata. after requires limit; inaccessible, unknown or filter-mismatched cursors return 400.", Changes: []string{"execution"}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined. Paging is opt-in with limit (1..1000); repeat identical filters and pass nextAfter as after until hasMore is false. Order is (seq,id). Each page is a fresh read snapshot; concurrent updates can move rows. Unknown, inaccessible or filter-mismatched cursors return 400. Without limit the complete legacy list is returned and nextAfter is omitted. system (default exclude) leaves out Fleet's own background calls (systemActor set), include adds them, only keeps them alone.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"$comment\":\"nextAfter from the preceding page with identical filters; requires limit.\",\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"excludeProjectIds\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); '-' is no project (an empty id or null is a 400); applied after projectIds, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"$comment\":\"Opt in to paging: 1..1000 rows. Omit for the legacy complete list.\",\"minimum\":1,\"type\":\"integer\"},\"needsYou\":{\"type\":\"boolean\"},\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"sessionId\":{\"type\":\"string\"},\"system\":{\"$comment\":\"Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).\",\"enum\":[\"exclude\",\"include\",\"only\"],\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_reconcile":  {Read: false, Long: false, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner or full access: preview or reconcile stuck executions with no live worker process, leaving active runs untouched; writes one audit row each", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: preview or reconcile stuck executions with no live worker process, leaving active runs untouched.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "CI runners and the executions they ran", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
+		"host_diagnose":         {Read: false, Long: true, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Diagnose a host without SSH or its files (owner or the host's holder): last poll, version, the executor's log tail, outbox and its refused rows, failed transfers, unsettled journal commands, the coordinator's unconfirmed commands, and every queued turn or step with the reason dispatch skipped this host. Asks the host for a fresh report and waits up to wait seconds (default 30, max 60); an offline host answers with its latest report and its age.", Changes: []string{"host"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"host\":{\"type\":\"string\"},\"wait\":{\"$comment\":\"seconds, at most 60\",\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"host\"],\"type\":\"object\"}")},
 		"host_update_history":   {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A host's update history, newest first, one page per request (before: the previous reply's nextCursor): each change of the update result the host reported (version, state, reason, when), the component versions that release pins for the host (cli/codex, tool/node) and those it changed against the release the host last switched to.", Changes: []string{"host"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"before\":{\"$comment\":\"Page: entries with seq below this (the previous reply's nextCursor).\",\"type\":\"integer\"},\"hostId\":{\"type\":\"string\"},\"limit\":{\"$comment\":\"Entries per page (default 30, at most 100).\",\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"hostId\"],\"type\":\"object\"}")},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "includeRemoved: also hosts removed by hosts_remove (state removed).", Changes: []string{"host", "execution", "command"}, InputSchema: json.RawMessage("{\"$comment\":\"includeRemoved: also hosts removed by hosts_remove (state removed).\",\"additionalProperties\":true,\"properties\":{\"includeRemoved\":{\"type\":\"boolean\"}},\"type\":\"object\"}")},
 		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.\",\"additionalProperties\":true,\"properties\":{\"harnesses\":{},\"holder\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"maxConcurrent\":{\"minimum\":1,\"type\":[\"integer\",\"null\"]},\"name\":{\"type\":\"string\"},\"platform\":{\"type\":\"string\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},

@@ -772,6 +772,8 @@ export function ResultRow(p: { artifacts: (ArtifactMeta & { previewId?: string }
 /** An execution start: state, agent mark, duration chip, resource stats, and Stop while it runs (CUJ 5). */
 export function BoundaryRow(p: {
   session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; resources?: ResourceSummary; onStop?: () => void; stopReason?: string;
+  /** Why a run not started or waiting has not gone on (dispatch's skip reason); shown while it is open. */
+  waitDetail?: string | null;
 }) {
   const active = createMemo(() => (openStates('execution') as string[]).includes(p.state));
   const secs = createMemo(() =>
@@ -798,6 +800,7 @@ export function BoundaryRow(p: {
             <EntityCode id={p.executionId} kind="execution" label />
             <Show when={p.session} keyed>{sid => <EntityCode id={sid} kind="conversation" />}</Show>
             <AgentMark harness={p.mark.harness} model={p.mark.model} effort={p.mark.effort} />
+            <Show when={active() && p.waitDetail} keyed>{w => <span class="chip t-attention" data-ui="boundary-wait">Waiting: {w}</span>}</Show>
             <span class="th-svc">
               <Show when={p.resources?.tokens?.total != null && (p.resources.tokens.basis !== 'unavailable' || p.resources.tokens.total > 0)}>
                 <span class="hc" data-tip="Tokens">
@@ -987,6 +990,7 @@ export function Thread(p: {
           endedAt={b.endedAt}
           now={p.now}
           resources={b.resources}
+          waitDetail={b.waitDetail}
           stopReason={p.stopReason}
           onStop={p.onStop && (openStates('execution') as string[]).includes(b.state) ? () => p.onStop!(b.executionId) : undefined}
         />

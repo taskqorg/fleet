@@ -115,8 +115,8 @@ func parseGapRules(raw []byte) (*gapRules, error) {
 	}
 	for i := range r.Rules {
 		x := &r.Rules[i]
-		if x.Source != "agent" && x.Source != "gateway" {
-			return nil, fmt.Errorf("agent-gaps.json rule %d: source must be agent or gateway", i)
+		if x.Source != "agent" && x.Source != "gateway" && x.Source != "dispatch" {
+			return nil, fmt.Errorf("agent-gaps.json rule %d: source must be agent, gateway or dispatch", i)
 		}
 		if x.re, err = regexp.Compile(x.Match); err != nil {
 			return nil, fmt.Errorf("agent-gaps.json rule %d: %w", i, err)
@@ -424,6 +424,36 @@ func recordCallGap(q *Request, r *gapRules, id string, parent *string, projectID
 	return err == nil, err
 }
 
+// dispatchCauseKind: the kind of a dispatch stall cause, its last segment ("host:owner-mac:forge" is forge).
+func dispatchCauseKind(cause string) string {
+	if i := strings.LastIndex(cause, ":"); i >= 0 {
+		return cause[i+1:]
+	}
+	return cause
+}
+
+// recordDispatchGap writes the gap of a queued agent run that only a changed setting lets start (dispatch.go): one row
+// per execution and cause kind, its line the skip reason (docs/designs/fleet-people-access.md#6-dispatch).
+func recordDispatchGap(q *Request, r *gapRules, executionID string, projectID *string, at time.Time, kind, reason string) (bool, error) {
+	class, _, ok := r.classify(gapFailure{Source: "dispatch", Tool: kind, Text: reason})
+	if !ok {
+		return false, nil
+	}
+	err := q.db().AgentGapPut(q.ctx(), db.AgentGapPutParams{ID: "dispatch:" + executionID + ":" + kind, ExecutionID: executionID, ProjectID: projectID,
+		Source: "dispatch", At: gapTime(at), Class: class, Family: gapFamilyOf(class), Tool: kind, Line: cutRunes(reason, 500), Rules: r.digest})
+	return err == nil, err
+}
+
+// dispatchGap: the gap of a dispatch pass's settings-only skip; a rules file that does not load records nothing.
+func dispatchGap(q *Request, executionID string, projectID *string, cause, reason string) error {
+	r, err := loadGapRules()
+	if err != nil {
+		return nil
+	}
+	_, err = recordDispatchGap(q, r, executionID, projectID, time.Now(), dispatchCauseKind(cause), reason)
+	return err
+}
+
 // ingestCallGap: the gap of a gateway call spool ingest just recorded (connection_ingest.go connRecord).
 func ingestCallGap(q *Request, id string, parent, projectID *string, startedAt *int64, l contract.CallLine) error {
 	r, err := loadGapRules()
@@ -528,6 +558,21 @@ func reclassifyGaps(ctx context.Context, a *App, q *Request, days int) (contract
 				at = *c.StartedAt
 			}
 			wrote, err := recordCallGap(q, r, c.ID, c.ParentExecutionID, c.ProjectID, at, c.Tool, c.Connection, firstString(c.ErrorCode, c.Outcome))
+			if err != nil {
+				return err
+			}
+			out.Failures++
+			if wrote {
+				out.Gaps++
+			}
+		}
+		dispatched, err := q.db().AgentGapDispatchRows(q.ctx(), since)
+		if err != nil {
+			return err
+		}
+		for _, x := range dispatched {
+			// The skip happened once: its stored reason is classified again, not re-read from dispatch.
+			wrote, err := recordDispatchGap(q, r, x.ExecutionID, x.ProjectID, x.At, x.Tool, x.Line)
 			if err != nil {
 				return err
 			}

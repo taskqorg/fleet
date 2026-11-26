@@ -173,6 +173,7 @@ func runExecutor() error {
 	if err := os.Chmod(root, 0o700); err != nil {
 		return err
 	}
+	startLog(root)
 	lock, err := os.OpenFile(filepath.Join(root, "executor.lock"), os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -202,6 +203,7 @@ func runExecutor() error {
 	if sessions == "" {
 		sessions = filepath.Join(root, "sessions")
 	}
+	logStatus(db, host)
 	e := &executor{db: db, ex: db, root: root, url: url, token: token, host: host, live: map[string]*live{}, sessions: sessions, harnessCache: map[string]M{}, storeCfg: storeConfig()}
 	if err := requeueUnauthorized(db); err != nil {
 		return err
@@ -376,6 +378,9 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, ForgeLogins: forgeLoginReport(), Version: &v, HarnessVersions: managedVersions(), ToolVersions: toolVersions(), Update: lastUpdate(e.root),
 		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions(), Load: e.sampleHostLoad(), Drain: drainReport(time.Now())}
+	if diagnoseNext.Swap(false) {
+		body.Diagnosis = diagnosis(e.db)
+	}
 	var a answer
 	if wait > 0 {
 		a = sendPoll(ctx, e.url, e.token, pollRoute+"?wait="+wait.String(), body)
@@ -405,6 +410,9 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 			sig.PollOk, sig.PollError = pollFields(a)
 		} else {
 			sig.Target = reply.Target
+			if reply.Diagnose != nil && *reply.Diagnose {
+				diagnoseNext.Store(true) // host_diagnose: the next poll carries the report
+			}
 			if reply.AutoUpdate != nil {
 				sig.AutoUpdate = *reply.AutoUpdate
 			}

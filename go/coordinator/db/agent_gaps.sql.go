@@ -30,6 +30,45 @@ func (q *Queries) AgentGapClassCount(ctx context.Context, arg AgentGapClassCount
 	return column_1, err
 }
 
+const agentGapDispatchRows = `-- name: AgentGapDispatchRows :many
+SELECT execution_id, project_id, at, tool, line FROM agent_gap WHERE source = 'dispatch' AND at >= $1::timestamptz
+`
+
+type AgentGapDispatchRowsRow struct {
+	ExecutionID string
+	ProjectID   *string
+	At          time.Time
+	Tool        string
+	Line        string
+}
+
+// The dispatch rows of a window (a reclassification classifies their stored reason again).
+func (q *Queries) AgentGapDispatchRows(ctx context.Context, since pgtype.Timestamptz) ([]AgentGapDispatchRowsRow, error) {
+	rows, err := q.db.Query(ctx, agentGapDispatchRows, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentGapDispatchRowsRow
+	for rows.Next() {
+		var i AgentGapDispatchRowsRow
+		if err := rows.Scan(
+			&i.ExecutionID,
+			&i.ProjectID,
+			&i.At,
+			&i.Tool,
+			&i.Line,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const agentGapFailedCalls = `-- name: AgentGapFailedCalls :many
 SELECT id, parent_execution_id, project_id, started_at,
   coalesce(data->>'tool', '')::text AS tool, coalesce(data->>'connection', '')::text AS connection,
