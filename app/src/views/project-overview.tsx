@@ -156,7 +156,10 @@ export function ProjectOverview(props: { projectId: string }) {
                   <Go to={`/results/${enc(r.code ?? r.id)}?project=${enc(props.projectId)}`} cls="pw-line">
                     <Icon name="file-text" />
                     <span class="pw-line-m"><span>{r.summary || fileLabel(r.name) || r.name}</span><Show when={r.code}><span class="muted mono">{r.code}</span></Show></span>
-                    <RowFacts><Ago t={r.createdAt} /></RowFacts>
+                    <RowFacts>
+                      <Show when={r.variant}>{x => <Fact text={x()} tip="Lab variant that made it" />}</Show>
+                      <Ago t={r.createdAt} />
+                    </RowFacts>
                   </Go>
                 )}</For>
               </div>
@@ -191,9 +194,12 @@ export function ProjectOverview(props: { projectId: string }) {
   );
 }
 
-/** A job on the Overview: its name, then the method in use, or "not chosen · N candidates" when Lab has candidates. */
+/** A job on the Overview: its name, then the method in use, or "not chosen · N candidates" when Lab has candidates;
+ * its experiments and the time of its last Lab run (board Approved P-A1). */
 function JobLine(props: { g: Group; projectId: string }) {
   const candidates = () => props.g.pipelines.filter(p => p.best).length;
+  // The job's last Lab run: the newest of its pipelines' runs on the project's sample (time is the rightmost fact).
+  const lastAt = () => Math.max(0, ...props.g.pipelines.map(p => (p.lastAt ? Date.parse(p.lastAt) || 0 : 0)));
   return (
     <Go to={projectFacetPath(props.projectId, 'pipelines')} cls="pw-line">
       <Icon name={props.g.inUse ? 'circle-check' : 'circle-dashed'} />
@@ -206,6 +212,7 @@ function JobLine(props: { g: Group; projectId: string }) {
       <RowFacts>
         <Show when={props.g.inUse && props.g.inUseSource === 'shared'}><span class="muted">shared default</span></Show>
         <Show when={props.g.experiments > 0}><Fact text={`${props.g.experiments} ${props.g.experiments === 1 ? 'experiment' : 'experiments'}`} tip="Lab experiments on this job" /></Show>
+        <Show when={lastAt()}>{t => <Ago t={t()} />}</Show>
       </RowFacts>
     </Go>
   );

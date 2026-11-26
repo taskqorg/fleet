@@ -1486,8 +1486,8 @@ func artifactWorkFacts(ctx context.Context, a *App, rows []contract.ArtifactRow)
 		}
 	}
 	type facts struct {
-		harness  *string
-		attempts int64
+		harness, variant *string
+		attempts         int64
 	}
 	byRun, byTask := map[string]facts{}, map[string]int64{}
 	if len(runs) > 0 {
@@ -1496,7 +1496,7 @@ func artifactWorkFacts(ctx context.Context, a *App, rows []contract.ArtifactRow)
 			return err
 		}
 		for _, r := range rs {
-			byRun[r.ID] = facts{r.Harness, r.TaskAttempts}
+			byRun[r.ID] = facts{r.Harness, r.Variant, r.TaskAttempts}
 		}
 	}
 	if len(tasks) > 0 {
@@ -1513,7 +1513,7 @@ func artifactWorkFacts(ctx context.Context, a *App, rows []contract.ArtifactRow)
 		var n int64
 		if r.ExecutionId != nil {
 			f := byRun[*r.ExecutionId]
-			r.Harness, n = f.harness, f.attempts
+			r.Harness, r.Variant, n = f.harness, f.variant, f.attempts
 		}
 		if r.TaskId != nil && n == 0 {
 			n = byTask[*r.TaskId] // the run is gone or hidden: the task still counts its attempts

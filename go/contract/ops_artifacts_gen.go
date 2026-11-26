@@ -188,6 +188,7 @@ type ArtifactRow struct {
 	TaskAttempts          *int64  `json:"taskAttempts,omitempty"`
 	TaskCode              *string `json:"taskCode,omitempty"`
 	TaskId                *string `json:"taskId"`
+	Variant               *string `json:"variant,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
