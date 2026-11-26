@@ -1,6 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,5 +76,50 @@ func TestSessionSubjectLockRank(t *testing.T) {
 	sess, _ := lockRank("session:1")
 	if !(task < subj && subj < sess) {
 		t.Fatalf("ranks task %d, subject %d, session %d", task, subj, sess)
+	}
+}
+
+// Requirement: a bot wake (trigger, Needs you, run now) takes the per-(bot, subject) conversation lock the store knows,
+// after the bot and before the session it creates. Risk: every HAL0 trigger failed "unknown advisory lock scope
+// \"bot-subject:...\"" on prod and the bot stopped running (2026-11-25).
+func TestBotSubjectLockRank(t *testing.T) {
+	subj, err := lockRank("bot-subject:b1:trigger:t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot, _ := lockRank("bot:b1")
+	sess, _ := lockRank("session:1")
+	if !(bot < subj && subj < sess) {
+		t.Fatalf("ranks bot %d, subject %d, session %d", bot, subj, sess)
+	}
+}
+
+// Requirement: every lock key prefix a coordinator source passes to acquireTxLock(s) is one lockRank knows. Risk: a new
+// prefix ("session-subject:", "bot-subject:") compiles and passes unit tests that stub the store, then fails every call
+// on prod with "unknown advisory lock scope" (2026-11-25, 2026-11-26).
+func TestLockPrefixesKnown(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`acquireTxLocks?(?:Mode)?\([^"\n]*"([a-z-]+:)"`)
+	seen := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range re.FindAllSubmatch(src, -1) {
+			seen++
+			if _, err := lockRank(string(m[1]) + "x"); err != nil {
+				t.Errorf("%s: %v", f, err)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no lock calls found: the pattern no longer matches the sources")
 	}
 }

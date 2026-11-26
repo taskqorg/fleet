@@ -53,7 +53,7 @@ var deletedHostRoutes = map[string]bool{"/api/hosts/poll": true, "/api/hosts/rec
 // Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
 // and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:
 //
-//	GLOBAL < DISPATCH < project:* < bot:* < task:* < session-subject:* < session:* < experiment:* < execution:* < host:* < usageKey:* < person-setting:* < budget:* < problems:* < board:*
+//	GLOBAL < DISPATCH < project:* < bot:* < task:* < bot-subject:*, session-subject:* < session:* < experiment:* < execution:* < host:* < usageKey:* < person-setting:* < budget:* < problems:* < board:*
 const (
 	GLOBAL   = "fleet:write"
 	DISPATCH = "dispatch"
@@ -72,6 +72,9 @@ func lockRank(key string) (int, error) {
 		return 3, nil
 	case strings.HasPrefix(key, "task:") && len(key) > len("task:"):
 		return 4, nil
+	case strings.HasPrefix(key, "bot-subject:") && len(key) > len("bot-subject:"):
+		// The one conversation per bot and subject (botConversation): taken before the session it creates.
+		return 5, nil
 	case strings.HasPrefix(key, "session-subject:") && len(key) > len("session-subject:"):
 		// The one open conversation per agent and subject (sessionStart): taken before the session it creates.
 		return 5, nil
