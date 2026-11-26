@@ -152,7 +152,9 @@ func projectCounts(by map[string]contract.ProjectWorkCounts) []contract.ProjectW
 			ids = append(ids, p)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return (ids[i] == "") != (ids[j] == "") && ids[j] == "" || (ids[i] == "") == (ids[j] == "") && ids[i] < ids[j] })
+	sort.Slice(ids, func(i, j int) bool {
+		return (ids[i] == "") != (ids[j] == "") && ids[j] == "" || (ids[i] == "") == (ids[j] == "") && ids[i] < ids[j]
+	})
 	out := make([]contract.ProjectWorkCounts, 0, len(ids))
 	for _, p := range ids {
 		c := by[p]
