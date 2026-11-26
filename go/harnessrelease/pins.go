@@ -32,6 +32,9 @@ type Kind struct {
 	Dir     string // under the releases root
 	Names   []string
 	Origins map[string]string // per component, the vendor's official download prefix; every pin's URL starts with it
+	// Env: components the executor names in an environment variable instead of putting them on PATH (the project
+	// browser's Playwright module and Chromium).
+	Env map[string]string
 }
 
 var (
@@ -41,13 +44,21 @@ var (
 			"claude":      "https://downloads.claude.ai/claude-code-releases/",
 			"antigravity": "https://storage.googleapis.com/antigravity-public/antigravity-cli/",
 		}}
-	Tools = Kind{Name: "tool", File: "tool-pins.json", Dir: "tools", Names: []string{"node", "pnpm", "gh", "glab"},
+	// Tools: node before playwright, whose --version needs node on PATH (fleet-update prepares them in this order).
+	Tools = Kind{Name: "tool", File: "tool-pins.json", Dir: "tools",
+		Names: []string{"node", "pnpm", "gh", "glab", "jq", "rg", "python", "playwright", "chromium"},
 		Origins: map[string]string{
-			"node": "https://nodejs.org/dist/",
-			"pnpm": "https://github.com/pnpm/pnpm/releases/download/",
-			"gh":   "https://github.com/cli/cli/releases/download/",
-			"glab": "https://gitlab.com/gitlab-org/cli/-/releases/",
-		}}
+			"node":       "https://nodejs.org/dist/",
+			"pnpm":       "https://github.com/pnpm/pnpm/releases/download/",
+			"gh":         "https://github.com/cli/cli/releases/download/",
+			"glab":       "https://gitlab.com/gitlab-org/cli/-/releases/",
+			"jq":         "https://github.com/jqlang/jq/releases/download/",
+			"rg":         "https://github.com/BurntSushi/ripgrep/releases/download/",
+			"python":     "https://github.com/astral-sh/python-build-standalone/releases/download/",
+			"playwright": "https://registry.npmjs.org/playwright-core/-/",
+			"chromium":   "https://storage.googleapis.com/chrome-for-testing-public/",
+		},
+		Env: map[string]string{"playwright": "FLEET_PLAYWRIGHT_MODULE", "chromium": "FLEET_BROWSER_EXECUTABLE"}}
 	Kinds = []Kind{CLIs, Tools}
 )
 
@@ -185,10 +196,27 @@ func (a Asset) validate() error {
 	if err != nil || (a.SHA256 != "" && (len(digest) != 32 || a.SHA512 != "")) || (a.SHA256 == "" && len(digest) != 64) {
 		return errors.New("invalid payload digest")
 	}
-	if _, stable := versionParts(a.Version); !stable || (a.Entry != "" && (!filepath.IsLocal(a.Entry) || filepath.Clean(a.Entry) != a.Entry || a.Entry == ".")) {
+	if !stableVersion(a.Version) || (a.Entry != "" && (!filepath.IsLocal(a.Entry) || filepath.Clean(a.Entry) != a.Entry || a.Entry == ".")) {
 		return errors.New("invalid version or executable path")
 	}
 	return nil
+}
+
+// stableVersion: x.y.z, or w.x.y.z for Chromium.
+func stableVersion(v string) bool {
+	if _, ok := versionParts(v); ok {
+		return true
+	}
+	fields := strings.Split(v, ".")
+	if len(fields) != 4 {
+		return false
+	}
+	for _, f := range fields {
+		if n, err := strconv.Atoi(f); err != nil || n < 0 || strconv.Itoa(n) != f {
+			return false
+		}
+	}
+	return true
 }
 
 func versionParts(v string) ([3]int, bool) {

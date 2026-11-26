@@ -166,6 +166,11 @@ jobs:
             pnpm: v => `https://github.com/pnpm/pnpm/releases/tag/v${v}`,
             gh: v => `https://github.com/cli/cli/releases/tag/v${v}`,
             glab: v => `https://gitlab.com/gitlab-org/cli/-/releases/v${v}`,
+            jq: v => `https://github.com/jqlang/jq/releases/tag/jq-${v}`,
+            rg: v => `https://github.com/BurntSushi/ripgrep/releases/tag/${v}`,
+            python: v => `https://docs.python.org/release/${v}/whatsnew/changelog.html`,
+            playwright: v => `https://github.com/microsoft/playwright/releases/tag/v${v}`,
+            chromium: v => `https://chromereleases.googleblog.com/ (Chrome ${v})`,
           };
           const lines = [failed.length ? '<!-- fleet-pins-qualification:failed -->' : '<!-- fleet-pins-qualification:offline-passed -->'];
           lines.push(`Update the release-managed ${process.env.KIND} components from vendor release metadata ([host update procedure](https://github.com/${process.env.GITHUB_REPOSITORY}/blob/main/docs/designs/fleet-host-updates.md)). Every host verifies each payload before switching; a host that cannot run one keeps its current release.`, '');

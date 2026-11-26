@@ -231,6 +231,22 @@ const tools = {
   pnpm: async exe => ({ 'store path': await use(exe, ['', 'store', 'path'], out => out.trim().length > 0) }),
   gh: async exe => ({ 'help': await use(exe, ['', 'help'], out => out.includes('gh <command>')) }),
   glab: async exe => ({ 'help': await use(exe, ['', 'help'], out => /glab/i.test(out)) }),
+  jq: async exe => ({ 'filter': await use(exe, ['', '-n', '-c', '{ok: (1 + 1)}'], out => out.trim() === '{"ok":2}') }),
+  rg: async exe => ({ 'search': await use(exe, ['', '--files', '--max-depth', '1', dirname(exe)], out => out.includes('rg')) }),
+  python: async exe => ({
+    'runs a script': await use(exe, ['', '-c', 'import json, sqlite3, ssl; print(json.dumps({"ok": sqlite3.sqlite_version > ""}))'], out => out.includes('"ok": true')),
+    'python3 beside it': await use(exe, ['python3', '--version'], out => /^Python 3\./.test(out.trim())),
+    'pip beside it': await use(exe, ['pip', '--version'], out => /^pip \d+/.test(out.trim())),
+  }),
+  // The project browser (go/executor/project_browser.cjs) loads index.js beside cli.js and connects over CDP.
+  playwright: async exe => ({
+    'module loads': await use(node, ['', '-e', `console.log(require(${JSON.stringify(join(dirname(exe), 'index.js'))}).chromium.name())`], out => out.trim() === 'chromium'),
+  }),
+  // --no-sandbox: GitHub's Ubuntu runners block user namespaces. The sandboxed launch is checked on each host: step 8
+  // and the project browser's readiness check.
+  chromium: async exe => ({
+    'renders a page': await use(exe, ['', '--headless', '--no-sandbox', '--dump-dom', 'data:text/html,<title>fleet</title><p id=q>ready</p>'], out => out.includes('ready')),
+  }),
 };
 
 const run = kind === 'cli' ? { codex: codexChecks, claude: claudeChecks, antigravity: antigravityChecks } : tools;
@@ -278,7 +294,7 @@ for (const [name, h] of Object.entries(result.harnesses)) {
   const names = [...new Set([...Object.keys(h.current), ...Object.keys(h.candidate)])];
   for (const check of names) {
     const cell = c => (c ? `${c.ok ? 'pass' : 'fail'}: ${String(c.detail).replaceAll('|', '/').replaceAll('\n', ' ').slice(0, 120)}` : '-');
-    lines.push(`| ${name} ${h.from} → ${h.to} | ${check} | ${cell(h.current[check])} | ${cell(h.candidate[check])} |`);
+    lines.push(`| ${name} ${h.from ?? 'not pinned'} → ${h.to} | ${check} | ${cell(h.current[check])} | ${cell(h.candidate[check])} |`);
   }
 }
 console.log(lines.join('\n'));

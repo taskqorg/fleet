@@ -54,7 +54,7 @@ func (u *updater) stageCandidate(kindName, name, dir string, raw []byte) (string
 	}
 	defer unlock()
 	p := &part{r: root, root: dir, stage: filepath.Join(dir, ".stage")}
-	if err := u.prepareHarness(p, name, a); err != nil {
+	if err := u.prepareHarness(p, name, a, nil); err != nil { // the executor's PATH already leads with its managed tools
 		return "", err
 	}
 	// One candidate per component: the others of this component go.

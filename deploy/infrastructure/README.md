@@ -9,6 +9,7 @@ Host service definitions and administrative scripts for coordinator storage, ori
 - [fleet-postgres.sql](fleet-postgres.sql): psql setup for the `fleet` database owner and non-owner `fleet_app` runtime role; peer-authentication setup is documented in its header.
 - [fleet-backup.sh](fleet-backup.sh): nightly ClickHouse backup, Garage mirror and optional age-encrypted secret archive; invoked by the backup timer.
 - [agent-access-smoke.sh](agent-access-smoke.sh): site page and API access checks, including the `site-agents` identity.
+- [fleet-browser-chrome.apparmor](fleet-browser-chrome.apparmor): the AppArmor profile that lets the pinned Chromium on PDS18 create its user-namespace sandbox.
 - [agent-browser-open.sh](agent-browser-open.sh): opens the production origin in Orca using host-scoped access headers and checks identity; returns a browser page ID for later commands.
 - [sse-smoke.sh](sse-smoke.sh): live SSE smoke against an explicitly selected test task, using the operator's Access session.
 - [pds18-ci/](pds18-ci/README.md): isolated trusted-main CI guest setup and runner registration.

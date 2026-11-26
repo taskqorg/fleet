@@ -62,48 +62,69 @@ func managedExecutable(name, fallback, model string) (path string, managed bool,
 
 // useManagedTools puts the release's pinned host tools (config/tool-pins.json, docs/designs/fleet-host-updates.md)
 // first on this process's PATH, once at start. Every child inherits it: native runs, readiness, the tool:<name>
-// capability (exec.LookPath) and forge calls all find the same binary. A release without tool pins keeps the host's.
+// capability (exec.LookPath) and forge calls all find the same binary. The project browser's Playwright module and
+// Chromium (harnessrelease.Tools.Env) replace FLEET_PLAYWRIGHT_MODULE and FLEET_BROWSER_EXECUTABLE instead. A release
+// without tool pins keeps the host's.
 func useManagedTools() error {
 	release := releaseHarnesses()
 	if release.err != nil {
 		return nil // the CLI manifest error is reported where a CLI is used (managedExecutable)
 	}
-	dirs, err := managedToolDirs(release.root)
-	if err != nil || len(dirs) == 0 {
+	dirs, env, err := managedToolDirs(release.root)
+	if err != nil {
 		return err
+	}
+	for k, v := range env {
+		if err := os.Setenv(k, v); err != nil {
+			return err
+		}
+	}
+	if len(dirs) == 0 {
+		return nil
 	}
 	return os.Setenv("PATH", strings.Join(append(dirs, os.Getenv("PATH")), string(os.PathListSeparator)))
 }
 
-// managedToolDirs: the directory of each pinned tool's executable under the releases root, each checked present. A
-// missing one stops the executor, so the release fails its health check and rolls back.
-func managedToolDirs(root string) ([]string, error) {
+// managedToolDirs: the directory of each pinned PATH tool's executable under the releases root, and the variables of
+// the others, each checked present. A missing one stops the executor, so the release fails its health check and rolls
+// back. Playwright's pinned executable is its cli.js; the module the browser script loads is index.js beside it.
+func managedToolDirs(root string) ([]string, map[string]string, error) {
 	exe, err := os.Executable()
 	if err == nil {
 		exe, err = filepath.EvalSymlinks(exe)
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	assets, err := harnessrelease.Tools.Read(filepath.Dir(exe), runtime.GOOS+"-"+runtime.GOARCH)
 	if err != nil {
-		return nil, fmt.Errorf("managed tool manifest: %w", err)
+		return nil, nil, fmt.Errorf("managed tool manifest: %w", err)
 	}
+	return managedTools(root, assets)
+}
+
+func managedTools(root string, assets map[string]harnessrelease.Asset) ([]string, map[string]string, error) {
 	var dirs []string
+	env := map[string]string{}
 	for _, name := range harnessrelease.Tools.Names {
 		a, ok := assets[name]
 		if !ok {
 			continue
 		}
 		path := filepath.Join(root, a.Executable(name))
-		if !isFile(path) {
-			return nil, fmt.Errorf("release-managed tool %s %s executable missing", name, a.Version)
+		if name == "playwright" {
+			path = filepath.Join(filepath.Dir(path), "index.js")
 		}
-		if d := filepath.Dir(path); !slices.Contains(dirs, d) {
+		if !isFile(path) {
+			return nil, nil, fmt.Errorf("release-managed tool %s %s executable missing", name, a.Version)
+		}
+		if key, ok := harnessrelease.Tools.Env[name]; ok {
+			env[key] = path
+		} else if d := filepath.Dir(path); !slices.Contains(dirs, d) {
 			dirs = append(dirs, d)
 		}
 	}
-	return dirs, nil
+	return dirs, env, nil
 }
 
 // runExecutable: the CLI a run launches. A host qualification run (docs/designs/fleet-host-updates.md, step 4) names a
@@ -188,8 +209,9 @@ func managedVersions() []contract.HarnessVersion {
 	return versions
 }
 
-// toolSemver: a tool's version in its --version output ("v26.13.1", "gh version 2.105.0 (2026-11-01)").
-var toolSemver = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
+// toolSemver: a tool's version in its --version output ("v26.13.1", "gh version 2.105.0 (2026-11-01)", "jq-1.8.2",
+// Chromium's four parts).
+var toolSemver = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
 
 // releaseTools: this release's host tool pins (config/tool-pins.json), nil while they are off.
 var releaseTools = sync.OnceValue(func() map[string]harnessrelease.Asset {

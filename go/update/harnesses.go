@@ -32,24 +32,30 @@ func (u *updater) prepareHarnesses(p *part, release string) error {
 		if err != nil {
 			return fmt.Errorf("%w: %s manifest: %v", refusal("harness-manifest"), kindLabel(k), err)
 		}
+		// A tool's --version may need an earlier tool of its kind (playwright runs on node): each prepared tool's
+		// directory goes first on the PATH of the later version runs, as the executor puts it on every run's PATH.
+		var path []string
 		for _, name := range k.Names {
 			a, ok := assets[name]
 			if !ok {
 				continue
 			}
-			if err := u.prepareHarness(p, name, a); err != nil {
+			if err := u.prepareHarness(p, name, a, path); err != nil {
 				var invalid refusal
 				if errors.As(err, &invalid) {
 					return fmt.Errorf("%w: %v", refusal(fmt.Sprintf("%s: %s/%s %s", invalid, k.Name, name, a.Version)), err)
 				}
 				return fmt.Errorf("%s %s %s: %w", kindLabel(k), name, a.Version, err)
 			}
+			if k.Name == harnessrelease.Tools.Name {
+				path = append(path, filepath.Join(p.root, filepath.Dir(a.Executable(name))))
+			}
 		}
 	}
 	return nil
 }
 
-func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) error {
+func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset, path []string) error {
 	dir := a.Dir(name)
 	if _, err := p.r.Stat(dir); err == nil {
 		cached, err := p.r.ReadFile(filepath.Join(dir, ".fleet-checksums"))
@@ -115,7 +121,7 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 	// libc, its macOS) or that reports another version refuses the release, and the host stays on its current one.
 	// Root (PDS18) does not run vendor code; its target, linux-amd64, is qualified offline before the merge.
 	if os.Geteuid() != 0 {
-		if err := harnessVersionRuns(filepath.Join(files, entry), stage, a.Version); err != nil {
+		if err := harnessVersionRuns(filepath.Join(files, entry), stage, a.Version, path); err != nil {
 			return err
 		}
 	}
@@ -157,8 +163,8 @@ func (u *updater) downloadHarness(a harnessrelease.Asset, path string, newHash f
 }
 
 // harnessVersionRuns: `<exe> --version` with a private home and no account names version. A wrong answer or a failed
-// start refuses; a timeout is transient (a busy host), so the next run tries again.
-func harnessVersionRuns(exe, stage, version string) error {
+// start refuses; a timeout is transient (a busy host), so the next run tries again. path goes first on its PATH.
+func harnessVersionRuns(exe, stage, version string, path []string) error {
 	home, err := os.MkdirTemp(stage, "home-")
 	if err != nil {
 		return err
@@ -167,7 +173,7 @@ func harnessVersionRuns(exe, stage, version string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), harnessVersionWait)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, "--version")
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + home, "DISABLE_AUTOUPDATER=1"}
+	cmd.Env = []string{"PATH=" + strings.Join(append(path, os.Getenv("PATH")), string(os.PathListSeparator)), "HOME=" + home, "TMPDIR=" + home, "DISABLE_AUTOUPDATER=1"}
 	cmd.Dir = home
 	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
