@@ -637,6 +637,95 @@ func (q *Queries) DeliverySettingsPut(ctx context.Context, arg DeliverySettingsP
 	return err
 }
 
+const deliverySiteExtend = `-- name: DeliverySiteExtend :exec
+UPDATE delivery_site_observation SET last_seen = $1 WHERE first_seen = $2
+`
+
+type DeliverySiteExtendParams struct {
+	LastSeen  time.Time
+	FirstSeen time.Time
+}
+
+func (q *Queries) DeliverySiteExtend(ctx context.Context, arg DeliverySiteExtendParams) error {
+	_, err := q.db.Exec(ctx, deliverySiteExtend, arg.LastSeen, arg.FirstSeen)
+	return err
+}
+
+const deliverySiteLatest = `-- name: DeliverySiteLatest :one
+SELECT first_seen, last_seen, covered_from, coordinator_version, ui_version, project_id
+FROM delivery_site_observation WHERE covered_from IS NOT NULL ORDER BY first_seen DESC LIMIT 1
+`
+
+func (q *Queries) DeliverySiteLatest(ctx context.Context) (DeliverySiteObservation, error) {
+	row := q.db.QueryRow(ctx, deliverySiteLatest)
+	var i DeliverySiteObservation
+	err := row.Scan(
+		&i.FirstSeen,
+		&i.LastSeen,
+		&i.CoveredFrom,
+		&i.CoordinatorVersion,
+		&i.UiVersion,
+		&i.ProjectID,
+	)
+	return i, err
+}
+
+const deliverySiteObservations = `-- name: DeliverySiteObservations :many
+SELECT first_seen, last_seen, covered_from, coordinator_version, ui_version, project_id
+FROM delivery_site_observation ORDER BY first_seen
+`
+
+func (q *Queries) DeliverySiteObservations(ctx context.Context) ([]DeliverySiteObservation, error) {
+	rows, err := q.db.Query(ctx, deliverySiteObservations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeliverySiteObservation
+	for rows.Next() {
+		var i DeliverySiteObservation
+		if err := rows.Scan(
+			&i.FirstSeen,
+			&i.LastSeen,
+			&i.CoveredFrom,
+			&i.CoordinatorVersion,
+			&i.UiVersion,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deliverySiteStart = `-- name: DeliverySiteStart :exec
+INSERT INTO delivery_site_observation(first_seen, last_seen, covered_from, coordinator_version, ui_version, project_id)
+VALUES ($1, $1, $2, $3, $4, $5)
+`
+
+type DeliverySiteStartParams struct {
+	FirstSeen          time.Time
+	CoveredFrom        *time.Time
+	CoordinatorVersion string
+	UiVersion          string
+	ProjectID          string
+}
+
+func (q *Queries) DeliverySiteStart(ctx context.Context, arg DeliverySiteStartParams) error {
+	_, err := q.db.Exec(ctx, deliverySiteStart,
+		arg.FirstSeen,
+		arg.CoveredFrom,
+		arg.CoordinatorVersion,
+		arg.UiVersion,
+		arg.ProjectID,
+	)
+	return err
+}
+
 const deliverySnapshotGet = `-- name: DeliverySnapshotGet :one
 SELECT state FROM delivery_snapshot WHERE id = 'last'
 `
@@ -759,20 +848,4 @@ func (q *Queries) DeliveryUISeen(ctx context.Context) ([]DeliveryUISeenRow, erro
 		return nil, err
 	}
 	return items, nil
-}
-
-const deliveryUISeenSave = `-- name: DeliveryUISeenSave :exec
-INSERT INTO delivery_ui_seen(version, seen_at, project_id)
-SELECT x.v, x.a, $1 FROM jsonb_to_recordset($2::jsonb) AS x(v text, a text)
-ON CONFLICT (version) DO UPDATE SET seen_at = EXCLUDED.seen_at WHERE delivery_ui_seen.seen_at <> EXCLUDED.seen_at
-`
-
-type DeliveryUISeenSaveParams struct {
-	ProjectID string
-	Seen      []byte
-}
-
-func (q *Queries) DeliveryUISeenSave(ctx context.Context, arg DeliveryUISeenSaveParams) error {
-	_, err := q.db.Exec(ctx, deliveryUISeenSave, arg.ProjectID, arg.Seen)
-	return err
 }

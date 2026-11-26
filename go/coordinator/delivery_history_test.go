@@ -95,7 +95,7 @@ func TestDeliveryEvidenceIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
-	deliveryInstalls(&r, dhState{}, map[string]hostVersion{"coordinator": {"1.2.4", "2026-11-14T11:30:00Z"}}, hostVersion{}, now)
+	deliverySiteEvidenceOf([]db.DeliverySiteObservation{siteSighting("2026-11-14T10:58:00Z", "2026-11-14T11:30:00Z", "2026-11-14T11:30:00Z", "1.2.4", "1.2.4")}, nil).reconcile(&r)
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestDeliveryEvidenceIntegration(t *testing.T) {
 		t.Fatal(series)
 	}
 	exact := contract.DeliveryRelease{Tag: "v1.2.3", Published: loaded.Published}
-	deliveryInstalls(&exact, dhState{}, map[string]hostVersion{"coordinator": {"1.2.3", "2026-11-14T11:30:00Z"}}, hostVersion{}, now)
+	deliverySiteEvidenceOf([]db.DeliverySiteObservation{siteSighting("2026-11-14T10:58:00Z", "2026-11-14T11:30:00Z", "2026-11-14T11:30:00Z", "1.2.3", "1.2.3")}, nil).reconcile(&exact)
 	if exact.InstalledVersions["coordinator"] != "1.2.3" {
 		t.Fatal(exact)
 	}
@@ -142,7 +142,8 @@ func TestDeliveryCompatibilityAndRefusal(t *testing.T) {
 	}
 	ui := contract.DeliveryRelease{Tag: "ui-1.2.2-v1.2.3", Published: "2026-11-14T10:00:00Z"}
 	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
-	deliveryInstalls(&ui, dhState{UISeen: map[string]string{"1.2.3": "2026-11-14T11:00:00Z"}}, map[string]hostVersion{"h": {"1.2.3", "2026-11-14T11:00:00Z"}}, hostVersion{}, now)
+	deliveryInstalls(&ui, "2026-11-14T10:00:00Z", map[string]hostVersion{"h": {"1.2.3", "2026-11-14T11:00:00Z"}}, now)
+	deliverySiteEvidenceOf(nil, map[string]string{"1.2.3": "2026-11-14T11:00:00Z"}).reconcile(&ui)
 	if len(ui.Installed) != 0 || len(ui.Available) != 0 || ui.UiOnSite == nil {
 		t.Fatal(ui)
 	}
@@ -222,46 +223,125 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	if len(regs) != 2 || regs[0].Key != "ui_wait" || regs[0].BaselineMs != 150000 {
 		t.Fatalf("a stalled UI release regresses against UI-only installs: %+v", regs)
 	}
-	// The minute pass's sighting beats the 10-minute history pass's.
-	saved := uiSeenSnapshot()
-	t.Cleanup(func() { uiSeenAt.Lock(); uiSeenAt.m = saved; uiSeenAt.Unlock() })
-	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 12, 0, 0, time.UTC))
-	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 20, 0, 0, time.UTC))
-	if uiSeenSnapshot()["9.9.9"] != "2026-11-17T16:12:00Z" {
-		t.Fatal(uiSeenSnapshot())
-	}
-	// Its own UI seen a second before GitHub's publication time (clock skew) is on the site at publication, not never.
-	r := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
-	deliveryInstalls(&r, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:00:00Z", "1.261117.28": "2026-11-17T16:59:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
-	if deref(r.UiOnSite) != "2026-11-17T17:00:01Z" {
-		t.Fatal(r)
-	}
-	// Its own version cannot be served before publication, however far the clock is off; a newer one only within a minute.
-	early := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
-	deliveryInstalls(&early, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T16:50:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
-	newer := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
-	deliveryInstalls(&newer, dhState{UISeen: map[string]string{"1.261117.30": "2026-11-17T16:50:00Z", "1.261117.31": "2026-11-17T17:00:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
-	if deref(early.UiOnSite) != "2026-11-17T17:00:01Z" || deref(newer.UiOnSite) != "2026-11-17T17:00:01Z" {
-		t.Fatal(early, newer)
-	}
-	stale := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
-	deliveryInstalls(&stale, dhState{UISeen: map[string]string{"1.261117.30": "2026-11-17T16:50:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
-	if stale.UiOnSite != nil {
-		t.Fatal("a newer UI seen well before publication says nothing of this one", stale)
-	}
-	// ... but while the site still serves it, the release has been on the site since its publication, as delivery_status says.
-	deliveryInstalls(&stale, dhState{UISeen: map[string]string{"1.261117.30": "2026-11-17T16:50:00Z"}}, nil, hostVersion{"1.261117.30", "2026-11-17T17:04:00Z"}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
-	if deref(stale.UiOnSite) != "2026-11-17T17:00:01Z" {
-		t.Fatal(stale)
-	}
-	odd := contract.DeliveryRelease{Tag: "ui-kit-v1.2", Published: "2026-11-17T17:00:01Z"}
-	deliveryInstalls(&odd, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:01:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
-	if odd.UiOnSite != nil {
-		t.Fatal("a tag that is no Fleet release records nothing", odd)
+	// An exact UI-only identity keeps the clock-skew allowance. Same-or-newer
+	// evidence must cover publication, including when the version was already served.
+	const published = "2026-11-17T17:00:01Z"
+	for _, tc := range []struct {
+		name         string
+		observations []db.DeliverySiteObservation
+		legacy       map[string]string
+		want         string
+	}{
+		{"exact legacy clock skew", nil, map[string]string{"1.261117.29": "2026-11-17T16:50:00Z"}, published},
+		{"stale newer sighting", []db.DeliverySiteObservation{siteSighting("2026-11-17T16:50:00Z", "2026-11-17T16:50:00Z", "2026-11-17T16:50:00Z", "1.261117.26", "1.261117.30")}, nil, ""},
+		{"near publication clock skew", []db.DeliverySiteObservation{siteSighting("2026-11-17T16:50:00Z", "2026-11-17T17:00:00Z", "2026-11-17T17:00:00Z", "1.261117.26", "1.261117.30")}, nil, published},
+		{"already serving newer UI", []db.DeliverySiteObservation{siteSighting("2026-11-17T16:50:00Z", "2026-11-17T16:50:00Z", "2026-11-17T17:04:00Z", "1.261117.26", "1.261117.30")}, nil, published},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: published}
+			deliverySiteEvidenceOf(tc.observations, tc.legacy).reconcile(&r)
+			if deref(r.UiOnSite) != tc.want {
+				t.Fatalf("UI on site = %q, want %q", deref(r.UiOnSite), tc.want)
+			}
+		})
 	}
 	for tag, want := range map[string]bool{"ui-1.261117.26-v1.261117.27": true, "ui-kit-1.0": false, "ui-v2.0.0": false, "v1.2.3": false} {
 		if uiOnlyRelease(tag) != want || deliveryReleaseTag(tag) != (want || tag[0] == 'v') {
 			t.Errorf("%s: uiOnly %v", tag, uiOnlyRelease(tag))
+		}
+	}
+}
+
+func siteSighting(covered, first, last, coordinator, ui string) db.DeliverySiteObservation {
+	parse := func(s string) time.Time {
+		at, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			panic(err)
+		}
+		return at
+	}
+	return db.DeliverySiteObservation{CoveredFrom: ptr(parse(covered)), FirstSeen: parse(first), LastSeen: parse(last), CoordinatorVersion: coordinator, UiVersion: ui}
+}
+
+// Requirement: recover times from retained version sightings even when GitHub
+// history was unavailable during several deployments. A genuine observation
+// gap cannot provide a success or a pending wait for the missing interval.
+func TestDeliverySiteRecovery(t *testing.T) {
+	const covered = "2026-11-26T08:05:00Z"
+	observations := []db.DeliverySiteObservation{
+		siteSighting("2026-11-26T08:00:00Z", "2026-11-26T08:00:00Z", "2026-11-26T08:01:00Z", "1.261126.10", "1.261126.10"),
+		siteSighting(covered, covered, "2026-11-26T10:00:00Z", "1.261126.12", "1.261126.12"),
+		siteSighting(covered, "2026-11-26T10:01:00Z", "2026-11-26T10:01:00Z", "1.261126.14", "1.261126.14"),
+		siteSighting(covered, "2026-11-26T10:02:00Z", "2026-11-26T10:02:00Z", "1.261126.14", "1.261126.15"),
+		siteSighting(covered, "2026-11-26T10:03:00Z", "2026-11-26T10:05:00Z", "1.261126.16", "1.261126.16"),
+	}
+	site := deliverySiteEvidenceOf(observations, nil)
+	rels := []contract.DeliveryRelease{
+		{Tag: "v1.261126.11", Published: "2026-11-26T08:04:00Z"},
+		{Tag: "v1.261126.13", Published: "2026-11-26T08:06:00Z"},
+		{Tag: "v1.261126.14", Published: "2026-11-26T10:00:15Z", Available: map[string]string{"coordinator": "2026-11-26T10:03:00Z"}, AvailabilityVersions: map[string]string{"coordinator": "1.261126.16"}, UiOnSite: ptr("2026-11-26T10:03:00Z")},
+		{Tag: "ui-1.261126.14-v1.261126.15", Published: "2026-11-26T10:01:30Z"},
+		{Tag: "v1.261126.17", Published: "2026-11-26T10:04:00Z"},
+	}
+	prs := make([]contract.DeliveryPr, len(rels))
+	for i := range rels {
+		r := &rels[i]
+		pub, _ := time.Parse(time.RFC3339, r.Published)
+		r.Target = r.Tag
+		prs[i] = contract.DeliveryPr{Number: int64(i + 1), MergeSha: r.Target, Opened: pub.Add(-time.Minute).Format(time.RFC3339), Merged: pub.Add(-time.Second).Format(time.RFC3339)}
+		site.reconcile(r)
+	}
+	deliveryDerive(prs, nil, rels)
+	if rels[0].UiOnSite != nil || rels[0].Available["coordinator"] != "" {
+		t.Fatalf("missing coverage became a successful observation: %+v", rels[0])
+	}
+	if prs[1].Durations["availability"] != 6_900_000 || rels[1].Installed["coordinator"] != "" || rels[1].AvailabilityVersions["coordinator"] != "1.261126.14" {
+		t.Fatalf("late qualifying release skipped the exact install incorrectly: %+v", prs[1])
+	}
+	if prs[2].Durations["availability"] != 45_000 || prs[2].Durations["install"] != 45_000 || prs[2].Durations["ui"] != 45_000 {
+		t.Fatalf("earlier retained evidence did not replace later derived times: %+v", prs[2])
+	}
+	if prs[3].Durations["ui_install"] != 30_000 || prs[3].Durations["total"] != 90_000 || len(prs[3].Available) != 0 {
+		t.Fatalf("UI-only release did not retain its own clock: %+v", prs[3])
+	}
+	from, until := "2026-11-26T08:00:00Z", "2026-11-26T10:05:00Z"
+	series := deliveryValues(prs, nil, from, until)
+	last := observations[len(observations)-1]
+	deliveryPending(series, prs, from, until, site.pendingFrom(last.LastSeen, from))
+	if len(series["availability"]) != 2 || len(series["availability_wait"]) != 1 || series["availability_wait"][0].pr != 5 || len(series["ui_wait"]) != 0 {
+		t.Fatalf("regression inputs include the gap or omit the pending release: %+v", series)
+	}
+	if from := site.pendingFrom(last.LastSeen.Add(3*time.Minute), covered); from != "" {
+		t.Fatalf("stale collector still asserts pending since %s", from)
+	}
+}
+
+// Requirement: historical reconciliation preserves observed exact installs and
+// UI sightings while discarding ambiguous same-or-newer times across the outage.
+func TestDeliveryHistoricalObservationGap(t *testing.T) {
+	gap := siteSighting("2026-11-25T18:00:00Z", "2026-11-25T18:00:00Z", "2026-11-26T04:20:00Z", "", "")
+	gap.CoveredFrom = nil
+	const firstSeen = "2026-11-26T04:00:00Z"
+	for _, cv := range []string{"1.261125.116", "1.261126.9"} {
+		r := contract.DeliveryRelease{
+			Tag: "v" + cv, Published: "2026-11-25T18:10:00Z",
+			Installed: map[string]string{"coordinator": firstSeen},
+			Available: map[string]string{"coordinator": firstSeen}, AvailabilityVersions: map[string]string{"coordinator": "1.261126.9"},
+			UiOnSite: ptr(firstSeen),
+		}
+		if cv == "1.261126.9" {
+			r.Published = "2026-11-26T03:59:12Z"
+			r.InstalledVersions = map[string]string{"coordinator": cv}
+		}
+		deliverySiteEvidenceOf([]db.DeliverySiteObservation{gap}, map[string]string{"1.261126.9": firstSeen}).reconcile(&r)
+		if r.Installed["coordinator"] != firstSeen {
+			t.Fatalf("recorded install timestamp changed: %+v", r)
+		}
+		if cv == "1.261125.116" && (r.Available["coordinator"] != "" || r.UiOnSite != nil || r.InstalledVersions["coordinator"] != "") {
+			t.Fatalf("unqualified history became a sample: %+v", r)
+		}
+		if cv == "1.261126.9" && (r.Available["coordinator"] != firstSeen || deref(r.UiOnSite) != firstSeen || r.InstalledVersions["coordinator"] != cv) {
+			t.Fatalf("exact version history was lost: %+v", r)
 		}
 	}
 }

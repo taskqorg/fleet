@@ -73,10 +73,20 @@ WHERE (delivery_history_state.backfilled_from, delivery_history_state.backfilled
   IS DISTINCT FROM (EXCLUDED.backfilled_from, EXCLUDED.backfilled, EXCLUDED.through, EXCLUDED.pulls_updated, EXCLUDED.installs_from,
   EXCLUDED.refreshed_at, EXCLUDED.problem, EXCLUDED.checked_release, EXCLUDED.checked_at);
 
--- name: DeliveryUISeenSave :exec
-INSERT INTO delivery_ui_seen(version, seen_at, project_id)
-SELECT x.v, x.a, @project_id FROM jsonb_to_recordset(@seen::jsonb) AS x(v text, a text)
-ON CONFLICT (version) DO UPDATE SET seen_at = EXCLUDED.seen_at WHERE delivery_ui_seen.seen_at <> EXCLUDED.seen_at;
+-- name: DeliverySiteObservations :many
+SELECT first_seen, last_seen, covered_from, coordinator_version, ui_version, project_id
+FROM delivery_site_observation ORDER BY first_seen;
+
+-- name: DeliverySiteLatest :one
+SELECT first_seen, last_seen, covered_from, coordinator_version, ui_version, project_id
+FROM delivery_site_observation WHERE covered_from IS NOT NULL ORDER BY first_seen DESC LIMIT 1;
+
+-- name: DeliverySiteExtend :exec
+UPDATE delivery_site_observation SET last_seen = @last_seen WHERE first_seen = @first_seen;
+
+-- name: DeliverySiteStart :exec
+INSERT INTO delivery_site_observation(first_seen, last_seen, covered_from, coordinator_version, ui_version, project_id)
+VALUES (@first_seen, @first_seen, @covered_from, @coordinator_version, @ui_version, @project_id);
 
 -- name: DeliveryRunReadsKeep :exec
 DELETE FROM delivery_run_read WHERE NOT run_id = ANY (@ids::bigint[]);

@@ -568,6 +568,14 @@ CREATE TABLE delivery_settings (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE delivery_site_observation (
+  "first_seen" timestamp with time zone NOT NULL,
+  "last_seen" timestamp with time zone NOT NULL,
+  "covered_from" timestamp with time zone,
+  "coordinator_version" text NOT NULL,
+  "ui_version" text NOT NULL,
+  "project_id" text NOT NULL
+);
 CREATE TABLE delivery_snapshot (
   "id" text NOT NULL,
   "state" jsonb NOT NULL,

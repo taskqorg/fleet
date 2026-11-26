@@ -217,6 +217,11 @@ CREATE POLICY live ON delivery_settings AS RESTRICTIVE FOR SELECT TO public USIN
 DROP POLICY IF EXISTS project_scope ON delivery_settings;
 CREATE POLICY project_scope ON delivery_settings FOR ALL TO public USING (fleet_visible(project_id));
 
+-- delivery_site_observation
+ALTER TABLE delivery_site_observation ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON delivery_site_observation;
+CREATE POLICY project_scope ON delivery_site_observation FOR ALL TO public USING (fleet_visible(project_id));
+
 -- delivery_state
 ALTER TABLE delivery_state ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON delivery_state;
