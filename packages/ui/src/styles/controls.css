@@ -114,7 +114,7 @@
   .seg:hover { background: var(--hover); }
   .seg.on { background: var(--selected); color: var(--accent); }
   .seg[aria-pressed="true"] { background: var(--selected); color: var(--accent); }
-  .facets { padding-block: var(--space-1); font-size: var(--font-size-sm); }
+  .facets { padding: var(--space-1) var(--space-4); font-size: var(--font-size-sm); } /* the filter bar's gutter (.fbar) */
   .facets .num { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
   .project-set { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
   /* A long choice wraps to the next line instead of squeezing its labels into each other (phone 390). */
