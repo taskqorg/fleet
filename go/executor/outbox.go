@@ -24,6 +24,7 @@ import (
 
 	"fleet/contract"
 	"fleet/errtrack"
+	"fleet/mcpserve"
 )
 
 // requeueUnauthorized: a 401 is a credential condition of the host, not of the row: at start those rows go back to the
@@ -339,6 +340,24 @@ var pollClient = httpClient(35 * time.Second)
 // coordinator and resent whole, so a deadline shorter than its ingest never lets it through and holds every row
 // behind it, the terminal receipt included.
 var deliveryClient = httpClient(pollClient.Timeout)
+
+var boardReadDeliveryClient = httpClient(contract.BoardReadMaxWaitSeconds*time.Second + boardReadHTTPMargin)
+
+func outboxDeliveryClient(route, body string) *http.Client {
+	if route == contract.RouteAgentTools.Path {
+		var envelope contract.AgentToolsRequest
+		if json.Unmarshal([]byte(body), &envelope) == nil {
+			rpc := mcpserve.Parse(envelope.Request)
+			if rpc.Method == "tools/call" && rpc.Params.Name == "board_read" {
+				wait := boardReadWaitSeconds(rpc.Params.Name, decRaw(rpc.Params.Arguments))
+				if wait > 0 && time.Duration(wait)*time.Second+boardReadHTTPMargin > deliveryClient.Timeout {
+					return boardReadDeliveryClient
+				}
+			}
+		}
+	}
+	return deliveryClient
+}
 
 func postJSON(c *http.Client, url, token string, v any) (*http.Response, error) {
 	return postJSONCtx(context.Background(), c, url, token, v)
@@ -738,7 +757,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			hold(false)
 			return nil
 		}
-		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
+		a := sendWithClient(context.Background(), outboxDeliveryClient(r.route, r.body), p.url, p.token, r.route, r.route, value)
 		// A span batch the telemetry store refuses for now (429, 503) holds only its own lane, never the coordinator as a
 		// whole; it says nothing about the coordinator either, so a probe it was stays open for the next request.
 		busy := a.kind == answerRetry && (a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)

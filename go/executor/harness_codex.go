@@ -117,7 +117,7 @@ type mcpServerEntry struct {
 	Args    jsonValue `json:"args"`
 	Tools   []string  `json:"tools"`
 	Env     jsonValue `json:"env"`
-	// ToolTimeoutSec: a server whose calls run longer than the harness default (project-env).
+	// ToolTimeoutSec configures the native MCP deadline for servers with longer calls.
 	ToolTimeoutSec int `json:"toolTimeoutSec"`
 }
 
