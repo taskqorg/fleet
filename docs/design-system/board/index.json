@@ -1102,6 +1102,50 @@
    "status": null
   },
   {
+   "id": "302233c5a83b4f37",
+   "canvas": "screens/lab-decisions",
+   "name": "Lab · idle · 1440 · dark",
+   "page": "lab-decisions",
+   "width": 1440,
+   "frameWidth": 1440,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "206e1d6c06a2f9c2",
+   "canvas": "screens/lab-decisions",
+   "name": "Lab · use case comparison · 1440 · dark",
+   "page": "lab-decisions",
+   "width": 1440,
+   "frameWidth": 1440,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "d70a22372f18da7a",
+   "canvas": "screens/lab-decisions",
+   "name": "Lab · idle · 390 · dark",
+   "page": "lab-decisions",
+   "width": 390,
+   "frameWidth": 390,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "71f83a259837fb72",
+   "canvas": "screens/lab-decisions",
+   "name": "Lab · use case · 390 · dark",
+   "page": "lab-decisions",
+   "width": 390,
+   "frameWidth": 390,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
    "id": "d471a9466962f9f8",
    "canvas": "screens/lab",
    "name": "Lab: which model, harness or pipeline is best right now",

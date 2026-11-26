@@ -8,6 +8,7 @@ import {
   money,
 } from '../../../packages/ui/src/index.ts';
 import { op, useAlive, type Ops } from '../api.ts';
+import { useLocation } from '../router.ts';
 import type { LabLeaderboardEntry } from '../../../contracts/generated/ops.ts';
 
 /** One model × pipeline cell: every leaderboard group of that pair over the scope, on one score form. */
@@ -76,6 +77,9 @@ export function comparisonCells(entries: readonly LabLeaderboardEntry[]): { form
   return { form, rows: bestOf(c => c.row), cols: bestOf(c => c.col), cells };
 }
 
+/** A variant the comparison ranks: still in the library, scored, with a run that succeeded. */
+const rankableEntry = (e: LabLeaderboardEntry) => !e.retired && e.scoreMean != null && e.succeededTrials > 0;
+
 const failRate = (c: ComparisonCell) => c.trials ? c.failed / c.trials : 0;
 // Partial: some trials failed often enough to doubt the score (amber); fail: nothing succeeded (red, OR-56).
 const cellState = (c: ComparisonCell): MatrixCellState => c.succeeded === 0 ? 'fail' : failRate(c) >= 0.1 ? 'partial' : 'pass';
@@ -105,14 +109,32 @@ export function LabComparison(props: {
   onOpenExperiment: (id: string) => void;
   /** A use case's comparison has Run in Lab (J2). */
   onRun?: () => void;
+  /** A use case's name (its goal) and the way to open it: a scope over several use cases lists the best of each. */
+  useCaseName?: (id: string) => string | undefined;
+  onOpenUseCase?: (id: string) => void;
 }) {
-  const data = createMemo(() => comparisonCells(props.entries));
+  // Only variants that can be compared are ranked: retired ones (their profile or pipeline left the library), ones with
+  // no score and ones whose every run failed stay in History (owner, 2026-11-27).
+  const rankable = createMemo(() => props.entries.filter(rankableEntry));
+  const notRanked = createMemo(() => new Set(props.entries.filter(e => !rankableEntry(e)).map(e => rowOf(e) + '\0' + e.pipelineId)).size);
+  const data = createMemo(() => comparisonCells(rankable()));
   const at = createMemo(() => new Map(data().cells.map(c => [c.row + '\0' + c.col, c])));
   const ranked = createMemo(() => data().cells.toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1) || failRate(a) - failRate(b)));
   const winner = createMemo(() => ranked().find(c => c.score != null && c.score > 0 && c.succeeded > 0) ?? null);
-  const runs = createMemo(() => data().cells.reduce((n, c) => n + c.trials, 0));
+  const runs = createMemo(() => props.entries.reduce((n, e) => n + e.trials, 0));
   const useCases = createMemo(() => new Set(props.entries.map(e => e.useCaseId)).size);
+  // Scores of different use cases cannot be compared: over several, one row per use case with its own best variant.
+  const perUseCase = createMemo(() => useCases() > 1);
+  const bestRows = createMemo(() => {
+    const ids = [...new Set(props.entries.map(e => e.useCaseId))];
+    return ids.map(id => {
+      const cells = comparisonCells(rankable().filter(e => e.useCaseId === id)).cells;
+      const best = cells.toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1) || failRate(a) - failRate(b))[0] ?? null;
+      return { id, best, runs: props.entries.filter(e => e.useCaseId === id).reduce((n, e) => n + e.trials, 0) };
+    }).sort((a, b) => (b.best ? 1 : 0) - (a.best ? 1 : 0) || (b.best?.score ?? -1) - (a.best?.score ?? -1) || a.id.localeCompare(b.id));
+  });
 
+  const [, go] = useLocation();
   const [promoting, setPromoting] = createSignal(false);
   const [promoted, setPromoted] = createSignal<Ops['lab_promote']['reply'] | null>(null);
   const [promoteError, setPromoteError] = createSignal<string | null>(null);
@@ -139,7 +161,7 @@ export function LabComparison(props: {
         <span class="muted lab-cmp-meta">{useCases()} use case{useCases() === 1 ? '' : 's'} · {runs()} runs · {props.windowLabel}</span>
         <span class="grow" />
         <Show when={props.onRun} keyed>{run => <Button label="Run in Lab" icon="play" onClick={run} />}</Show>
-        <Show when={winner()}>{w => <>
+        <Show when={!perUseCase() && winner()}>{w => <>
           <Show when={scope()}>{p => (
             <span class="lab-scope muted" data-tip="Promote sets this project's recommended method. A system-wide scope is not offered yet.">
               scope <span class="mono">{p()}</span>
@@ -155,7 +177,23 @@ export function LabComparison(props: {
         <p class="lab-note" role="status">Recommended method set to <span class="mono">{p().method.id ?? ''}</span>{p().catalogue ? <> · catalogue r{p().catalogue!.revision}</> : ''}{p().note ? ` · ${String(p().note)}` : ''}</p>
       )}</Show>
       <Show when={!(props.loading && !props.error)} fallback={<Skeleton rows={4} />}>
-        <Show when={data().cells.length > 0} fallback={<Empty text={`No finished trials for ${props.title} in this window yet.`} />}>
+        <Show when={perUseCase()}>
+          <DataTable label={`Best per use case: ${props.title}`} head={
+            <tr><th scope="col">Use case</th><th scope="col">Best variant</th><th scope="col" class="num">Score</th><th scope="col" class="num">Median</th><th scope="col" class="num">Runs</th></tr>
+          }>
+            <For each={bestRows()}>{r => (
+              <TableRow onOpen={() => props.onOpenUseCase?.(r.id)}>
+                <TableName label={props.useCaseName?.(r.id) ?? r.id} onOpen={() => props.onOpenUseCase?.(r.id)} />
+                <td class={r.best ? '' : 'muted'}>{r.best ? `${r.best.row} · ${r.best.col}` : 'no variant scored yet'}</td>
+                <td class="num"><Show when={r.best}>{b => <Num m={{ value: b().score, basis: b().score == null ? 'unavailable' : 'measured' }} kind="score" />}</Show></td>
+                <td class="num"><Show when={r.best}>{b => <Num m={msMeasured(b().wallMs)} kind="duration" />}</Show></td>
+                <td class="num mono">{r.runs}</td>
+              </TableRow>
+            )}</For>
+          </DataTable>
+          <p class="lab-note muted">Open a use case to compare and promote.</p>
+        </Show>
+        <Show when={!perUseCase() && data().cells.length > 0} fallback={<Show when={!perUseCase()}><Empty text={`No finished trials for ${props.title} in this window yet.`} /></Show>}>
           <div class="lab-cmp-body">
             <div class="lab-mx">
               <DataTable label={`Model × Pipeline: ${props.title}`} head={
@@ -197,6 +235,9 @@ export function LabComparison(props: {
               </DataTable>
             </div>
           </div>
+        </Show>
+        <Show when={!perUseCase() && notRanked() > 0}>
+          <p class="lab-note muted">{notRanked()} variant{notRanked() === 1 ? '' : 's'} not ranked: retired, no score or every run failed · <a class="row-link" href="/history?section=lab" onClick={e => { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); go('/history?section=lab'); } }}>History</a></p>
         </Show>
       </Show>
     </section>
