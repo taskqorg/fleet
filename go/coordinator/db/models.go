@@ -480,6 +480,26 @@ type Activity struct {
 	Detail       []byte
 }
 
+type AgentGap struct {
+	ID           string
+	ExecutionID  string
+	ProjectID    *string
+	Source       string
+	At           time.Time
+	Class        string
+	Family       string
+	Tool         string
+	Line         string
+	Rules        string
+	TombstonedAt *time.Time
+}
+
+type AgentGapPass struct {
+	Rules string
+	Days  int32
+	At    time.Time
+}
+
 type AgentToolReceipt struct {
 	ID             string
 	ExecutionID    string

@@ -265,6 +265,9 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		if err := q.db().ConnCallProblem(q.ctx(), db.ConnCallProblemParams{ID: id, Problem: problemOf(string(l.Outcome), deref(l.ErrorCode))}); err != nil {
 			return false, err
 		}
+		if err := ingestCallGap(q, id, parent, t.ProjectID, startedAt, l); err != nil {
+			return false, err
+		}
 	}
 	if err := connAccount(q, id, l, t.Step); err != nil {
 		return false, err
