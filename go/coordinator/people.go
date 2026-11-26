@@ -250,7 +250,7 @@ func init() {
 					return out, err
 				}
 				row := contract.HumanAccessRow{Email: p.Email, Name: p.Name, Roles: p.Roles, Owner: p.Owner,
-					Machine: p.AccessCommonName != "" || !personEmail.MatchString(p.Email), InitialProjects: orEmpty(initial), PersonalLab: hasPersonalLab(p),
+					Machine: p.machine(), InitialProjects: orEmpty(initial), PersonalLab: hasPersonalLab(p),
 					Grants: []contract.HumanAccessGrant{}, Version: peopleRowVersion(p)}
 				for _, g := range p.Grants {
 					row.Grants = append(row.Grants, contract.HumanAccessGrant{Kind: g.Kind, Id: g.ID})
@@ -299,6 +299,10 @@ func init() {
 		return contract.PeopleSetReply{People: int64(n)}, err
 	})
 }
+
+// machine: an identity that is not a person: a service token (Access common name) or a name that is not an e-mail
+// (site-agents, as its people.json row is).
+func (p *Person) machine() bool { return p.AccessCommonName != "" || !personEmail.MatchString(p.Email) }
 
 func publicPerson(p *Person) *Person {
 	out := *p
