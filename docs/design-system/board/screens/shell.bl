@@ -2375,7 +2375,7 @@ canvas:
     9c2fea728b2681ea al(v,g(8)) p(0,0) s(520,hug:239.3) f[] "Frame 787"
       8c8839535ee2fbfb al(v,g(2)) p(0,0) s(520,hug:31.3) f[] "Frame 788"
         3eced5884330f296 t("List Pinned group (Conversations and others)",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(520,) f[(66076f1aa091b4fc,#ECECEC)] "Text 754"
-        6057b98ccd3c4b4f t("Same grip, ghost and drop line; order saved per list.",Inter,11,r,align(l),lh(1.3)) p(0,17) s(fill,hug:14.3) ext(520,) f[(26be412fc62147fd,#9A9A9F)] "Text 755"
+        6057b98ccd3c4b4f t("Same drag of the row itself, no grip; order saved per list.",Inter,11,r,align(l),lh(1.3)) p(0,17) s(fill,hug:14.3) ext(520,) f[(26be412fc62147fd,#9A9A9F)] "Text 755"
       feceabe3b9e3f440 al(v) p(0,39.3) s(520,200) f[(216037ef9073d21f,#0B0B0C)] st[(5c86b851b9fc59ff,#2A2A2D,w(1))] "Frame 789"
         079f55b97ade86aa al(v) p(0,0) s(hug:103.21,hug:29) f[] "Frame 790"
           f519080bf1a627e4 al(h,y(c),g(6),pad(0,12)) p(0,0) s(fill,28) ext(103.21,) f[] "Frame 791"
