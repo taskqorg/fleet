@@ -4,7 +4,7 @@
 
 **Purpose.** Choose the files a run reads ([projects](../pages/projects.md), Run on files). A message's files come through the [composer](composer.md); both show the chosen files with the same chips.
 
-**Anatomy.** A dashed drop area on the sunken surface: the file icon, the prompt ("Drop the files to read, or") and a quiet **Pick files** button that opens the picker for several files at once. Under it, one chip per file: thumbnail or file icon, name, then size, upload percent or "failed", and a remove button; an uploading chip has a progress bar on its bottom edge.
+**Anatomy.** A dashed drop area on the sunken surface: the file icon, the prompt ("Drop the files to read, or") and a quiet **Pick files** button that opens the picker for several files at once. Under it, one chip per file: thumbnail or file icon, name, then size, upload percent, "storing" once every byte is sent and the server still writes the file, or "failed", and a remove button; an uploading chip has a progress bar on its bottom edge.
 
 **Behaviour.**
 * Files dropped anywhere over the area are added (`DropZone`); while they are dragged over it, the dashed accent overlay shows the prompt and moves nothing (OR-23).

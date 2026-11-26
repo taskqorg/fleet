@@ -427,7 +427,7 @@ export function AttachmentChips(p: { files: ComposerAttachment[]; onRemove?: (id
             </Show>
             <span class="att-name">{a.name}</span>
             <span class="att-size">
-              {a.state === 'uploading' ? `${Math.round((a.progress ?? 0) * 100)}%` : a.state === 'failed' ? 'failed' : bytes(a.size).text}
+              {a.state === 'uploading' ? ((a.progress ?? 0) >= 1 ? 'storing' : `${Math.round((a.progress ?? 0) * 100)}%`) : a.state === 'failed' ? 'failed' : bytes(a.size).text}
             </span>
             <Show when={p.onRemove} keyed>
               {rem => (

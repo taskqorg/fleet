@@ -45,9 +45,12 @@ export function PipelineRun(props: { projectId: string; pipelineId: string; meth
     return undefined;
   };
   const note = () => {
-    const xs = files.items, up = xs.filter(x => x.state === 'uploading').length;
+    // Every byte sent is not yet stored: the server still writes the file (a few seconds), so a sent file reads "storing".
+    const xs = files.items, busy = xs.filter(x => x.state === 'uploading');
+    const sent = busy.filter(x => (x.progress ?? 0) >= 1).length, up = busy.length - sent;
     if (!xs.length) return 'Files stay in the project\'s store; the run reads only them.';
-    return `${xs.length} ${xs.length === 1 ? 'file' : 'files'}${up ? ` · ${up} uploading` : ''} · stored in the project`;
+    const n = `${xs.length} ${xs.length === 1 ? 'file' : 'files'}`;
+    return busy.length ? `${n}${up ? ` · ${up} uploading` : ''}${sent ? ` · ${sent} storing` : ''}` : `${n} · stored in the project`;
   };
   const start = async () => {
     if (why() || busy()) return;
