@@ -636,7 +636,7 @@ type publishingAdapter interface {
 	pushBranch(ctx forgeContext, ref contract.RepoRef, leaseSHA string) error
 	findOpen(ctx forgeContext) (pubView, bool, error)
 	createDraft(ctx forgeContext, title, body string) (pubView, error)
-	liveStatus(ctx forgeContext) (pubView, M, error)
+	liveStatus(ctx forgeContext, allowUnpublished bool) (pubView, M, error)
 	postCodeReview(ctx forgeContext, sha, desc, targetURL string) error
 	readbackCodeReview(ctx forgeContext, sha, desc, targetURL string) (string, string, bool, error)
 	markReady(ctx forgeContext, pr pubView) error
@@ -778,16 +778,37 @@ func (a githubAdapter) viewSelector(ctx forgeContext) string {
 	return strconv.FormatInt(ctx.Number, 10)
 }
 
-func (a githubAdapter) liveStatus(ctx forgeContext) (pubView, M, error) {
+func (a githubAdapter) liveStatus(ctx forgeContext, allowUnpublished bool) (pubView, M, error) {
 	b, stderr, err := forgeRun(forgeCommand(ctx, "gh", "pr", "view", a.viewSelector(ctx), "--repo", a.repoArg(ctx), "--json", "number,url,isDraft,state,baseRefName,headRefOid,headRefName,mergeable,statusCheckRollup,mergeStateStatus,autoMergeRequest"))
 	if err != nil {
-		return pubView{}, nil, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
+		if !allowUnpublished {
+			return pubView{}, nil, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
+		}
+		var exit *exec.ExitError
+		// Keep gh's branch selection and check rollup. Confirm its no-PR diagnostic with a provider list.
+		if ctx.Branch != "" && ctx.Number == 0 && errors.As(err, &exit) && exit.ExitCode() == 1 &&
+			strings.TrimSpace(stderr) == "no pull requests found for branch "+strconv.Quote(ctx.Branch) {
+			owner := strings.Split(ctx.Repo, "/")[0]
+			endpoint := "repos/" + ctx.Repo + "/pulls?state=all&head=" + url.QueryEscape(owner+":"+ctx.Branch)
+			list, listErr := publishingStatusList(forgeCommand(ctx, "gh", "api", "--hostname", a.ghHost(), endpoint))
+			if listErr != nil {
+				return pubView{}, nil, listErr
+			}
+			if len(list) == 0 {
+				return pubView{State: "UNPUBLISHED"}, nil, nil
+			}
+			return pubView{}, nil, errors.New("project-status-read-failed: pull request view and branch list disagree")
+		}
+		return pubView{}, nil, forgeSanitizeErr("project-status-read-failed", stderr, err)
 	}
 	v, err := dec(string(b))
 	if err != nil {
 		return pubView{}, nil, errors.New("invalid forge response")
 	}
 	pr := typedRaw[forgePRView](b)
+	if allowUnpublished && (pr.Number <= 0 || pr.State == "" || pr.URL == "" || pr.HeadRefName == "" || !validForgeHex40(pr.HeadRefOid)) {
+		return pubView{}, nil, errors.New("invalid forge response")
+	}
 	view := pubView{
 		Number: pr.Number, URL: pr.URL, Title: pr.Title, IsDraft: pr.IsDraft, State: pr.State,
 		BaseRefName: pr.BaseRefName, HeadRefOid: pr.HeadRefOid, HeadRefName: pr.HeadRefName,
@@ -1094,27 +1115,44 @@ func (a gitlabAdapter) createDraft(ctx forgeContext, title, body string) (pubVie
 	return v, nil
 }
 
-func (a gitlabAdapter) liveStatus(ctx forgeContext) (pubView, M, error) {
-	var b []byte
-	var stderr string
-	var err error
-	if ctx.Number > 0 {
-		b, stderr, err = forgeRun(forgeCommand(ctx, "glab", "api", "--hostname", a.glHost(), "projects/"+a.projPath(ctx)+"/merge_requests/"+strconv.FormatInt(ctx.Number, 10)))
-		if err != nil {
-			return pubView{}, nil, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
-		}
-	} else {
-		b, stderr, err = forgeRun(forgeCommand(ctx, "glab", "api", "--hostname", a.glHost(), "projects/"+a.projPath(ctx)+"/merge_requests?state=opened&source_branch="+url.QueryEscape(ctx.Branch)))
-		if err != nil {
-			return pubView{}, nil, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
-		}
-		mrs := typedRaw[[]gitlabMRView](b)
-		if len(mrs) == 0 {
-			return pubView{}, nil, errors.New("merge request is not open for this execution branch")
-		}
-		b = []byte(enc(mrs[0]))
+func (a gitlabAdapter) liveStatus(ctx forgeContext, allowUnpublished bool) (pubView, M, error) {
+	prefix := "project-delivery-unconfirmed"
+	if allowUnpublished {
+		prefix = "project-status-read-failed"
 	}
-	mr := typedRaw[gitlabMRView](b)
+	var mr gitlabMRView
+	if ctx.Number > 0 {
+		b, stderr, err := forgeRun(forgeCommand(ctx, "glab", "api", "--hostname", a.glHost(), "projects/"+a.projPath(ctx)+"/merge_requests/"+strconv.FormatInt(ctx.Number, 10)))
+		if err != nil {
+			return pubView{}, nil, forgeSanitizeErr(prefix, stderr, err)
+		}
+		mr = typedRaw[gitlabMRView](b)
+	} else {
+		cmd := forgeCommand(ctx, "glab", "api", "--hostname", a.glHost(), "projects/"+a.projPath(ctx)+"/merge_requests?state=opened&source_branch="+url.QueryEscape(ctx.Branch))
+		if allowUnpublished {
+			list, err := publishingStatusList(cmd)
+			if err != nil {
+				return pubView{}, nil, err
+			}
+			if len(list) == 0 {
+				return pubView{State: "UNPUBLISHED"}, nil, nil
+			}
+			mr = typed[gitlabMRView](list[0])
+		} else {
+			b, stderr, err := forgeRun(cmd)
+			if err != nil {
+				return pubView{}, nil, forgeSanitizeErr(prefix, stderr, err)
+			}
+			mrs := typedRaw[[]gitlabMRView](b)
+			if len(mrs) == 0 {
+				return pubView{}, nil, errors.New("merge request is not open for this execution branch")
+			}
+			mr = mrs[0]
+		}
+	}
+	if allowUnpublished && (mr.IID <= 0 || mr.State == "" || mr.WebURL == "" || mr.SourceBranch == "" || !validForgeHex40(mr.SHA)) {
+		return pubView{}, nil, errors.New("invalid forge response")
+	}
 	view := gitlabToPubView(mr, nil)
 	out := M{
 		"provider":         "gitlab",
@@ -1251,8 +1289,21 @@ func (a gitlabAdapter) cancelMergeRequest(ctx forgeContext, pr pubView) (bool, b
 
 // ---------- Shared Publishing Logic ----------
 
+func publishingStatusList(cmd *exec.Cmd) ([]any, error) {
+	b, stderr, err := forgeRun(cmd)
+	if err != nil {
+		return nil, forgeSanitizeErr("project-status-read-failed", stderr, err)
+	}
+	v, err := dec(string(b))
+	list, ok := v.([]any)
+	if err != nil || !ok {
+		return nil, errors.New("invalid forge response")
+	}
+	return list, nil
+}
+
 func publishingLiveOpen(ctx forgeContext, adapter publishingAdapter, expectedHeadSha string) (pubView, error) {
-	pr, _, err := adapter.liveStatus(ctx)
+	pr, _, err := adapter.liveStatus(ctx, false)
 	if err != nil {
 		return pubView{}, err
 	}
@@ -1553,9 +1604,13 @@ func executePublishingAction(ctx forgeContext, action string, args publishingArg
 
 	switch action {
 	case "status":
-		view, rawMap, err := adapter.liveStatus(ctx)
+		view, rawMap, err := adapter.liveStatus(ctx, true)
 		if err != nil {
 			return nil, err
+		}
+		if rawMap == nil {
+			rawMap = M{"state": view.State, "published": false, "provider": ref.Provider, "host": ref.Host,
+				"repo": ref.Slug, "kind": adapter.kind(), "branch": ctx.Branch}
 		}
 		if expectedSha != "" {
 			rawMap["expectedHeadSha"] = expectedSha
