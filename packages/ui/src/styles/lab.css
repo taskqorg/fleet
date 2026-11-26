@@ -25,4 +25,7 @@
   }
   .lab-trials { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-4); }
   .lab-qs { display: flex; flex-direction: column; gap: var(--space-3); }
+  /* A finished run's evidence under its question: one wrapping chip per variant (OR-66, no sideways scroll). */
+  .lab-ev-list { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+  .lab-ev { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); min-inline-size: 0; padding: var(--space-1) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--font-size-sm); overflow-wrap: break-word; }
 }

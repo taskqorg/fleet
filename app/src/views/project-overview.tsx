@@ -50,7 +50,7 @@ export function jobName(capability: string): string {
 const median = (ms: number | null) => (ms == null ? '' : duration(ms / 1000).text);
 
 /** A link that opens in the app (OR-26); a modified click keeps the browser's own behaviour. */
-function Go(p: { to: string; cls?: string; children: unknown }) {
+export function Go(p: { to: string; cls?: string; children: unknown }) {
   const [, go] = useLocation();
   return <a class={p.cls ?? 'row-link'} href={p.to} onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); go(p.to); } }}>{p.children as never}</a>;
 }
@@ -85,7 +85,7 @@ function DecisionCard(props: { d: Decision }) {
 const perRun = (e: Entry): number | null => (e.costUsd == null || e.trials === 0 ? null : e.costUsd / e.trials);
 
 /** A variant's evidence in one line: score, succeeded of trials, median time, cost; failures in the danger tone. */
-function EntryFacts(props: { e: Entry; label?: boolean }) {
+export function EntryFacts(props: { e: Entry; label?: boolean }) {
   return (
     <>
       <Show when={props.label}><span class="mono">{props.e.variantLabel}</span></Show>
