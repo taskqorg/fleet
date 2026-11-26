@@ -271,8 +271,8 @@ func homeProblems(q *Request) (*contract.HomeProblems, error) {
 	}
 	for id, n := range by {
 		name := id
-		if b, err := readBotFull(q, id); err == nil {
-			name = b.Settings.Name
+		if n, err := q.db().ProblemOwnerName(q.ctx(), id); err == nil {
+			name = n
 		}
 		out.Owners = append(out.Owners, contract.HomeProblemOwner{BotId: id, Name: name, N: n})
 	}
