@@ -23,7 +23,7 @@
       ],
       "auth": "project:projectId",
       "agent": "bound:project",
-      "description": "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved"
+      "description": "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved. content.settings carries name and the optional description (one line, at most 160 characters) and domain (a host name such as example.com) that the project head shows; read the current content with project_detail first"
     },
     "project_initial_access_revoke": {
       "read": false,

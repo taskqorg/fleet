@@ -8,6 +8,8 @@ export function DetailHead(p: {
    * it would only repeat the title. */
   crumb?: JSX.Element;
   title: JSX.Element;
+  /** Muted text after the title on its line, such as a project's `description · domain`; omit when there is none. */
+  aside?: JSX.Element;
   /** The state line under the title: state, progress, age (OR-39). */
   state?: JSX.Element;
   /** The primary action (a split button in the built head) and Share, on the right. */
@@ -23,7 +25,12 @@ export function DetailHead(p: {
         <span class="grow" />
         {p.actions}
       </div>
-      <h2 class="detail-title">{p.title}</h2>
+      <Show when={p.aside} fallback={<h2 class="detail-title">{p.title}</h2>}>
+        <div class="dh-title">
+          <h2 class="detail-title">{p.title}</h2>
+          <span class="dh-aside">{p.aside}</span>
+        </div>
+      </Show>
       <Show when={p.state} keyed>{s => <div class="dh-state">{s}</div>}</Show>
     </header>
   );

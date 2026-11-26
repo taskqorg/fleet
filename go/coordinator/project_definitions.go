@@ -90,6 +90,9 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
+	if err := projectHeadText(recOf(bundle["settings"])); err != nil { // new writes only: a retry gets its stored result
+		return nil, err
+	}
 	if !create && !mayAccessProjectID(q.person, id) {
 		return nil, fail(404, "Unknown project")
 	}

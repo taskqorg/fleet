@@ -313,6 +313,8 @@ function ProjectWork(props: {
   // The name as edited in Setup, before Save (the editor's draft), heads the project while the editor is open.
   const [draftName, setDraftName] = createSignal('', { ownedWrite: true });
   const title = () => (props.facet === 'setup' && draftName() ? draftName() : props.p?.name ?? props.id);
+  // After the name, muted: `description · domain` (board P-A1); nothing when both are empty.
+  const aside = () => [str(props.p?.raw.description).trim(), str(props.p?.raw.domain).trim()].filter(Boolean).join(' · ');
   // Talk to PM opens the project's PM conversation (OR-51); with none yet, a new conversation on the project's pm role.
   const pmSession = createMemo(() => overview.data?.pm ?? (overview.data?.conversations ?? []).find(s => s.profileId === pmProfile()));
   const talk = () => {
@@ -323,6 +325,7 @@ function ProjectWork(props: {
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
         title={title()}
+        aside={aside() || undefined}
         onClose={props.onClose}
         actions={<Button label="Talk to PM" icon="messages-square" onClick={talk} />}
         state={
@@ -427,6 +430,12 @@ function ProjectSetup(props: { projectId: string; name: string; raw?: Record<str
           <Match when={!doc.data}><Skeleton rows={6} /></Match>
           <Match when={doc.data}>
             <DetailSection title="About" action={edit()}>
+              <Show when={str(doc.data?.description).trim() || str(doc.data?.domain).trim()}>
+                <div class="pw-list">
+                  <Show when={str(doc.data?.description).trim()}>{d => <div class="pw-line"><span class="pw-k">Description</span><span class="pw-line-m">{d()}</span></div>}</Show>
+                  <Show when={str(doc.data?.domain).trim()}>{d => <div class="pw-line"><span class="pw-k">Domain</span><span class="pw-line-m">{d()}</span></div>}</Show>
+                </div>
+              </Show>
               <div class="pw-about">
                 <For each={about()} fallback={<p class="muted">Nothing written about {props.name} yet.</p>}>{p => <p>{p}</p>}</For>
               </div>
