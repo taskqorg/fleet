@@ -30,7 +30,8 @@ const TARGET_KEY = 'fleet:home-target';
 
 /** The card groups in attention order: a session is in the group of its state's word (registry `life`, OR-55). */
 type Group = 'waiting' | 'failed' | 'working' | 'queued';
-const GROUPS = (['waiting', 'failed', 'working', 'queued'] as const).map(id => ({ id, ...states.life[id], states: statesOf('session', [id]) as string[] }));
+// Queued holds preparing sessions whose run has not started (lifeOfCard): its link filters Conversations to preparing.
+const GROUPS = (['waiting', 'failed', 'working', 'queued'] as const).map(id => ({ id, ...states.life[id], states: id === 'queued' ? ['preparing'] : statesOf('session', [id]) as string[] }));
 /** Failed sessions that share a plain cause (OR-58): the cause, how many, their hosts. */
 type Cause = { id: string; text: string; n: number; hosts: string[] };
 /**
