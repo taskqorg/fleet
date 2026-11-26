@@ -41,7 +41,7 @@ function startPostgres() {
   }
   const {FLEET_EXECUTION_ID: _, ...env} = process.env;
   try {
-    execFileSync('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-t', '60', '-o', `-k ${pgdata} -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start'],
+    execFileSync('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-t', '60', '-o', `-k '${pgdata.replaceAll("'", "'\\''")}' -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start'],
       {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: {...env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8'}});
   } catch (e) {
     for (const until = Date.now() + 60_000; Date.now() < until; execFileSync('sleep', ['0.2'])) if (ready()) return;

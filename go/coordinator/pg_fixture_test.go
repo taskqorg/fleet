@@ -105,7 +105,8 @@ func startTestCluster(bin, dir string, port int) error {
 			}
 		}
 	}
-	opts := fmt.Sprintf("-k %s -p %d %s", dir, port, testPGOptions)
+	// pg_ctl hands -o to /bin/sh: quote the socket directory, which may hold spaces (macOS Application Support).
+	opts := fmt.Sprintf("-k '%s' -p %d %s", strings.ReplaceAll(dir, "'", `'\''`), port, testPGOptions)
 	start := osexec.Command(filepath.Join(bin, "pg_ctl"), "-D", dir, "-l", filepath.Join(dir, "server.log"), "-w", "-t", "60", "-o", opts, "start")
 	start.Env = pgServerEnv()
 	out, startErr := start.CombinedOutput()
