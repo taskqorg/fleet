@@ -896,8 +896,8 @@ func triggerSendOne(q *Request, t db.Trigger, target triggerTarget, slot string,
 	return sent, err
 }
 
-// triggerChanges: the changes after the trigger's cursor that its condition names, classified by their current rows
-// (watch.go classify), and the cursor and sent limits keys after them.
+// triggerChanges: the changes after the trigger's cursor that its condition names, classified by trigger_focus.go,
+// and the cursor and sent limits keys after them.
 func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPart, int64, []string, error) {
 	var focus []string
 	var directedBy, self string
@@ -1002,13 +1002,25 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 				(!fullAccess(dir) && !mayAccessProjectID(dir, p) && (target.bot == nil || p != target.bot.ProjectId)) {
 				continue
 			}
-			// A task edit that kept its state classifies empty and leaves the task unseen: a later change of the same task
-			// in this pass may still change its state.
-			s, err := classify(q, c)
+			if c.Kind == "execution" {
+				if c.ExecutionWatchSignal == nil {
+					// Legacy rows all read the same current state. Check it once per page, without marking any
+					// actual transition for this execution seen.
+					key := "legacy-execution:" + c.Id
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+				} else if *c.ExecutionWatchSignal == "" {
+					continue
+				}
+			}
+			// A task edit or a superseded execution signal can precede a qualifying change of the same row.
+			s, err := classify(q, c, target)
 			if err != nil {
 				return nil, t.ChangeCursor, t.LimitsSignaled, err
 			}
-			if s != "" || c.Kind != "task" {
+			if s != "" || (c.Kind != "task" && c.Kind != "execution") {
 				seen[string(c.Kind)+c.Id] = true
 			}
 			if s != "" {

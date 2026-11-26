@@ -25,7 +25,7 @@ func (q *Queries) StreamChangeXid(ctx context.Context, seq int64) (string, error
 }
 
 const streamChangesAfter = `-- name: StreamChangesAfter :many
-SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target FROM change
+SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target, execution_watch_signal FROM change
  WHERE xid < (SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot())) FROM pg_snapshot_xip(pg_current_snapshot()) x
  WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datid IS DISTINCT FROM (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())))
  AND (xid, seq) > (CAST($1::text AS xid8), $2::bigint)
@@ -39,16 +39,17 @@ type StreamChangesAfterParams struct {
 }
 
 type StreamChangesAfterRow struct {
-	Seq           int64
-	Kind          string
-	ID            string
-	TaskID        *string
-	SessionID     *string
-	HostID        *string
-	Op            string
-	ProjectID     *string
-	Actor         *string
-	SettingTarget *string
+	Seq                  int64
+	Kind                 string
+	ID                   string
+	TaskID               *string
+	SessionID            *string
+	HostID               *string
+	Op                   string
+	ProjectID            *string
+	Actor                *string
+	SettingTarget        *string
+	ExecutionWatchSignal *string
 }
 
 // Visible changes after the change at (xid, seq), in (xid, seq) order.
@@ -72,6 +73,7 @@ func (q *Queries) StreamChangesAfter(ctx context.Context, arg StreamChangesAfter
 			&i.ProjectID,
 			&i.Actor,
 			&i.SettingTarget,
+			&i.ExecutionWatchSignal,
 		); err != nil {
 			return nil, err
 		}
@@ -84,23 +86,24 @@ func (q *Queries) StreamChangesAfter(ctx context.Context, arg StreamChangesAfter
 }
 
 const streamChangesFirst = `-- name: StreamChangesFirst :many
-SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target FROM change
+SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target, execution_watch_signal FROM change
  WHERE xid < (SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot())) FROM pg_snapshot_xip(pg_current_snapshot()) x
  WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datid IS DISTINCT FROM (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())))
  ORDER BY xid, seq LIMIT $1::int
 `
 
 type StreamChangesFirstRow struct {
-	Seq           int64
-	Kind          string
-	ID            string
-	TaskID        *string
-	SessionID     *string
-	HostID        *string
-	Op            string
-	ProjectID     *string
-	Actor         *string
-	SettingTarget *string
+	Seq                  int64
+	Kind                 string
+	ID                   string
+	TaskID               *string
+	SessionID            *string
+	HostID               *string
+	Op                   string
+	ProjectID            *string
+	Actor                *string
+	SettingTarget        *string
+	ExecutionWatchSignal *string
 }
 
 // Visible changes from the start of the log, in (xid, seq) order.
@@ -124,6 +127,7 @@ func (q *Queries) StreamChangesFirst(ctx context.Context, lim int32) ([]StreamCh
 			&i.ProjectID,
 			&i.Actor,
 			&i.SettingTarget,
+			&i.ExecutionWatchSignal,
 		); err != nil {
 			return nil, err
 		}

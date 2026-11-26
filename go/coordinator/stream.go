@@ -140,8 +140,9 @@ func (b *Broadcast) close() {
 // change: one change row; the JSON is contract.Change (contracts/ops-sessions.schema.json), the other fields stay in the coordinator.
 type change struct {
 	contract.Change
-	ProjectID *string `json:"-"` // watch only (fleet-pm-agent.md §5); not in the stream contract
-	Actor     *string `json:"-"`
+	ProjectID            *string `json:"-"` // watch only (fleet-pm-agent.md §5); not in the stream contract
+	Actor                *string `json:"-"`
+	ExecutionWatchSignal *string `json:"-"`
 }
 
 // The horizon (queries/stream.sql): the lowest xid of the statement's snapshot that may still commit change rows
@@ -181,7 +182,8 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 	out = make([]change, 0, len(rows))
 	for _, r := range rows {
 		c := change{Change: contract.Change{Seq: r.Seq, Kind: contract.ChangeKind(r.Kind), Id: r.ID, TaskId: r.TaskID,
-			SessionId: r.SessionID, HostId: r.HostID, Op: r.Op, SettingTarget: r.SettingTarget}, ProjectID: r.ProjectID, Actor: r.Actor}
+			SessionId: r.SessionID, HostId: r.HostID, Op: r.Op, SettingTarget: r.SettingTarget}, ProjectID: r.ProjectID,
+			Actor: r.Actor, ExecutionWatchSignal: r.ExecutionWatchSignal}
 		c.Touches = contract.Touches(r.Kind, c.Id) // the operations the contract says this change can alter
 		out = append(out, c)
 	}

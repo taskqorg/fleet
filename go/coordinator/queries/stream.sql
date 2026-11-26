@@ -7,14 +7,14 @@ SELECT xid::text FROM change WHERE seq=$1;
 
 -- name: StreamChangesFirst :many
 -- Visible changes from the start of the log, in (xid, seq) order.
-SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target FROM change
+SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target, execution_watch_signal FROM change
  WHERE xid < (SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot())) FROM pg_snapshot_xip(pg_current_snapshot()) x
  WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datid IS DISTINCT FROM (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())))
  ORDER BY xid, seq LIMIT @lim::int;
 
 -- name: StreamChangesAfter :many
 -- Visible changes after the change at (xid, seq), in (xid, seq) order.
-SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target FROM change
+SELECT seq, kind, id, task_id, session_id, host_id, op, project_id, actor, setting_target, execution_watch_signal FROM change
  WHERE xid < (SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot())) FROM pg_snapshot_xip(pg_current_snapshot()) x
  WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datid IS DISTINCT FROM (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())))
  AND (xid, seq) > (CAST(@xid::text AS xid8), @seq::bigint)

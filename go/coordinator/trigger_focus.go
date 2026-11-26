@@ -91,7 +91,7 @@ func (s *watchSession) focus() []string {
 }
 
 // classify: one change by its current row; "" drops it (§5 table).
-func classify(q *Request, c change) (string, error) {
+func classify(q *Request, c change, target triggerTarget) (string, error) {
 	switch c.Kind {
 	case "task":
 		t, err := q.db().TaskWatchState(q.ctx(), db.TaskWatchStateParams{Seq: c.Seq, ID: c.Id})
@@ -119,14 +119,24 @@ func classify(q *Request, c change) (string, error) {
 		}
 		return "question " + c.Id + " on task " + firstString(task, "none"), nil
 	case "execution":
-		s, err := q.db().ExecutionWatchState(q.ctx(), c.Id)
+		s, err := q.db().ExecutionWatchState(q.ctx(), db.ExecutionWatchStateParams{ID: c.Id, WatchSignal: c.ExecutionWatchSignal})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", nil
 		}
 		if err != nil {
 			return "", err
 		}
-		return "execution " + c.Id + " " + s, nil
+		line := "execution " + c.Id + " " + s
+		if c.ExecutionWatchSignal == nil {
+			sessionID, botID := target.ref()
+			delivered, err := q.db().LegacyExecutionWakeDelivered(q.ctx(), db.LegacyExecutionWakeDeliveredParams{
+				SessionID: sessionID, BotID: botID, SignalLine: line,
+			})
+			if err != nil || delivered {
+				return "", err
+			}
+		}
+		return line, nil
 	case "host": // only reported problems (§5 table)
 		if ok, err := q.db().ObservationHasProblems(q.ctx(), c.Id); err != nil || !ok {
 			return "", err
