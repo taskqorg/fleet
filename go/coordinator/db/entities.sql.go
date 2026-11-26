@@ -447,6 +447,42 @@ func (q *Queries) EntDeliveryRelease(ctx context.Context, tag string) ([]byte, e
 	return payload, err
 }
 
+const entKindOf = `-- name: EntKindOf :many
+SELECT 'execution'::text AS kind, id FROM execution WHERE id = ANY ($1::text[])
+UNION ALL SELECT 'task', id FROM task WHERE id = ANY ($1::text[])
+UNION ALL SELECT 'conversation', id FROM session WHERE id = ANY ($1::text[])
+UNION ALL SELECT 'result', id FROM artifact WHERE id = ANY ($1::text[])
+UNION ALL SELECT 'question', id FROM question WHERE id = ANY ($1::text[])
+UNION ALL SELECT 'experiment', id FROM experiment WHERE id = ANY ($1::text[])
+`
+
+type EntKindOfRow struct {
+	Kind string
+	ID   string
+}
+
+// The card kinds of the entities a bare id names (a UUID in agent text, entity-card.md): run, task, conversation,
+// result, question or experiment, as each table's row-level security lets the caller see it.
+func (q *Queries) EntKindOf(ctx context.Context, ids []string) ([]EntKindOfRow, error) {
+	rows, err := q.db.Query(ctx, entKindOf, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EntKindOfRow
+	for rows.Next() {
+		var i EntKindOfRow
+		if err := rows.Scan(&i.Kind, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const entProjectCodeSet = `-- name: EntProjectCodeSet :exec
 SELECT fleet_project_code_set($1::text, $2::text)
 `

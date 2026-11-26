@@ -77,3 +77,13 @@ test('pull requests in agent text: a GitHub URL and owner/repo#n, never a path o
   assert.deepEqual(hits('Opened https://github.com/taskqorg/fleet/pull/1198 and taskqorg/fleet#1196.'), ['taskqorg/fleet#1198', 'taskqorg/fleet#1196']);
   assert.deepEqual(hits('see #643, src/app/x#1, https://github.com/a/b/pull/12/files'), []);
 });
+
+test('a UUID in agent text is a reference (OR-38); a bare id registers by id alone', async () => {
+  const { UUID_REF } = await import('../../packages/ui/src/markdown.ts');
+  assert.deepEqual([...'run 8be57cc0-7076-4d1b-b0f6-6976a21496fa failed; sha abcdef'.matchAll(UUID_REF)].map(m => m[0]), ['8be57cc0-7076-4d1b-b0f6-6976a21496fa']);
+  calls.length = 0;
+  const h = source.live!({ id: 'bare-1' });
+  await tick(5);
+  assert.deepEqual(calls[0], [{ id: 'bare-1' }]);
+  assert.equal(h.read()?.kind, 'task');
+});

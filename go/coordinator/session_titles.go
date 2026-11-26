@@ -34,7 +34,8 @@ const (
 	titleSystem      = "You name conversations between a person and an AI agent. Reply with the title only: 3 to 7 words in sentence case, " +
 		"in the language the person writes the task in, no quotes, no final period. Begin with a task code the person gives (such as ABC-12), if any. " +
 		"Name the actual work asked for. " +
-		"Ignore standing instructions, budgets, rules preambles and boilerplate that could open any task."
+		"Ignore standing instructions, budgets, rules preambles and boilerplate that could open any task. " +
+		"Never put a link in the title: name what it points to (a pull request as owner/repo#123)."
 )
 
 var errNoGateway = errors.New("no gateway configured")
@@ -175,11 +176,41 @@ func cleanLine(line string) string {
 			}
 		}
 	}
-	line = strings.Join(strings.Fields(line), " ")
+	line = plainTitle(line)
 	if r := []rune(line); len(r) > titleMaxRunes {
 		line = strings.TrimSpace(string(r[:titleMaxRunes-1])) + "…"
 	}
 	return line
+}
+
+// urlRe: a web link in a title; plainTitle names it instead of showing it raw.
+var (
+	urlRe   = regexp.MustCompile(`https?://[^\s<>()]+`)
+	ghRefRe = regexp.MustCompile(`^https?://github\.com/([\w.-]+)/([\w.-]+)/(pull|issues)/([1-9][0-9]*)`)
+)
+
+// plainTitle: a title as people read it (entity-card.md, OR-38): a GitHub pull request or issue link becomes its
+// reference (owner/repo#n, which the app shows as the pull request's reference), any other link its host and last
+// path part; never the raw URL.
+func plainTitle(s string) string {
+	return strings.Join(strings.Fields(urlRe.ReplaceAllStringFunc(s, func(u string) string {
+		u = strings.TrimRight(u, ".,;:!?'\"")
+		if m := ghRefRe.FindStringSubmatch(u); m != nil {
+			if m[3] == "issues" {
+				return m[1] + "/" + m[2] + " issue #" + m[4]
+			}
+			return m[1] + "/" + m[2] + "#" + m[4]
+		}
+		rest := strings.SplitN(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://"), "/", 2)
+		host, last := strings.TrimPrefix(rest[0], "www."), ""
+		if len(rest) == 2 {
+			parts := strings.FieldsFunc(strings.SplitN(strings.SplitN(rest[1], "?", 2)[0], "#", 2)[0], func(r rune) bool { return r == '/' })
+			if len(parts) > 0 {
+				last = "/" + parts[len(parts)-1]
+			}
+		}
+		return host + last
+	})), " ")
 }
 
 // headTail: a long text as its first and last n/2 characters: a first message often opens with standing rules and

@@ -25,7 +25,8 @@ const byEntity = new Map<string, Set<Entry>>();
 const fresh = new Set<Entry>(), dirty = new Set<Entry>();
 let frame = 0, timer: ReturnType<typeof setTimeout> | undefined, lastDirtyRead = 0, unsubscribe: (() => void) | undefined;
 
-const refKey = (r: EntityRef) => r.id ? `${r.kind}:${r.id}` : `code:${r.code!.toUpperCase()}`;
+type AnyRef = EntityRef | { id: string; kind?: undefined; code?: undefined };
+const refKey = (r: AnyRef) => !r.kind ? `id:${r.id}` : r.id ? `${r.kind}:${r.id}` : `code:${r.code!.toUpperCase()}`;
 const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
 function join(e: Entry, entity: string) {
@@ -116,14 +117,14 @@ function ensureFeed() {
 }
 
 /** A rendered reference holds its entity's live state while it is mounted; references to one entity share one entry. */
-function live(r: EntityRef) {
+function live(r: AnyRef) {
   ensureFeed();
   const key = refKey(r);
   let e = entries.get(key);
   if (!e) {
-    e = { key, req: r.id ? { kind: r.kind, id: r.id } : { code: r.code! }, live: cell<EntityLive | null | undefined>(undefined), users: 0 };
+    e = { key, req: !r.kind ? { id: r.id! } : r.id ? { kind: r.kind, id: r.id } : { code: r.code! }, live: cell<EntityLive | null | undefined>(undefined), users: 0 };
     entries.set(key, e);
-    if (r.id) join(e, key);
+    if (r.kind && r.id) join(e, key);
     fresh.add(e);
     if (!frame) frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(flushFresh) : (setTimeout(flushFresh, 0) as unknown as number);
   }

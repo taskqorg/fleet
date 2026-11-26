@@ -49,9 +49,11 @@ export function Overview(props: {
     // pull requests they first went over with and what those took; one metric keeps its own row.
     const byPr = new Map<number, number>();
     for (const g of regs) if (g.firstPr) byPr.set(g.firstPr, (byPr.get(g.firstPr) ?? 0) + 1);
+    // Each pull request named here is a reference (OR-44): its live state and card, never a bare #n.
+    const prRef = (n: number) => <EntityCode kind="pull_request" id={`${FLEET}#${n}`} code={`#${n}`} cls="inline" />;
     const cause = [...byPr].sort((a, b) => b[1] - a[1]).map(([n, k]) => {
       const pr = h?.prs.find(x => x.number === n), t = pr?.durations.total;
-      return `#${n}${pr ? ` ${pr.title}` : ''}${typeof t === 'number' ? `: ${fmt(t)} from open to installed` : ''}${pr?.queueRemovals ? `, ${pr.queueRemovals} queue removals` : ''} (${k} ${k === 1 ? 'metric' : 'metrics'})`;
+      return <>{prRef(n)}{`${pr ? ` ${pr.title}` : ''}${typeof t === 'number' ? `: ${fmt(t)} from open to installed` : ''}${pr?.queueRemovals ? `, ${pr.queueRemovals} queue removals` : ''} (${k} ${k === 1 ? 'metric' : 'metrics'})`}</>;
     });
     const worst = regs.toSorted((a, b) => b.currentMs / (b.baselineMs || 1) - a.currentMs / (a.baselineMs || 1));
     return [
@@ -60,14 +62,14 @@ export function Overview(props: {
           facts={`worst ${keyLabel(worst[0].key)} ${worst[0].metric.toUpperCase()} ${fmt(worst[0].currentMs)} against ${fmt(worst[0].baselineMs)}`}
           actions={[...(worst[0]?.compareUrl ? [{ label: 'Compare', onClick: () => window.open(worst[0].compareUrl!, '_blank', 'noopener') }] : [])]} />
         <p class="muted small-note">{worst.map(g => `${keyLabel(g.key)} ${g.metric.toUpperCase()} ${fmt(g.currentMs)} / ${fmt(g.baselineMs)}`).join(' · ')}</p>
-        {cause.length > 0 && <p class="small-note">First over with {cause.join('; ')}.</p>}
+        {cause.length > 0 && <p class="small-note">First over with {cause.flatMap((c, i) => i ? ['; ', c] : [c])}.</p>}
       </div>]
       : regs.map(g => <ProblemRow severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
-        facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />)),
-      ...failedItems().map(it => <ProblemRow severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={<>{it.title} · <Ago t={ms(it.since)} /></>}
+        facts={<>{g.firstPr ? <>Since {prRef(g.firstPr)} · </> : ''}{g.n} pull requests in the last 24 h</>} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />)),
+      ...failedItems().map(it => <ProblemRow severity="failure" title={it.stage === 'mq_failed' ? 'Removed from the merge queue' : 'Checks failed'} facts={<><EntityCode kind="pull_request" id={`${it.repo}#${it.number}`} code={`#${it.number}`} title={it.title} state={it.stage} form="full" /> · <Ago t={ms(it.since)} /></>}
         actions={[{ label: 'Open', primary: true, onClick: () => props.onOpen(it) }]} />),
-      ...stuck().map(it => <ProblemRow severity="warning" title={`#${it.number} ${it.stage === 'installing' && uiOnly(it.release) ? 'waiting for the UI on site' : states.delivery[it.stage].label.toLowerCase()} for ${fmt(props.now - ms(it.since))}, P90 ${fmt(props.norms.stage(it)![1])}`}
-        facts={it.title} actions={[{ label: 'Open', primary: true, onClick: () => props.onOpen(it) }]} />),
+      ...stuck().map(it => <ProblemRow severity="warning" title={`${it.stage === 'installing' && uiOnly(it.release) ? 'Waiting for the UI on site' : states.delivery[it.stage].label} for ${fmt(props.now - ms(it.since))}, P90 ${fmt(props.norms.stage(it)![1])}`}
+        facts={<EntityCode kind="pull_request" id={`${it.repo}#${it.number}`} code={`#${it.number}`} title={it.title} state={it.stage} form="full" />} actions={[{ label: 'Open', primary: true, onClick: () => props.onOpen(it) }]} />),
     ];
   });
   const rowH = catalogueRow();
