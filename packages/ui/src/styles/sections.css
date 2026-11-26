@@ -129,6 +129,12 @@
   /* A host's compact version lines (pages/hosts.md, frame 2A): name and version pairs that wrap, never scroll. */
   .host-versions { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); margin: 0; }
   .hv { white-space: nowrap; }
+  /* Host Disk section (hosts.md, board drafts/host-disk): figures and trend wrap under each other at phone width. */
+  .disk-head { display: flex; flex-wrap: wrap; align-items: safe end; gap: var(--space-2) var(--space-5); margin-block-end: var(--space-3); }
+  .disk-figure { display: flex; flex-direction: column; gap: var(--space-1); min-inline-size: 0; font-variant-numeric: tabular-nums; }
+  .disk-figure b { font-size: var(--font-size-lg); font-weight: 600; }
+  .disk-figure.attention b { color: var(--attention-fg); }
+  .disk-sub { margin: var(--space-4) 0 var(--space-1); color: var(--fg-faint); font-size: var(--font-size-sm); font-weight: 500; text-transform: uppercase; }
   .host-log { margin: var(--space-2) 0 0; padding: var(--space-3) var(--space-4); background: var(--surface-sunken); color: var(--fg-muted); font: var(--font-size-sm)/1.4 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
   @media (pointer: coarse) { .pins-cell { min-height: var(--size-row-phone); } }
 }

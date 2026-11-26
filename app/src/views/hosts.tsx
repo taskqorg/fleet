@@ -33,6 +33,7 @@ import { modelsText, useCompatProfiles } from './accounts.tsx';
 import { ConnectionAdd, HostAdd } from './system-add.tsx';
 import { HostUpdates } from './host-updates.tsx';
 import { HostDiagnosis } from './host-diagnosis.tsx';
+import { HostDisk } from './host-disk.tsx';
 import { profileGaps, type CompatAccount } from '../compat.ts';
 
 export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people' | 'access' | 'agents' | 'problems';
@@ -537,6 +538,7 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
       )}</For>
       <Show when={h().version}>{v => <KvRow icon="info" label="Daemon version" meta={<span class="mono">{v()}</span>} />}</Show>
     </DetailSection>
+    <HostDisk host={h()} clockOffsetMs={props.clockOffsetMs} />
     {/* Run resources stay apart from the daemon's readings (hosts.md, Active Executions): the last hour's runs here. */}
     <Show when={recentRuns().length > 0}>
       <DetailSection title="Recent runs, last hour">
