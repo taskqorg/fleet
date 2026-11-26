@@ -472,7 +472,7 @@ type Request struct {
 	person     *Person
 	peopleView *peopleSnapshot
 	host       *authHost
-	agent      string // execution:<id> when a host agent calls on behalf of person (its director)
+	agent      string     // execution:<id> when a host agent calls on behalf of person (its director)
 	caller     *appCaller // a project app on /api/apps (apps.go): person is its approver narrowed to the app's project
 	// refInputs: a native agent's pipeline_run inputs by reference, read and stored before its receipt's transaction
 	// (receiptStageRefs), by refKey.
@@ -482,6 +482,9 @@ type Request struct {
 	body         json.RawMessage
 	tx           pgx.Tx
 	accessTx     pgx.Tx // tx on which refreshRequestAccess already ran
+	// laterWakes: a trigger pass's bot wakes over several subjects, sent each in its own transaction after the pass
+	// (triggerPass); nil elsewhere, where they are sent in the caller's transaction.
+	laterWakes *[]laterWake
 }
 
 func (q *Request) baseCtx() context.Context {

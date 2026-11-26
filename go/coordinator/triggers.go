@@ -584,7 +584,15 @@ func triggerPass(ctx context.Context, a *App, now time.Time) error {
 		if t.BotID != nil {
 			lock = "bot:" + *t.BotID
 		}
-		err := a.store.Write(ctx, nil, []string{lock}, func(q *Request) error { return triggerOne(q, t.ID, now) })
+		var later []laterWake
+		err := a.store.Write(ctx, nil, []string{lock}, func(q *Request) error {
+			later = later[:0]
+			q.laterWakes = &later
+			return triggerOne(q, t.ID, now)
+		})
+		if err == nil {
+			err = sendLaterWakes(ctx, a, lock, later)
+		}
 		if err != nil {
 			errs = errors.Join(errs, fmt.Errorf("trigger %s: %w", t.ID, err))
 			a.store.Write(ctx, nil, []string{lock}, func(q *Request) error {
@@ -752,6 +760,16 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, al
 		return triggerSendOne(q, t, target, slot, nil, "", manual)
 	}
 	keys, lines := threadGroups(all)
+	if target.bot != nil && len(keys) > 1 && q.laterWakes != nil {
+		// A pass waking a bot on several subjects (48 problems after a duty) sends each in its own transaction after
+		// this one commits: one transaction for all held the bot's and every conversation's locks and a pool
+		// connection for minutes (pass.triggers 334 s on prod, 2026-11-26), and the bot's own tool calls waited on
+		// them. Each wake has its dedup key, so a send that runs twice records one turn.
+		for _, k := range keys {
+			*q.laterWakes = append(*q.laterWakes, laterWake{trigger: t, botID: target.bot.Id, slot: slot, parts: lines[k], thread: k, manual: manual})
+		}
+		return true, nil
+	}
 	if target.bot != nil {
 		// Each subject's conversation takes its bot-subject lock before its session lock (botConversation), so one pass
 		// waking several subjects takes all of them first, in lock order; otherwise the second subject's lock would
@@ -784,6 +802,38 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, al
 		sent = sent || ok
 	}
 	return sent, nil
+}
+
+// laterWake: one subject's wake of a pass, sent after the pass commits (sendLaterWakes).
+type laterWake struct {
+	trigger     db.Trigger
+	botID, slot string
+	parts       []string
+	thread      string
+	manual      bool
+}
+
+// sendLaterWakes: each subject's wake in its own transaction under the bot's lock; a failed one is logged and the
+// others still go (its subject comes back: a problem stays unstarted, a change shows in the conversation's next wake).
+func sendLaterWakes(ctx context.Context, a *App, lock string, later []laterWake) error {
+	var errs error
+	for _, w := range later {
+		err := a.store.Write(ctx, nil, []string{lock}, func(q *Request) error {
+			target, err := triggerTargetOfRow(q, w.trigger)
+			if errors.Is(err, errNotFound) {
+				return nil // the bot went
+			}
+			if err != nil {
+				return err
+			}
+			_, err = triggerSendOne(q, w.trigger, target, w.slot, w.parts, w.thread, w.manual)
+			return err
+		})
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("wake %s: %w", w.thread, err))
+		}
+	}
+	return errs
 }
 
 // triggerSendOne: the trigger's message to its target for one thread ("" the main thread).
