@@ -5,6 +5,9 @@ import { OfflineMarker } from './primitives.tsx';
 
 export type Blocker = { cause: string; n: number; href: string };
 
+/** The pulse line's problems: a quiet count with who owns them, then loud pills only for what no bot is fixing. */
+export type PulseProblems = { n: number; owner?: string; href: string; pills: { text: string; tone: 'attention' | 'danger'; href: string }[] };
+
 /** One cause of stuck work: a danger pill with the cause in words and ×N (OR-56, OR-58). */
 export function BlockerChip(p: Blocker) {
   return (
@@ -25,7 +28,7 @@ const COUNTS: { key: 'working' | 'queued' | 'done'; life: Life; word: string }[]
  * the first `chips` of them and `+K` (OR-30), then `Live ›`. Each count and chip is a link.
  */
 export function PulseLine(p: {
-  working: number; queued: number; done: number; blockers?: Blocker[]; chips?: number;
+  working: number; queued: number; done: number; blockers?: Blocker[]; chips?: number; problems?: PulseProblems;
   countHref: (state: Life) => string; liveHref: string; moreHref?: string;
   staleSince?: number; clock?: number;
 }) {
@@ -42,10 +45,22 @@ export function PulseLine(p: {
           </Show>
         )}
       </For>
+      <Show when={p.problems && p.problems.n > 0 ? p.problems : undefined}>{pr => (
+        <>
+          <a class="pulse-count t-neutral" href={pr().href} aria-label={`${pr().n} problems${pr().owner ? `, ${pr().owner} on them` : ''}`}>
+            <i aria-hidden="true" /><b class="num">{pr().n}</b><span>{pr().n === 1 ? 'problem' : 'problems'}{pr().owner ? ` · ${pr().owner} on them` : ''}</span>
+          </a>
+          <For each={pr().pills}>{x => (
+            <a class={['blocker', `t-${x.tone}`]} data-ui="problem-pill" href={x.href} data-tip={x.text}><i aria-hidden="true" /><span class="blocker-cause">{x.text}</span></a>
+          )}</For>
+        </>
+      )}</Show>
       <For each={shown()}>{b => <BlockerChip {...b} />}</For>
       <Show when={more() > 0}><a class="pulse-more" href={p.moreHref ?? p.liveHref} aria-label={`${more()} more blockers`}>+{more()}</a></Show>
       <Show when={p.staleSince !== undefined}><OfflineMarker state="offline" since={p.staleSince} now={p.clock ?? Date.now()} /></Show>
-      <a class="pulse-live" href={p.liveHref}>Live ›</a>
+      <Show when={p.problems && p.problems.n > 0} fallback={<a class="pulse-live" href={p.liveHref}>Live ›</a>}>
+        <a class="pulse-live" href={p.problems!.href}>Problems ›</a>
+      </Show>
     </div>
   );
 }

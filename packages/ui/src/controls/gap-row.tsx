@@ -10,8 +10,8 @@ export function GapRow(p: {
   name: string;
   /** "743 runs · 3 hosts · codex, claude": the count and where. */
   detail: string;
-  /** Failures per day of the window, oldest first. */
-  days: readonly number[];
+  /** Failures per day of the window, oldest first; none: no sparkline (System › Problems). */
+  days?: readonly number[];
   /** Index into days of the change (the fix's release on every host). */
   changeAt?: number;
   /** Where the finding stands: Open, Investigating, Watching · #n on hosts, Below threshold. */
@@ -28,7 +28,7 @@ export function GapRow(p: {
       <a class="gaprow-name" href={p.href} aria-current={p.current ? 'true' : undefined}
         onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(); } }}>{p.name}</a>
       <span class="gaprow-detail">{p.detail}</span>
-      <Sparkline values={p.days} changeAt={p.changeAt} label={`${p.name}: ${p.days.join(', ')} a day`} />
+      <Show when={p.days}>{days => <Sparkline values={days()} changeAt={p.changeAt} label={`${p.name}: ${days().join(', ')} a day`} />}</Show>
       <span class={['badge', `t-${p.chip.tone}`]} data-tip={p.chip.tip}>{p.chip.text}</span>
       <Show when={p.fact}><span class="gaprow-fact" data-tip={p.factTip}>{p.fact}</span></Show>
     </li>

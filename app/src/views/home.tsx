@@ -8,7 +8,7 @@ import type { JSX } from '@solidjs/web';
 import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, QuietSummary, GroupHeader, Ago,
   OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, states, stamp, day, dayStart, causeOf,
-  type Blocker, type Target, type Life, type AvatarMark,
+  type Blocker, type PulseProblems, type Target, type Life, type AvatarMark,
   timeOf, plural, WorkFacts, peerFence, Fact,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
@@ -49,11 +49,12 @@ function headline(text: string): string {
 }
 
 // Blocker chips (OR-56, OR-58): home_view groups failed runs that need a look by plain cause and host (contracts/
-// vocabulary.json `causes`) and the coordinator's problem questions by what they are about; here they get their words.
+// vocabulary.json `causes`); here they get their words. Problems are the pulse line's own count (pulse-line.md,
+// OR-71): quiet with their owner, loud only when stuck or without an owner, so problem blockers are left out.
 const FAMILY: Record<string, string> = { bugsink: 'New errors in Bugsink', 'error-spike': 'Errors spiked', 'client-error': 'Browser errors', delivery: 'Delivery got slower', store: 'A store needs a look' };
 const clause = (text: string) => (/^[^:.]+/.exec(text)?.[0] ?? text).trim();
 function blockers(groups: HomeBlocker[]): Blocker[] {
-  return groups.map(g => {
+  return groups.filter(g => g.kind === 'run').map(g => {
     const host = g.hostId ?? '';
     if (g.kind === 'run') {
       const what = g.text ? clause(g.text) : 'A run needs a look';
@@ -206,6 +207,14 @@ function HomePage() {
   // Pulse: working and queued sessions, sessions done today, then blockers.
   const rows = () => view.data?.sessions ?? [];
   const chips = createMemo(() => blockers(view.data?.blockers ?? []));
+  const problems = createMemo((): PulseProblems | undefined => {
+    const p = view.data?.problems;
+    if (!p) return undefined;
+    const pills: PulseProblems['pills'] = [];
+    if (p.unowned > 0) pills.push({ text: `${p.unowned} ${p.unowned === 1 ? 'problem' : 'problems'} without an owner`, tone: 'danger', href: '/system/problems' });
+    if (p.stuck > 0) pills.push({ text: `${p.stuck} stuck${p.firstStuck ? `: ${headline(p.firstStuck.text)}` : ''}`, tone: 'attention', href: p.firstStuck ? `/system/problems/${p.firstStuck.code}` : '/system/problems' });
+    return { n: p.open, owner: p.owners.length === 1 ? p.owners[0].name : undefined, href: '/system/problems', pills };
+  });
   const stateHref = (l: Life) => formatView({ view: 'conversations', state: statesOf('session', [l]) });
 
   // Quiet summary: since the last visit, or today on a first one (home_view counts).
@@ -399,6 +408,7 @@ function HomePage() {
           queued={rows().filter(s => lifeOfSession(s.state) === 'queued').length}
           done={view.data?.counts.doneToday ?? 0}
           blockers={chips()}
+          problems={problems()}
           countHref={stateHref}
           liveHref="/live"
         />

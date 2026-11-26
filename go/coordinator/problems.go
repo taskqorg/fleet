@@ -288,6 +288,7 @@ func init() {
 	op("problem_get", problemGetOp)
 	op("problem_update", problemUpdateOp)
 	op("problem_escalate", problemEscalateOp)
+	op("problem_talk", problemTalkOp)
 }
 
 func problemCode(seq int64) string { return "P-" + strconv.FormatInt(seq, 10) }
@@ -558,4 +559,39 @@ func problemAnswerAfter(q *Request, questionID string, data json.RawMessage) err
 		return err
 	}
 	return q.db().ProblemUpdate(q.ctx(), db.ProblemUpdateParams{ID: p.ID, Phase: ptr("working"), ClearQuestion: true})
+}
+
+// problemTalkOp: a person's message to the problem's owner bot, in the problem's conversation (created on the first
+// message), with the problem's line first so the bot knows what it is about.
+func problemTalkOp(q *Request, r *contract.ProblemTalkRequest) (contract.ProblemTalkReply, error) {
+	var out contract.ProblemTalkReply
+	text := strings.TrimSpace(r.Text)
+	if text == "" {
+		return out, fail(400, "Enter a message")
+	}
+	p, err := problemFind(q, r.Id, "")
+	if err != nil {
+		return out, err
+	}
+	if p.OwnerBotID == nil {
+		return out, fail(409, "No bot owns this problem: give a bot the duty first")
+	}
+	b, err := readBotFull(q, *p.OwnerBotID)
+	if err != nil {
+		return out, err
+	}
+	if err := botDirects(q, b.BotRecord); err != nil {
+		return out, err
+	}
+	dedup := ""
+	if rid := strings.TrimSpace(deref(r.RequestId)); rid != "" {
+		dedup = "problem:" + p.ID + ":" + rid
+	}
+	head := fmt.Sprintf("About %s ×%d (cause %s, phase %s): %s\n\n", problemCode(p.Seq), p.Count, p.Cause, p.Phase, cutRunes(p.Text, 400))
+	_, sid, admitted, err := admitBotWake(q, &b, botWakeReq{Cause: "manual", DedupKey: dedup, Text: head + text, SentBy: director(q),
+		Source: "problem", Thread: problemSubject(p.ID)})
+	if err != nil {
+		return out, err
+	}
+	return contract.ProblemTalkReply{Problem: problemOut(q, p), SessionId: sid, Admitted: admitted}, nil
 }

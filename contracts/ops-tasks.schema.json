@@ -37,6 +37,7 @@
     "problems_list": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "changes": ["problem"], "description": "Problems (anomalies with a bot owner), newest first; open by default."},
     "problem_get": {"read": true, "errors": [400, 404], "auth": "person", "agent": "tool", "changes": ["problem"], "description": "One problem by id, code (P-12) or open cause."},
     "problem_update": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "tool", "description": "The owner bot (or the owner) sets a problem's phase, note or linked work, or closes it as fixed or as a duplicate of another problem."},
+    "problem_talk": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "no", "description": "A person writes to the bot that owns a problem, in that problem's conversation (created on the first message). This is how a person reacts to an anomaly; there is no Investigate button."},
     "problem_escalate": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "tool", "description": "The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look."}
   },
   "$defs": {
@@ -173,6 +174,8 @@
     "ProblemGetReply": {"type": "object", "required": ["problem"], "properties": {"problem": {"$ref": "#/$defs/ProblemRow"}}},
     "ProblemUpdateRequest": {"type": "object", "unevaluatedProperties": false, "required": ["id"], "properties": {"id": {"type": "string", "$comment": "an id or a code (P-12)"}, "phase": {"$ref": "#/$defs/ProblemSetPhase"}, "note": {"type": "string"}, "work": {"type": "string"}, "close": {"$ref": "#/$defs/ProblemClose"}, "duplicateOf": {"type": "string", "$comment": "with close duplicate: the other problem's id or code"}}},
     "ProblemUpdateReply": {"type": "object", "required": ["problem"], "properties": {"problem": {"$ref": "#/$defs/ProblemRow"}}},
+    "ProblemTalkRequest": {"type": "object", "unevaluatedProperties": false, "required": ["id", "text"], "properties": {"id": {"type": "string", "$comment": "an id or a code (P-12)"}, "text": {"type": "string"}, "requestId": {"type": "string"}}},
+    "ProblemTalkReply": {"type": "object", "required": ["problem", "sessionId", "admitted"], "properties": {"problem": {"$ref": "#/$defs/ProblemRow"}, "sessionId": {"type": "string"}, "admitted": {"type": "boolean"}}},
     "ProblemEscalateRequest": {"type": "object", "unevaluatedProperties": false, "required": ["id", "kind", "text"], "properties": {"id": {"type": "string", "$comment": "an id or a code (P-12)"}, "kind": {"$ref": "#/$defs/ProblemEscalationKind"}, "text": {"type": "string", "$comment": "the diagnosis in one line, what was tried, what only the owner can give and the recommendation"}, "options": {"type": "array", "items": {"type": "string"}, "$comment": "at most 4"}}},
     "ProblemEscalateReply": {"type": "object", "required": ["problem", "questionId"], "properties": {"problem": {"$ref": "#/$defs/ProblemRow"}, "questionId": {"type": "string"}}}
   }

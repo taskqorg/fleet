@@ -101,6 +101,7 @@
   .pulse-count span, .pulse-live, .pulse-more { color: var(--fg-muted); }
   .pulse a:hover span, .pulse-live:hover { color: var(--fg); }
   .blocker { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; height: var(--size-chip); padding: 0 var(--space-3); border-radius: var(--radius-pill); background: var(--danger-bg); color: var(--danger-fg); font-weight: var(--font-weight-medium); }
+  .blocker.t-attention { background: var(--attention-bg); color: var(--attention-fg); }
   .blocker-cause { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pulse .num, .tool-line .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   @media (max-width: 480px) { .blocker .num { display: none; } }

@@ -493,6 +493,34 @@ func (v ProblemState) Valid() bool {
 	return false
 }
 
+type ProblemTalkReply struct {
+	Admitted  bool       `json:"admitted"`
+	Problem   ProblemRow `json:"problem"`
+	SessionId string     `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemTalkReply) Validate() error {
+	if err := Check(&v.Problem, "problem"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProblemTalkRequest struct {
+	Id        string  `json:"id"`
+	RequestId *string `json:"requestId,omitempty"`
+	Text      string  `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemTalkRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ProblemTalkRequest) Closed() bool { return true }
+
 type ProblemUpdateReply struct {
 	Problem ProblemRow `json:"problem"`
 }
@@ -2701,6 +2729,7 @@ func init() {
 		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Resolve every entity code in a text to its kind and id", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
 		"problem_escalate":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look.", InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"kind\":{\"enum\":[\"only-you\",\"product\",\"authority\"],\"type\":\"string\"},\"options\":{\"$comment\":\"at most 4\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"text\":{\"$comment\":\"the diagnosis in one line, what was tried, what only the owner can give and the recommendation\",\"type\":\"string\"}},\"required\":[\"id\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"problem_get":             {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "One problem by id, code (P-12) or open cause.", Changes: []string{"problem"}, InputSchema: json.RawMessage("{\"properties\":{\"cause\":{\"$comment\":\"the open problem of this cause\",\"type\":\"string\"},\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"problem_talk":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "no", Description: "A person writes to the bot that owns a problem, in that problem's conversation (created on the first message). This is how a person reacts to an anomaly; there is no Investigate button.", InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"id\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"problem_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot (or the owner) sets a problem's phase, note or linked work, or closes it as fixed or as a duplicate of another problem.", InputSchema: json.RawMessage("{\"properties\":{\"close\":{\"enum\":[\"fixed\",\"duplicate\"],\"type\":\"string\"},\"duplicateOf\":{\"$comment\":\"with close duplicate: the other problem's id or code\",\"type\":\"string\"},\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"note\":{\"type\":\"string\"},\"phase\":{\"enum\":[\"working\",\"review\",\"watching\",\"stuck\"],\"type\":\"string\"},\"work\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"problems_list":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Problems (anomalies with a bot owner), newest first; open by default.", Changes: []string{"problem"}, InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"$comment\":\"the code of the last row of the previous page\",\"type\":\"string\"},\"limit\":{\"$comment\":\"1 to 200, default 50\",\"type\":\"integer\"},\"ownerBotId\":{\"type\":\"string\"},\"phase\":{\"enum\":[\"new\",\"working\",\"review\",\"watching\",\"stuck\",\"escalated\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"state\":{\"enum\":[\"open\",\"closed\",\"all\"],\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"project_code_set":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.", InputSchema: json.RawMessage("{\"$comment\":\"2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"code\"],\"type\":\"object\"}")},
