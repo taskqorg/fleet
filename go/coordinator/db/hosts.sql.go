@@ -963,7 +963,8 @@ func (q *Queries) RouteDecisionsOfSubscription(ctx context.Context, arg RouteDec
 
 const runningByHostHarness = `-- name: RunningByHostHarness :many
 SELECT host_id::text AS host_id, coalesce(harness,'')::text AS harness, count(*)::int AS n FROM execution
- WHERE state IN ('preparing','running') AND host_id IS NOT NULL AND (kind <> 'host_job' OR state = 'running') GROUP BY 1,2
+ WHERE kind IN ('agent_run','host_job') AND state IN ('preparing','running') AND host_id IS NOT NULL
+ AND (kind <> 'host_job' OR state = 'running') GROUP BY 1,2
 `
 
 type RunningByHostHarnessRow struct {

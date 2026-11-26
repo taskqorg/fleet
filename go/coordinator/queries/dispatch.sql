@@ -319,6 +319,13 @@ WHERE host_id IS NOT NULL AND kind IN ('agent_run','host_job') AND state IN ('pr
  AND (kind <> 'host_job' OR state = 'running')
 GROUP BY 1;
 
+-- name: DispQueuedHostJobsByHost :many
+-- Host jobs handed to a host that do not run yet: no slot (DispRunningByHost), but scriptHost spreads new unpinned
+-- script steps by them so a burst does not queue on one host.
+SELECT host_id::text AS host_id, count(*)::int AS n FROM execution
+WHERE host_id IS NOT NULL AND kind = 'host_job' AND state = 'preparing'
+GROUP BY 1;
+
 -- name: DispStartableTasks :many
 -- Queued tasks of a project that nothing has started: no primary execution, no session on the task, no open blocking
 -- dependency, not managed by a bot (its bot starts it) (fleet.md: the queue advances automatically). Held tasks are
