@@ -1,8 +1,10 @@
 // Library › Changes › Agent environment (docs/design-system/pages/changes.md, board drafts/agent-garden frames 3 and 6):
-// what every future agent gets, each setting with its drift state and last change. One reply: system_changes.
+// what every future agent gets, each setting with its drift state and last change, or the open agent gap finding about
+// it (agent_gaps, System › Agents). Reads: system_changes and the agent_gaps view.
 import { createMemo, For, Show } from 'solid-js';
 import { DetailSection, DriftRow, day, moment, type Tone } from '../../../packages/ui/src/index.ts';
-import type { GrantDrift, SystemChangesReply } from '../../../contracts/generated/ops.ts';
+import type { AgentGapClass, GrantDrift, SystemChangesReply } from '../../../contracts/generated/ops.ts';
+import { useView } from '../store.ts';
 
 type Row = { key: string; name: string; detail?: string; chip: { text: string; tone: Tone; tip?: string }; fact?: string; factTip?: string; href?: string };
 const ok = (text = 'In sync'): Row['chip'] => ({ text, tone: 'success' });
@@ -106,15 +108,47 @@ export function agentEnvironmentDrift(d: SystemChangesReply) {
   return [connectionRows(d, now), keyRows(d, now), hostToolRows(d), sandboxRows(d), profileRows(d)].reduce((n, rows) => n + drifting(rows), 0);
 }
 
+type Group = 'connection' | 'keys' | 'host-tool' | 'sandbox' | 'profile';
+const LIVE_FINDING = ['open', 'investigating', 'linked', 'watching', 'still-failing'];
+const connectionOf = (c: AgentGapClass) => {
+  const arg = c.class.split(':')[1] ?? '';
+  return arg.includes('/') ? arg.split('/')[0] : c.tools[0]?.key.split('/')[0] ?? '';
+};
+
+/** The agent gap finding about a row (board drafts/agent-garden frame 3): its class names the row's setting. */
+function findingFor(classes: readonly AgentGapClass[], group: Group, key: string): AgentGapClass | undefined {
+  return classes.find(c => {
+    if (!c.finding || !LIVE_FINDING.includes(c.finding.state)) return false;
+    const arg = c.class.split(':')[1] ?? '';
+    switch (group) {
+      case 'host-tool': return (c.family === 'missing-command' || c.family === 'missing-module') && key.split(/[ ,]+/).includes(arg);
+      case 'keys': return c.family === 'gateway-quota' && connectionOf(c) === key;
+      case 'connection': return (c.family === 'mcp-refused' || c.family === 'gateway-unknown-tool' || c.family === 'gateway-rejected') && connectionOf(c) === key;
+      case 'sandbox': return c.family.startsWith('sandbox-') && c.harnesses.some(h => h.key === key.split(' ')[0]);
+      case 'profile': return (c.family === 'tool-unavailable' || c.family === 'model-unsupported') && c.profiles.some(x => x.key === key);
+    }
+  });
+}
+
+/** A row with its finding as its last fact, opening System › Agents when the row opens nothing else. */
+function withFinding(r: Row, c: AgentGapClass | undefined): Row {
+  if (!c?.finding) return r;
+  const state = c.finding.state === 'open' ? '' : ` · ${c.finding.state.replace('-', ' ')}`;
+  return { ...r, fact: `finding: ${c.label}${state}`, factTip: [`${c.count} failures in ${c.executions} runs`, c.setting.text, r.fact].filter(Boolean).join(' · '), href: r.href ?? `/agent-gaps/${encodeURIComponent(c.class)}` };
+}
+
 export function AgentEnvironment(p: { data: SystemChangesReply; onOpen: (path: string) => void }) {
+  const gaps = useView('agent_gaps', {}, { quiet: 30_000 });
   const groups = createMemo(() => {
     const now = Date.now();
+    const classes = gaps.data?.classes ?? [];
+    const mark = (group: Group, rows: Row[]) => rows.map(r => withFinding(r, findingFor(classes, group, r.key)));
     return [
-      { title: 'Connection tools', rows: connectionRows(p.data, now) },
-      { title: 'Key pools', rows: keyRows(p.data, now) },
-      { title: 'Host tools', rows: hostToolRows(p.data) },
-      { title: 'Sandbox policy', rows: sandboxRows(p.data) },
-      { title: 'Profiles', rows: profileRows(p.data) },
+      { title: 'Connection tools', rows: mark('connection', connectionRows(p.data, now)) },
+      { title: 'Key pools', rows: mark('keys', keyRows(p.data, now)) },
+      { title: 'Host tools', rows: mark('host-tool', hostToolRows(p.data)) },
+      { title: 'Sandbox policy', rows: mark('sandbox', sandboxRows(p.data)) },
+      { title: 'Profiles', rows: mark('profile', profileRows(p.data)) },
     ].filter(g => g.rows.length);
   });
   return <For each={groups()}>{g => {
