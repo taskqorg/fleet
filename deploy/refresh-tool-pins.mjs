@@ -79,7 +79,7 @@ const rgVersion = version(rg.tag_name);
 // Python: the newest stable CPython of the newest python-build-standalone release (no alpha, beta or candidate).
 const pythonBuild = python.tag_name;
 const pythonVersion = python.assets
-  .map(a => a.name.match(/^cpython-(\d+\.\d+\.\d+)\+\d+-x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/)?.[1])
+  .map(a => a.name.match(/^cpython-(\d+\.\d+\.\d+)\+\d+-x86_64-unknown-linux-gnu-install_only\.tar\.gz$/)?.[1])
   .filter(Boolean)
   .sort((a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; })
   .at(-1);
@@ -118,7 +118,7 @@ for (const [target, p] of Object.entries(platform)) {
   current.jq = keepNewer(current.jq, { version: jqVersion, ...githubAsset(jq, `jq-${p.jq}`) }, 'jq');
   const rgDir = `ripgrep-${rgVersion}-${p.rg}`;
   current.rg = keepNewer(current.rg, { version: rgVersion, ...githubAsset(rg, `${rgDir}.tar.gz`), entry: `${rgDir}/rg` }, 'rg');
-  const pythonFile = `cpython-${pythonVersion}+${pythonBuild}-${p.python}-install_only_stripped.tar.gz`;
+  const pythonFile = `cpython-${pythonVersion}+${pythonBuild}-${p.python}-install_only.tar.gz`;
   current.python = keepNewer(current.python, { version: pythonVersion, ...githubAsset(python, pythonFile), entry: 'python/bin/python' }, 'python');
   current.playwright = keepNewer(current.playwright, {
     version: playwrightVersion, url: playwright.dist.tarball, sha512: playwrightSha512, entry: 'package/cli.js',
