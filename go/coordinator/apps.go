@@ -119,15 +119,8 @@ func projectAppRead(q *Request, id string) (contract.ProjectAppView, error) {
 		return contract.ProjectAppView{}, err
 	}
 	keys, err := q.db().ProjectAppKeys(q.ctx(), []string{id})
-	if err != nil {
-		return contract.ProjectAppView{}, err
-	}
-	use, err := projectAppUse(q, []string{id})
-	v := projectAppView(db.ProjectAppGetRow(r), keys)
-	if u, ok := use[id]; ok {
-		v.Use30d = u
-	}
-	return v, err
+	// A write's reply leaves use30d empty: project_apps, which the change stream rereads, answers it.
+	return projectAppView(db.ProjectAppGetRow(r), keys), err
 }
 
 // appUseDays: the window of an app's and a pipeline's use (fleet-project-apps.md, Screens).

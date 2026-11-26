@@ -89,11 +89,11 @@
   .pw-pipe-h > .grow { flex: 1; }
   .pw-pipe > p { margin: 0; overflow-wrap: anywhere; }
   .pw-pipe { display: flex; flex-direction: column; gap: var(--space-3); }
-  /* Run with files on a pipeline page (pages/projects.md, Pipeline page). */
   /* A pipeline page's Used by lines (board drafts/project-apps.bl PA3, PA4): the caller, its facts, "30 d" last; on a phone the facts take the second line. */
   .pw-use { container-type: inline-size; }
   .pw-use .pw-line-m > :first-child { flex: 0 0 16rem; min-inline-size: 0; }
   @container (width < 30rem) { .pw-use .pw-line-m > :first-child { flex-basis: 100%; } }
+  /* Run with files on a pipeline page (pages/projects.md, Pipeline page). */
   .pw-run { display: flex; flex-direction: column; gap: var(--space-3); }
   .pw-run-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
   .pw-run-foot > .pw-muted-line { flex: 1; min-inline-size: 0; }

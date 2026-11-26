@@ -216,6 +216,11 @@ func TestProjectAppUse(t *testing.T) {
 	run("use-a4", "agent_run", "succeeded", "use-r4", "", "", 3*time.Hour, 2)
 	run("use-r5", "pipeline_run", "succeeded", "", "", "use-x", 3*time.Hour, 0)
 	run("use-a5", "agent_run", "succeeded", "use-r5", "", "", 3*time.Hour, 7)
+	// A queued app run (no start yet) counts; Fleet's own run of the pipeline is left out.
+	exec(`INSERT INTO execution (id, kind, state, project_id, data, observation, config_ref, app_id, pipeline_id)
+	 VALUES ('use-r6', 'pipeline_run', 'preparing', 'desiign', '{}', 'confirmed', '{}', 'use-site', 'use-pipe')`)
+	run("use-r7", "pipeline_run", "succeeded", "", "", "", 3*time.Hour, 0)
+	exec(`UPDATE execution SET system_actor = 'fleet' WHERE id = 'use-r7'`)
 
 	usd := func(cs []contract.CostFigure) float64 {
 		for _, c := range cs {
@@ -230,8 +235,8 @@ func TestProjectAppUse(t *testing.T) {
 	if len(apps.Apps) != 1 {
 		t.Fatalf("apps %+v", apps.Apps)
 	}
-	if u := apps.Apps[0].Use30d; u.Runs != 2 || u.Failed != 1 || usd(u.Cost) != 2.25 {
-		t.Fatalf("use30d %+v (USD %v), want 2 runs, 1 failed, $2.25", u, usd(u.Cost))
+	if u := apps.Apps[0].Use30d; u.Runs != 3 || u.Failed != 1 || usd(u.Cost) != 2.25 {
+		t.Fatalf("use30d %+v (USD %v), want 3 runs, 1 failed, $2.25", u, usd(u.Cost))
 	}
 	var use []contract.ProjectPipelineUse
 	if err := e.app.store.Read(e.ctx, nil, func(q *Request) (err error) {
@@ -240,7 +245,7 @@ func TestProjectAppUse(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(use) != 2 || use[0].Caller.Kind != "app" || deref(use[0].Caller.Name) != "Use site" || use[0].Runs != 2 || use[0].Failed != 1 ||
+	if len(use) != 2 || use[0].Caller.Kind != "app" || deref(use[0].Caller.Name) != "Use site" || use[0].Runs != 3 || use[0].Failed != 1 ||
 		usd(use[0].Cost) != 2.25 || use[1].Caller.Kind != "people" || use[1].Runs != 1 || usd(use[1].Cost) != 2 {
 		t.Fatalf("pipeline use %+v", use)
 	}

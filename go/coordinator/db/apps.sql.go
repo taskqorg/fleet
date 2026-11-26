@@ -714,7 +714,8 @@ const projectAppUse = `-- name: ProjectAppUse :many
 WITH RECURSIVE runs AS MATERIALIZED (
  SELECT e.id, e.app_id AS caller, (e.state = 'failed') AS failed
  FROM execution e
- WHERE e.app_id = ANY($1::text[]) AND e.started_at >= $2::timestamptz AND e.kind = 'pipeline_run'
+ WHERE e.app_id = ANY($1::text[]) AND (e.started_at >= $2::timestamptz OR (e.started_at IS NULL AND e.ended_at IS NULL))
+  AND e.kind = 'pipeline_run'
 ), tree(root, id) AS (
  SELECT r.id, r.id FROM runs r
  UNION
@@ -762,7 +763,8 @@ type ProjectAppUseRow struct {
 
 // Each app's real use since @since (fleet-project-apps.md, Screens): its pipeline runs (execution_app) and the failed
 // ones, and the cost of their leaf executions only (fleet-analytics.md: containers never count, a leaf counts once),
-// summed per currency and basis from execution_spend; a leaf without a fresh spend row counts as unpriced.
+// summed per currency and basis from execution_spend; a leaf without a fresh spend row counts as unpriced. A run
+// still queued (no start yet) counts.
 func (q *Queries) ProjectAppUse(ctx context.Context, arg ProjectAppUseParams) ([]ProjectAppUseRow, error) {
 	rows, err := q.db.Query(ctx, projectAppUse, arg.AppIds, arg.Since)
 	if err != nil {
@@ -854,8 +856,8 @@ const projectPipelineUse = `-- name: ProjectPipelineUse :many
 WITH RECURSIVE runs AS MATERIALIZED (
  SELECT e.id, coalesce(e.app_id, '') AS caller, (e.state = 'failed') AS failed
  FROM execution e
- WHERE e.project_id = $1::text AND e.started_at >= $2::timestamptz AND e.pipeline_id = $3::text
-  AND e.experiment_id IS NULL AND e.kind = 'pipeline_run'
+ WHERE e.project_id = $1::text AND (e.started_at >= $2::timestamptz OR (e.started_at IS NULL AND e.ended_at IS NULL))
+  AND e.pipeline_id = $3::text AND e.experiment_id IS NULL AND e.system_actor IS NULL AND e.kind = 'pipeline_run'
 ), tree(root, id) AS (
  SELECT r.id, r.id FROM runs r
  UNION
@@ -905,7 +907,7 @@ type ProjectPipelineUseRow struct {
 }
 
 // Who ran a project's pipeline since @since (the pipeline page's Used by): one row per app, and an empty caller for agents and
-// people; Lab runs (experiment_id) are left out. Runs, failed runs and the leaf cost as ProjectAppUse counts them.
+// people; Lab runs (experiment_id) and Fleet's own runs (system_actor) are left out. Runs, failed runs and the leaf cost as ProjectAppUse counts them.
 func (q *Queries) ProjectPipelineUse(ctx context.Context, arg ProjectPipelineUseParams) ([]ProjectPipelineUseRow, error) {
 	rows, err := q.db.Query(ctx, projectPipelineUse, arg.ProjectID, arg.Since, arg.PipelineID)
 	if err != nil {
