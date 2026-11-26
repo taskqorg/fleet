@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"fleet/contract"
@@ -36,6 +37,11 @@ func projectView(q *Request, r *contract.ProjectViewRequest) (contract.ProjectVi
 	pc, err := projectContext(q, id)
 	if err != nil {
 		return out, err
+	}
+	for k, dst := range map[string]**string{"description": &out.Description, "domain": &out.Domain} {
+		if s, _ := jsonString(pc[k]); strings.TrimSpace(s) != "" {
+			*dst = ptr(strings.TrimSpace(s))
+		}
 	}
 
 	qs, err := questionsList(q, "", "", "open", "", []string{id}, nil, nil)

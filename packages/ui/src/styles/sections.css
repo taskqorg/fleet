@@ -3,6 +3,8 @@
   :where(.dr-fold, .mc-open, .t-label):is(button) { border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
 
   .dhead { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+  .dh-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); min-width: 0; }
+  .dh-aside { min-width: 0; font-size: var(--font-size-sm); color: var(--fg-muted); overflow-wrap: anywhere; text-wrap: pretty; }
   .dh-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); font-size: var(--font-size-sm); color: var(--fg-muted); }
 
   .diff-row { display: grid; grid-template-columns: var(--size-label) minmax(0, 1fr); align-items: center; gap: var(--space-4); min-height: var(--size-row); padding: 0 var(--space-4); border-bottom: 1px solid var(--line-soft); }

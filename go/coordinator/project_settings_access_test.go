@@ -33,7 +33,12 @@ func TestProjectSettingsAccessKeys(t *testing.T) {
 	if err != nil || string(def["data"]) != `"internal"` {
 		t.Fatalf("default data %s %v", def["data"], err)
 	}
-	for _, bad := range []map[string]any{{"data": "secret"}, {"risks": map[string]any{"read": "maybe"}}, {"approvals": map[string]any{"keys": "owner"}}} {
+	// The project head's description and domain (board P-A1) are known keys: kept, checked, never unknownKeys.
+	if _, unknown, err := projectSettings(raw(map[string]any{"description": "Digital Assets Management", "domain": "revilio.com"})); err != nil || len(unknown) != 0 {
+		t.Fatalf("description and domain: unknown %v, %v", unknown, err)
+	}
+	for _, bad := range []map[string]any{{"data": "secret"}, {"risks": map[string]any{"read": "maybe"}}, {"approvals": map[string]any{"keys": "owner"}},
+		{"description": 7}, {"description": "two\nlines"}, {"domain": "https://revilio.com/"}} {
 		if _, _, err := projectSettings(raw(bad)); err == nil {
 			t.Errorf("%v accepted", bad)
 		}

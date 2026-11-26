@@ -344,6 +344,8 @@ export function ProjectEditor(props: {
           <DetailSection title="Context">
             <Show when={!props.id}>{field('Project ID', str(bundle().settings.id), v => setting('id', v))}</Show>
             {field('Name', str(bundle().settings.name), v => setting('name', v))}
+            {field('Description', str(bundle().settings.description), v => setting('description', v))}
+            {field('Domain', str(bundle().settings.domain), v => setting('domain', v))}
             <For each={bundle().contextFiles}>
               {(f, i) => (
                 <Disclosure summary={f.path} summaryClass="muted">
