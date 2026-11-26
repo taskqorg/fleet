@@ -2,13 +2,13 @@
 
 Fleet develops and tunes a pipeline for a project in Lab; then the project's own application uses it. A **project app** is that application (DAM's site at revilio.com, for example) calling the project's pipelines from its own data processing: it starts a run with files it already has, gets the result back, and every run and its cost show in Fleet under the project and the app. One app belongs to one project and may only run that project's pipelines. Agents, people and apps call the same operations ([shared core](../../fleet.md#principles)); an app adds no operation of its own.
 
-Not built: everything below. Today an outside program can call `pipeline_run` only by posing as a person (a Cloudflare Access service token mapped in `people.json`), which makes it an operator of the project with rights far beyond running pipelines.
+Approved by the owner 2026-11-26 (board `drafts/project-apps`, frames PA1-PA4). Not built: everything below. Today an outside program can call `pipeline_run` only by posing as a person (a Cloudflare Access service token mapped in `people.json`), which makes it an operator of the project with rights far beyond running pipelines.
 
 ## Terms
 
 - **App:** `{id, project, name, pipelines, callbackOrigins, limits}`, one project's caller. `id` is a name such as `dam-site`, unique in Fleet.
 - **App key:** the secret the app sends as `Authorization: Bearer <key>`. Fleet stores its SHA-256 only. An app has at most two live keys (the current one and, during rotation, the previous one).
-- **Edge token:** the Cloudflare Access service token `fleet-apps` that lets requests to `/api/apps/*` through Cloudflare, as `fleet-machines` does for hosts. It is the same for every app and authorizes nothing in Fleet on its own.
+- **Edge token:** the Cloudflare Access service token `fleet-apps` that lets requests to `/api/apps/*` through Cloudflare, as `fleet-machines` does for hosts. It is the same for every app and authorizes nothing in Fleet on its own. Fleet creates it through the Cloudflare API (below); nobody makes it by hand.
 - **Input by reference:** a `pipeline_run` input that names a file on one of the project's [files grants](fleet-project-access.md) instead of an uploaded artifact.
 
 ## Model
@@ -34,6 +34,20 @@ Not built: everything below. Today an outside program can call `pipeline_run` on
 - `project_app_revoke {appId}` (owner or full access): retires every key at once and makes the app `revoked`. Runs already started finish; their records stay.
 - `project_app_set {appId, pipelines?, callbackOrigins?, limits?}` (owner or full access): changes the settings of an active app; every change is a `setting-change`.
 - `project_apps {projectId}` (person or agent tool): the project's apps with state, settings, key ages, last use, and runs, failures and cost over the last 30 days. Never a key value. Every write to `project_app` and `project_app_key` is a change (kind `project-app`).
+
+## Edge setup
+
+Fleet sets up Cloudflare for apps itself, in the onboarding style of [access status](fleet-connections.md#11-access-status-and-onboarding); the owner only approves a card.
+
+- `apps_edge_status` (person or agent tool): `ready`, `missing` or `failed`, with the Access application and service token ids, the token's expiry, and the error of the last attempt.
+- `apps_edge_setup {requestId}` (person or agent tool): asks the owner with one approval card ("Fleet creates the Cloudflare service token fleet-apps and an Access application for fleet.ufobe.com/api/apps/* that admits only it"). Approve queues the work; it runs with the coordinator's Cloudflare token (`FLEET_CLOUDFLARE_ACCESS_API_TOKEN_FILE`, the one Humans uses):
+  1. create the service token `fleet-apps` (`POST /accounts/<id>/access/service_tokens`) and write its client id and secret to `<FLEET_SECRET_DIR>/apps/edge.env` (0600); the secret is never in the database;
+  2. create the self-hosted Access application `Fleet apps` on `fleet.ufobe.com/api/apps` with one policy, `non_identity`, include that service token;
+  3. probe: a request to `/api/apps/ops/apps_ping` with the edge token and no app key must answer Fleet's 401 (it passed Cloudflare), and one without the edge token must be stopped by Cloudflare.
+  Each step is idempotent (an existing token or application named so is reused); the state and every step are in `audit()`.
+- **Permissions.** The Cloudflare token needs, on the Fleet account, `Access: Service Tokens Edit` and `Access: Apps and Policies Edit` besides Humans' `Access: Groups Edit`. A refusal names the missing permission in `apps_edge_status`, and the card says what to add to the token.
+- **Rotation.** `apps_edge_setup` with `rotate: true` refreshes the service token's secret (`POST .../service_tokens/<id>/rotate`); every app's next `project_app_key_take` hands out the new pair. A token near its expiry shows in `apps_edge_status`.
+- `project_app_key_take` answers the edge token's client id and secret with the app key, so the app gets everything it needs in one answer.
 
 ## Calling Fleet
 
@@ -81,7 +95,7 @@ Board frames: `drafts/project-apps.bl` (dark, 1440 and 390).
 
 1. Ask for the app: `project_app_ask {projectId: "dam", requestId, id: "dam-site", name: "DAM site", pipelines: ["doc-recognize-agent"], callbackOrigins: ["https://revilio.com"], reason}`.
 2. Wait for the owner's answer on the card (`project_apps` shows the state).
-3. Take the key (`project_app_key_take`) and the edge token's location from the owner's onboarding, store both in the app's secret store, never in a repository or chat.
+3. Once `apps_edge_status` is `ready` (else `apps_edge_setup` and the owner's card), take the key and the edge token (`project_app_key_take`) and store them in the app's secret store, never in a repository or chat.
 4. In the app: upload or reference files, call `pipeline_run` with `wait: false` and `notify`, verify the callback's signature, read the result with `pipeline_get`.
 5. Check: `project_apps` shows the app's last use and its first run; `analytics_query {dimensions: ["app", "pipeline"], measures: ["executions", "cost"]}` shows the run and its cost.
 
@@ -89,6 +103,7 @@ Board frames: `drafts/project-apps.bl` (dark, 1440 and 390).
 
 - **A service-token person per app** (works today): an operator of the project, able to start sessions and change settings; no app identity in attribution; every key change is a Cloudflare and `people.json` edit.
 - **A Cloudflare service token per app as the only credential:** revoking or rotating needs Cloudflare each time, and Fleet would still need its own identity for scope and attribution. One shared edge token plus a Fleet app key keeps Cloudflare a single, unchanging gate and puts revoke and rotate in Fleet.
+- **The owner makes the edge token by hand:** the owner decided (2026-11-26) that Fleet does it through the Cloudflare API and the owner only approves.
 - **Uploads only:** DAM's documents are already readable through `dam-files`; uploading them again would copy personal files through one more network path and store them twice.
 - **Result in the callback body:** the result holds personal fields; a signed notice plus `pipeline_get` keeps them inside Fleet's authenticated API.
 
