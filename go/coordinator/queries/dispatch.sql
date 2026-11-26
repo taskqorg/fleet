@@ -312,8 +312,11 @@ UPDATE execution SET wait_reason=sqlc.narg(wait_reason)::text WHERE id = @id;
 SELECT task_id FROM execution WHERE id=$1;
 
 -- name: DispRunningByHost :many
+-- A host job counts once it runs: a script step handed to its host and queued in the executor takes no slot
+-- (work-allocation B7; 2026-11-26: 26 queued DAM steps showed owner-mac full against 2 that ran).
 SELECT host_id::text AS host_id, count(*)::int AS n FROM execution
 WHERE host_id IS NOT NULL AND kind IN ('agent_run','host_job') AND state IN ('preparing','running')
+ AND (kind <> 'host_job' OR state = 'running')
 GROUP BY 1;
 
 -- name: DispStartableTasks :many

@@ -92,12 +92,14 @@ UPDATE question SET addressed_to= @holder::text WHERE id= @id::text;
 
 -- name: RunningByHostHarness :many
 SELECT host_id::text AS host_id, coalesce(harness,'')::text AS harness, count(*)::int AS n FROM execution
- WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2;
+ WHERE state IN ('preparing','running') AND host_id IS NOT NULL AND (kind <> 'host_job' OR state = 'running') GROUP BY 1,2;
 
 -- name: HostRuns :many
 -- The runs on hosts the caller may see (row-level security), per host oldest start first: the order slot tiles fill.
+-- A host job shows once it runs (work-allocation B7), as dispatch counts it.
 SELECT host_id::text AS host_id, id, state::text AS state, started_at FROM execution
- WHERE state IN ('preparing','running') AND host_id IS NOT NULL ORDER BY host_id, started_at NULLS LAST, seq;
+ WHERE state IN ('preparing','running') AND host_id IS NOT NULL AND (kind <> 'host_job' OR state = 'running')
+ ORDER BY host_id, started_at NULLS LAST, seq;
 
 -- name: PendingCommandsByHost :many
 SELECT host_id::text AS host_id, count(*)::int AS n FROM command WHERE status='pending' AND host_id IS NOT NULL GROUP BY 1;
