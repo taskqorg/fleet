@@ -2,7 +2,7 @@
 
 Fleet develops and tunes a pipeline for a project in Lab; then the project's own application uses it. A **project app** is that application (DAM's site at revilio.com, for example) calling the project's pipelines from its own data processing: it starts a run with files it already has, gets the result back, and every run and its cost show in Fleet under the project and the app. One app belongs to one project and may only run that project's pipelines. Agents, people and apps call the same operations ([shared core](../../fleet.md#principles)); an app adds no operation of its own.
 
-Approved by the owner 2026-11-26 (board `drafts/project-apps`, frames PA1-PA4). Built: apps, keys, the app route, the Cloudflare edge, `requestedBy {kind: app}` and the `app` dimension. Not built: inputs by reference, callbacks, limits, API-step pricing, the screens. Today an outside program can call `pipeline_run` only by posing as a person (a Cloudflare Access service token mapped in `people.json`), which makes it an operator of the project with rights far beyond running pipelines.
+Approved by the owner 2026-11-26 (board `drafts/project-apps`, frames PA1-PA4). Built: apps, keys, the app route, the Cloudflare edge, `requestedBy {kind: app}`, the `app` dimension, inputs by reference, callbacks and limits. Not built: API-step pricing, the screens. Today an outside program can call `pipeline_run` only by posing as a person (a Cloudflare Access service token mapped in `people.json`), which makes it an operator of the project with rights far beyond running pipelines.
 
 ## Terms
 
@@ -62,12 +62,12 @@ Fleet sets up Cloudflare for apps itself, in the onboarding style of [access sta
   - `apps_ping`: the app and its project, the edge probe.
 - **Inputs.** `inputs[]` takes either `{path, artifactId}` (an upload, as today) or `{path, ref: {connection, path}}`. `connection` must be a ready files grant connection of the app's project (`dam-files`); `path` is the server's own path under a granted folder. The app never sends the bytes of a file Fleet can already read.
 - **Result.** As for every caller: `wait: true` (the default) answers when the run ends, `wait: false` answers the started run at once; `pipeline_get {runId}` reads its state, `canonicalResult` and `resultArtifact`. An app should use `wait: false` with a callback or polling: one request held for the whole run passes Cloudflare and can be cut.
-- **Callback.** `pipeline_run` takes `notify: {url}` when the app has callback origins and the URL's origin is one of them; otherwise 400. When the run ends, Fleet posts `{runId, requestId, state, finishedAt}` to the URL with `X-Fleet-Signature: sha256=<HMAC of the body with the app key>` and `X-Fleet-App: <id>`. The body carries no result: the app reads it with `pipeline_get`, so personal data never travels in a callback. Delivery is background work on the work kit (`attempts`, `next_attempt_at`, `last_error`); a 2xx ends it, anything else retries with backoff until the run's record is cleaned up. Each attempt is in the run's history.
+- **Callback.** `pipeline_run` takes `notify: {url}` only from an app caller whose callback origins hold the URL's `https` origin; otherwise 400. When the run ends, Fleet posts `{runId, requestId, state, finishedAt}` (`finishedAt` in epoch ms, as `pipeline_get`) to the URL with `X-Fleet-Signature: sha256=<hex HMAC-SHA256 of the body>` and `X-Fleet-App: <id>`. The HMAC key is the app's **callback secret**, not the app key (Fleet keeps only the key's hash): each key mint (approval, `project_app_rotate`) makes a new one in `<FLEET_SECRET_DIR>/apps/callback/<app id>` (0600), and `project_app_key_take` answers it as `callbackSecret`. The body carries no result: the app reads it with `pipeline_get`, so personal data never travels in a callback. Delivery is the work kit's `app-callback` queue over table `app_callback` (`attempts`, `next_attempt_at`, `last_error`, `delivered_at`; a row waits until its run ends): a 2xx ends it, anything else retries with backoff until the run's record is cleaned up (the row goes with it). The post follows no redirect and times out after 15 s.
 - **Idempotence.** `requestId` stays the app's key for a run: a retried `pipeline_run` with the same `requestId` answers the same run.
 
 ## Inputs by reference
 
-At `pipeline_run`, before the run is planned, the coordinator stages each `ref` input: it calls the gateway's `files_get` on the named connection with a read token minted for the run's project, the way the coordinator's own reads are made ([system activity](fleet-analytics.md#system-activity)), and stores the bytes as an artifact of the project, deduplicated by SHA-256 (a file read before is not stored again). The staged artifact then goes to the run as an ordinary input. Each read is a `tool_run` child of the pipeline run, with the path in the gateway spool like every other files call. A path outside the grant, a missing file or a grant that is not ready fails the run before any step with `input:<path>: <reason>`.
+At `pipeline_run`, before the run is planned and outside any transaction, the coordinator stages each `ref` input (`pipeline_refs.go`): it calls the gateway's `files_get` on the named connection with a read token minted for the run's project, the way the coordinator's own reads are made ([system activity](fleet-analytics.md#system-activity)), into a private temporary folder, and stores the bytes as an artifact of the project through the operator-upload path (the run's director as the upload's person), deduplicated by SHA-256 (a stored artifact of the project with the same content is reused). The staged artifact then goes to the run as an ordinary input. Each read is a system `tool_run` of the read token, with the path in the gateway spool like every other files call; it is not a child of the run, which does not exist yet. An unknown connection, a connection of another project or of another kind, a path outside the grant or a missing file fails the call before any step with 400 `input:<path>: <reason>`; a grant that is not ready or a failed read with 409. Every caller (agent, person, app) may use refs.
 
 ## Limits
 
@@ -76,6 +76,8 @@ Settings on the app, set with `project_app_ask` or `project_app_set`; an empty v
 - `runsPerDay`: runs the app may start per UTC day. Over it, `pipeline_run` answers 429 `limit:runs-per-day`.
 - `spendPerMonth`: `{amount, currency}` of measured and estimated spend of the app's runs in the UTC month. Over it, `pipeline_run` answers 429 `limit:spend-per-month`; a run in flight finishes.
 - `concurrentRuns`: runs of the app in flight at once. Over it, `pipeline_run` answers 429 `limit:concurrent-runs`.
+
+A limit refuses at its bound (the next run would be one too many, or the month's spend has reached the amount). Spend counts each leaf's `execution_spend` cost in the limit's currency with basis `measured` or `estimated`. The limits are checked before any input is read and again in the run's creating transaction; a retried `requestId` answers its run whatever the limits.
 
 The project's own budgets ([people access](fleet-people-access.md)) apply to app runs as to any other work of the project.
 
@@ -113,7 +115,7 @@ Board frames: `drafts/project-apps.bl` (dark, 1440 and 390).
 
 - Contract tests: an app key reaches only the listed operations and only its project (other project 404, other operation 403, other pipeline 403, a run of another caller 404 on `pipeline_get`); a retired key 401; a request on `/api/apps/*` without the edge token's client id 403.
 - A `ref` input outside the grant fails the run before any step; a ref read appears as a `tool_run` child with its path in the spool.
-- Callback: signature verifies with the key; a failing receiver is retried; the body has no result fields.
+- Callback: signature verifies with the callback secret; a failing receiver is retried; the body has no result fields.
 - Limits: each 429 at its bound; empty limits never refuse.
 - Pricing: an `api` step of each of the three providers has an `estimated` cost on the run.
 - Live: DAM's app (or a test client with its key) runs `doc-recognize-agent` on two `dam-files` references with a callback; Projects › DAM › Pipelines shows "Used by: DAM site"; `analytics_query` by `app` shows the run and its cost.

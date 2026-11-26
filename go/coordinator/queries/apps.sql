@@ -104,3 +104,33 @@ UPDATE execution SET app_id = @app_id WHERE id = @id AND app_id IS DISTINCT FROM
 
 -- name: ProjectAppPayload :one
 SELECT payload FROM project_app WHERE id = $1 AND state = 'active' AND deleted_at IS NULL;
+
+-- name: AppRunsSince :one
+-- Runs the app started since a time (limits.runsPerDay), by execution_app (app_id, started_at).
+SELECT count(*)::bigint FROM execution WHERE app_id = @app_id AND started_at >= @since AND kind = 'pipeline_run';
+
+-- name: AppRunsInFlight :one
+-- The app's runs not ended yet (limits.concurrentRuns); a run ends with its ended_at.
+SELECT count(*)::bigint FROM execution WHERE app_id = @app_id AND kind = 'pipeline_run' AND ended_at IS NULL;
+
+-- name: AppSpendSince :one
+-- Measured and estimated spend in currency of the app's executions started since a time (limits.spendPerMonth): each
+-- leaf's execution_spend row, its one cost or, when it has several currencies or bases, its payload groups.
+SELECT coalesce(sum(CASE WHEN s.payload IS NULL THEN
+  CASE WHEN s.cost_currency = @currency::text AND s.cost_basis IN ('measured', 'estimated') THEN s.cost_value END
+ ELSE (SELECT sum((g->>'value')::float8) FROM jsonb_array_elements(s.payload) g
+  WHERE g->>'currency' = @currency::text AND g->>'basis' IN ('measured', 'estimated')) END), 0)::float8
+FROM execution e JOIN execution_spend s ON s.execution_id = e.id
+WHERE e.app_id = @app_id AND e.started_at >= @since AND s.tombstoned_at IS NULL;
+
+-- name: AppCallbackPut :exec
+INSERT INTO app_callback (run_id, app_id, url) VALUES (@run_id, @app_id, @url) ON CONFLICT (run_id) DO NOTHING;
+
+-- name: AppCallbackDue :many
+SELECT run_id, attempts FROM app_callback WHERE delivered_at IS NULL AND next_attempt_at <= @now ORDER BY next_attempt_at LIMIT @lim;
+
+-- name: AppCallbackGet :one
+SELECT run_id, app_id, url FROM app_callback WHERE run_id = $1 AND delivered_at IS NULL;
+
+-- name: AppCallbackDelivered :exec
+UPDATE app_callback SET delivered_at = clock_timestamp() WHERE run_id = $1;

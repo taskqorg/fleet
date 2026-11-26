@@ -111,8 +111,9 @@ func TestProjectToolsMatchOperations(t *testing.T) {
 		}
 		// The converse: every request property but the injected projectId is a tool argument, so an operation that
 		// gains one (pipeline_run inputs, DAM 2026-11-26) cannot ship with an agent tool that refuses it.
+		// notify is a project app's callback (fleet-project-apps.md): refused for every other caller, so no agent tool.
 		for arg := range props {
-			if _, ok := schema.Properties[arg]; !ok && arg != "projectId" {
+			if _, ok := schema.Properties[arg]; !ok && arg != "projectId" && !(name == "pipeline_run" && arg == "notify") {
 				t.Errorf("%s: the operation takes %s, the tool does not", name, arg)
 			}
 		}

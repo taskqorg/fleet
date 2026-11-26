@@ -498,13 +498,18 @@ func connReconcileMarkUnknown(ctx context.Context, a *App, reason string) {
 // flag: an edge 5xx (no gateway call id) on a tool that may not be repeated reads unknown. A tool the connection does
 // not grant is recorded for the grants drift problem (grants.go).
 func gatewayCall(ctx context.Context, token, connection, tool string, args any, idempotent bool) contract.CallLine {
+	line := contract.GatewayCall(ctx, gatewayTarget(token, idempotent), connection, tool, jsonBytes(args))
+	grantRefused(connection, tool, line)
+	return line
+}
+
+// gatewayTarget: the gateway as the coordinator calls it with token (through Cloudflare Access on an https URL).
+func gatewayTarget(token string, idempotent bool) contract.GatewayTarget {
 	t := contract.GatewayTarget{URL: gatewayURL(), Token: token, Idempotent: idempotent}
 	if strings.HasPrefix(t.URL, "https://") {
 		t.Header = cfAccessHeaders()
 	}
-	line := contract.GatewayCall(ctx, t, connection, tool, jsonBytes(args))
-	grantRefused(connection, tool, line)
-	return line
+	return t
 }
 
 func cfAccessHeaders() map[string]string {

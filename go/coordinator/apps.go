@@ -368,6 +368,9 @@ func projectAppMint(q *Request, app db.ProjectAppGetRow, directedBy string) (str
 		Sha256: secretHash(value)}); err != nil {
 		return "", err
 	}
+	if err := appCallbackSecretNew(q, app.ID); err != nil {
+		return "", err
+	}
 	if err := audit(q, "project-app:"+app.ID, "key", nil, keyID, auditExtra{}); err != nil {
 		return "", err
 	}
@@ -421,6 +424,9 @@ func projectAppKeyTake(q *Request, r *contract.ProjectAppKeyTakeRequest) (contra
 	out := contract.ProjectAppKeyTakeReply{AppId: app.ID, KeyId: keyID, Key: string(value), Url: new(appsBaseURL())}
 	if id, secret, ok := appsEdgeCredentials(); ok {
 		out.EdgeClientId, out.EdgeClientSecret = &id, &secret
+	}
+	if secret := appCallbackSecret(app.ID); secret != "" {
+		out.CallbackSecret = &secret
 	}
 	if err := audit(q, "project-app:"+app.ID, "key-taken", nil, keyID, auditExtra{}); err != nil {
 		return no, err
@@ -504,6 +510,74 @@ func projectAppSet(q *Request, r *contract.ProjectAppSetRequest) (contract.Proje
 		return contract.ProjectAppSetReply{}, err
 	}
 	return projectAppRead(q, app.ID)
+}
+
+// appRunLimit: the 429 of an app's next run over one of its limits (fleet-project-apps.md, Limits), nil within all of
+// them; an empty limit never refuses. Days and months are UTC.
+func appRunLimit(q *Request, appID string, l contract.ProjectAppLimits, now time.Time) error {
+	now = now.UTC()
+	if l.RunsPerDay != nil {
+		n, err := q.db().AppRunsSince(q.ctx(), db.AppRunsSinceParams{AppID: &appID, Since: new(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC))})
+		if err != nil {
+			return err
+		}
+		if n >= *l.RunsPerDay {
+			return fail(429, "limit:runs-per-day")
+		}
+	}
+	if l.ConcurrentRuns != nil {
+		n, err := q.db().AppRunsInFlight(q.ctx(), &appID)
+		if err != nil {
+			return err
+		}
+		if n >= *l.ConcurrentRuns {
+			return fail(429, "limit:concurrent-runs")
+		}
+	}
+	if s := l.SpendPerMonth; s != nil {
+		spent, err := q.db().AppSpendSince(q.ctx(), db.AppSpendSinceParams{AppID: &appID, Since: new(time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)),
+			Currency: s.Currency})
+		if err != nil {
+			return err
+		}
+		if spent >= s.Amount {
+			return fail(429, "limit:spend-per-month")
+		}
+	}
+	return nil
+}
+
+// appRunCheck: before an app's pipeline_run reads any input, its notify URL (checked against the app's callback
+// origins) and, for a request that starts a new run, its limits. Other callers may not ask for a callback.
+func appRunCheck(q *Request, projectID, requestID string, notify *contract.PipelineRunNotify) (string, error) {
+	if q.caller == nil {
+		if notify != nil {
+			return "", fail(400, "notify: only a project app's run calls back")
+		}
+		return "", nil
+	}
+	target := ""
+	err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+		raw, err := q.db().ProjectAppPayload(q.ctx(), q.caller.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fail(403, "The app is not active")
+		}
+		if err != nil {
+			return err
+		}
+		p := projectAppPayloadOf(raw)
+		if notify != nil {
+			if target, err = appNotifyURL(p, notify); err != nil {
+				return err
+			}
+		}
+		prev, err := q.db().PipelineRunsByProjectRequest(q.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: projectID, RequestID: requestID})
+		if err != nil || len(prev) > 0 {
+			return err // a retried request answers its run whatever the limits
+		}
+		return appRunLimit(q, q.caller.ID, p.Limits, time.Now())
+	})
+	return target, err
 }
 
 func appsPing(q *Request, _ *contract.AppsPingRequest) (contract.AppsPingReply, error) {

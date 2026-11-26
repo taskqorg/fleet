@@ -131,8 +131,13 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !projectAppPayloadOf(raw).allowsPipeline(def.ID) {
+		p := projectAppPayloadOf(raw)
+		if !p.allowsPipeline(def.ID) {
 			return nil, fail(403, "The app may not run pipeline "+def.ID)
+		}
+		// Again under the run's GLOBAL write, so concurrent requests cannot pass a limit together (appRunCheck).
+		if err := appRunLimit(q, q.caller.ID, p.Limits, time.Now()); err != nil {
+			return nil, err
 		}
 		run.DirectedBy = q.person.Email
 	}
@@ -511,6 +516,11 @@ func pipelineEnded(q *Request, run *runRecord) error {
 			return err
 		}
 	}
+	if run.RequestedBy.Kind == "app" { // its callback, when it asked for one, is due now (apps_callback.go)
+		if err := kitWake(q, "app-callback", run.ID, time.Now()); err != nil {
+			return err
+		}
+	}
 	return pipelineSoon(q, run.ID)
 }
 
@@ -712,29 +722,43 @@ type pipelineSignature struct {
 }
 
 // pipelineRunInputs: a pipeline_run's input files, each a stored artifact of the project (an agent saves its files with
-// artifact_save first), staged for every step as example/<path>, as a Lab example's input files are.
+// artifact_save first) or a file on one of the project's files grants (ref, staged into an artifact by pipelineRefStage
+// first, outside any transaction), given to every step as example/<path>, as a Lab example's input files are.
 func pipelineRunInputs(q *Request, projectID string, inputs []contract.PipelineRunInput) ([]fileRef, error) {
 	seen := map[string]bool{}
 	for _, in := range inputs {
 		if !pipelineInputPath(in.Path) || pipelineReservedInput(in.Path) || seen[in.Path] {
 			return nil, fail(400, "inputs: each path must be a distinct relative file path")
 		}
+		if (in.Ref == nil) == (deref(in.ArtifactId) == "") {
+			return nil, fail(400, "input:"+in.Path+": give either artifactId or ref")
+		}
+		if in.Ref != nil && q.tx != nil {
+			return nil, fail(400, "input:"+in.Path+": an input by reference is read by a direct pipeline_run call")
+		}
 		seen[in.Path] = true
 	}
 	out := []fileRef{}
 	for _, in := range inputs {
-		a, err := artifactRow(withTx(q), q.app, in.ArtifactId)
+		id := deref(in.ArtifactId)
+		if in.Ref != nil {
+			var err error
+			if id, err = pipelineRefStage(q, projectID, in.Path, *in.Ref); err != nil {
+				return nil, err
+			}
+		}
+		a, err := artifactRow(withTx(q), q.app, id)
 		if err != nil {
 			return nil, err
 		}
 		if deref(a.ProjectID) != projectID {
-			return nil, fail(400, "inputs: artifact "+in.ArtifactId+" is not an artifact of project "+projectID)
+			return nil, fail(400, "inputs: artifact "+id+" is not an artifact of project "+projectID)
 		}
 		if a.State != "stored" {
 			// artifact_save answers pending; the upload finishes in the background.
-			return nil, fail(409, "inputs: artifact "+in.ArtifactId+" is "+a.State+", not stored yet; call pipeline_run again once artifact_list shows it stored")
+			return nil, fail(409, "inputs: artifact "+id+" is "+a.State+", not stored yet; call pipeline_run again once artifact_list shows it stored")
 		}
-		out = append(out, fileRef{ArtifactID: in.ArtifactId, Path: "example/" + in.Path})
+		out = append(out, fileRef{ArtifactID: id, Path: "example/" + in.Path})
 	}
 	return out, nil
 }
@@ -753,9 +777,13 @@ type pipelineCatalogue struct {
 // runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); with wait it waits
 // for the run, else it answers the started run (a person's page follows it with pipeline_get, since a run outlasts a
 // request). inv is pipeline (pipeline_run) or direct (direct_search); methodID nil selects the recommended method.
-func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string, inputs []contract.PipelineRunInput, wait bool) (recordRest, error) {
+func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string, inputs []contract.PipelineRunInput, notify *contract.PipelineRunNotify, wait bool) (recordRest, error) {
 	if rid == "" || len(rid) > 200 || strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 {
 		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
+	}
+	callback, err := appRunCheck(q, projectID, rid, notify)
+	if err != nil {
+		return nil, err
 	}
 	staged, err := pipelineRunInputs(q, projectID, inputs)
 	if err != nil {
@@ -812,7 +840,11 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 		// The method runs as adopted: its overrides (a promoted Lab variant's profile, model or arguments) are part of it.
 		run, err = startRun(q, pipelineStartOptions{File: file, ProjectID: &projectID, RequestID: rid, Example: example, RequestedBy: &reqBy,
 			Overrides: overrides, Inputs: staged, Extra: recordRest{"signature": jsonBytes(signature), "invocation": jsonBytes(inv), "selectedMethod": methodRaw, "selectionSource": orNull(source), "context": jsonBytes(p)}})
-		return err
+		if err != nil || callback == "" {
+			return err
+		}
+		// The app's callback waits for the run's end (apps_callback.go).
+		return q.db().AppCallbackPut(q.ctx(), db.AppCallbackPutParams{RunID: run.ID, AppID: q.caller.ID, Url: callback})
 	})
 	if err != nil {
 		return nil, err

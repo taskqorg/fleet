@@ -78,3 +78,8 @@ DELETE FROM access_work WHERE grant_id = @grant_id AND op = @op;
 SELECT id, project_id, server_id, kind, level, state, request_id, asked_by, question_id, credential, expires_at, payload, created_at, updated_at
 FROM access_grant WHERE payload->>'connection' = @connection::text AND state = 'ready' AND deleted_at IS NULL
 ORDER BY updated_at DESC LIMIT 1;
+
+-- name: AccessGrantOfConnection :one
+-- The grant a project access connection names, the ready one first, else its latest (an input by reference names one).
+SELECT id, project_id, kind, state FROM access_grant WHERE payload->>'connection' = @connection::text AND deleted_at IS NULL
+ORDER BY (state = 'ready') DESC, updated_at DESC LIMIT 1;

@@ -109,6 +109,7 @@ func (v *ProjectAppIdRequest) Validate() error {
 
 type ProjectAppKeyTakeReply struct {
 	AppId            string  `json:"appId"`
+	CallbackSecret   *string `json:"callbackSecret,omitempty"`
 	EdgeClientId     *string `json:"edgeClientId,omitempty"`
 	EdgeClientSecret *string `json:"edgeClientSecret,omitempty"`
 	Key              string  `json:"key"`

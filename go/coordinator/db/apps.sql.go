@@ -10,6 +10,134 @@ import (
 	"time"
 )
 
+const appCallbackDelivered = `-- name: AppCallbackDelivered :exec
+UPDATE app_callback SET delivered_at = clock_timestamp() WHERE run_id = $1
+`
+
+func (q *Queries) AppCallbackDelivered(ctx context.Context, runID string) error {
+	_, err := q.db.Exec(ctx, appCallbackDelivered, runID)
+	return err
+}
+
+const appCallbackDue = `-- name: AppCallbackDue :many
+SELECT run_id, attempts FROM app_callback WHERE delivered_at IS NULL AND next_attempt_at <= $1 ORDER BY next_attempt_at LIMIT $2
+`
+
+type AppCallbackDueParams struct {
+	Now time.Time
+	Lim int32
+}
+
+type AppCallbackDueRow struct {
+	RunID    string
+	Attempts int32
+}
+
+func (q *Queries) AppCallbackDue(ctx context.Context, arg AppCallbackDueParams) ([]AppCallbackDueRow, error) {
+	rows, err := q.db.Query(ctx, appCallbackDue, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AppCallbackDueRow
+	for rows.Next() {
+		var i AppCallbackDueRow
+		if err := rows.Scan(&i.RunID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const appCallbackGet = `-- name: AppCallbackGet :one
+SELECT run_id, app_id, url FROM app_callback WHERE run_id = $1 AND delivered_at IS NULL
+`
+
+type AppCallbackGetRow struct {
+	RunID string
+	AppID string
+	Url   string
+}
+
+func (q *Queries) AppCallbackGet(ctx context.Context, runID string) (AppCallbackGetRow, error) {
+	row := q.db.QueryRow(ctx, appCallbackGet, runID)
+	var i AppCallbackGetRow
+	err := row.Scan(&i.RunID, &i.AppID, &i.Url)
+	return i, err
+}
+
+const appCallbackPut = `-- name: AppCallbackPut :exec
+INSERT INTO app_callback (run_id, app_id, url) VALUES ($1, $2, $3) ON CONFLICT (run_id) DO NOTHING
+`
+
+type AppCallbackPutParams struct {
+	RunID string
+	AppID string
+	Url   string
+}
+
+func (q *Queries) AppCallbackPut(ctx context.Context, arg AppCallbackPutParams) error {
+	_, err := q.db.Exec(ctx, appCallbackPut, arg.RunID, arg.AppID, arg.Url)
+	return err
+}
+
+const appRunsInFlight = `-- name: AppRunsInFlight :one
+SELECT count(*)::bigint FROM execution WHERE app_id = $1 AND kind = 'pipeline_run' AND ended_at IS NULL
+`
+
+// The app's runs not ended yet (limits.concurrentRuns); a run ends with its ended_at.
+func (q *Queries) AppRunsInFlight(ctx context.Context, appID *string) (int64, error) {
+	row := q.db.QueryRow(ctx, appRunsInFlight, appID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const appRunsSince = `-- name: AppRunsSince :one
+SELECT count(*)::bigint FROM execution WHERE app_id = $1 AND started_at >= $2 AND kind = 'pipeline_run'
+`
+
+type AppRunsSinceParams struct {
+	AppID *string
+	Since *time.Time
+}
+
+// Runs the app started since a time (limits.runsPerDay), by execution_app (app_id, started_at).
+func (q *Queries) AppRunsSince(ctx context.Context, arg AppRunsSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, appRunsSince, arg.AppID, arg.Since)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const appSpendSince = `-- name: AppSpendSince :one
+SELECT coalesce(sum(CASE WHEN s.payload IS NULL THEN
+  CASE WHEN s.cost_currency = $1::text AND s.cost_basis IN ('measured', 'estimated') THEN s.cost_value END
+ ELSE (SELECT sum((g->>'value')::float8) FROM jsonb_array_elements(s.payload) g
+  WHERE g->>'currency' = $1::text AND g->>'basis' IN ('measured', 'estimated')) END), 0)::float8
+FROM execution e JOIN execution_spend s ON s.execution_id = e.id
+WHERE e.app_id = $2 AND e.started_at >= $3 AND s.tombstoned_at IS NULL
+`
+
+type AppSpendSinceParams struct {
+	Currency string
+	AppID    *string
+	Since    *time.Time
+}
+
+// Measured and estimated spend in currency of the app's executions started since a time (limits.spendPerMonth): each
+// leaf's execution_spend row, its one cost or, when it has several currencies or bases, its payload groups.
+func (q *Queries) AppSpendSince(ctx context.Context, arg AppSpendSinceParams) (float64, error) {
+	row := q.db.QueryRow(ctx, appSpendSince, arg.Currency, arg.AppID, arg.Since)
+	var column_1 float64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const appsEdgeByQuestion = `-- name: AppsEdgeByQuestion :one
 SELECT id FROM apps_edge WHERE question_id = $1
 `
