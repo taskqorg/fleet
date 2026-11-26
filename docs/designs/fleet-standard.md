@@ -50,7 +50,8 @@ No SQL string literals in Go, no `map[string]any` read from the database, no `do
 Locks are entity keys declared by the caller (GLOBAL only by name, where truly global). Effects after
 commit or rollback only through `afterCommit(q, fn)` and `afterRollback(q, fn)` (`onEnd` stays internal to
 `store.go` and `tx.go`). The auth cache is fenced and cleared only by writes holding `GLOBAL` (which all
-person, grant, initial-member and host writes hold).
+person, grant, initial-member and host writes hold). A background pass holds `GLOBAL` or `DISPATCH` for one
+unit of its work (one placement, one step), never for its whole queue: every write that needs them waits only that long.
 
 **S4 Operations.** The contract (`contracts/ops-*.schema.json`) fully declares an operation: request,
 reply, `read`, `long`, `errors`, `auth` (`person` | `project:<path>` | `holder:<kind>` | `architect` |

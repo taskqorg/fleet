@@ -298,9 +298,6 @@ SELECT (EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce
  AND NOT EXISTS(SELECT 1 FROM bot_task bt WHERE bt.task_id=t.id AND bt.link_kind='managed')
   AND NOT EXISTS(SELECT 1 FROM task_dependency d JOIN task b ON b.id=d.depends_on_task_id WHERE d.task_id=t.id AND d.kind='blocks' AND b.state<>'completed')))::boolean;
 
--- name: DispPipelinePending :one
-SELECT EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','waiting') AND kind='agent_run' AND host_id IS NULL AND data ? 'pipelineRunId')::boolean;
-
 -- name: DispQueuedIDs :many
 SELECT id FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run' ORDER BY seq;
 

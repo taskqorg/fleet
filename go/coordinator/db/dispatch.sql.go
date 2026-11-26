@@ -847,17 +847,6 @@ func (q *Queries) DispPendingSessions(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
-const dispPipelinePending = `-- name: DispPipelinePending :one
-SELECT EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','waiting') AND kind='agent_run' AND host_id IS NULL AND data ? 'pipelineRunId')::boolean
-`
-
-func (q *Queries) DispPipelinePending(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, dispPipelinePending)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const dispProblemDismiss = `-- name: DispProblemDismiss :exec
 INSERT INTO problem_dismissal(execution_id, project_id, problem, reason, actor) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text)
 `
