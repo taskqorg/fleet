@@ -501,10 +501,28 @@ func agentPromoteOnly(q *Request, sessions ...string) error {
 			}
 		})
 	}
+	// A session whose agent is active promotes nothing: its messages wait without their terminal checks, which ran for
+	// every queued message on every pass under DISPATCH (2026-11-26: promote.terminal-check p95 22 s). Its messages are
+	// checked when the session is idle.
+	active := map[string]bool{}
 	for i := range queued {
 		m := queued[i]
 		sid := m.SessionID
 		if !txHasLock(q.tx, "session:"+sid) {
+			continue
+		}
+		busy, seen := active[sid]
+		if !seen {
+			_, as := obs.Start(q.ctx(), "promote.active", obs.KindInternal)
+			a, err := agentActive(q, sid)
+			as.End(err)
+			if err != nil {
+				return err
+			}
+			busy = a != nil
+			active[sid] = busy
+		}
+		if busy {
 			continue
 		}
 		_, ts := obs.Start(q.ctx(), "promote.terminal-check", obs.KindInternal)
@@ -529,10 +547,7 @@ func agentPromoteOnly(q *Request, sessions ...string) error {
 		if earlier {
 			continue
 		}
-		_, as := obs.Start(q.ctx(), "promote.active", obs.KindInternal)
-		a, err := agentActive(q, sid)
-		as.End(err)
-		if err != nil {
+		if a, err := agentActive(q, sid); err != nil {
 			return err
 		} else if a != nil {
 			continue
