@@ -10,6 +10,8 @@
 // so are pipelines and history; `/projects/FLT/pipelines/<id>` is `/projects/FLT?facet=pipelines&pipeline=<id>`. Setup
 // replaced the facets Rules & methods and Access: `/projects/FLT/rules`, `/projects/FLT/access` and their `?facet=` open it.
 
+import { cell } from './signal.ts';
+
 /** Earlier path prefix and its target route, most specific first. Each pair maps one way and back. */
 export const ROUTES: readonly (readonly [earlier: string, target: string])[] = [
   ['/overview', '/home'],
@@ -46,11 +48,15 @@ const LIBRARY: readonly (readonly [earlier: string, target: string])[] = [
 ];
 
 // Project codes (D17): the address bar names a project by its code, the views and the server by its id. Filled from
-// project_list (setProjectCodes); until then, or for a project without a code, the id stands in both ways.
+// project_list (setProjectCodes); for a project without a code the id stands in both ways. Until the first list is read
+// a code in the address bar cannot be told from an id, so a screen that names a project waits (projectCodesPending):
+// reading `DAM` as an id asked the server for an unknown project (project_view 404s on every cold load, 2026-11-26).
 const codeById = new Map<string, string>();
 const idByCode = new Map<string, string>();
-/** Records each project's code; answers whether anything changed. */
+const codesRead = cell(false);
+/** Records each project's code (a failed read records none); answers whether anything changed. */
 export function setProjectCodes(ps: readonly { id: string; code?: string | null }[]): boolean {
+  codesRead.value = true;
   let changed = false;
   for (const p of ps) {
     if (!p.code || codeById.get(p.id) === p.code) continue;
@@ -64,6 +70,11 @@ export function setProjectCodes(ps: readonly { id: string; code?: string | null 
 export const projectIdOf = (seg: string) => idByCode.get(seg.toUpperCase()) ?? seg;
 /** The segment that names a project in the address bar: its code, else its id. */
 export const projectSegment = (id: string) => codeById.get(id) ?? id;
+/** Whether the address-bar path names one project by a segment that cannot be resolved yet (codes not read); tracked. */
+export function projectCodesPending(path: string): boolean {
+  const seg = path.split('?')[0].split('/');
+  return seg[1] === 'projects' && !!seg[2] && !isListFacet(seg[2]) && !codesRead.value;
+}
 
 // `prefix` matches the path itself or the path followed by a segment.
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(prefix + '/');

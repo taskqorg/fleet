@@ -6,7 +6,7 @@ import { render, type JSX } from '@solidjs/web';
 import { createAgent, registerTools } from '@ui-sdk/core/agent';
 import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, refreshDrafts, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { useLocation, useSearch, syncLocation } from './router.ts';
-import { setProjectCodes } from './routes.ts';
+import { projectCodesPending, setProjectCodes } from './routes.ts';
 import type { InfraSection } from './views/hosts.tsx';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
@@ -341,6 +341,15 @@ const decodeSegment = (s: string): string => { try { return decodeURIComponent(s
 
 function PrivateRoutes(props: { go: (to: string) => void }) {
   const [loc] = useLocation();
+  const search = useSearch();
+  // The address bar names a project by its code (routes.ts): once the codes are known, the current address takes them.
+  // A screen whose address names a project waits for them, so no read asks for a code as if it were an id.
+  const projects = useOp('project_list', {});
+  createEffect(() => [projects.data?.projects, projects.error] as const, ([ps, err]) => {
+    if (!ps && !err) return;
+    if (setProjectCodes((ps ?? []).map(p => ({ id: String(p.id), code: typeof p.code === 'string' ? p.code : null })))) syncLocation();
+  });
+  const codesPending = createMemo(() => (loc(), search(), projectCodesPending(location.pathname)));
   // Library speaks its target routes (routes.ts): /library, /library/<root>, /library/<root>/<id>.
   const libMatch = createMemo(() => /^\/library(?:\/(agents|pipelines|methods|bots|skills|changes)(?:\/([^/]+))?)?\/?$/.exec(loc()));
   // System (pages/system.md): every root and item renders in one view, so the tree stays mounted between them.
@@ -374,6 +383,9 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
   return (
     <Loading fallback={<Empty text="Loading…" />}>
       <Switch fallback={<Empty text="This page does not exist." action={<Button label="Home" icon="house" onClick={() => props.go('/home')} />} />}>
+        <Match when={codesPending()}>
+          <Empty text="Loading…" />
+        </Match>
         <Match when={libSection()}>
           {sec => <Library section={sec()} id={libId()} />}
         </Match>
@@ -397,10 +409,6 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
 function Focus(props: { go: (to: string) => void }) {
   const projects = useOp('project_list', {});
   const list = createMemo<{ id: string; name: string }[]>(() => (projects.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) })));
-  // The address bar names a project by its code (routes.ts): once the codes are known, the current address takes them.
-  createEffect(() => projects.data?.projects, ps => {
-    if (ps && setProjectCodes(ps.map(p => ({ id: String(p.id), code: typeof p.code === 'string' ? p.code : null })))) syncLocation();
-  });
   // Not shown where it leads: Home without the focus.
   const [loc] = useLocation(), search = useSearch();
   const here = createMemo(() => loc() === '/overview' && new URLSearchParams(search()).has('all'));
