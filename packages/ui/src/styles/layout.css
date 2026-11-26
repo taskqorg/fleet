@@ -37,7 +37,7 @@
   .rail-head { display: flex; align-items: center; gap: var(--space-2); padding-left: var(--space-3); height: var(--size-control); }
   /* OR-42: collapsed and expanded map 1:1. Same items, same heights; only labels go. */
   .rail.mini { width: calc(2 * var(--space-2) + 2 * var(--space-3) + var(--size-icon) + 1px); }
-  .rail.mini .nm, .rail.mini .nav-pin, .rail.mini .rail-menu:not(.up), .rail.mini .brand, .rail.mini .waiting { display: none; }
+  .rail.mini .nm, .rail.mini :is(.nav-pin, .nav-pin-slot), .rail.mini .rail-menu:not(.up), .rail.mini .brand, .rail.mini .waiting { display: none; }
   .rail.mini .rail-h { visibility: hidden; width: 0; padding: var(--space-1) 0; overflow: hidden; white-space: nowrap; }
   /* The user block (board screens/shell): update strip, then avatar, name and version; collapsed, icon buttons above the avatar. */
   .rail-user { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
@@ -197,6 +197,7 @@
   .nav-count.out-only { background: none; }
   .rail.mini .nav-out, .rail.mini .nav-count.out-only { display: none; }
   .nav-pin { display: inline-flex; align-items: center; justify-content: center; width: var(--size-control); height: var(--size-control); border: 0; background: none; color: var(--fg-muted); cursor: pointer; }
+  .nav-pin-slot { flex: none; width: var(--size-control); }
   .nav-pin .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   /* Only a pinned item has its pin, always shown (OR-37, no exceptions); the row itself is the drag handle, no grip. */
   .nav-pin.on { color: var(--fg); }
@@ -405,7 +406,7 @@
     .rail, .rail.mini { width: auto; padding: var(--space-2) var(--space-1); }
     .nav-toggle, .divider { display: none; }
     .shell-h { padding-left: var(--space-3); }
-    .rail .nm, .rail .rail-h, .rail .nav-pin, .rail .rail-menu:not(.up), .rail .rail-g:not(.pinned) .nav-i.pinned, .rail .brand, .rail .waiting, .rail-head { display: none; }
+    .rail .nm, .rail .rail-h, .rail :is(.nav-pin, .nav-pin-slot), .rail .rail-menu:not(.up), .rail .rail-g:not(.pinned) .nav-i.pinned, .rail .brand, .rail .waiting, .rail-head { display: none; }
     .rail .rail-ver, .rail .rail-prob, .rail .upd-strip { display: none; }
     .rail:not(.mini) .menu-ver { display: flex; }
     .rail .nav-i a { padding: 0 var(--space-2); position: relative; }

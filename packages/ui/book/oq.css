@@ -34,7 +34,7 @@
 .phone-list{flex:1;overflow:auto;min-width:0}
 .phone-row{display:flex;flex-direction:column;gap:var(--space-1);padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--line-soft);min-height:var(--size-row-phone)}
 .force-narrow .rail{width:auto;padding:var(--space-2) var(--space-1)}
-.force-narrow .rail .nm,.force-narrow .rail .rail-h,.force-narrow .rail .nav-pin{display:none}
+.force-narrow .rail .nm,.force-narrow .rail .rail-h,.force-narrow .rail .nav-pin,.force-narrow .rail .nav-pin-slot{display:none}
 .force-narrow .rail .nav-i a{padding:0 var(--space-2);position:relative;height:var(--size-hit-phone)}
 .force-narrow .rail .nav-count{position:absolute;top:var(--space-1);right:0;padding:0 var(--space-1)}
 .bottom-bar{display:flex;border-top:1px solid var(--line);background:var(--surface)}
@@ -43,6 +43,5 @@
 .bottom-bar .nav-count{position:absolute;top:var(--space-1);right:var(--space-4)}
 .switcher{display:flex;align-items:center;gap:var(--space-2);min-height:var(--size-hit-phone);padding:0 var(--space-3);border:0;border-bottom:1px solid var(--line);background:var(--surface);cursor:pointer;text-align:left}
 .inline-rail .rail{width:100%;border-right:0;border-bottom:1px solid var(--line)}
-.inline-rail .nav-pin{opacity:1}
 /* The phone variants keep the top bar they were drawn with (before D19 removed it from the shell). */
 .topbar{display:flex;align-items:center;gap:var(--space-4);height:var(--size-row-phone);padding:0 var(--space-4);border-bottom:1px solid var(--line);background:var(--surface)}

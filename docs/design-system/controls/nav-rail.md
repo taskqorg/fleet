@@ -76,7 +76,7 @@ Collapsed, the strip keeps its row with only its button over the avatar column (
 
 **Keyboard.** `g` then a letter goes to a section ([principles §5](../principles.md#5-keyboard)). Up and down arrows move through items, `p` pins or unpins the focused item, and on a focused pinned item Space grabs it, the arrows move it, Space or Enter drops and Escape cancels.
 
-**Accessibility.** `nav` named "Sections". Each pinned and group list is named. Pin buttons are named "Pin Tasks" or "Unpin Tasks" and expose `aria-pressed`. Counters have accessible names such as "12 running in focus, 30 outside" (**Counters**).
+**Accessibility.** `nav` named "Sections". Each pinned and group list is named. Only a pinned item has a pin button, named "Unpin Projects" with `aria-pressed` true; Pin is in the item's menu and on `p`. Counters have accessible names such as "12 running in focus, 30 outside" (**Counters**).
 
 **Do.** Keep the order the person chose. **Don't.** Reorder sections automatically by frequency (specq "stable adaptation"). Don't add a separate Favourites page (OR-12).
 

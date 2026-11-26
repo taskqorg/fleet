@@ -297,11 +297,11 @@ export function NavRail(p: {
     };
   });
 
-  // An item unpinned from the pinned group leaves it: focus follows to the same item in its group.
+  // An unpinned item leaves the pinned group and loses its pin button: focus goes to the same item's link in its group.
   const toggle = (id: string, inPinned = false) => {
-    const cur = pinned();
-    p.onPins(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
-    if (inPinned) focusItem(id, false);
+    const cur = pinned(), unpin = cur.includes(id);
+    p.onPins(unpin ? cur.filter(x => x !== id) : [...cur, id]);
+    if (inPinned || unpin) focusItem(id, false);
   };
   // Pinned sections reorder by drag (reorder.tsx; owner 26 Nov: no Move up / Move down).
   let pinnedRef: HTMLUListElement | undefined;
@@ -339,7 +339,8 @@ export function NavRail(p: {
         </a>
         {/* OR-37, no exceptions: no pin appears on hover. A pinned item always shows its pin, pressed, and a click unpins;
             pinning is in the item's menu and on `p`. */}
-        <Show when={isPinned()}>
+        {/* An unpinned item keeps the pin's slot empty, so counters stay in one column. */}
+        <Show when={isPinned()} fallback={<span class="nav-pin-slot" aria-hidden="true" />}>
           <button
             type="button"
             class="nav-pin on"

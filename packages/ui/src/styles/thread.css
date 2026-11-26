@@ -241,7 +241,7 @@
     .ec-copy { opacity: 1; }
     .ec-copy > .btn { min-width: var(--size-hit-phone); min-height: var(--size-hit-phone); }
   }
-  /* A list row has no buttons that appear on hover (OR-37, no exceptions): its code copies from the row menu and the card. */
+  /* A list row has no buttons that appear on hover (OR-37, no exceptions): its code copies from the entity card the code opens (Copy code), and in list pages from the row menu too. */
   :is(.vl-row, .cat-row) .ec-copy { display: none; }
   .ec-code.id:hover, .ec-label:hover, .ec-code[aria-expanded=true] { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
   .md .ec-code.inline { font-size: .95em; color: var(--accent); }
