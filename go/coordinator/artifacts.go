@@ -1557,11 +1557,27 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 	}
 	reason = truncate(reason, 500)
 	d := connDB(ctx, a)
+	// projectId "-" is no project (as in the list ops): only the project-less copies of the content. Omitted, the purge
+	// takes the content in every project, so a null must never stand for "no project" (2026-11-26: a purge of
+	// project-less pipeline files also deleted the same page images in project dam).
+	noProject := projectID != nil && *projectID == "-"
+	if noProject {
+		projectID = nil
+	}
 	found, err := d.ArtOfContent(ctx, db.ArtOfContentParams{ContentHash: hash, ProjectID: projectID, Scope: scope})
 	if err != nil {
 		return none, err
 	}
 	rows := artRows(found)
+	if noProject {
+		kept := rows[:0]
+		for _, x := range rows {
+			if x.ProjectID == nil {
+				kept = append(kept, x)
+			}
+		}
+		rows = kept
+	}
 	all, err := storeList(ctx, a)
 	if err != nil {
 		return none, err
