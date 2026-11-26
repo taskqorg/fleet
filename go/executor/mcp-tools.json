@@ -209,7 +209,7 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "One pipeline run of this project by runId.",
+    "description": "Read a pipeline run in this session's project by runId. To inspect a pipeline step, pass its parent run's ID as runId and find the step in plan.entries. Use pipeline_history to find run IDs in this project.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
