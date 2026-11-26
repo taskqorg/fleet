@@ -29,6 +29,7 @@ Standing principles:
 - **Brilliant first.** Every visible change is drawn on the board and approved by the owner before code; options are board frames, never text (OR-62).
 - **Walk the live site.** Before drawing and after each deploy, walk the section and its neighbours on real data and compare with the canvas (OR-69).
 - **No sideways scroll.** Nothing scrolls horizontally, at any width: rows wrap, tables stack at narrow widths, long values wrap or truncate with the full text on click (OR-66).
+- **Anomalies to agents.** An anomaly shows passively with the bot that owns it; no Investigate or Dismiss button; Needs you holds only what only the person can give (OR-71).
 - **Terms.** Inactive things are Idle, then Archived; "park" means host stickiness only; the product word is conversation (разговор) (OR-70).
 
 A rule marked *Target* is approved and not built yet; until it is built, the current screens keep the behaviour the rule replaces.
@@ -82,7 +83,7 @@ These rules left the list above on 2026-11-26 (owner, one pass). Their ids stay;
 | OR-31 Search is an icon | component | [controls/search.md](controls/search.md#rules-kept-here) |
 | OR-32 One palette | component | [controls/spotlight.md](controls/spotlight.md#rules-kept-here) |
 | OR-34 Focus | component | [controls/focus-control.md](controls/focus-control.md#rules-kept-here) |
-| OR-40 Needs you first | component | [patterns/needs-you.md](patterns/needs-you.md#rules-kept-here) |
+| OR-40 Needs you first, OR-71 Anomalies to agents | component | [patterns/needs-you.md](patterns/needs-you.md#rules-kept-here) |
 | OR-41 Resizable columns | component | [controls/side-panel.md](controls/side-panel.md#rules-kept-here) |
 | OR-42 Collapse without a jump | component | [controls/nav-rail.md](controls/nav-rail.md#rules-kept-here) |
 | OR-44 Entity card | component | [controls/entity-card.md](controls/entity-card.md#rules-kept-here) |

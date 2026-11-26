@@ -36,7 +36,7 @@ Conversation with a product manager (PM) is the primary way to discuss and assig
 - Projects and tasks: create and configure projects, describe work and set priorities.
 - Execution: balance work and track progress.
 - Spend: show cumulative spend on each Tasks and Projects list row, linking to its detail breakdown; a conversation shows its spend under Details only (OR-54).
-- Decisions: answer questions and resolve blockers.
+- Decisions: answer questions that only a person can answer. Anomalies show passively with the bot that owns each; the person reacts by talking to that bot.
 - Results: inspect what was done, where to find it, what was checked and what remains; accept work under project rules.
 
 List spend reads one batch per page from current stored execution valuations, preserving visible attribution, separate currencies and bases, and unknown or partial coverage, and updates quietly in place while retaining the operator's list and last confirmed values.
@@ -180,7 +180,7 @@ Show active, waiting and historical managed tasks, bot runs, triggers, questions
 
 Bots → Automations manages independently named, versioned manual, daily and Needs you triggers. Each automation supplies its own instructions, runs in the bot's granted project, and inherits its Fleet profile and tools under current grants.
 
-The event filter selects questions, execution problems or both in that project. Add trigger types through the shared operation contract and wake admission. The creation catalog lists only supported types.
+The event filter selects questions, execution problems, owned problems or any of them in that project; owned problems include those without a project. Add trigger types through the shared operation contract and wake admission. The creation catalog lists only supported types.
 
 Daily schedules use an explicit IANA time zone and fire at most once per local date. Recovery catches up today's eligible slot and skips earlier dates and nonexistent local times.
 
@@ -194,30 +194,16 @@ Capture direct and delegated attribution when work is created. Count each execut
 
 Refresh public standard API-equivalent model prices through the scoped, audited [provider pricing workflow](docs/designs/fleet-analytics.md#provider-pricing-refresh). Preserve historical tariff entries and distinguish subscription equivalents from billed amounts.
 
-The first Fleet operations pilot uses the display name HAL0 (digit zero). Fleet bot display names remain configurable. HAL0 wakes on new Needs you entries and a schedule. It checks tasks, executions, telemetry and rendered Fleet Web.
+##### HAL0 operations duty
 
-HAL0 uses Fleet questions for genuine owner decisions and continues or creates authorized, deduplicated Fleet fixes for confirmed technical causes. It verifies those fixes on the affected surface, retains unconfirmed observations, and uses audited dismissal for proved obsolete or duplicate entries.
+The Fleet operations bot uses the display name HAL0 (digit zero); bot display names remain configurable. HAL0 holds the system duty for problems ([routing rule](docs/designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner)): it owns every problem without a project and those of project `fleet`, and wakes on a new or changed problem it owns, on new Needs you entries and on its daily reconciliation.
 
-Qualify those cases in isolation before any bounded live pilot and coordinate that pilot with the existing queue operator.
+- **HAL0-DUTY-1.** For each problem, in its problem conversation: read the evidence (`problem_get`, `telemetry_findings`, `telemetry_trace`, `agent_gaps`, `delivery_history`, Bugsink), match it to existing tasks, pull requests and problems, then continue or create one linked fix and set the phase (`working`, `review`, `watching`). Verify the fix on the affected surface before closing as fixed. Close a proved duplicate with the other problem named. Never wait for a person to approve a technical fix.
+- **HAL0-DUTY-2.** Ask the owner only through `problem_escalate`, of kind `only-you`, `product` or `authority`, with a one-line diagnosis, what was tried, a recommendation and options. Never ask whether to investigate.
+- **HAL0-DUTY-3.** The daily reconciliation reports in HAL0's conversation, quietly: problems opened, fixed and stuck since the last one, open escalations, and any uncovered interval. Unknown, stale or partial telemetry stays unknown with its reason.
+- **HAL0-DUTY-4.** Preserve active runs, explicit holds and dependencies; reread the task and current execution before acting. A wake that changes nothing records a quiet pass.
 
-##### Fleet project monitoring
-
-- **HAL0-MON-1.** Use a Fleet-scoped Needs you automation for new questions and execution problems, and a separate daily reconciliation in an explicit IANA time zone.
-  Coordinate ownership and the daily slot with the queue operator and keep the provider pricing automation independent.
-  Reconciliation covers active, waiting and stalled tasks, their executions, ordinary task progress, and missed signals since the last confirmed reconciliation. Retain the checked interval and any uncovered range.
-  Before acting, reread the task and current execution. Preserve active runs, explicit holds and dependencies.
-- **HAL0-MON-2.** Read both `telemetry_summary` and `telemetry_findings` under the [telemetry rules and freshness contract](docs/designs/fleet-telemetry.md#6-rules).
-  Use Fleet's cause and group keys and open `telemetry_trace` when it can resolve the diagnosis. A fresh empty finding set is a quiet observation.
-  Record stale, unavailable or incomplete results, unconfirmed executions, and missing usage or cost coverage as unknown with a reason.
-  Match each cause to its existing Fleet event, question or task before any write. Repeated signals, restarts and HAL0's own events must preserve that identity.
-- **HAL0-MON-3.** Answer a technical question through Fleet when an approved requirement resolves it. For a confirmed technical cause, continue the matching authorized task if eligible, or create one linked task and verify the fix on the affected surface.
-  Use the existing question for a pending owner decision or ask once through Fleet with context, evidence links, options and a recommendation. Link the task when one exists.
-  Record quiet passes in Runs. Close or dismiss a resolved, obsolete or duplicate entry only with confirmed evidence and Fleet's [audit trail](docs/designs/fleet-system-management.md#audit-journal).
-
-Isolated qualification covers task progress and stalls, new and repeated Needs you, common-cause findings, fresh empty and stale or unavailable telemetry, an owner decision routed to a test recipient, a technical answer, replay and restart, and preservation of an active run and an explicit hold.
-
-In the coordinated live pilot, read back both automation revisions and the next scheduled slot.
-Observe the scheduled reconciliation and an event-triggered run through terminal execution evidence. Retain their results, links to any affected tasks and questions, and the relevant audit entries.
+The coordinator's watchdog, not HAL0, reports HAL0 itself down ([rule 6](docs/designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner)).
 
 ### Environments
 

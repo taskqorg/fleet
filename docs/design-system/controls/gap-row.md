@@ -15,6 +15,6 @@
 
 **Accessibility.** A list item named by its class and state; the sparkline is an image whose name lists the days; the step trail is an ordered list with the current step marked `aria-current="step"` and done steps named.
 
-**Do.** Say the state in words. **Don't.** Put Investigate on the row: the decision is in the opened class, on its finding.
+**Do.** Say the state in words. **Don't.** Put Investigate or Dismiss anywhere: the finding's problem has a bot owner, and the person talks to it ([problems](../../designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner)).
 
 **Used in.** [System](../pages/system.md).

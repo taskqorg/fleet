@@ -21,7 +21,7 @@ The design copies proven patterns and names: wide structured events per operatio
 *   **Pass:** a periodic loop in a service (dispatch, reconcile, placement, update check, the rules pass itself).
 *   **Rule:** one embedded SQL query that returns rows `(subject, value, baseline, exemplars, host_id, store_id, project_id)`; the last three drive grouping and the recipient. A returned row is a finding.
 *   **Finding:** one rule firing for one subject, with up to five exemplar `trace_id`s. Findings are listed by `telemetry_findings`.
-*   **Problem:** a finding (or a direct signal such as a refused insert) turned into a needs-you question with a `cause` key. Problems are owned by [system management, Problems](fleet-system-management.md#problems-needs-you-questions-from-rules).
+*   **Problem:** a finding (or a direct signal such as a refused insert) turned into a problem with a `cause` key and a bot owner; it is not a question. Problems are owned by [system management, Problems](fleet-system-management.md#problems-anomalies-with-a-bot-owner).
 *   **Audit journal:** durable Postgres record of who changed what. It is not telemetry. See [Spans and the journal](#7-spans-and-the-audit-journal).
 
 ## The Problem
@@ -63,7 +63,7 @@ The result: when Fleet is slow, a host goes quiet, a provider fails or a run cos
 
 *   **Given:** the gateway records one `client` span per provider call.
 *   **When:** more than 50% of calls to one provider fail over 5 minutes, with at least 10 calls.
-*   **Then:** one question per provider (`problem:error-spike:gateway.call:<connection>`), with up to five exemplar traces. Answer `Investigate` opens a PM task with those links; `Dismiss` withdraws it until the cause clears and fires again.
+*   **Then:** one problem per provider (`problem:error-spike:gateway.call:<connection>`), with up to five exemplar traces, owned by the system duty bot, which reads the traces and fixes or escalates it.
 
 ### CUJ 3: Why was this task slow
 
@@ -261,7 +261,7 @@ One rules pass in the coordinator runs every minute (`pass.rules`). Each rule is
 | `latency` | 2 | 1-hour p95 above 2 x the 7-day p95, at least 20 calls | operation | `problem:latency:<service>:<name>` |
 | `cost` | 2 | tokens or credits per task, per experiment, per hour above 3 x the 7-day median; a subscription limit projected to run out before reset | project or subscription | `problem:cost:<subject>` |
 
-All new keys start with `problem:` so the dispatch sweep, which withdraws any `host:`, `execution:`, `subscription:`, `placement:` or `budget:…:reached` cause it did not compute, never touches them. Rule results feed [Problems](fleet-system-management.md#problems-needs-you-questions-from-rules), which turns them into questions, groups them and closes them. `stuck` uses 30 minutes until stage 2 replaces it with the execution kind's own 7-day p99. A rule with no baseline yet (cold start: less than 7 days of rollup) does not fire.
+All new keys start with `problem:` so the dispatch sweep, which withdraws any `host:`, `execution:`, `subscription:`, `placement:` or `budget:…:reached` cause it did not compute, never touches them. Rule results feed [Problems](fleet-system-management.md#problems-anomalies-with-a-bot-owner), which turns them into questions, groups them and closes them. `stuck` uses 30 minutes until stage 2 replaces it with the execution kind's own 7-day p99. A rule with no baseline yet (cold start: less than 7 days of rollup) does not fire.
 
 **When the watcher is down.** The coordinator counts failed inserts in memory. After 3 failed flushes in a row it opens `problem:telemetry:clickhouse` in Postgres directly. The rules pass records its last run in `telemetry_summary`; the System screen shows findings as stale when that is older than 3 minutes. If the coordinator itself is down, nothing fires; `/api/health` and the existing provider checks remain the outside view.
 
@@ -300,7 +300,7 @@ What agents lack, read as data: a failed tool call of an agent run, or a failed 
 *   **Rules.** In order, the first whose source, `shell` and `match` hold wins; `class` may take match groups, `{tool}` and `{connection}`. `skip` records nothing (a gateway error the agent saw is counted from the call row; a local server not up is no gap). A shell command no rule names is no gap: its exit status is the program's answer. Any other unmatched failure is `other` with its decisive line (the first line naming an error).
 *   **Classes.** `missing-command:<name>`, `missing-module:<name>`, `sandbox-write`, `sandbox-shm`, `sandbox-network`, `sandbox-code`, `approval-denied`, `tool-unavailable:<tool>`, `browser-unready`, `auth-unready`, `model-unsupported`, `fleet-refused:<tool>`, `fleet-unconfirmed:<tool>`, `mcp-refused:<connection>/<tool>`, `gateway-unknown-tool`, `gateway-quota`, `gateway-rejected:<connection>/<tool>`, `gateway-provider-down:<connection>`, `other`. Each family names its controlling setting (`setting`: kind, the file or operation, what a fix there does for every future agent).
 *   **Storage.** `agent_gap`: one row per classified failure (event id and block index, or the call id), on the agent run that lacked something (a gateway call's parent run, else the call's row), with the rules digest. Host, harness, profile and project come from the run. `agent_gap_pass` records each classification of a window with the rules it used; the `agent-gaps` pass (at start, then hourly) classifies the last 30 days again when no pass used the current rules, and `agent_gaps_reclassify` (owner) does it on request.
-*   **Findings.** A class other than `other` with at least `finding.minCount` failures in `finding.minExecutions` agent runs over `finding.days` (defaults 10, 3, 7) opens a finding (`agent_gap_finding`, Fleet project) and a problem question, cause `gap:<class>`, source `agent-gaps`, answers Investigate or Dismiss. Investigate starts a PM conversation (preset `investigate`, project `fleet`, as the person who answered) with the class's counts, breakdowns, examples and setting; the PM has the fix made as a pull request in taskqorg/fleet and names it with `agent_gaps_link {class, pr}`. The finding then waits until the delivery record shows that pull request's release running on the coordinator and on every host seen in the last hour: that moment is the change point (`changeAt`, the sparkline marker). `finding.watchDays` (3) after it, the class's failures per agent run in the same span after and before decide: at most `finding.fixedRatio` (0.5) of the before rate closes the finding as fixed (the question lets go); otherwise it asks again as still failing with both rates. An open or dismissed finding whose class falls below the threshold is dropped with its question; a fixed class that passes the threshold again opens a new finding that names the earlier pull request. States: open, investigating, dismissed, linked, watching, fixed, still-failing (`agentGapFindingTransition`, the only writer).
+*   **Findings.** A class other than `other` with at least `finding.minCount` failures in `finding.minExecutions` agent runs over `finding.days` (defaults 10, 3, 7) opens a finding (`agent_gap_finding`, Fleet project) and a problem, cause `gap:<class>`, source `agent-gaps`, owned by the system duty bot. The bot works it in its problem conversation with the class's counts, breakdowns, examples and setting (not built: today a question with Investigate starts a PM conversation); the bot has the fix made as a pull request in taskqorg/fleet and names it with `agent_gaps_link {class, pr}`. The finding then waits until the delivery record shows that pull request's release running on the coordinator and on every host seen in the last hour: that moment is the change point (`changeAt`, the sparkline marker). `finding.watchDays` (3) after it, the class's failures per agent run in the same span after and before decide: at most `finding.fixedRatio` (0.5) of the before rate closes the finding and its problem as fixed; otherwise the problem reopens as still failing with both rates. An open finding whose class falls below the threshold is dropped with its problem; a fixed class that passes the threshold again opens a new finding that names the earlier pull request. States: open, investigating, dismissed, linked, watching, fixed, still-failing (`agentGapFindingTransition`, the only writer).
 *   **Read.** `agent_gaps` (agent tool): per class the count, the previous window's count, daily counts with empty days, distinct executions, counts by host, harness, profile, tool and project, the five newest examples (one per execution, with the app path of its conversation, task or Lab experiment), the setting and the class's finding (a finding's class shows even with no failure in the window); filters by class or family, host, profile and project.
 
 ## Settings
@@ -323,7 +323,7 @@ All numbers in this design are settings; these are their defaults, tuned from th
 | Part | Designed in | Used by |
 |---|---|---|
 | Audit journal, and how it differs from spans | [system management](fleet-system-management.md#audit-journal); difference in [§7 here](#7-spans-and-the-audit-journal) | both |
-| Problems: rule results and direct signals as needs-you questions | [system management](fleet-system-management.md#problems-needs-you-questions-from-rules) | rules here, cause list there |
+| Problems: rule results and direct signals with a bot owner | [system management](fleet-system-management.md#problems-anomalies-with-a-bot-owner) | rules here, cause list there |
 | System screen | layout and actions in [system management](fleet-system-management.md#system-screen); read panels in [§8 here](#8-system-screen-read-half) | both |
 | Host readings (disk, store free) | `host.heartbeat` here | `store-fill` rule, System screen, purge preview |
 
@@ -386,7 +386,7 @@ All numbers in this design are settings; these are their defaults, tuned from th
 ## Risks & Mitigations
 
 *   **Span loss during a long ClickHouse outage.** Coordinator spans are dropped (counted); executor and gateway spans wait in their files. Accepted: the count and the clickhouse question say how much was lost.
-*   **A rule that fires on noise.** Every factor is a setting; `Dismiss` withdraws a question until the cause clears.
+*   **A rule that fires on noise.** Every factor is a setting; the owner bot changes it through a pull request, and a noisy problem never reaches Needs you.
 *   **Attrs growing without bound.** The allow list and value cap in `Span.Set`.
 
 ## Detailed Implementation
@@ -419,7 +419,7 @@ Wave 1 renames Go files, so this list names packages and areas, not file paths.
 
 1.  `span_minute` rollup view; `error-burn`, `latency`, `cost` rules; `stuck` from p99; baseline column in `telemetry_summary`.
 2.  `telemetry_query`; `pg_calls`, `pg_ms` summed in the store transaction wrapper; per-candidate route reasons as `event` rows.
-3.  PM `Investigate` routine: answer `Investigate` opens a PM task with the exemplar links.
+3.  The duty bot reads a problem's exemplar links in its problem conversation.
 
 ### Stage 3
 

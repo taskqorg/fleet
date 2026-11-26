@@ -30,7 +30,7 @@ Unchanged defaults: no limits (no minimum interval, no trigger count cap); the s
 | `presetId` | The preset the trigger was made from; a label only. |
 | `text` | The message text. It replaces the fixed texts in code. |
 | `when` | `every` (`everyMs`), `daily` (`time` `HH:MM`, IANA `zone`) or `manual` (only `trigger_run`). |
-| `ifChanged` | Change kinds: `task`, `question`, `execution`, `host`, `limits`. Empty: fire on time without a check. |
+| `ifChanged` | Change kinds: `task`, `question`, `execution`, `host`, `limits`, `problem`. Empty: fire on time without a check. `problem` counts a problem this bot owns that opened, reopened or changed phase, any project or none; a raise of an open cause and the bot's own updates count nothing ([problems](fleet-system-management.md#problems-anomalies-with-a-bot-owner)). |
 | `enabled` | Paused when false. A paused trigger keeps every value. |
 | `revision` | Optimistic concurrency for saves and deletes. |
 | state | `cursor` (change log position), `nextAt`, `lastSlot` (daily date), `fires`, `lastFireAt`, `quietChecks` and `quietSince` (checks without change since the last fire), `lastError`, `limitsSignaled`. |
@@ -60,7 +60,7 @@ A preset is a JSON file `config/triggers/<id>.json` with the trigger fields exce
 | `conversation-check` | every 5 min | task, question, execution | Review your focus with `task_page` and `questions_list`. |
 | `focus-changes` | every 15 s (each pass) | task, question, execution | none beyond the change list |
 | `daily-reconciliation` | daily 09:00 UTC | none | Reconcile your project: open tasks, Needs you, runs since the last reconciliation. |
-| `needs-you` | every 15 s (each pass), bot target | question, execution | Handle new Needs you entries in your project. |
+| `needs-you` | every 15 s (each pass), bot target | question, execution, problem | Handle new Needs you entries in your project and the problems you own. |
 
 ## Operations
 
