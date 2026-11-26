@@ -705,19 +705,22 @@
       "type": "object",
       "properties": {
         "requestId": {
-          "type": "string"
+          "type": "string",
+          "description": "Required for a fresh question."
         },
         "question": {
-          "type": "string"
+          "type": "string",
+          "description": "Fresh question text. Supply requestId with it."
+        },
+        "taskId": {
+          "type": "string",
+          "description": "The task for a fresh question about an existing-task blocker."
         },
         "resume": {
-          "type": "string"
+          "type": "string",
+          "description": "An existing question ID. Supply resume alone to read its answer."
         }
-      },
-      "required": [
-        "requestId",
-        "question"
-      ]
+      }
     }
   },
   {
