@@ -189,7 +189,7 @@
   /* The list holds the columns and each row takes them as a subgrid, so names, states and facts line up across rows. */
   .drift-rows {
     list-style: none; margin: 0; padding: 0; container-type: inline-size; border-top: 1px solid var(--line-soft);
-    display: grid; grid-template-columns: minmax(7rem, 14rem) minmax(0, 1fr) auto minmax(0, 16rem); column-gap: var(--space-3);
+    display: grid; grid-template-columns: minmax(6rem, 11rem) minmax(12rem, 1fr) auto minmax(0, max-content); column-gap: var(--space-3);
   }
   .drow {
     position: relative; display: grid; align-items: center; gap: var(--space-1) var(--space-3);
