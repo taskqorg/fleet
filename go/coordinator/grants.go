@@ -148,14 +148,18 @@ func grantsDrift(q *Request, history bool) (contract.ConnectionsDriftReply, erro
 	if err != nil {
 		return contract.ConnectionsDriftReply{}, err
 	}
-	var audits []db.AuditOfKindRow
+	var audits []db.AuditLatestOfTargetsRow
 	if history {
-		if audits, err = q.db().AuditOfKind(q.ctx(), "connection"); err != nil {
+		targets := make([]string, 0, len(conns))
+		for _, c := range conns {
+			targets = append(targets, "connection:"+c.Name)
+		}
+		if audits, err = q.db().AuditLatestOfTargets(q.ctx(), targets); err != nil {
 			return contract.ConnectionsDriftReply{}, err
 		}
 	}
 	last := map[string]contract.GrantChange{}
-	for _, r := range audits { // oldest first: the last one stays
+	for _, r := range audits {
 		var v struct {
 			Field      string  `json:"field"`
 			Actor      string  `json:"actor"`

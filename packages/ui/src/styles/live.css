@@ -183,4 +183,27 @@
     .chrow > footer { justify-content: flex-start; }
     .chrow > .when { align-self: start; }
   }
+
+  /* Drift rows (controls/drift-row.md): Changes › Agent environment. Flat one-line rows in a panel: name, detail, state,
+     last fact; the list is the size container, so a narrow pane stacks each row (OR-66) with the state on the first line. */
+  .drift-rows { list-style: none; margin: 0; padding: 0; container-type: inline-size; border-top: 1px solid var(--line-soft); }
+  .drow {
+    position: relative; display: grid; align-items: center; gap: var(--space-1) var(--space-3);
+    grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto minmax(0, max-content); grid-template-areas: "name detail chip fact";
+    padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line-soft);
+  }
+  .drow:has(.drow-link:hover) { background: var(--hover); }
+  .drow:has(.drow-link:focus-visible) { outline: var(--size-focus-ring) solid var(--accent); outline-offset: calc(-1 * var(--size-focus-ring)); }
+  .drow-name { grid-area: name; min-width: 0; color: var(--fg); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+  .drow-link { text-decoration: none; }
+  .drow-link:focus-visible { outline: none; }
+  .drow-link::after { content: ""; position: absolute; inset: 0; }
+  .drow [data-tip]:not(.drow-link) { position: relative; z-index: 1; }
+  .drow-detail { grid-area: detail; min-width: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+  .drow > .badge { grid-area: chip; justify-self: start; }
+  .drow-fact { grid-area: fact; justify-self: end; min-width: 0; text-align: end; color: var(--fg-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  @container (width < 40rem) {
+    .drow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name chip" "detail detail" "fact fact"; }
+    .drow-fact { justify-self: start; text-align: start; }
+  }
 }

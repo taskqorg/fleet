@@ -3,7 +3,7 @@
 import { createSignal, For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, ChangeRow, DetailHead, DiffRow, InheritedRows, MatrixCell,
+  StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, ChangeRow, DriftRow, DetailHead, DiffRow, InheritedRows, MatrixCell,
   CatalogueTree, FilterBar, StateCounters, Presets, SearchBox, GroupControl, SortControl, DetailSection, KvRow, TabBar,
   DataTable, TableRow, TableName, StateBadge, ShareBar, ProblemRow, Button, SplitButton, WorkFacts, peerFence,
   InfiniteList, Preview, StateDot, createPages, type Page,
@@ -114,6 +114,16 @@ function LiveRowDemo() {
     <LiveRow kind="event" at={NOW - 2 * min} state="done" text="Nightly digest finished" onOpen={() => {}} facts={<WorkFacts attempts={207} agent="codex" />} />
     <LiveRow kind="runner" name="self-hosted pds18" fact="offline 12m" trouble onOpen={() => {}} />
     <LiveRow kind="event" at={NOW - 9 * min} state="done" text="Stale row: last read 9m ago" stale />
+  </ul>;
+}
+
+function DriftRowDemo() {
+  return <ul class="drift-rows">
+    <DriftRow name="github" detail="19 granted · all 19 that code and profiles use" chip={{ text: 'In sync', tone: 'success' }} fact="tools changed 26 Nov · alex" />
+    <DriftRow name="gradus-gitlab" detail="7 granted · lacks mrs_open, pipelines_failed and releases" chip={{ text: '3 missing', tone: 'attention', tip: 'mrs_open: Delivery (go/coordinator/delivery.go)' }} fact="tools changed 20 Nov · alex" />
+    <DriftRow name="tavily" detail="6 of 6 keys active · least used · no next key" chip={{ text: 'No failover', tone: 'attention' }} />
+    <DriftRow name="python" detail="3.13.1 · on 2 of 3 hosts" chip={{ text: 'Missing on pds18', tone: 'attention' }} href="#" onOpen={() => {}} />
+    <DriftRow name="Codex: coding-worker" detail="no sandbox on writable runs · network on" chip={{ text: 'Applied on 3 hosts', tone: 'success' }} fact="release v1.261126.11" />
   </ul>;
 }
 
@@ -271,6 +281,7 @@ export const BLOCK_SECTIONS: Entry[] = [
   ['run-strip', 'Live: run strip', 'time-strip', () => <RunStripDemo />, () => <>One host's last 24 hours: a tick per run in the running tone, failures in danger.</>],
   ['worker-slot', 'Live: worker slot', 'worker-slot', () => <SlotDemo />, () => <>Busy (pulsing dot, elapsed time, project colour bar), idle (dashed, opens nothing), failing (what fails ×N, retry countdown, cause). The title takes the width and truncates. With work facts the second line shows code · project, then ×N, time in work and the agent mark; a failing slot shows its cause, ×N and the time since the latest failed start.</>],
   ['host-band', 'Live: host band', 'host-band', () => <HostDemo />, () => <>Normal, problem (danger border and glow, one problem line), offline (last values dimmed with the age), loading. Narrow bands stack the slots and move the gauges under the name (container query).</>],
+  ['drift-row', 'Changes: drift rows', 'drift-row', () => <DriftRowDemo />, () => <>Agent environment: in sync, missing grants (the tool and who uses it in the tooltip), no failover, a host tool missing on a host (opens it), a sandbox group; narrow, each row stacks with the state on its first line.</>],
   ['change-row', 'Changes: change rows', 'change-row', () => <ChangeRowDemo />, () => <>A definition on its way (its pull request), a conflict and a failure that need a person, one made in Fleet, a Lab experiment; narrow, each row stacks with the time on its first line.</>],
   ['live-row', 'Live: live rows', 'live-row', () => <LiveRowDemo />, () => <>Project, task in work, delivery, runner, event; work rows carry the work facts; repeats are one event with ×N; trouble turns the dot and the fact red; stale rows are dimmed and open nothing.</>],
   ['work-facts', 'Rows: work facts', 'work-facts', () => <WorkFactsDemo />, () => <>Quiet form (owner pick B): ×N attempts from two, time in work, agent mark; the latest attempt and the time in the state are in the tooltip of the time in work. Peers: attempts 1, 1, 2, 1, 3, 500 and hours 1, 2, 3, 2, 1, 40, so ×500 and 40h take the attention tone (ten times the median or more).</>],
