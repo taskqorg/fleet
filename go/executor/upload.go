@@ -42,6 +42,7 @@ type transferJob struct {
 	ArtifactId  *string         `json:"artifactId"`
 	StoreId     string          `json:"storeId"`
 	Url         string          `json:"url"`
+	StagingKey  *string         `json:"stagingKey"`
 	Size        *uint64         `json:"size"`
 	PartSize    *uint64         `json:"partSize"`
 	Source      transferSource  `json:"source"`
@@ -216,7 +217,7 @@ func (c *transferClient) post(route string, body any) (json.RawMessage, *failure
 	case answerEdge:
 		return nil, retryf("coordinator edge answered %d (%s)", a.status, a.text)
 	case answerRetry:
-		if isRecoverableUploadText(a.text) {
+		if route != contract.RouteArtifactsRenew.Path && isRecoverableUploadText(a.text) {
 			return nil, &failure{recoverable: true, msg: a.text}
 		}
 		return nil, retryf("%s", a.text)
@@ -224,6 +225,13 @@ func (c *transferClient) post(route string, body any) (json.RawMessage, *failure
 	// 409 no_store: no listed store is reachable now: wait and retry.
 	if a.status == 409 && strings.Contains(a.text, "No reachable store") {
 		return nil, retryf("409 %s", a.text)
+	}
+	if route == contract.RouteArtifactsRenew.Path {
+		var problem struct {
+			Code string `json:"code"`
+		}
+		_ = json.Unmarshal([]byte(a.text), &problem)
+		return nil, &failure{recoverable: a.status == 409 && problem.Code == "no_such_key", msg: fmt.Sprintf("%d %s", a.status, a.text)}
 	}
 	msg := fmt.Sprintf("%d %s", a.status, a.text)
 	return nil, &failure{recoverable: isRecoverableUploadText(a.text), msg: msg}
@@ -401,12 +409,12 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		if v.ArtifactId != "" {
 			a = v.ArtifactId
 		}
-		return verifyArtifact(c, a, v.StoreId, v.Url)
+		return verifyArtifact(c, a, v.StoreId, v.Url, v.StagingKey)
 	}
 	return commit, nil
 }
 
-func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contract.ArtifactStateReply, *failure) {
+func verifyArtifact(c *transferClient, artifactID, storeID, url string, stagingKey *string) (contract.ArtifactStateReply, *failure) {
 	r, f := c.get(url)
 	if f != nil {
 		return contract.ArtifactStateReply{}, f
@@ -416,7 +424,7 @@ func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contrac
 	if err != nil {
 		return contract.ArtifactStateReply{}, ioFailure(err)
 	}
-	return transferReply(c, contract.RouteArtifactsVerified, contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
+	return transferReply(c, contract.RouteArtifactsVerified, contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest, StagingKey: stagingKey})
 }
 
 const maxUploadRecoveries = 3
@@ -541,7 +549,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			return M{"artifactId": a, "state": out.State}, nil
 		}
 	case "verify":
-		return verifyArtifact(c, str0(body.ArtifactId), body.StoreId, body.Url)
+		return verifyArtifact(c, str0(body.ArtifactId), body.StoreId, body.Url, body.StagingKey)
 	case "copy":
 		// Download the source object next to the journal, then upload it to this host's store.
 		tmp := filepath.Join(body.Spool, id+".part")

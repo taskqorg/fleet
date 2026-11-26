@@ -465,10 +465,11 @@ func (v *ArtifactTransferPayload) Validate() error {
 
 // ArtifactVerifiedRequest: POST /api/hosts/artifacts/verified: the digest a store's host read back.
 type ArtifactVerifiedRequest struct {
-	ArtifactId string `json:"artifactId"`
-	HostId     string `json:"hostId"`
-	Sha256     string `json:"sha256"`
-	StoreId    string `json:"storeId"`
+	ArtifactId string  `json:"artifactId"`
+	HostId     string  `json:"hostId"`
+	Sha256     string  `json:"sha256"`
+	StagingKey *string `json:"stagingKey,omitempty"`
+	StoreId    string  `json:"storeId"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -478,9 +479,10 @@ func (v *ArtifactVerifiedRequest) Validate() error {
 
 // ArtifactVerify: a presigned read of the staged object for the store host to hash
 type ArtifactVerify struct {
-	ArtifactId string `json:"artifactId"`
-	StoreId    string `json:"storeId"`
-	Url        string `json:"url"`
+	ArtifactId string  `json:"artifactId"`
+	StagingKey *string `json:"stagingKey,omitempty"`
+	StoreId    string  `json:"storeId"`
+	Url        string  `json:"url"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
