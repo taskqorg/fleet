@@ -62,7 +62,17 @@ func rulesPass(ctx context.Context, a *App) error {
 	var spanErr error
 	if spanStore != nil {
 		fs, spanErr = spanRules(ctx)
+		if spanErr == nil {
+			var c []contract.Finding
+			c, spanErr = cleanupSpanRules(ctx)
+			fs = append(fs, c...)
+		}
 	}
+	cleanup, err := cleanupStateRules(ctx, a)
+	if err != nil {
+		return err
+	}
+	more = append(more, cleanup...)
 	if spanErr != nil {
 		// The span rules could not run: their findings of the last pass stand, so the sync neither closes their
 		// questions nor resets their since; the Postgres rules still apply.
@@ -125,7 +135,7 @@ type ruleProblemData struct {
 
 func text(f *contract.Finding, s string) { f.Text = &s }
 
-var spanRule = map[string]bool{"absence-host": true, "absence-pass": true, "error-spike": true, "host-saturation": true}
+var spanRule = map[string]bool{"absence-host": true, "absence-pass": true, "error-spike": true, "host-saturation": true, "disk-growth": true, "orphan": true}
 
 // spanRules: absence-host, absence-pass, error-spike, host-saturation over the span table.
 func spanRules(ctx context.Context) ([]contract.Finding, error) {

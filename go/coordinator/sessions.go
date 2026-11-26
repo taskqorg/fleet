@@ -862,6 +862,8 @@ type teardownSkipped struct {
 type teardownPayload struct {
 	WorkspaceKey     json.RawMessage `json:"workspaceKey,omitempty"`
 	DeleteBranch     bool            `json:"deleteBranch,omitempty"`
+	OutputsStored    bool            `json:"outputsStored,omitempty"`
+	Step             bool            `json:"step,omitempty"`
 	ProjectID        string          `json:"projectId,omitempty"`
 	Project          json.RawMessage `json:"project,omitempty"`
 	WorkingDirectory string          `json:"workingDirectory,omitempty"`
@@ -873,6 +875,17 @@ type teardownPayload struct {
 // even when squash-merged (git branch -D); the executor still keeps the worktree for any cleanup.keepWhen reason
 // (uncommitted, unpushed, teardown-failed).
 func teardownCommand(q *Request, s agentSession, last agentExecution, deleteBranch bool) (any, error) {
+	return teardownCommandWith(q, s, last, teardownFlags{deleteBranch: deleteBranch})
+}
+
+// teardownFlags: how the host treats the worktree (docs/designs/fleet-host-cleanup.md#10-worktree-lifecycle-for-every-run-kind):
+// outputsStored lets worktree/output go before keepWhen; step marks a pipeline step session.
+type teardownFlags struct {
+	deleteBranch, outputsStored, step bool
+}
+
+func teardownCommandWith(q *Request, s agentSession, last agentExecution, f teardownFlags) (any, error) {
+	deleteBranch := f.deleteBranch
 	sid, host := s.ID, deref(last.HostID)
 	// A removed host never fetches it: its worktrees went with it, and a pending command would keep purge waiting.
 	if live, err := knownHost(q, host); err != nil || !live {
@@ -887,7 +900,7 @@ func teardownCommand(q *Request, s agentSession, last agentExecution, deleteBran
 		payload.WorkspaceKey = d["workspaceKey"]
 	}
 	workingDirectory := d.val("workingDirectory")
-	payload.DeleteBranch = deleteBranch
+	payload.DeleteBranch, payload.OutputsStored, payload.Step = deleteBranch, f.outputsStored, f.step
 	if p := d.text("projectId"); p != "" {
 		workspace := rawObject(last.rest).object("workspaceSnapshot")
 		snapshots := rawObject(s.rest).object("workspaceSnapshots")

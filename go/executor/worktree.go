@@ -427,8 +427,31 @@ func keepReasons(project contract.ProjectContext) map[string]bool {
 // commits on no remote branch, a failed teardown script). The branch goes with -d (merged only), or -D
 // when the work was delivered (deleteBranch: the task was accepted).
 func teardown(dir, session, top string, project contract.ProjectContext, deleteBranch, detached bool) contract.Teardown {
+	return teardownWith(dir, session, top, project, teardownOptions{deleteBranch: deleteBranch, detached: detached})
+}
+
+// teardownOptions: how a teardown treats the worktree (docs/designs/fleet-host-cleanup.md#10-worktree-lifecycle-for-every-run-kind).
+// dropOutput: the run's results are stored (or nothing can collect them any more), so worktree/output goes before the
+// keepWhen checks. ignoreUncommitted: a personal project's pipeline step, which writes no tracked work.
+type teardownOptions struct {
+	deleteBranch, detached, dropOutput, ignoreUncommitted bool
+}
+
+func teardownWith(dir, session, top string, project contract.ProjectContext, opt teardownOptions) contract.Teardown {
+	deleteBranch, detached := opt.deleteBranch, opt.detached
 	keep := keepReasons(project)
+	if opt.ignoreUncommitted {
+		delete(keep, "uncommitted")
+	}
 	w := filepath.Join(dir, "worktree")
+	if opt.dropOutput {
+		// Only untracked results: a repository that tracks files under output/ keeps them.
+		if st, err := os.Lstat(filepath.Join(w, "output")); err == nil && st.IsDir() {
+			if tracked, err := hardenedGit("-C", w, "ls-files", "--", "output").Output(); err == nil && len(tracked) == 0 {
+				_ = removeTree(filepath.Join(w, "output"))
+			}
+		}
+	}
 	removeProjectEnv(session) // the dev environment is disposable; env_exec starts it again for a kept worktree
 	// Copies set aside by setAsideStale go when the task was accepted, or when the session never had a branch of its own
 	// (a detached conversation keeps no work). A cancelled or failed task's copy stays: it may be the only copy of its work.

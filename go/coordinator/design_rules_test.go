@@ -859,6 +859,9 @@ var designRulesOwned = map[string]map[string]string{
 	"rules.go": {
 		"R-SQL": "S2 covers PostgreSQL: these are the ClickHouse span-store queries of the span rules (absence-host, absence-pass, error-spike, host-saturation), which sqlc cannot generate",
 	},
+	"rules_cleanup.go": {
+		"R-SQL": "S2 covers PostgreSQL: these are the ClickHouse span-store queries of disk-growth, orphan and telemetry_disk (docs/designs/fleet-host-cleanup.md#13-rules), which sqlc cannot generate",
+	},
 	"sql_builder.go": {
 		"R-SQL": "S2: the one place SQL is assembled at run time (resource item pages, analytics_query grouping and filters, list pages and their counts, delete and purge cascades), from allowlisted identifiers with bind parameters; sqlc cannot vary a statement's table, comparison, grouping or conditions",
 	},

@@ -366,6 +366,10 @@ func (a *App) effectiveHostLoad(hostID string, dbLoad *hostLoadObservation) *hos
 		return dbLoad
 	}
 	if dbLoad == nil || cached.UpdatedAt >= dbLoad.UpdatedAt {
+		// The heartbeat's top list is short (command:MB, pid 0); the poll's full entries name pid, user and age.
+		if dbLoad != nil && len(dbLoad.Top) > 0 && cached.UpdatedAt-dbLoad.UpdatedAt < hostLoadStaleMs {
+			cached.Top = dbLoad.Top
+		}
 		return cached
 	}
 	return dbLoad

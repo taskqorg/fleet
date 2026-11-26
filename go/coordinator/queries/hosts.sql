@@ -151,7 +151,7 @@ SELECT id, holder, last_seen_at, project_id, payload FROM host_observation WHERE
 -- name: HostObservationPut :exec
 INSERT INTO host_observation(id, holder, last_seen_at, project_id, payload)
 VALUES (@id, sqlc.narg(holder), sqlc.narg(last_seen_at), sqlc.narg(project_id), @payload)
-ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload || jsonb_strip_nulls(jsonb_build_object('inventory', host_observation.payload->'inventory')), updated_at=now(),
  holder=excluded.holder, last_seen_at=excluded.last_seen_at, project_id=excluded.project_id;
 
 -- name: RouteDecisionsOfSubscription :many

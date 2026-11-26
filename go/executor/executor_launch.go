@@ -183,7 +183,11 @@ func (e *executor) run(c M) error {
 			case err != nil:
 				data = refusedTeardown(err.Error())
 			case ok && !created:
-				data = teardown(dir, workspaceSession(session, key), top, project, tp.DeleteBranch != nil && *tp.DeleteBranch, tp.Branch != nil && !*tp.Branch)
+				personal := projectPersonal(tp.Project)
+				data = teardownWith(dir, workspaceSession(session, key), top, project, teardownOptions{
+					deleteBranch: tp.DeleteBranch != nil && *tp.DeleteBranch, detached: tp.Branch != nil && !*tp.Branch,
+					dropOutput:        (tp.OutputsStored != nil && *tp.OutputsStored) || personal,
+					ignoreUncommitted: personal && tp.Step != nil && *tp.Step})
 			}
 		}
 		reason := str0(data.Reason)

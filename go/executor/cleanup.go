@@ -253,6 +253,7 @@ func (e *executor) startSweep() {
 			if tmp {
 				c.add(sweepTmp("/tmp", age, now))
 			}
+			c.add(e.inventoryPass(roots, tmp))
 			c.record("sweep")
 			time.Sleep(time.Hour)
 		}

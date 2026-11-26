@@ -1417,6 +1417,44 @@ func (v *HostDiagnosisRequest) Validate() error {
 	return nil
 }
 
+type HostDiskProject struct {
+	Bytes     float64 `json:"bytes"`
+	ProjectId string  `json:"projectId"`
+	Worktrees int64   `json:"worktrees"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDiskProject) Validate() error {
+	return nil
+}
+
+// HostDiskReading: The host's latest inventory (docs/designs/fleet-host-cleanup.md#11-inventory-reconcile).
+type HostDiskReading struct {
+	At            float64           `json:"at"`
+	Disk          HostDisk          `json:"disk"`
+	Keep          int64             `json:"keep"`
+	LeftoverBytes *float64          `json:"leftoverBytes,omitempty"`
+	Projects      []HostDiskProject `json:"projects"`
+	Teardown      int64             `json:"teardown"`
+	Unknown       int64             `json:"unknown"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDiskReading) Validate() error {
+	if err := Check(&v.Disk, "disk"); err != nil {
+		return err
+	}
+	if v.Projects == nil {
+		return Missing("projects")
+	}
+	for i := range v.Projects {
+		if err := Check(&v.Projects[i], "projects"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type HostHarnessVersion struct {
 	Expected string  `json:"expected"`
 	Harness  string  `json:"harness"`
@@ -1527,6 +1565,7 @@ type HostRow struct {
 	AutoUpdate       json.RawMessage      `json:"autoUpdate"`
 	Capabilities     []string             `json:"capabilities"`
 	Configured       bool                 `json:"configured"`
+	Disk             *HostDiskReading     `json:"disk,omitempty"`
 	HarnessVersions  []HostHarnessVersion `json:"harnessVersions,omitempty"`
 	Id               string               `json:"id"`
 	LastSeenAt       *float64             `json:"lastSeenAt"`
@@ -1556,6 +1595,11 @@ func (v *HostRow) Validate() error {
 	}
 	if v.Capabilities == nil {
 		return Missing("capabilities")
+	}
+	if v.Disk != nil {
+		if err := Check(v.Disk, "disk"); err != nil {
+			return err
+		}
 	}
 	for i := range v.HarnessVersions {
 		if err := Check(&v.HarnessVersions[i], "harnessVersions"); err != nil {
