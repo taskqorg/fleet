@@ -215,10 +215,7 @@ type ghRepo struct {
 }
 
 func deliveryPass(ctx context.Context, a *App) error {
-	// The UI the site serves, read once per pass like the host versions; noted first, so a failed read below still keeps
-	// the minute's sighting (a UI-only release's UI on site).
 	ui := uiServed()
-	noteUISeen(ui, time.Now())
 	type target struct {
 		projects    []string
 		provider    string

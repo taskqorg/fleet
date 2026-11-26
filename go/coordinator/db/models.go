@@ -991,6 +991,15 @@ type DeliverySetting struct {
 	TombstonedAt *time.Time
 }
 
+type DeliverySiteObservation struct {
+	FirstSeen          time.Time
+	LastSeen           time.Time
+	CoveredFrom        *time.Time
+	CoordinatorVersion string
+	UiVersion          string
+	ProjectID          string
+}
+
 type DeliverySnapshot struct {
 	ID        string
 	State     []byte

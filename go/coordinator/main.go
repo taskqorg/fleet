@@ -276,6 +276,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	startDeliverySiteObservations(bgCtx, a)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}

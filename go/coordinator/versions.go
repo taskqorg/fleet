@@ -14,6 +14,8 @@ import (
 	"fleet/contract"
 )
 
+var coordinatorStarted = time.Now().UTC()
+
 // system_versions: the installed version of every Fleet part in one read, for the navigation's version mark and its
 // overview (docs/design-system/controls/nav-rail.md, Version) and for agents.
 func init() {

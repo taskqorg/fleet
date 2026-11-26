@@ -1,11 +1,11 @@
 // Delivery history and health (docs/designs/fleet-delivery-pipeline.md, Delivery health): one record per merged pull
 // request, per release and per merge-queue run of the fleet repository, read from GitHub through the github connection
-// every 10 minutes (the first pass backfills from the repository start), with host installs and the UI on site recorded
-// by the coordinator from the time it first ran this pass. Over the records: the rolling 7-day baseline (P50/P90 per
+// every 10 minutes (the first pass backfills from the repository start). It reconciles releases with updater results
+// and the independently recorded coordinator and site sightings. Over the records: the rolling 7-day baseline (P50/P90 per
 // stage and per job), named snapshots, and the regression check (daily and after each release) that holds one needs-you
 // question per worsened stage or job and withdraws it when the value is back (problemsSync, source delivery).
 // Stored in tables (migration 82: delivery_pr, delivery_run, delivery_release, delivery_baseline, delivery_check,
-// delivery_settings, delivery_history_state with delivery_ui_seen, delivery_run_read): a few hundred rows a week,
+// delivery_settings, delivery_history_state, delivery_site_observation, delivery_run_read): a few hundred rows a week,
 // business records rather than spans, so Postgres and not ClickHouse.
 // ponytail: the fleet repository only (its releases and hosts are the Fleet ones); other repositories need their own
 // release and install mapping.
@@ -24,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"fleet/contract"
@@ -51,7 +50,7 @@ var deliveryBasisOf = map[string][]string{"install": {"exact-install-v1", delive
 
 var deliveryDefaults = contract.DeliverySettings{Ratio: 1.5, MinSamples: 5, MinDeltaMs: 60_000}
 
-// dhState: the pass's own state: delivery_history_state and delivery_ui_seen, the runs to read again (delivery_run_read)
+// dhState: the pass's own state: delivery_history_state, the runs to read again (delivery_run_read)
 // and each pull request's PR CI lookups (the retry columns of delivery_pr).
 type dhState struct {
 	BackfilledFrom string
@@ -59,7 +58,6 @@ type dhState struct {
 	Through        string // the last UTC day whose runs were read
 	PullsUpdated   string
 	InstallsFrom   string
-	UISeen         map[string]string // UI version to when the site first served it
 	RefreshedAt    string
 	Problem        string
 	CheckedRelease string
@@ -69,8 +67,6 @@ type dhState struct {
 	CiRetry        map[string]int    // pull request number to failed PR CI lookups, read again up to dhRetries
 	CiError        map[string]string // pull request number to its last failed PR CI lookup
 }
-
-var coordinatorStarted = time.Now().UTC()
 
 func init() {
 	onStart(func(ctx context.Context, a *App) {
@@ -137,7 +133,7 @@ func dhLoad[T any](q *Request, kind string) ([]T, error) {
 }
 
 func dhStateOf(q *Request) (dhState, error) {
-	st := dhState{UISeen: map[string]string{}, CiTried: map[string]string{}, CiRetry: map[string]int{}, CiError: map[string]string{}}
+	st := dhState{CiTried: map[string]string{}, CiRetry: map[string]int{}, CiError: map[string]string{}}
 	d, err := q.db().DeliveryHistoryState(q.ctx())
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return st, err
@@ -145,13 +141,6 @@ func dhStateOf(q *Request) (dhState, error) {
 	st.BackfilledFrom, st.Backfilled, st.Through, st.PullsUpdated = d.BackfilledFrom, d.Backfilled, d.Through, d.PullsUpdated
 	st.InstallsFrom, st.RefreshedAt, st.Problem = d.InstallsFrom, d.RefreshedAt, d.Problem
 	st.CheckedRelease, st.CheckedAt = d.CheckedRelease, d.CheckedAt
-	seen, err := q.db().DeliveryUISeen(q.ctx())
-	if err != nil {
-		return st, err
-	}
-	for _, r := range seen {
-		st.UISeen[r.Version] = r.SeenAt
-	}
 	runs, err := q.db().DeliveryRunReads(q.ctx())
 	if err != nil {
 		return st, err
@@ -181,24 +170,13 @@ func dhStateOf(q *Request) (dhState, error) {
 	return st, nil
 }
 
-// dhSave writes the pass's state: its row, the UI first seen, the runs to read again (the others go) and the PR CI
+// dhSave writes the pass's state: its row, the runs to read again (the others go) and the PR CI
 // lookup state on the stored pull requests (the work kit's retry columns: attempts, next_attempt_at, last_error).
 func dhSave(q *Request, st dhState) error {
 	d := q.db()
 	if err := d.DeliveryHistoryStateSave(q.ctx(), db.DeliveryHistoryStateSaveParams{BackfilledFrom: st.BackfilledFrom, Backfilled: st.Backfilled,
 		Through: st.Through, PullsUpdated: st.PullsUpdated, InstallsFrom: st.InstallsFrom, RefreshedAt: st.RefreshedAt, Problem: st.Problem,
 		CheckedRelease: st.CheckedRelease, CheckedAt: st.CheckedAt, ProjectID: ciProject}); err != nil {
-		return err
-	}
-	type seen struct {
-		V string `json:"v"`
-		A string `json:"a"`
-	}
-	ui := []seen{}
-	for v, at := range st.UISeen {
-		ui = append(ui, seen{v, at})
-	}
-	if err := d.DeliveryUISeenSave(q.ctx(), db.DeliveryUISeenSaveParams{Seen: jsonBytes(ui), ProjectID: ciProject}); err != nil {
 		return err
 	}
 	type read struct {
@@ -307,12 +285,21 @@ type dhRun struct {
 
 func deliveryHistoryPass(ctx context.Context, a *App) error {
 	var keyed bool
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
+		_, _, keyed, err = githubConnectionOf(q, ciOwner)
+		return err
+	}); err != nil {
+		return err
+	}
+	return deliveryHistoryCollect(ctx, a, time.Now().UTC(), keyed, func(tool string, args map[string]string) ([]byte, error) {
+		return githubReadKeyed(ctx, a, ciProject, tool, args)
+	})
+}
+
+func deliveryHistoryCollect(ctx context.Context, a *App, now time.Time, keyed bool, forgeRead func(string, map[string]string) ([]byte, error)) error {
 	var st dhState
 	var obs []db.DeliveryHostsSeenRow
 	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
-		if _, _, keyed, err = githubConnectionOf(q, ciOwner); err != nil {
-			return err
-		}
 		if st, err = dhStateOf(q); err != nil {
 			return err
 		}
@@ -321,7 +308,6 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}); err != nil {
 		return err
 	}
-	now := time.Now().UTC()
 	save := func(fn func(q *Request) error) error {
 		return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if fn != nil {
@@ -342,7 +328,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		for i := 0; i+1 < len(kv); i += 2 {
 			args[kv[i]] = kv[i+1]
 		}
-		b, err := githubReadKeyed(ctx, a, ciProject, tool, args)
+		b, err := forgeRead(tool, args)
 		if err == nil {
 			err = json.Unmarshal(b, into)
 		}
@@ -386,9 +372,9 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			return fail(err)
 		}
 		rels = append(rels, rs...)
-		// After the backfill one page: GitHub's list is not by date, but a new ui-* release sorts right after its day's native
-		// ones (ui-1.261117.26-v1.261117.27 was 33rd), well inside 100.
-		if len(rs) < 100 || !backfill {
+		// Normally one page. On recovery, read older pages as well so an
+		// outage spanning more than one page keeps its release associations.
+		if len(rs) < 100 || !backfill && st.Problem == "" {
 			break
 		}
 	}
@@ -614,9 +600,6 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 	}
 	// Releases: new ones are added; installs and the UI on site are recorded for those published since installsFrom.
-	if st.InstallsFrom == "" {
-		st.InstallsFrom = now.Format(time.RFC3339)
-	}
 	relBy := map[string]*contract.DeliveryRelease{}
 	for i := range releases {
 		relBy[releases[i].Tag] = &releases[i]
@@ -631,23 +614,27 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			relBy[releases[i].Tag] = &releases[i]
 		}
 	}
-	if st.UISeen == nil {
-		st.UISeen = map[string]string{}
+	var site deliverySiteEvidence
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
+		site, err = readDeliverySiteEvidence(q)
+		return err
+	}); err != nil {
+		return fail(err)
 	}
-	// The earliest this process saw each UI served: delivery_status's pass notes it every minute, so a UI-only release's
-	// UI on site (its total's end) is not up to this pass's 10 minutes late. Noted here too for a coordinator whose
-	// delivery_status pass is off (FLEET_DELIVERY_TICK_MS=0).
-	// The time of the read, not the pass's start: the reads above take minutes in a backfill.
-	ui, uiAt := uiServed(), time.Now().UTC()
-	noteUISeen(ui, uiAt)
-	for v, at := range uiSeenSnapshot() {
-		if st.UISeen[v] == "" || at < st.UISeen[v] {
-			st.UISeen[v] = at
+	if st.InstallsFrom == "" {
+		st.InstallsFrom = now.Format(time.RFC3339)
+		if len(site.observations) != 0 {
+			st.InstallsFrom = min(st.InstallsFrom, site.observations[0].FirstSeen.UTC().Format(time.RFC3339))
 		}
 	}
 	hosts := deliveryHostVersions(obs, now)
+	siteChanged := false
 	for i := range releases {
-		deliveryInstalls(&releases[i], st, hosts, hostVersion{ui, uiAt.Format(time.RFC3339)}, now)
+		deliveryInstalls(&releases[i], st.InstallsFrom, hosts, now)
+		r := &releases[i]
+		beforeAvailability, beforeInstall, beforeUI := r.Available["coordinator"], r.Installed["coordinator"], deref(r.UiOnSite)
+		site.reconcile(r)
+		siteChanged = siteChanged || beforeAvailability != r.Available["coordinator"] || beforeInstall != r.Installed["coordinator"] || beforeUI != deref(r.UiOnSite)
 		deliveryUpdateObservations(&releases[i], obs)
 	}
 	runList := make([]contract.DeliveryRun, 0, len(have))
@@ -668,8 +655,8 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	if len(skipped) > 0 {
 		st.Problem = fmt.Sprintf("%d reads failed, first: %s", len(skipped), skipped[0])
 	}
-	// The check: after each new release and at least daily.
-	check := newest != st.CheckedRelease || st.CheckedAt < now.Add(-24*time.Hour).Format(time.RFC3339)
+	// Check after releases or a change in their site timing, and at least daily.
+	check := siteChanged || newest != st.CheckedRelease || st.CheckedAt < now.Add(-24*time.Hour).Format(time.RFC3339)
 	err := save(func(q *Request) error {
 		for _, p := range prs {
 			if id := "delivery-pr:" + strconv.FormatInt(p.Number, 10); changed(id, p) {
@@ -697,7 +684,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	// Its own transaction: a failed check must not undo the records just read; it counts as done only when it ran.
 	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		if _, err := deliveryCheck(q, prs, runList, now, st.InstallsFrom); err != nil {
+		if _, err := deliveryCheck(q, prs, runList, now, site.pendingFrom(now, st.InstallsFrom)); err != nil {
 			return err
 		}
 		st.CheckedRelease, st.CheckedAt = newest, now.Format(time.RFC3339)
@@ -759,26 +746,6 @@ func uiServed() string {
 	return version
 }
 
-// uiSeenAt: UI version to the first time this process saw the site serve it (RFC 3339), noted by every delivery pass.
-var uiSeenAt = struct {
-	sync.Mutex
-	m map[string]string
-}{m: map[string]string{}}
-
-func noteUISeen(v string, at time.Time) {
-	uiSeenAt.Lock()
-	defer uiSeenAt.Unlock()
-	if v != "" && uiSeenAt.m[v] == "" {
-		uiSeenAt.m[v] = at.UTC().Format(time.RFC3339)
-	}
-}
-
-func uiSeenSnapshot() map[string]string {
-	uiSeenAt.Lock()
-	defer uiSeenAt.Unlock()
-	return maps.Clone(uiSeenAt.m)
-}
-
 type hostVersion struct{ version, at string }
 
 // deliveryProblemData: what a delivery regression's owner problem records besides its cause and text.
@@ -796,12 +763,12 @@ func deliveryHostsSeen(q *Request) ([]db.DeliveryHostsSeenRow, error) {
 }
 
 // deliveryHostVersions: each host seen in the last hour with its executor version and when it got it (the healthy
-// update's time when it names that version, else now), plus "coordinator": this process.
+// update's time when it names that version, else now).
 func deliveryHostVersions(obs []db.DeliveryHostsSeenRow, now time.Time) map[string]hostVersion {
-	out := map[string]hostVersion{"coordinator": {version, coordinatorStarted.Format(time.RFC3339)}}
+	out := map[string]hostVersion{}
 	for _, o := range obs {
 		v := o.Version
-		if v == "" || now.UnixMilli()-int64(o.LastSeenMs) > 3600_000 {
+		if o.ID == "coordinator" || v == "" || now.UnixMilli()-int64(o.LastSeenMs) > 3600_000 {
 			continue
 		}
 		u, ok := decodeUpdate(json.RawMessage(o.Update))
@@ -830,15 +797,11 @@ func deliveryObservation(tag, published string, hv hostVersion, now time.Time) (
 	return at, hv.version == releaseVersionOf(tag)
 }
 
-// deliveryInstalls: a release published since installsFrom is installed on a host when the host runs it or newer
-// (the first time seen); its UI is on the site when the site first served a UI of its version or newer. served: the UI
-// the site serves now and when that was read; a release no sighting qualifies for is on the site then, as delivery_status
-// says, so the two never disagree for long.
-func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]hostVersion, served hostVersion, now time.Time) {
-	if r.Published < st.InstallsFrom || !deliveryReleaseTag(r.Tag) {
+// deliveryInstalls keeps executor updates on their existing observation path.
+func deliveryInstalls(r *contract.DeliveryRelease, installsFrom string, hosts map[string]hostVersion, now time.Time) {
+	if !deliveryReleaseTag(r.Tag) {
 		return
 	}
-	v := releaseVersionOf(r.Tag)
 	if r.Installed == nil {
 		r.Installed = map[string]string{}
 	}
@@ -850,6 +813,9 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 	}
 	if r.AvailabilityVersions == nil {
 		r.AvailabilityVersions = map[string]string{}
+	}
+	if installsFrom == "" || r.Published < installsFrom {
+		return
 	}
 	for h, hv := range hosts {
 		at, exact := deliveryObservation(r.Tag, r.Published, hv, now)
@@ -864,33 +830,6 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 		if exact && r.Installed[h] == "" {
 			r.Installed[h] = at
 			r.InstalledVersions[h] = hv.version
-		}
-	}
-	if r.UiOnSite == nil {
-		// A sighting before GitHub's publication time is the coordinator's clock behind GitHub's: a UI-only release's own
-		// version exists only once release.yml publishes it (versions are never reused), and any other seen within a
-		// minute is the same skew.
-		skew := r.Published
-		if p, err := time.Parse(time.RFC3339, r.Published); err == nil {
-			skew = p.Add(-time.Minute).Format(time.RFC3339)
-		}
-		for uv, at := range st.UISeen {
-			if at < r.Published && (uv == v && uiOnlyRelease(r.Tag) || at >= skew) {
-				at = r.Published
-			}
-			if !versionLess(uv, v) && at >= r.Published && (r.UiOnSite == nil || at < *r.UiOnSite) {
-				r.UiOnSite = ptr(at)
-			}
-		}
-		// The UI served now has been served since its first sighting, and this release was on the site from then or from its
-		// publication, whichever is later. A sighting after publication was taken above, so with the pass's sightings merged
-		// this is a clock more than a minute behind GitHub's: on the site at publication, as delivery_status says.
-		if r.UiOnSite == nil && served.version != "" && !versionLess(served.version, v) && served.at >= r.Published {
-			at := served.at
-			if s := st.UISeen[served.version]; s != "" && s < at {
-				at = s
-			}
-			r.UiOnSite = ptr(max(at, r.Published))
 		}
 	}
 }
@@ -1087,10 +1026,8 @@ func deliveryValues(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from
 	return out
 }
 
-// deliveryPending adds, for pull requests merged in [from, now) still short of a release (or of the coordinator install
-// of a release published since installsFrom), the time waited so far: a stalled release or install then raises the
-// stage's values instead of leaving it with fewer of them.
-func deliveryPending(s deliverySeries, prs []contract.DeliveryPr, from, now, installsFrom string) {
+// deliveryPending adds waits for release publication and for landings covered by site observations.
+func deliveryPending(s deliverySeries, prs []contract.DeliveryPr, from, now, pendingFrom string) {
 	add := func(k string, p contract.DeliveryPr, since string) {
 		if d := msBetween(&since, &now); d != nil {
 			s[k] = append(s[k], deliveryValue{p.Merged, *d, p.Number, p.Url})
@@ -1103,9 +1040,9 @@ func deliveryPending(s deliverySeries, prs []contract.DeliveryPr, from, now, ins
 		switch {
 		case p.Released == nil:
 			add("release", p, p.Merged)
-		case installsFrom != "" && *p.Released >= installsFrom && p.Available["coordinator"] == "" && strings.HasPrefix(deref(p.Release), "v"):
+		case pendingFrom != "" && *p.Released >= pendingFrom && p.Available["coordinator"] == "" && strings.HasPrefix(deref(p.Release), "v"):
 			add("availability_wait", p, *p.Released)
-		case installsFrom != "" && *p.Released >= installsFrom && p.UiOnSite == nil && uiOnlyRelease(deref(p.Release)):
+		case pendingFrom != "" && *p.Released >= pendingFrom && p.UiOnSite == nil && uiOnlyRelease(deref(p.Release)):
 			add("ui_wait", p, *p.Released) // a UI-only release not on the site yet, compared with ui_install
 		}
 	}
@@ -1266,7 +1203,7 @@ func fmtMs(ms int64) string {
 
 // deliveryCheck: the last 24 h against the baseline (the named snapshot of the settings, else the 7 days before);
 // each regression holds the question problem:delivery:<key>:<metric>, gone ones withdraw (problemsSync).
-func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.DeliveryRun, now time.Time, installsFrom string) (contract.DeliveryRegressionsReply, error) {
+func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.DeliveryRun, now time.Time, pendingFrom string) (contract.DeliveryRegressionsReply, error) {
 	s, err := deliverySettingsOf(q)
 	if err != nil {
 		return contract.DeliveryRegressionsReply{}, err
@@ -1286,7 +1223,7 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 	}
 	f, u := day.Format(time.RFC3339), now.Format(time.RFC3339)
 	cur := deliveryValues(prs, runs, f, u)
-	deliveryPending(cur, prs, f, u, installsFrom)
+	deliveryPending(cur, prs, f, u, pendingFrom)
 	current := deliveryWindow(prs, runs, day, now)
 	current.Stats = cur.stats() // with the pending waits the comparison uses
 	regs := deliveryCompare(prs, cur, base, s)
@@ -1524,7 +1461,21 @@ func deliveryRegressionsOp(q *Request, r *contract.DeliveryRegressionsRequest) (
 			if err != nil {
 				return err
 			}
-			c, err = deliveryCheck(w, prs, runs, time.Now().UTC(), st.InstallsFrom)
+			releases, err := dhLoad[contract.DeliveryRelease](w, "delivery-release")
+			if err != nil {
+				return err
+			}
+			site, err := readDeliverySiteEvidence(w)
+			if err != nil {
+				return err
+			}
+			// Sightings can be newer than the retained PR history when a forge read fails.
+			for i := range releases {
+				site.reconcile(&releases[i])
+			}
+			deliveryDerive(prs, runs, releases)
+			now := time.Now().UTC()
+			c, err = deliveryCheck(w, prs, runs, now, site.pendingFrom(now, st.InstallsFrom))
 			return err
 		})
 		return c, err
