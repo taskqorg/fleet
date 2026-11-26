@@ -7,7 +7,7 @@
 import { createMemo, createSignal, For, Match, onSettled, Show, Switch, type Accessor } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  AgeChip, Button, CatalogueTree, ContextMenu, DetailHead, DetailSection, Empty, EntityCode, ErrorBanner, Fact, HostBand,
+  AgeChip, Button, CatalogueTree, ContextMenu, DetailHead, DetailSection, Empty, EntityCode, ErrorBanner, Fact, FactCount, HostBand,
   KvRow, ListDetail, Num, OfflineMarker, ProblemRow, QuestionCard, RowFacts, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, bytes, copyText, duration, harnesses, matchSearch, money,
   type CatalogueTreeNode, type CostFigureLike, type GaugeProps, type WorkerSlotProps,
@@ -130,9 +130,8 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
         },
         right: (
           <RowFacts>
-            {isFresh && h.pollError ? <Fact tip={h.pollError.message}><span class="t-danger">polls failing</span></Fact>
-              : limit != null ? <Fact tip={`${h.running} of ${limit} slots busy`}><span>{h.running} of {limit}</span></Fact>
-                : h.running > 0 ? <Fact tip={`${h.running} busy`}><span>{h.running}</span></Fact> : null}
+            {isFresh && h.pollError ? <FactCount kind="failed" tip={`Polls failing: ${h.pollError.message}`} />
+              : <FactCount kind="working" n={h.running} tip={limit != null ? `${h.running} of ${limit} slots busy` : `${h.running} busy`} />}
             <Fact tip="Last seen">
               {h.lastSeenAt
                 ? <AgeChip t={h.lastSeenAt} alertAfter={15 * 60} tone="attention" alertLabel="not seen for a while" clockOffsetMs={curOffset} />

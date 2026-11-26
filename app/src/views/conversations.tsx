@@ -8,7 +8,7 @@ import {
   OpsSummary, KvRow, Num, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, finishedStates,
   OpenQuestion, Preview, StateDot, statesOf, type Tone,
-  ShellStatus, ShellActions, WorkFacts, peerFence, useTick, FacetChips,
+  ShellStatus, ShellActions, WorkFacts, peerFence, useTick, FacetChips, FactCount,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -331,9 +331,7 @@ function SessionFacts(props: { s: SessionRow; fences: SessionFences }) {
         <Show when={props.s.now} keyed>
           {now => <span class="row-now" data-tip={now}>{now}</span>}
         </Show>
-        <Show when={q() > 0}>
-          <span class="chip-age t-attention alert">{q() === 1 ? '1 question' : `${q()} questions`}</span>
-        </Show>
+        <FactCount kind="questions" n={q()} />
       </>}
       attempts={failing() ? props.s.failedStarts : undefined}
       attemptsFence={props.fences.starts}
