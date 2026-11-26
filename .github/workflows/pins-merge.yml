@@ -55,6 +55,15 @@ jobs:
           check qualify-hosts "$PINS_STATUS_LOGIN"
           check code-review "$PINS_STATUS_LOGIN"
           [ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)" = "$SHA" ] || { echo "head moved"; exit 0; }
+          # Auto-merge turned on for an earlier head stays on after the proposal is rebuilt, but GitHub never enqueues it
+          # (#1055 sat outside the queue with every required check green): turn it off and on again for this head. A
+          # proposal already in the queue is left alone, since turning auto-merge off would take it out.
+          # shellcheck disable=SC2016 # GraphQL variables, not shell ones
+          armed=$(gh api graphql -F n="$pr" -f o="${GITHUB_REPOSITORY%/*}" -f r="${GITHUB_REPOSITORY#*/}" -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){autoMergeRequest{enabledAt} mergeQueueEntry{state}}}}' --jq '.data.repository.pullRequest | if .mergeQueueEntry then "queued" elif .autoMergeRequest then "armed" else "off" end')
+          [ "$armed" = queued ] && { echo "already in the merge queue"; exit 0; }
+          if [ "$armed" = armed ]; then
+            gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --disable-auto
+          fi
           gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --auto
           declare -A dispatched=()
           for _ in $(seq 170); do
