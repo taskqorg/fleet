@@ -8,6 +8,12 @@
 
 **Layout.** [App shell](../patterns/app-shell.md) and one scrolling page, no control column (OR-24: no catalogue).
 * **Head:** one summary line: the definitions on their way to the repository (quiet), the rows that need a person (attention), the Lab experiments (quiet), then the hosts: installing (running), behind (attention), revert in flight (attention), qualification failed (danger), or "hosts aligned"; and Refresh.
+* **Agent environment** (board `drafts/agent-garden`, frames 3 and 6, approved 2026-11-26): what every future agent gets, from `system_changes` `agentEnvironment` with its components and definitions. The panel head says the drift count, or that everything is in sync. One [detail section](../controls/detail-section.md) per kind, its count and `N drift` or `in sync`, and one [drift row](../controls/drift-row.md) per setting:
+  * *Connection tools*: each connection Fleet uses (`connections_drift`, [grants drift](../../designs/fleet-connections.md#12-grants-drift)): granted against the tools code and profiles use, the missing ones (attention, the users and `connections_set_tools` in the tooltip), stale grants in the detail, the last change.
+  * *Key pools*: each connection with more than one key or a key policy: active keys, strategy, the failover statuses; `No failover` when several keys have none.
+  * *Host tools*: each release-managed host tool: its pin, `pinned on every host` or `Missing on <hosts>`; the row opens the first host it misses.
+  * *Sandbox policy*: one row per harness, mode and network over the profiles that share them, `Applied on N hosts` or `Behind on <hosts>`, with the release.
+  * *Profiles*: agent definitions not in step with `config/agents`, then one row for the profiles in sync.
 * **Definitions** (board `drafts/definitions-home`, approved 2026-11-26): one [change row](../controls/change-row.md) per definition that is not the repository's, from `system_changes`. A Fleet save sends itself to the repository ([one home per kind](../../designs/fleet-definition-editors.md#one-home-per-kind)), so a row needs a person only by exception:
   * *on its way*: the chip is the publish task's pull request and its stage (`PR #1102 · CI running`, `PR #1095 · merged · waits for release`), or the task while it has none (`T-FLT-67 · worker on it`); no buttons; it leaves when a release ships it.
   * *conflict* (repository-changed, attention): the repository changed the file under a Fleet edit. Compare (opens the definition), Keep mine (`definition_publish` with `keep`), Take repository (`definition_take_repository`).
@@ -24,3 +30,4 @@
 | What a pin proposal is doing and which host fails it | Proposal row and the Proposal and host cells of the component groups |
 | A conflict between a Fleet edit and the repository | Conflict row: Compare, Keep mine, Take repository |
 | Definitions made in Fleet and not in the repository | New in Fleet rows with Publish; Lab variants by experiment |
+| What every future agent gets and what drifts | Agent environment: connection tools, key pools, host tools, sandbox policy, profiles |

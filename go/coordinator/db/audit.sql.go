@@ -47,6 +47,38 @@ func (q *Queries) AuditInsert(ctx context.Context, arg AuditInsertParams) error 
 	return err
 }
 
+const auditLatestOfTargets = `-- name: AuditLatestOfTargets :many
+SELECT DISTINCT ON (target) target, (payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'target', target, 'field', field, 'actor', actor,
+ 'onBehalfOf', on_behalf_of, 'holder', holder, 'projectId', project_id, 'at', (extract(epoch FROM at) * 1000)::bigint)))::jsonb AS data
+FROM audit_log WHERE target = ANY($1::text[]) ORDER BY target, seq DESC
+`
+
+type AuditLatestOfTargetsRow struct {
+	Target string
+	Data   []byte
+}
+
+// The newest audit record of each named target (connections_drift: a connection's last settings change).
+func (q *Queries) AuditLatestOfTargets(ctx context.Context, targets []string) ([]AuditLatestOfTargetsRow, error) {
+	rows, err := q.db.Query(ctx, auditLatestOfTargets, targets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditLatestOfTargetsRow
+	for rows.Next() {
+		var i AuditLatestOfTargetsRow
+		if err := rows.Scan(&i.Target, &i.Data); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const auditOfKind = `-- name: AuditOfKind :many
 SELECT target, (payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'target', target, 'field', field, 'actor', actor,
  'onBehalfOf', on_behalf_of, 'holder', holder, 'projectId', project_id, 'at', (extract(epoch FROM at) * 1000)::bigint))

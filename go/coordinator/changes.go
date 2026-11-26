@@ -152,7 +152,8 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window, cu
 		}
 		return out.HarnessDrift[i].Harness < out.HarnessDrift[j].Harness
 	})
-	return out, nil
+	out.AgentEnvironment, err = agentEnvironment(q)
+	return out, err
 }
 
 // publishTaskPRs: each publish task's latest pull request (publishing_status of the tasks' projects, by task).

@@ -6,6 +6,29 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// AgentEnvironment: What every future agent gets (Changes › Agent environment): connection grants and key pools, the sandbox by profile, the profile count. Host tools and profile drift are the components and definitions of the same reply.
+type AgentEnvironment struct {
+	Grants   ConnectionsDriftReply `json:"grants"`
+	Profiles int64                 `json:"profiles"`
+	Sandbox  []SandboxGroup        `json:"sandbox"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentEnvironment) Validate() error {
+	if err := Check(&v.Grants, "grants"); err != nil {
+		return err
+	}
+	if v.Sandbox == nil {
+		return Missing("sandbox")
+	}
+	for i := range v.Sandbox {
+		if err := Check(&v.Sandbox[i], "sandbox"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CiJob: runner: the self-hosted runner's name, else the hosted label (ubuntu-latest). Times in ms.
 type CiJob struct {
 	CreatedAt  *float64 `json:"createdAt"`
@@ -3042,6 +3065,21 @@ func (v *RunnerSpend) Validate() error {
 	return nil
 }
 
+type SandboxGroup struct {
+	Harness  string   `json:"harness"`
+	Mode     string   `json:"mode"`
+	Network  bool     `json:"network"`
+	Profiles []string `json:"profiles"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SandboxGroup) Validate() error {
+	if v.Profiles == nil {
+		return Missing("profiles")
+	}
+	return nil
+}
+
 type StopCommandRef struct {
 	Id     string `json:"id"`
 	Status string `json:"status"`
@@ -3231,6 +3269,7 @@ func (v *SystemChangePublishPR) Validate() error {
 }
 
 type SystemChangesReply struct {
+	AgentEnvironment  AgentEnvironment          `json:"agentEnvironment"`
 	Ahead             []SystemChangeDefinition  `json:"ahead"`
 	Components        []SystemChangeKind        `json:"components"`
 	Experiments       []SystemChangeExperiment  `json:"experiments"`
@@ -3242,6 +3281,9 @@ type SystemChangesReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SystemChangesReply) Validate() error {
+	if err := Check(&v.AgentEnvironment, "agentEnvironment"); err != nil {
+		return err
+	}
 	if v.Ahead == nil {
 		return Missing("ahead")
 	}
@@ -3547,7 +3589,7 @@ func init() {
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.", InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "bound:session", Description: "Queued messages", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Why an execution (executionId) was routed to its host and account; or, with subscriptionId, the newest 50 decisions since since (epoch ms, default the last 24 h) that skipped that subscription somewhere (J5 model skips carry cause subscription:<id>:model:<model>)", InputSchema: json.RawMessage("{\"$comment\":\"executionId, or subscriptionId with an optional since (epoch ms).\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"since\":{\"type\":\"integer\"},\"subscriptionId\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
-		"system_changes":        {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Drift across repository, active store and hosts: repository-changed and store-only definitions, release version alignment, harness CLI pin drift, and the release-managed components by kind (agent CLIs, host tools): pinned version, the open pin proposal with its stage and Lab trials, and each host's state", Changes: []string{"definition", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"system_changes":        {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Drift across repository, active store and hosts: repository-changed and store-only definitions, release version alignment, harness CLI pin drift, and the release-managed components by kind (agent CLIs, host tools): pinned version, the open pin proposal with its stage and Lab trials, and each host's state; the agent environment: connection grants drift, key pools and the sandbox by profile", Changes: []string{"definition", "host", "api-connection", "connection-key", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"system_purge":          {Read: false, Long: true, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner only: remove tombstoned objects nothing live references (preview, kinds host|project|experiment|task|session, default all): rows, then store objects and spans. Call preview: true first; removed and kept list ids per kind, rows the counts that go with them, retryLater the store/span deletions still pending. A purged project keeps its id reserved", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned objects (kinds, default all) that no live row references, with every row that goes with them (the reference map in go/coordinator/cleanup.go): a removed host with no execution, session, command, store or artifact copy naming it; a deleted experiment or project whose rows no row outside it names. A purged project keeps its definition row, so its id is never reused. preview true counts them and changes nothing; the confirm recomputes with the same queries, deletes the rows, then the store objects no remaining artifact shares and the ClickHouse spans of the removed executions.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects, experiments, tasks and sessions deleted by object_delete.\",\"enum\":[\"host\",\"project\",\"experiment\",\"task\",\"session\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
 		"system_versions":       {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Versions of the coordinator, the app and every host's executor", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 	} {

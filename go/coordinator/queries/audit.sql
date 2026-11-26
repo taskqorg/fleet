@@ -30,3 +30,9 @@ SELECT DISTINCT ON (field) field, value
 FROM audit_log
 WHERE target = 'people' AND field LIKE 'cloudflare-access:%'
 ORDER BY field, seq DESC;
+
+-- name: AuditLatestOfTargets :many
+-- The newest audit record of each named target (connections_drift: a connection's last settings change).
+SELECT DISTINCT ON (target) target, (payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'target', target, 'field', field, 'actor', actor,
+ 'onBehalfOf', on_behalf_of, 'holder', holder, 'projectId', project_id, 'at', (extract(epoch FROM at) * 1000)::bigint)))::jsonb AS data
+FROM audit_log WHERE target = ANY(@targets::text[]) ORDER BY target, seq DESC;

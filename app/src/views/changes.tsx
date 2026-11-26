@@ -12,6 +12,7 @@ import type {
   SystemChangeKind, SystemChangesReply, SystemPinsProposal, SystemVersionsReply,
 } from '../../../contracts/generated/ops.ts';
 import type { UpdateResult } from '../../../contracts/generated/host-protocol.ts';
+import { AgentEnvironment, agentEnvironmentDrift } from './agent-environment.tsx';
 
 const defRoute = (d: SystemChangeDefinition) =>
   `/library/${d.kind === 'agent' ? 'agents' : d.kind === 'pipeline' ? 'pipelines' : 'methods'}/${encodeURIComponent(d.id)}`;
@@ -118,6 +119,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
   const installing = createMemo(() => (changesOp.data?.versions.hosts ?? []).filter(h => updateOf(h.update)?.state === 'pending' && updateOf(h.update)?.version === offered()));
   const installingBehind = createMemo(() => behindHosts().filter(h => installing().includes(h)).length);
   const reverting = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'reverting').length ?? 0);
+  const envDrift = createMemo(() => changesOp.data ? agentEnvironmentDrift(changesOp.data) : 0);
   // The summary line: the definitions first (on their way, need you, Lab experiments), then the hosts, each in its tone.
   const driftParts = createMemo<{ text: string; tone: string }[]>(() => {
     const data = changesOp.data;
@@ -135,6 +137,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
       need > 0 && { text: `${need} need${need === 1 ? 's' : ''} you`, tone: 't-attention' },
       data.experiments.length > 0 && { text: plural(data.experiments.length, 'Lab experiment', 'Lab experiments'), tone: 'muted' },
       ...(hosts.length ? hosts : [{ text: 'hosts aligned', tone: 'muted' }]),
+      envDrift() > 0 && { text: `${plural(envDrift(), 'agent environment drift', 'agent environment drifts')}`, tone: 't-attention' },
     ].filter((x): x is { text: string; tone: string } => !!x);
   });
 
@@ -155,6 +158,14 @@ export function Changes(props: { onClose?: () => void } = {}) {
           <Show when={notice()}>{n => (
             <ProblemRow severity={n().severity} title={n().title} facts={n().facts} actions={[{ label: 'Dismiss', onClick: () => setNotice(null) }]} />
           )}</Show>
+
+          <section class="panel" data-ui="agent-environment" aria-label="Agent environment">
+            <header class="panel-h">
+              <h2>Agent environment</h2>
+              <span class={envDrift() ? 't-attention' : 'muted'}>{envDrift() ? plural(envDrift(), 'drift', 'drifts') : 'what every future agent gets, in sync'}</span>
+            </header>
+            <AgentEnvironment data={data()} onOpen={go} />
+          </section>
 
           <Show when={definitions().length}>
             <DetailSection title="Definitions" count={definitions().length} action={<span class="muted">a save in Fleet opens its pull request; unedited ones follow each release</span>}>
