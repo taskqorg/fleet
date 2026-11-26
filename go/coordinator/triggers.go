@@ -946,22 +946,24 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 			}
 		}
 	}
-	for _, sid := range selves {
-		es, err := q.db().BotOwnExecutions(q.ctx(), &sid) // the session's and its children's executions
+	if len(selves) > 0 {
+		// Resolve direct children once, then look up executions by session ID. The old OR with a child
+		// subquery scanned execution for every conversation of a bot on every check.
+		ids, err := q.db().ChildSessionIDs(q.ctx(), selves)
 		if err != nil {
 			return nil, t.ChangeCursor, t.LimitsSignaled, err
 		}
-		for _, e := range es {
-			own["execution:"+e] = true
-		}
-		cs, err := q.db().ChildSessionIDs(q.ctx(), &sid)
+		ids = append(ids, selves...)
+		es, err := q.db().SessionExecutionIDs(q.ctx(), ids)
 		if err != nil {
 			return nil, t.ChangeCursor, t.LimitsSignaled, err
 		}
-		for _, c := range cs {
-			children[c] = true
+		for _, id := range es {
+			own["execution:"+id] = true
 		}
-		children[sid] = true
+		for _, id := range ids {
+			children[id] = true
+		}
 	}
 	cursor := t.ChangeCursor
 	parts, seen, ownedProblems := []threadPart{}, map[string]bool{}, map[string]bool{}

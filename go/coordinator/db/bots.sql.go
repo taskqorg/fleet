@@ -442,33 +442,6 @@ func (q *Queries) BotMemoryRevisionInsert(ctx context.Context, arg BotMemoryRevi
 	return err
 }
 
-const botOwnExecutions = `-- name: BotOwnExecutions :many
-SELECT e.id
-FROM execution e
-WHERE e.session_id = $1
-   OR e.session_id IN (SELECT s.id FROM session s WHERE s.created_by_session_id = $1)
-`
-
-func (q *Queries) BotOwnExecutions(ctx context.Context, sessionID *string) ([]string, error) {
-	rows, err := q.db.Query(ctx, botOwnExecutions, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const botRenameConversations = `-- name: BotRenameConversations :exec
 UPDATE session SET title = $1::text WHERE bot_id = $2::text AND subject IS NULL AND title_by = 'bot' AND tombstoned_at IS NULL
 `

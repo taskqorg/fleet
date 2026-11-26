@@ -59,20 +59,23 @@ END;
 
 -- name: BoardSessionParentTerminal :one
 WITH RECURSIVE
-  chain(id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, depth) AS (
-    SELECT id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, 0
+  chain(id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, next_session_id, depth) AS (
+    SELECT id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id,
+           COALESCE(NULLIF(created_by_session_id, ''), NULLIF(source_session_id, '')), 0
     FROM session
     WHERE id = @session_id::text
     UNION ALL
-    SELECT s.id, s.task_id, s.pipeline_run_id, s.parent_execution_id, s.created_by_execution_id, s.created_by_session_id, s.source_session_id, c.depth + 1
+    SELECT s.id, s.task_id, s.pipeline_run_id, s.parent_execution_id, s.created_by_execution_id,
+           COALESCE(NULLIF(s.created_by_session_id, ''), NULLIF(s.source_session_id, '')), c.depth + 1
     FROM session s
-    JOIN chain c ON s.id = COALESCE(NULLIF(c.created_by_session_id, ''), NULLIF(c.source_session_id, ''))
+    JOIN chain c ON s.id = c.next_session_id
     WHERE c.depth < 10
   ),
-  exec_chain(id, kind, state, parent_execution_id, pipeline_run_id, pipeline_step_id, depth) AS (
+  exec_chain(id, kind, state, parent_execution_id, pipeline_run_id, pipeline_step_id, terminal_parent_id, depth) AS (
     -- Two index lookups (execution_pkey, execution_session), not one OR filter: the OR read every execution
     -- (2026-11-24 on PDS18: 20k pages, 150 ms warm; cancelled at the hosts' 35 s deadline inside terminal receipts under GLOBAL).
-    SELECT b.id, b.kind, b.state, b.parent_execution_id, b.pipeline_run_id, b.pipeline_step_id, 0
+    SELECT b.id, b.kind, b.state, b.parent_execution_id, b.pipeline_run_id, b.pipeline_step_id,
+           COALESCE(NULLIF(b.parent_execution_id, ''), b.pipeline_step_id), 0
     FROM (
       SELECT e.id, e.kind, e.state, e.parent_execution_id, NULLIF(e.data->>'pipelineRunId', '') AS pipeline_run_id, NULLIF(e.data->>'pipelineStepId', '') AS pipeline_step_id
       FROM execution e
@@ -87,7 +90,8 @@ WITH RECURSIVE
       WHERE e.session_id IN (SELECT c.id FROM chain c)
     ) b
     UNION ALL
-    SELECT p.id, p.kind, p.state, p.parent_execution_id, NULLIF(p.data->>'pipelineRunId', ''), NULLIF(p.data->>'pipelineStepId', ''), ec.depth + 1
+    SELECT p.id, p.kind, p.state, p.parent_execution_id, NULLIF(p.data->>'pipelineRunId', ''), NULLIF(p.data->>'pipelineStepId', ''),
+           COALESCE(NULLIF(p.parent_execution_id, ''), NULLIF(p.data->>'pipelineStepId', '')), ec.depth + 1
     FROM execution p
     JOIN exec_chain ec ON (p.id = ec.parent_execution_id OR p.id = ec.pipeline_run_id OR p.id = ec.pipeline_step_id)
      AND p.id <> ec.id -- an agent run names itself as its parent: that row adds nothing
@@ -118,7 +122,8 @@ SELECT (
   ) OR EXISTS (
     SELECT 1
     FROM exec_chain ec
-    JOIN execution p ON p.id = COALESCE(NULLIF(ec.parent_execution_id, ''), NULLIF(ec.pipeline_step_id, ''))
+    -- Resolve the parent ID in the CTE so this RLS lookup can use a plain primary key comparison.
+    JOIN execution p ON p.id = ec.terminal_parent_id
     WHERE ec.kind IN ('agent_run', 'host_job')
       AND p.kind = 'pipeline_step'
       AND ec.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')

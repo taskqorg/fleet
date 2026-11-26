@@ -10,11 +10,11 @@ import (
 )
 
 const childSessionIDs = `-- name: ChildSessionIDs :many
-SELECT id FROM session WHERE created_by_session_id=$1
+SELECT id FROM session WHERE created_by_session_id = ANY($1::text[])
 `
 
-func (q *Queries) ChildSessionIDs(ctx context.Context, createdBySessionID *string) ([]string, error) {
-	rows, err := q.db.Query(ctx, childSessionIDs, createdBySessionID)
+func (q *Queries) ChildSessionIDs(ctx context.Context, sessionIds []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, childSessionIDs, sessionIds)
 	if err != nil {
 		return nil, err
 	}
@@ -99,11 +99,11 @@ func (q *Queries) OpenQuestionTask(ctx context.Context, id string) (string, erro
 }
 
 const sessionExecutionIDs = `-- name: SessionExecutionIDs :many
-SELECT id FROM execution WHERE session_id=$1
+SELECT id FROM execution WHERE session_id = ANY($1::text[])
 `
 
-func (q *Queries) SessionExecutionIDs(ctx context.Context, sessionID *string) ([]string, error) {
-	rows, err := q.db.Query(ctx, sessionExecutionIDs, sessionID)
+func (q *Queries) SessionExecutionIDs(ctx context.Context, sessionIds []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, sessionExecutionIDs, sessionIds)
 	if err != nil {
 		return nil, err
 	}
