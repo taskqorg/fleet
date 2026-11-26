@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1082,7 +1083,7 @@ const maxVerifyFailures = 5
 // queues one with a fresh URL, after a HEAD of the staging object: a staging object gone with its content key present
 // was promoted already (a verified report whose database write failed, 2026-11-26) and the copy is verified now
 // ("stored"); gone without it, the uploader sends the file again ("missing" takes its recovery path, whose reserve opens
-// a new upload session). The fifth failed verification of a present object rejects the copy.
+// a new upload session). After maxVerifyFailures failed verifications within the last hour the copy is rejected.
 func reverify(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, uploader string) (string, error) {
 	if c.State != "pending" || c.UploadID != nil || c.StagingKey == nil || uploader == s.HostID {
 		return c.State, nil
@@ -1091,19 +1092,18 @@ func reverify(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow,
 	if err != nil || h.Open {
 		return c.State, err
 	}
-	t, err := tunnel(s)
-	if err != nil {
-		return c.State, err
-	}
-	size, err := t.Head(s.Bucket, *c.StagingKey)
-	if err != nil {
-		return c.State, err
-	}
-	if size < 0 {
-		if done, err := promoted(ctx, a, x, s, t); err != nil || done {
-			return "stored", err
+	// A store that cannot be read now is checked on the next renew; the verification is queued as before and the lease
+	// holds, so an outage of the store does not fail the upload.
+	if t, err := tunnel(s); err == nil {
+		if size, err := t.Head(s.Bucket, *c.StagingKey); err == nil && size < 0 {
+			done, err := promoted(ctx, a, x, s, t)
+			if err == nil && done {
+				return "stored", nil
+			}
+			if err == nil {
+				return "missing", nil
+			}
 		}
-		return "missing", nil
 	}
 	if h.Failed >= maxVerifyFailures {
 		return "failed", reject(ctx, a, x, s, *c.StagingKey, fmt.Sprintf("the store host failed to verify the upload %d times", h.Failed))
@@ -1123,19 +1123,26 @@ func promoted(ctx context.Context, a *App, x *Artifact, s *StoreRow, t *S3) (boo
 	if err != nil || n != x.Size {
 		return false, err
 	}
-	return true, copyVerified(ctx, a, x, s)
+	if err := copyVerified(ctx, a, x, s); err != nil {
+		return false, err
+	}
+	return true, settleCopy(ctx, a, x)
 }
 
-// copyVerified: the copy is verified, the artifact stored, and its execution's artifact wait settles.
+// copyVerified: the copy is verified and the artifact stored.
 func copyVerified(ctx context.Context, a *App, x *Artifact, s *StoreRow) error {
-	err := artWrite(ctx, a, func(d *db.Queries) error {
+	return artWrite(ctx, a, func(d *db.Queries) error {
 		if err := artifactCopyTransition(ctx, d, x.ID, s.ID, artifactCopyEvent{To: "verified"}); err != nil {
 			return err
 		}
 		return d.ArtStoredNow(ctx, x.ID)
 	})
-	if err != nil || x.ExecutionID == nil {
-		return err
+}
+
+// settleCopy: the artifact's execution re-reads its artifact wait.
+func settleCopy(ctx context.Context, a *App, x *Artifact) error {
+	if x.ExecutionID == nil {
+		return nil
 	}
 	return settleWaiting(ctx, a, *x.ExecutionID)
 }
@@ -1277,7 +1284,12 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 	if err := copyVerified(ctx, a, x, s); err != nil {
 		return nil, err
 	}
-	t.Delete(s.Bucket, staging)
+	if err := t.Delete(s.Bucket, staging); err != nil {
+		slog.Warn("artifact staging object kept after verification", "artifact", x.ID, "store", s.ID, "key", staging, "err", err)
+	}
+	if err := settleCopy(ctx, a, x); err != nil {
+		return nil, err
+	}
 	return contract.ArtifactStateReply{State: "stored"}, nil
 }
 
@@ -1696,8 +1708,8 @@ func expireLeases(ctx context.Context, a *App) error {
 			if t, err := tunnel(s); err == nil {
 				if up := deref(c.UploadID); up != "" {
 					t.AbortMultipartUpload(s.Bucket, deref(c.StagingKey), up)
-				} else if done, err := promoted(ctx, a, x, s, t); err != nil || done {
-					continue // a committed upload whose content was promoted is verified; an unread store, the next pass
+				} else if done, err := promoted(ctx, a, x, s, t); err == nil && done {
+					continue // a committed upload whose content was promoted: verified, not failed
 				}
 			}
 		}
