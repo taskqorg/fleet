@@ -59,3 +59,18 @@ func TestDefinitionScalarsAndExecutionTime(t *testing.T) {
 		t.Fatal("executionTime(epochMs) returned nil")
 	}
 }
+
+// Requirement: a conversation started with a subject (sessionStart: "session-subject:<profile>:<role>:<subject>") takes a
+// lock the store knows, ranked after the project and task it belongs to and before the session it creates. Risk: every
+// start with a subject failed "unknown advisory lock scope" on prod (2026-11-26, agent gap Investigate).
+func TestSessionSubjectLockRank(t *testing.T) {
+	subj, err := lockRank("session-subject:pm:pm:question:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := lockRank("task:1")
+	sess, _ := lockRank("session:1")
+	if !(task < subj && subj < sess) {
+		t.Fatalf("ranks task %d, subject %d, session %d", task, subj, sess)
+	}
+}
