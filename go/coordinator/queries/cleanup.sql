@@ -48,12 +48,13 @@ LEFT JOIN execution p ON p.id = e.parent_execution_id AND p.tombstoned_at IS NUL
 WHERE e.id = ANY (@executions::text[]) AND (t.id IS NOT NULL OR x.id IS NOT NULL OR p.id IS NOT NULL) LIMIT 1;
 
 -- name: CleanupRunningCount :one
--- The executions the confirm stops (agent runs and host jobs, execKinds) or cancels (running pipeline runs).
+-- The executions the confirm stops (agent runs and host jobs, execKinds) or cancels (pipeline runs not ended: running,
+-- or preparing while their inputs by reference are read).
 SELECT count(*) FROM execution WHERE id = ANY (@ids::text[])
-  AND ((kind IN ('agent_run', 'host_job') AND state IN ('preparing', 'running', 'waiting')) OR (kind = 'pipeline_run' AND state = 'running'));
+  AND ((kind IN ('agent_run', 'host_job') AND state IN ('preparing', 'running', 'waiting')) OR (kind = 'pipeline_run' AND state IN ('preparing', 'running')));
 
 -- name: CleanupRunningPipelineRuns :many
-SELECT id FROM execution WHERE id = ANY (@ids::text[]) AND kind = 'pipeline_run' AND state = 'running' ORDER BY seq;
+SELECT id FROM execution WHERE id = ANY (@ids::text[]) AND kind = 'pipeline_run' AND state IN ('preparing', 'running') ORDER BY seq;
 
 -- name: CleanupLiveRuns :many
 SELECT id FROM execution WHERE id = ANY (@ids::text[]) AND kind IN ('agent_run', 'host_job') AND state IN ('preparing', 'running', 'waiting') ORDER BY seq;

@@ -271,10 +271,11 @@ func (q *Queries) CleanupRevokeRunTokens(ctx context.Context, arg CleanupRevokeR
 
 const cleanupRunningCount = `-- name: CleanupRunningCount :one
 SELECT count(*) FROM execution WHERE id = ANY ($1::text[])
-  AND ((kind IN ('agent_run', 'host_job') AND state IN ('preparing', 'running', 'waiting')) OR (kind = 'pipeline_run' AND state = 'running'))
+  AND ((kind IN ('agent_run', 'host_job') AND state IN ('preparing', 'running', 'waiting')) OR (kind = 'pipeline_run' AND state IN ('preparing', 'running')))
 `
 
-// The executions the confirm stops (agent runs and host jobs, execKinds) or cancels (running pipeline runs).
+// The executions the confirm stops (agent runs and host jobs, execKinds) or cancels (pipeline runs not ended: running,
+// or preparing while their inputs by reference are read).
 func (q *Queries) CleanupRunningCount(ctx context.Context, ids []string) (int64, error) {
 	row := q.db.QueryRow(ctx, cleanupRunningCount, ids)
 	var count int64
@@ -283,7 +284,7 @@ func (q *Queries) CleanupRunningCount(ctx context.Context, ids []string) (int64,
 }
 
 const cleanupRunningPipelineRuns = `-- name: CleanupRunningPipelineRuns :many
-SELECT id FROM execution WHERE id = ANY ($1::text[]) AND kind = 'pipeline_run' AND state = 'running' ORDER BY seq
+SELECT id FROM execution WHERE id = ANY ($1::text[]) AND kind = 'pipeline_run' AND state IN ('preparing', 'running') ORDER BY seq
 `
 
 func (q *Queries) CleanupRunningPipelineRuns(ctx context.Context, ids []string) ([]string, error) {

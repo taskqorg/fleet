@@ -1002,6 +1002,10 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (*runRecord, er
 		for _, r := range old.InputRefs {
 			o.Refs = append(o.Refs, pipelineInputRef{Path: r.Path, Connection: r.Connection, File: r.File})
 		}
+		o.Extra["exampleInputs"] = json.RawMessage("null") // rerunExtra's copy would bring the old refs' files back
+		if len(o.Inputs) > 0 {
+			o.Extra["exampleInputs"] = jsonBytes(o.Inputs)
+		}
 	}
 	if draft {
 		o.draft, o.draftBase, o.hasDraftBase = def, base, true

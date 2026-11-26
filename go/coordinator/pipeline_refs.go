@@ -6,8 +6,10 @@
 // tool_run with its path in the spool) into a private temporary folder, then the operator-upload path (uploads.go) as
 // the run's director, once per content (a stored artifact of the project with the same SHA-256 is reused). The step
 // after the call records the artifact, its size and the staging time on the run; once every ref is stored the run
-// starts its steps. A ref that cannot be read fails the run with input:<path>: <reason>; any other failure (the object
-// store, the database) is retried with the kit's backoff.
+// starts its steps. A ref that cannot be read (a grant not ready, a path outside it, a missing file) fails the run with
+// input:<path>: <reason>; a read that may work later (no read token, the gateway or server unreachable) is retried with
+// the kit's backoff until its retries reach the failing pause, then fails the run the same way; any other failure (the
+// object store, the database) is retried.
 package main
 
 import (
@@ -30,7 +32,7 @@ import (
 )
 
 func init() {
-	kitRegister(&kitQueue{Name: "input-refs", Period: 5 * time.Second, Limit: 16, Workers: 4, Due: inputRefDue, Step: inputRefStep,
+	kitRegister(&kitQueue{Name: "input-refs", Period: 5 * time.Second, Limit: 16, Workers: 8, Due: inputRefDue, Step: inputRefStep,
 		Retry: kitRetry{Table: "pipeline_input_ref", Key: "id", Guard: `pipeline_input_ref.attempts=$5::int`, Class: func(error) string { return "input_ref_failed" }}})
 }
 
@@ -46,10 +48,14 @@ type pipelineInputRef struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// refInputError: why input path failed, as `input:<path>: <reason>`.
+// refInputError: why input path failed, as `input:<path>: <reason>`. A 503 (refInputRetry) is a read that may work
+// later (no read token, the gateway or the server unreachable): the kit reads it again until its retries reach the
+// failing pause (kitFailingAttempts), then the run fails with it.
 func refInputError(code int, input, reason string) error {
 	return fail(code, "input:"+input+": "+reason)
 }
+
+func refInputRetry(input, reason string) error { return refInputError(503, input, reason) }
 
 // pipelineRefCheck: what an input by reference needs that no read decides, checked before the run is created: a person
 // to store it for, a file path, and a files grant connection of projectID. Whether the grant is ready and the file
@@ -121,8 +127,11 @@ var pipelineRefFetch = pipelineRefRead
 // inputRefStep: one input by reference of a preparing run (the input-refs queue's step, in the kit's transaction). The
 // read is the claim's call; its result is recorded on the run under GLOBAL, as the run's other writes are.
 func inputRefStep(q *Request, _ time.Time, c *kitClaim) error {
-	if err := acquireTxLock(q, GLOBAL); err != nil {
-		return err
+	r, recording := c.Result.(inputRefStaged)
+	if recording {
+		if err := acquireTxLock(q, GLOBAL); err != nil {
+			return err
+		}
 	}
 	row, err := q.db().PipelineInputRefGet(q.ctx(), c.Key)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -139,12 +148,19 @@ func inputRefStep(q *Request, _ time.Time, c *kitClaim) error {
 		return q.db().PipelineInputRefDrop(q.ctx(), row.RunID)
 	}
 	i := slices.IndexFunc(run.InputRefs, func(r pipelineInputRef) bool { return r.Path == row.Path })
-	if i < 0 {
-		return q.db().PipelineInputRefDone(q.ctx(), c.Key)
+	if i < 0 { // a row the run does not name: it goes, and the run starts if it was the last
+		if !recording {
+			if err := acquireTxLock(q, GLOBAL); err != nil {
+				return err
+			}
+		}
+		if err := q.db().PipelineInputRefDone(q.ctx(), c.Key); err != nil {
+			return err
+		}
+		return inputRefsStored(q, run)
 	}
 	in := &run.InputRefs[i]
-	r, ok := c.Result.(inputRefStaged)
-	if !ok {
+	if !recording {
 		a, p, project, ref := q.app, q.peopleSnapshot().person(run.director()), run.project(), *in
 		c.Call = func(ctx context.Context) any {
 			start := time.Now()
@@ -156,8 +172,8 @@ func inputRefStep(q *Request, _ time.Time, c *kitClaim) error {
 	in.StageMs = &r.ms
 	if r.err != nil {
 		var he *HTTPError
-		if !errors.As(r.err, &he) || !strings.HasPrefix(he.Msg, "input:") {
-			return r.err // not the input's fault: the kit reads it again after its backoff
+		if !errors.As(r.err, &he) || !strings.HasPrefix(he.Msg, "input:") || he.Code == 503 && c.Attempts+1 < kitFailingAttempts() {
+			return r.err // not the input's fault, or a read that may work later: the kit reads it again after its backoff
 		}
 		in.Error = he.Msg
 		run.failure = jsonBytes(pipelineStepError{Code: "input_unavailable", Message: he.Msg})
@@ -167,16 +183,27 @@ func inputRefStep(q *Request, _ time.Time, c *kitClaim) error {
 	if err := q.db().PipelineInputRefDone(q.ctx(), c.Key); err != nil {
 		return err
 	}
+	return inputRefsStored(q, run)
+}
+
+// inputRefsStored writes run after one of its refs left the queue; once none is left, every ref is stored and the run's
+// steps start (put gives it its pipeline queue row); a ref the queue no longer holds unstored fails it.
+func inputRefsStored(q *Request, run *runRecord) error {
 	left, err := q.db().PipelineInputRefLeft(q.ctx(), run.ID)
 	if err != nil {
 		return err
 	}
-	if left == 0 { // every input is stored: the run's steps start (put gives it its pipeline queue row)
+	if left == 0 {
 		inputs := []fileRef{}
 		if run.ExampleInputs != nil {
 			inputs = append(inputs, *run.ExampleInputs...)
 		}
 		for _, in := range run.InputRefs {
+			if in.ArtifactID == "" {
+				msg := "input:" + in.Path + ": the read was lost; run pipeline_rerun"
+				run.failure = jsonBytes(pipelineStepError{Code: "input_unavailable", Message: msg})
+				return run.finish(q, "failed", "input_unavailable")
+			}
 			inputs = append(inputs, fileRef{ArtifactID: in.ArtifactID, Path: "example/" + in.Path})
 		}
 		run.ExampleInputs, run.State = &inputs, "running"
@@ -222,7 +249,7 @@ type refFile struct {
 func pipelineRefRead(ctx context.Context, a *App, projectID, input string, ref contract.PipelineRunRef, dir string) (string, refFile, error) {
 	token, release, err := readTokenFor(ctx, a, ref.Connection, projectID)
 	if err != nil {
-		return "", refFile{}, refInputError(409, input, err.Error())
+		return "", refFile{}, refInputRetry(input, err.Error())
 	}
 	defer release()
 	line := contract.GatewayDownload(ctx, gatewayTarget(token, true), ref.Connection, "files_get", jsonBytes(struct {
@@ -230,7 +257,7 @@ func pipelineRefRead(ctx context.Context, a *App, projectID, input string, ref c
 	}{ref.Path}), contract.Download{Root: dir})
 	grantRefused(ref.Connection, "files_get", line)
 	if line.Outcome != contract.CallOutcomeOk {
-		code, reason := 409, deref(line.ErrorCode)
+		code, reason := 503, deref(line.ErrorCode) // may work later
 		switch reason {
 		case "bad-path", "file-refused":
 			code = 400 // the gateway's: outside the grant, or no such file
@@ -251,7 +278,7 @@ func pipelineRefRead(ctx context.Context, a *App, projectID, input string, ref c
 		refFile
 	}
 	if err := json.Unmarshal(line.Output, &out); err != nil || out.Path == "" {
-		return "", refFile{}, refInputError(409, input, "the gateway answered no file")
+		return "", refFile{}, refInputRetry(input, "the gateway answered no file")
 	}
 	if out.Name == "" {
 		out.Name = path.Base(ref.Path)
