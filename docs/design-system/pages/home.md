@@ -12,7 +12,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)). The shel
 
 1. **Greeting and pulse line.**
    * A greeting with the person's name.
-   * One pulse line, read left to right: working, queued, done today, then blockers. Counts follow OR-29.
+   * One pulse line, read left to right: working, queued, done today, the problems count with its stuck and down pills, then blockers. Counts follow OR-29 ([pulse line](../controls/pulse-line.md); board `drafts/anomaly-routing` frames A, C, D).
    * Each blocker is one chip in the danger tone, with its cause and `×N` ([OR-56](../owner-rules.md), [OR-58](../owner-rules.md)); a click opens [Live](live.md) at that host or cause.
    * The line ends with `Live ›`.
 2. **Composer.** Picks who to talk to and sends the first message; see **Composer** below.
@@ -75,7 +75,7 @@ Behaviour:
 | Everything waiting for a person: questions, acceptance, approvals | Waiting for you cards with the question in place |
 | Sessions, including with the PM: what each does now | Session cards; the card opens the session |
 | Bots: which are active, which sleep, run now | Working cards and the Asleep row with Wake |
-| Problems that need a look | Blocker chips in the pulse line, aggregated by cause |
+| Problems that need a look | The pulse line's problems count with the owner bot; loud only when stuck or without a working owner |
 | Tasks across projects by state | Pulse line counts; drill-down through Live and Projects |
 
 ## Data
@@ -87,11 +87,11 @@ One read: `home_view` (a view operation, [data layer](../../designs/fleet-data-l
 | Groups and cards | `home_view.sessions`: the open session states and `failed` (`openStates('session')`), at most 200 by latest activity, grouped by `life('session', state)` in attention order; rows carry `activityAt` and `now` |
 | Now line | `now` on each session row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
 | Quiet summary | `home_view.counts`: sessions done, pull requests merged and failed runs that need a look since `visitAt`, the person's last Home visit (else since midnight). Leaving Home records the visit (`person_visit {page: "home"}`; closing or reloading the tab sends it by `fetchLater`), so it stays put while Home is open |
-| Questions on cards | `home_view.questions` (open, in the focus, oldest first), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) arrives as a blocker instead. Answered in place with `OpenQuestion` ([decision block](../controls/decision-block.md#open-question)); a key request takes the key on the card |
+| Questions on cards | `home_view.questions` (open, in the focus, oldest first), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem is never a question here: only its owner bot's escalation (`problem_escalate`) arrives, on that bot's card. Answered in place with `OpenQuestion` ([decision block](../controls/decision-block.md#open-question)); a key request takes the key on the card |
 | Asleep bots | `home_view.bots` with no `activeRunId`; Wake is `bot_run`; a message to a bot is `bot_run` with the text: it starts a turn in the bot's conversation without a subject, or queues there when it is busy |
 | Composer | Project PMs from `project_list` (the shell's read) and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets` when sent, `session_start`); bots from `home_view.bots`. The last target picked stays in this browser |
 | Failed cards by cause | `home_view.failures`: the plain cause of each failed session's newest failed run |
-| Pulse line | Working and queued sessions (by `life`) from the cards' rows; done today: `home_view.counts.doneToday`; blockers: `home_view.blockers`, failed runs that need a look grouped by plain cause and host, plus problem questions grouped by what they are about |
+| Pulse line | Working and queued sessions (by `life`) from the cards' rows; done today: `home_view.counts.doneToday`; blockers: `home_view.blockers`, failed runs that need a look grouped by plain cause and host, and `home_view.problems`: open count, count by owner, the stuck ones and the down duty bots (not built: today problem questions grouped by what they are about) |
 | Live updates | The change stream rereads `home_view` when sessions, executions, questions, bots, bot runs or delivery change, at most once in 2 s |
 
 ## Open

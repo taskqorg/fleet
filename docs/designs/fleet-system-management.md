@@ -3,13 +3,13 @@
 *   **Author:** Alex Kirs
 *   **Status:** Proposed
 *   **Date:** 2026-11-11
-*   **Linked design:** [telemetry](fleet-telemetry.md). This document owns the audit journal, problems as needs-you questions, and the System screen layout and actions. Telemetry owns spans, the rules pass and the screen's read panels.
+*   **Linked design:** [telemetry](fleet-telemetry.md). This document owns the audit journal, problems and their routing, and the System screen layout and actions. Telemetry owns spans, the rules pass and the screen's read panels.
 
 --------------------------------------------------------------------------------
 
 ## Overview
 
-The owner runs Fleet from the app without a shell: add, pause and remove hosts; free disk; archive and delete test data; see backups and releases; see and answer problems. Every action is an operation over the shared core ([fleet.md R2](../../fleet.md#principles)), so the PM agent can do what its director can. Every system change is written to one audit journal. Nothing is blocked by built-in rules: destructive actions show a preview, limits are settings with permissive defaults.
+The owner runs Fleet from the app without a shell: add, pause and remove hosts; free disk; archive and delete test data; see backups and releases; see problems and the bot working on each. Every action is an operation over the shared core ([fleet.md R2](../../fleet.md#principles)), so the PM agent can do what its director can. Every system change is written to one audit journal. Nothing is blocked by built-in rules: destructive actions show a preview, limits are settings with permissive defaults.
 
 ### Terms
 
@@ -17,7 +17,7 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 *   **Delete:** mark an object `deleted` (tombstone): it leaves every view and operation, its references stay valid, its secrets are dropped at once. Owner only.
 *   **Purge:** remove tombstoned rows that no other row references, and their stored files. On demand, with a preview.
 *   **Reference map:** for each object kind, the tables and columns that point at it. Purge and the delete preview read it.
-*   **Problem:** a needs-you question with a `cause` key, opened by Fleet from a rule or a direct signal, closed by Fleet when the cause clears.
+*   **Problem:** an anomaly with a `cause` key, opened by Fleet from a rule or a direct signal, owned by a bot, closed by Fleet when the cause clears. Not a question.
 *   **Audit journal:** the durable record of system changes: who, what, previous and new value, trace link.
 *   **Delivered:** a session's result reached its destination: its task was accepted, or its pull request was merged.
 
@@ -36,7 +36,7 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 1.  `hosts_remove` with a preview; a removed executor gets 410 and stops.
 2.  Archive for every object kind; owner hard delete with preview; `system_purge` with preview.
 3.  A worktree is removed as soon as its session is delivered and no `keepWhen` condition holds.
-4.  Problems from the [stage 1 telemetry rules](fleet-telemetry.md#6-rules) and direct signals as self-closing needs-you questions.
+4.  Problems from the [stage 1 telemetry rules](fleet-telemetry.md#6-rules) and direct signals as self-closing rows with a bot owner; Needs you only for what a person alone can give.
 5.  Scheduled Postgres dumps with rotation, a restore drill, both shown on screen.
 6.  One audit journal for every system operation, by person, agent or Fleet.
 7.  One System screen where the owner answers "is the system healthy" and acts.
@@ -94,34 +94,56 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 *   **Read:** `journal_list {target?, projectId?, actor?, before?, limit}`, newest first. Owner sees all; others see entries of their granted projects; the `people` target is owner-only (as today).
 *   **Spans vs journal:** see [telemetry §7](fleet-telemetry.md#7-spans-and-the-audit-journal). The entry stores `trace_id`.
 
-### Problems: needs-you questions from rules
+### Problems: anomalies with a bot owner
 
-**Copy what exists.** Dispatch already opens one `operator_decision` question per `cause`, withdraws it when the cause is gone, and asks once; the ask-once and withdraw logic sits in the dispatch caller, and `openCauseQuestion` only asks. `problems.sync` takes that logic over, and the dispatch sweep moves into `problems.sync(source=dispatch)` in M4, with the source stored on each question, before any rule writes a key. New keys start with `problem:` so the current sweep regex never matches them. Problems reuse this exact mechanism; the second asking path `cAsk` stays for its current callers and is not used here.
+An **anomaly** is any signal of a fault or a deviation: a telemetry rule finding, a dispatch stall, a Bugsink issue, a delivery regression, an agent gap class, a refused key, a failed update. Every anomaly is a **problem**: one row per cause, repeats counted as `×N`, closed by itself when the cause goes. A problem is not a question. A person sees every problem passively; a bot owns it and reacts; Needs you receives only what a person alone can give (owner, 2026-11-26: "I will never press these buttons").
 
-*   **Writers:** `problems.sync(source, causes)` for sources that compute a full set each run (`dispatch`, `rules`): given the full set of current causes from one source, open questions for new causes and withdraw open questions of that source whose cause is not in the set. A cause stays open until 2 consecutive runs without it (setting `problems.cleanRuns`, avoids flapping). One-off senders (span writer, backup pass, drill, update result in a poll) use `problems.open(cause, ...)` and `problems.close(cause)` and never withdraw each other. The question's `data` holds `cause`, `source`, `rule`, `exemplars`, `hostId`, `storeId`.
-*   **Changes to the existing helper (M4):** `openCauseQuestion` today hard-codes `options: ["ok"]`; it gains an options parameter, the extra `data` fields, and `dismissed_at`: a dismissed question stays withdrawn while its cause is present and the mark clears when the cause goes.
-*   **Recipient:** owner for system causes (no project); the project director for project causes; the cause's holder is named in the text, as the stall question does.
-*   **Answers:** `Investigate` (stage 2: the PM opens a task with exemplar links and its analysis; stage 1: a link to `telemetry_trace`) or `Dismiss` (withdraw; it reopens only after the cause clears and returns). Exception: a Bugsink issue that regresses or passes its mute asks again whatever the earlier answer ([error tracking](fleet-error-tracking.md#5-owner-needs-you)).
-*   **Grouping (Alertmanager-style inhibition):** before sync, findings whose subject depends on a firing absence cause fold into it: `problem:host:<id>:silent` absorbs every finding whose rule row carries that `host_id`; `problem:store:<id>:offline` absorbs store errors; `problem:telemetry:clickhouse` absorbs every rule (rules cannot run). Folded findings stay in `telemetry_findings` with `groupCause`.
+**Routing rule.**
 
-| Cause | Source | Fires | Recipient | Built |
-|---|---|---|---|---|
-| `host:<id>:{offline,trust,paused,holder}`, `subscription:<id>:{paused,not-taken,not-ready,refused}`, `placement:<host>:<harness>`, `budget:<id>:reached` | dispatch | queued work has no candidate | director | built |
-| `update:<host>:<version>` | direct: refused or failed update in a poll | at once | holder | built |
-| `problem:host:<id>:silent` | rule `absence-host` | no heartbeat 3 min (dispatch's `host:<id>:offline` is about placement, this is about the heartbeat) | owner | stage 1 |
-| `problem:host:<id>:saturated` | rule `host-saturation` | see telemetry | owner | stage 1 |
-| `problem:store:<id>:fill` | rule `store-fill` | free below `free_space_warning` | owner | stage 1 |
-| `problem:execution:<id>:stuck` | rule `stuck` | no activity 30 min | director | stage 1 |
-| `problem:execution:<id>:orphans` | rule `orphan` | processes alive after end | owner | stage 1 |
-| `problem:resource:failing` | rule `resource-failing` | a resource processor item paused at its maximum retry pause | owner | built |
-| `problem:work:stalled` | rule `work-stalled` | a work kit queue whose selection or failure writes keep failing, at the maximum pause | owner | built |
-| `problem:backup:missing` | direct: backup pass | no good dump for 48 h | owner | stage 1 (M6) |
-| `problem:backup:drill-failed` | direct: drill | last drill failed | owner | stage 1 (M6) |
-| `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | owner | stage 1 |
-| `problem:bugsink:<issue>` | direct: the Bugsink alert webhook ([error tracking](fleet-error-tracking.md#5-owner-needs-you)) | a new Bugsink issue, or one that regressed or passed its mute; closes when Bugsink reports it resolved | owner | built |
-| `problem:<rule>:<subject>` | other rules | see telemetry | owner or director | stage 1 and 2 |
+1. Every problem is visible passively: the Home pulse line counts them, System › Problems lists them. No automation hides one.
+2. Every problem has one owner: a bot, chosen by duty (below). With no matching duty the owner is the system duty bot (HAL0). A person is never the default owner.
+3. Needs you receives a problem only as a question an agent writes with `problem_escalate`, and only of one of three kinds: `only-you` (a step needs something only a person holds: a key, an account, money, a vendor or legal act), `product` (several acceptable outcomes and no approved requirement picks one), `authority` (the fix is irreversible, deletes data or overrides the owner's own setting).
+4. The test for an engineer adding a signal: "Could an agent with every Fleet tool finish this without asking anyone?" Yes: it is only a problem. No: the escalation names what only the person can give and what waits until they do. "Should I look?" never qualifies.
+5. A signal source never creates a question. Sources call `problemRaise`, `problemsSync`, `problemsSet` and `problemClose` only; `problem_escalate` (an agent tool) is the one path from a problem to a question. The only automatic question is the watchdog's (rule 6).
+6. **Watchdog.** When a duty bot stops working (its last 3 wakes failed, or a problem it owns stays `new` for 30 minutes with no run of the bot since it opened), the coordinator raises one problem `duty:<bot>:down` with no owner and asks the owner one `only-you` question naming the bot, the reason, the count of problems waiting and that a PM can fix or take the duty. It closes when the bot runs again. One item, never one per waiting problem.
 
-All numbers are settings with these defaults, tuned from the first week: `problems.cleanRuns` 2, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false. Web push later reads the same questions.
+**Table** `problem`: `id`, `seq` (the code `P-<seq>`), `cause`, `source`, `rule`, `project_id NULL`, `text`, `data jsonb` (cause, source, rule, exemplars, hostId, storeId, executionId as today), `state` (`open`, `closed`), `phase` (`new`, `working`, `review`, `watching`, `stuck`, `escalated`), `owner_bot_id NULL`, `note` (the owner's latest one-line note), `work` (`T-…` task code or pull request URL), `question_id NULL` (the open escalation), `count`, `misses`, `opened_at`, `seen_at`, `phase_at`, `closed_at`, `close_reason` (`cleared`, `fixed`, `duplicate`), `reopened`. One open row per cause (unique index on `cause` where `state = 'open'`). A cause that returns within 24 h of closing reopens its row (`reopened + 1`) and keeps its owner, work and conversation; later it opens a new row.
+
+*   **Writers** keep their names and callers: `problemsSync(source, causes)` for sources that compute a full set each run (`rules`, `delivery`, `grants`): open new causes, refresh present ones, close one absent for `problems.cleanRuns` runs (default 2, avoids flapping). `problemsSet(source, pattern, causes)` for a pass that sees all of one pattern at once (dispatch, pins): absent causes close at once. One-off senders use `problemRaise(cause, ...)` and `problemClose(cause)` and never close each other's causes. A raise of an open cause counts `+1` and refreshes `seen_at`; a Bugsink regression or unmute reopens its row whatever happened before.
+*   **Owner bot actions** (`problem_update {id, phase?, note?, work?, close?}`): set the phase, write the note, link the task or pull request, close as `fixed` with evidence or as `duplicate` of another problem (audited in the journal). The owner may do the same. `problem_escalate {id, kind, text, options?, recommendation}` asks one `operator_decision` question from the owner bot, linked to the problem (`question_id`), phase `escalated`; one open escalation per problem; its answer goes to the bot's problem conversation. Reads: `problems_list {state?, phase?, owner?, projectId?, before?, limit}` (newest first; open by default) and `problem_get {id | cause}` with the occurrences and the linked work.
+*   **Progress signal, not a limit.** A problem whose owner bot ran on it 3 times without a change of phase, note or work, or that stays `working` for 48 h, turns `stuck` and shows loud. No attempt cap, budget or cooldown stops the bot.
+*   **Conversation.** Each problem has one conversation of its owner bot (subject `problem:<id>`), created on the bot's first wake for it or on the person's first message; System › Problems shows it beside the row. The person acts by writing there ("look at the github grants", "not this class"). There is no Investigate or Dismiss button.
+*   **Grouping (Alertmanager-style inhibition)** stays: before sync, findings whose subject depends on a firing absence cause fold into it (`problem:host:<id>:silent` absorbs every finding whose rule row carries that `host_id`; `problem:store:<id>:offline` absorbs store errors; `problem:telemetry:clickhouse` absorbs every rule). Folded findings stay in `telemetry_findings` with `groupCause`.
+*   **Migration.** Every open or answered question that holds a cause becomes an open problem with the same cause, text, data, project and age; open ones are withdrawn. The cause column of `question` and its indexes are dropped once no writer uses them. Agent gap findings keep their table and link `problem_id` instead of `question_id`; their Investigate step goes (the owner bot investigates).
+
+**Duty.** A bot's settings carry `duty.problems`: `system` (true: owns every problem without a project and those of projects no other bot claims) and `projects` (ids it owns). HAL0 holds `system: true` and `projects: ["fleet"]` ([HAL0](../../fleet.md#hal0-operations-duty)). A bot trigger with `ifChanged: ["problem"]` wakes on a new problem it owns or a change of one (a raise of an open cause wakes nobody; the bot's own updates wake nobody); the `needs-you` preset includes `problem`. A wake lists the problems with their codes; the bot works one conversation per problem.
+
+| Cause | Source | Fires | Built |
+|---|---|---|---|
+| `host:<id>:{offline,trust,paused,holder}`, `subscription:<id>:{paused,not-taken,not-ready,refused}`, `placement:<host>:<harness>`, `budget:<id>:reached` | dispatch | queued work has no candidate | built as a question |
+| `update:<host>:<version>` | direct: refused or failed update in a poll | at once | built as a question |
+| `key:<fingerprint>:disabled` | direct: a provider refused a pooled key | at once | built as a question |
+| `pins:<kind>:<sha>`, `pins:cli:revert:<harness>@<version>` | pins pass | a pin proposal failed qualification or is reverted | built as a question |
+| `problem:host:<id>:silent` | rule `absence-host` | no heartbeat 3 min (dispatch's `host:<id>:offline` is about placement, this is about the heartbeat) | stage 1 |
+| `problem:host:<id>:saturated` | rule `host-saturation` | see telemetry | stage 1 |
+| `problem:store:<id>:fill` | rule `store-fill` | free below `free_space_warning` | stage 1 |
+| `problem:execution:<id>:stuck` | rule `stuck` | no activity 30 min | stage 1 |
+| `problem:execution:<id>:orphans` | rule `orphan` | processes alive after end | stage 1 |
+| `problem:resource:failing` | rule `resource-failing` | a resource processor item paused at its maximum retry pause | built as a question |
+| `problem:work:stalled` | rule `work-stalled` | a work kit queue whose selection or failure writes keep failing, at the maximum pause | built as a question |
+| `problem:backup:missing` | direct: backup pass | no good dump for 48 h | stage 1 (M6) |
+| `problem:backup:drill-failed` | direct: drill | last drill failed | stage 1 (M6) |
+| `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | built as a question |
+| `problem:bugsink:<issue>` | direct: the Bugsink alert webhook ([error tracking](fleet-error-tracking.md#5-alerts-become-problems)) | a new Bugsink issue, or one that regressed or passed its mute; closes when Bugsink reports it resolved | built as a question |
+| `problem:delivery:<key>:<metric>` | delivery | a stage or job got slower than its baseline | built as a question |
+| `gap:<class>` | agent gaps | a class above the finding threshold | built as a question |
+| `grants:<connection>` | grants | a connection lacks catalogue tools its users call | built as a question |
+| `duty:<bot>:down` | watchdog | a duty bot stopped working (rule 6) | not built |
+| `problem:<rule>:<subject>` | other rules | see telemetry | stage 1 and 2 |
+
+Not built: the `problem` table, its operations, duty, watchdog and System › Problems; every cause above still opens a question with Investigate and Dismiss.
+
+All numbers are settings with these defaults: `problems.cleanRuns` 2, `problems.reopenHours` 24, `problems.stuckWakes` 3, `problems.stuckHours` 48, `duty.downWakes` 3, `duty.newMinutes` 30, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false.
 
 ### Hosts
 
@@ -171,7 +193,7 @@ One screen (owner decision), from `packages/ui` only, dark theme first. Per-scre
 
 | Panel | Read from | Actions |
 |---|---|---|
-| Problems | open cause questions | answer, dismiss |
+| Problems | `problems_list`: owner, phase and note per row, the owner's problem conversation beside it | none: the person writes in the conversation |
 | Services | [telemetry §8](fleet-telemetry.md#8-system-screen-read-half) | none |
 | Hosts | `hosts_list`, heartbeat readings | pause, resume, remove (preview), rotate secret |
 | Stores | `stores_list`, `store_free` | set free-space warning |
@@ -257,6 +279,18 @@ Archive and delete are one operation each with a `kind` (`object_archive`, `obje
 
 *   **Reason for rejection:** Rejected by author: the cause-question mechanism exists and gives grouping, single ask and self-close; a second service adds a process and a store.
 
+### Problems as questions addressed to the duty bot
+
+*   **Pros:** the smallest change: dedupe, withdraw and the PM hand-off stay as they are.
+*   **Cons:** a fact with occurrences, phases and a watched fix lives as a question with answer buttons; "is this a decision?" becomes "who is it addressed to"; the buttons come back the first time a bot is missing.
+*   **Reason for rejection:** Rejected by author (consilium of three models, owner approved 2026-11-26): questions hold decisions only.
+
+### Attempt caps, wake budgets and cooldowns for the duty bot
+
+*   **Pros:** bound cost when a noisy class flaps.
+*   **Cons:** an invented limit that stops work the owner wants done.
+*   **Reason for rejection:** Rejected by author (owner rule: no invented limits): no progress turns a problem `stuck` and shows it loud; work continues.
+
 ### Backups by a host cron script outside Fleet
 
 *   **Pros:** proven, small.
@@ -298,7 +332,7 @@ Names packages and areas; wave 1 renames Go files.
 | M1 Host remove | `hosts_remove` with preview, 410 for removed hosts, list filter | two paused hosts removed from the app |
 | M2 Archive, delete, purge | reference map with schema test, `object_archive`, `object_delete`, `system_purge` | owner clears acceptance data in the app |
 | M3 Worktree on delivery | executor reads `keepWhen`, `unpushed`, PR merge poll, local branch delete | merged session's worktree gone, branch on remote |
-| M4 Problems | `problems.sync`, grouping, direct signals; telemetry stage 1 rules feed it | an offline host raises one question that closes itself |
+| M4 Problems | `problem` table, writers moved off questions, `problems_list`, `problem_get`, `problem_update`, `problem_escalate`, duty, `problem` trigger kind, watchdog, System › Problems | Needs you on prod holds only owner-level questions; HAL0 takes a new problem, links its fix and closes it |
 | M5 System screen | panels of the table above | owner answers "is the system healthy" on one screen |
 | M6 Backups | `backup` table, pass, rotation, off-host copy, drill, `backups_list`, `backup_run` | drill passes and shows on screen |
 
