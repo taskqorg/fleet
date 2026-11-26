@@ -476,9 +476,6 @@ type Request struct {
 	host       *authHost
 	agent      string     // execution:<id> when a host agent calls on behalf of person (its director)
 	caller     *appCaller // a project app on /api/apps (apps.go): person is its approver narrowed to the app's project
-	// refInputs: a native agent's pipeline_run inputs by reference, read and stored before its receipt's transaction
-	// (receiptStageRefs), by refKey.
-	refInputs map[string]string
 	// unknownEmail: the email Access signed in for a person Fleet does not know, set only for boot (bootUnknownAllowed).
 	unknownEmail string
 	body         json.RawMessage

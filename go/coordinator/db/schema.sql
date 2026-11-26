@@ -926,6 +926,14 @@ CREATE TABLE personal_lab_draft (
   "promoted_method" text,
   "updated_at" timestamp with time zone NOT NULL
 );
+CREATE TABLE pipeline_input_ref (
+  "id" text NOT NULL,
+  "run_id" text NOT NULL,
+  "path" text NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
 CREATE TABLE pipeline_run (
   "run_id" text NOT NULL,
   "definition_sha256" text NOT NULL,

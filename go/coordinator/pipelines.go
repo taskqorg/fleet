@@ -53,6 +53,7 @@ type runRecord struct {
 	Authority         *contract.PipelineAuthority       `json:"authority,omitempty"`
 	CanonicalResult   *contract.PipelineCanonicalResult `json:"canonicalResult,omitempty"`
 	ExampleInputs     *[]fileRef                        `json:"exampleInputs,omitempty"`
+	InputRefs         []pipelineInputRef                `json:"inputRefs,omitempty"` // inputs by reference as asked, and how each was staged (pipeline_refs.go)
 	ParentExecutionID string                            `json:"parentExecutionId,omitempty"`
 	TaskID            string                            `json:"taskId,omitempty"`
 	DeliveryID        string                            `json:"deliveryId,omitempty"`
@@ -68,6 +69,7 @@ type runRecord struct {
 	RerunOf           string                            `json:"rerunOf,omitempty"`
 	Reused            *[]string                         `json:"reused,omitempty"`
 	RerunIdentity     string                            `json:"rerunIdentity,omitempty"`
+	failure           json.RawMessage                   // why a run that failed before any step did (finish), as a step error
 	rest              recordRest
 }
 

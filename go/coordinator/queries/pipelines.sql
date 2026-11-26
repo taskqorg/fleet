@@ -11,6 +11,28 @@ INSERT INTO pipeline_work(run_id) VALUES($1) ON CONFLICT DO NOTHING;
 -- name: PipelineWorkDelete :exec
 DELETE FROM pipeline_work WHERE run_id=$1;
 
+-- name: PipelineInputRefAdd :exec
+-- A preparing run's input by reference waits on the input-refs queue (pipeline_refs.go).
+INSERT INTO pipeline_input_ref(id, run_id, path) VALUES(@id, @run_id, @path) ON CONFLICT (run_id, path) DO NOTHING;
+
+-- name: PipelineInputRefDue :many
+SELECT id, attempts FROM pipeline_input_ref WHERE next_attempt_at<=sqlc.arg(now)::pg_catalog.timestamptz ORDER BY next_attempt_at, id LIMIT sqlc.arg(lim);
+
+-- name: PipelineInputRefGet :one
+SELECT run_id, path FROM pipeline_input_ref WHERE id=$1;
+
+-- name: PipelineInputRefDone :exec
+-- One stored input leaves the queue.
+DELETE FROM pipeline_input_ref WHERE id=$1;
+
+-- name: PipelineInputRefLeft :one
+-- The run's inputs by reference not stored yet.
+SELECT count(*)::bigint FROM pipeline_input_ref WHERE run_id=$1;
+
+-- name: PipelineInputRefDrop :exec
+-- A run that ended (a failed input, a cancel) stages nothing more.
+DELETE FROM pipeline_input_ref WHERE run_id=$1;
+
 -- name: PipelineRunLock :one
 -- The run row, locked for this step's transaction.
 SELECT id FROM execution WHERE id=$1 FOR UPDATE;

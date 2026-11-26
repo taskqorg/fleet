@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -33,6 +34,7 @@ type pipelineStartOptions struct {
 	RerunOf      string             `json:"rerunOf,omitempty"`
 	Reuse        []json.RawMessage  `json:"reuse,omitempty"`
 	Inputs       []fileRef          `json:"inputs,omitempty"` // stored project artifacts staged as example/<path> (pipeline_run inputs)
+	Refs         []pipelineInputRef `json:"refs,omitempty"`   // inputs by reference: the run is preparing until each is stored (pipeline_refs.go)
 	draft        *pipelineDef
 	draftBase    int64
 	hasDraftBase bool
@@ -146,6 +148,9 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 		inputs := append([]fileRef{}, o.Inputs...)
 		run.ExampleInputs = &inputs
 	}
+	if len(o.Refs) > 0 {
+		run.State, run.InputRefs = "preparing", append([]pipelineInputRef{}, o.Refs...)
+	}
 	if err := run.merge(o.Extra); err != nil {
 		return nil, err
 	}
@@ -234,7 +239,7 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 	return run, run.put(q)
 }
 
-// pipelineWait polls until the run leaves running (pipeline_run waits for a direct search).
+// pipelineWait polls until the run leaves preparing and running (pipeline_run waits for a direct search).
 func pipelineWait(ctx context.Context, a *App, runID string) (recordRest, error) {
 	for {
 		var r *runRecord
@@ -244,7 +249,7 @@ func pipelineWait(ctx context.Context, a *App, runID string) (recordRest, error)
 		if r == nil {
 			return nil, fail(404, "Not found")
 		}
-		if r.State != "running" {
+		if r.State != "running" && r.State != "preparing" { // preparing: its inputs by reference are read first
 			return pipelinePublicRead(ctx, a, runID)
 		}
 		select {
@@ -283,7 +288,7 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 // The caller handles post-commit notification and a handed-off native stop.
 func pipelineCancelIn(q *Request, runID string) (string, *runRecord, error) {
 	run, err := getRun(q, runID)
-	if err != nil || run == nil || run.State != "running" {
+	if err != nil || run == nil || run.State != "running" && run.State != "preparing" {
 		return "", nil, err
 	}
 	own := ""
@@ -382,6 +387,9 @@ func (run *runRecord) finish(q *Request, state, problem string) error {
 		result.Native = search
 	}
 	if problem != "" {
+		if stepErr == nil {
+			stepErr = run.failure
+		}
 		if stepErr == nil {
 			stepErr = jsonBytes(struct {
 				Code string `json:"code"`
@@ -509,6 +517,9 @@ func pipelineEnded(q *Request, run *runRecord) error {
 	if _, err := unscoped(q, func() (int64, error) {
 		return q.db().BoardCancelQueuedBoardWakesForPipelineRun(q.ctx(), run.ID)
 	}); err != nil {
+		return err
+	}
+	if err := q.db().PipelineInputRefDrop(q.ctx(), run.ID); err != nil { // a run that ends reads no more inputs
 		return err
 	}
 	if id := run.ExperimentID; id != "" {
@@ -714,11 +725,11 @@ func pipelineRunFrom(q *Request, pipelineID string, b pipelineRule, draft *pipel
 
 // pipelineSignature: the identity of a pipeline_run or direct_search request (fields in key order).
 type pipelineSignature struct {
-	Inputs     []fileRef `json:"inputs,omitempty"`
-	Invocation string    `json:"invocation"`
-	MethodID   *string   `json:"methodId"`
-	ProjectID  string    `json:"projectId"`
-	Query      string    `json:"query"`
+	Inputs     []fileRef              `json:"inputs,omitempty"`
+	Invocation string                 `json:"invocation"`
+	MethodID   *string                `json:"methodId"`
+	ProjectID  string                 `json:"projectId"`
+	Query      string                 `json:"query"`
 	Refs       []pipelineRefSignature `json:"refs,omitempty"` // inputs by reference, as asked: a retry is the same request whatever the file holds now
 }
 
@@ -762,45 +773,39 @@ func pipelineRequestFresh(q *Request, projectID, requestID string) (bool, error)
 	return fresh, err
 }
 
-// refKey: an input by reference in Request.refInputs.
-func refKey(r contract.PipelineRunRef) string { return r.Connection + "\x00" + r.Path }
-
-// pipelineRunInputs: a pipeline_run's input files, each a stored artifact of the project (an agent saves its files with
-// artifact_save first) or a file on one of the project's files grants (ref, staged into an artifact by pipelineRefStage
-// outside any transaction, or before a native agent's receipt by receiptStageRefs), given to every step as
-// example/<path>, as a Lab example's input files are.
-func pipelineRunInputs(q *Request, projectID string, inputs []contract.PipelineRunInput) ([]fileRef, error) {
+// pipelineRunInputs: a pipeline_run's input files, given to every step as example/<path>, as a Lab example's input
+// files are: each a stored artifact of the project (an agent saves its files with artifact_save first), or a file on one
+// of the project's files grants (ref), checked here without a read and stored by the input-refs queue once the run
+// exists (pipeline_refs.go).
+func pipelineRunInputs(q *Request, projectID string, inputs []contract.PipelineRunInput) ([]fileRef, []pipelineInputRef, error) {
 	if _, _, err := pipelineInputsSigned(inputs); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := []fileRef{}
+	var refs []pipelineInputRef
 	for _, in := range inputs {
-		id := deref(in.ArtifactId)
 		if in.Ref != nil {
-			if id = q.refInputs[refKey(*in.Ref)]; id == "" {
-				if q.tx != nil {
-					return nil, fail(400, "input:"+in.Path+": an input by reference is read before the run's transaction")
-				}
-				var err error
-				if id, err = pipelineRefStage(q, projectID, in.Path, *in.Ref); err != nil {
-					return nil, err
-				}
+			if err := pipelineRefCheck(q, projectID, in.Path, *in.Ref); err != nil {
+				return nil, nil, err
 			}
+			refs = append(refs, pipelineInputRef{Path: in.Path, Connection: in.Ref.Connection, File: in.Ref.Path})
+			continue
 		}
+		id := *in.ArtifactId
 		a, err := artifactRow(withTx(q), q.app, id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if deref(a.ProjectID) != projectID {
-			return nil, fail(400, "inputs: artifact "+id+" is not an artifact of project "+projectID)
+			return nil, nil, fail(400, "inputs: artifact "+id+" is not an artifact of project "+projectID)
 		}
 		if a.State != "stored" {
 			// artifact_save answers pending; the upload finishes in the background.
-			return nil, fail(409, "inputs: artifact "+id+" is "+a.State+", not stored yet; call pipeline_run again once artifact_list shows it stored")
+			return nil, nil, fail(409, "inputs: artifact "+id+" is "+a.State+", not stored yet; call pipeline_run again once artifact_list shows it stored")
 		}
 		out = append(out, fileRef{ArtifactID: id, Path: "example/" + in.Path})
 	}
-	return out, nil
+	return out, refs, nil
 }
 
 // pipelineCatalogue: the methods of a project's catalogue and its recommendation.
@@ -835,9 +840,11 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 	if err != nil {
 		return nil, err
 	}
+	// Inputs are checked, not read: a ref is read after the run answers (pipeline_refs.go), so no file read holds it.
 	var staged []fileRef
+	var pending []pipelineInputRef
 	if fresh {
-		if staged, err = pipelineRunInputs(q, projectID, inputs); err != nil {
+		if staged, pending, err = pipelineRunInputs(q, projectID, inputs); err != nil {
 			return nil, err
 		}
 	}
@@ -893,9 +900,15 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 		reqBy := requester(q)
 		// The method runs as adopted: its overrides (a promoted Lab variant's profile, model or arguments) are part of it.
 		run, err = startRun(q, pipelineStartOptions{File: file, ProjectID: &projectID, RequestID: rid, Example: example, RequestedBy: &reqBy,
-			Overrides: overrides, Inputs: staged, Extra: recordRest{"signature": jsonBytes(signature), "invocation": jsonBytes(inv), "selectedMethod": methodRaw, "selectionSource": orNull(source), "context": jsonBytes(p)}})
-		if err != nil || callback == "" {
+			Overrides: overrides, Inputs: staged, Refs: pending, Extra: recordRest{"signature": jsonBytes(signature), "invocation": jsonBytes(inv), "selectedMethod": methodRaw, "selectionSource": orNull(source), "context": jsonBytes(p)}})
+		if err != nil {
 			return err
+		}
+		if err := pipelineRefsEnqueue(q, run); err != nil {
+			return err
+		}
+		if callback == "" {
+			return nil
 		}
 		// The app's callback waits for the run's end (apps_callback.go).
 		return q.db().AppCallbackPut(q.ctx(), db.AppCallbackPutParams{RunID: run.ID, AppID: q.caller.ID, Url: callback})
@@ -981,8 +994,21 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (*runRecord, er
 	if old.ExampleInputs != nil && len(old.exampleInputs()) == 0 {
 		o.Inputs = *old.ExampleInputs
 	}
+	// A run that ended before every input by reference was stored reads its refs again, as asked.
+	if slices.ContainsFunc(old.InputRefs, func(r pipelineInputRef) bool { return r.ArtifactID == "" }) {
+		o.Inputs = slices.DeleteFunc(slices.Clone(o.Inputs), func(f fileRef) bool {
+			return slices.ContainsFunc(old.InputRefs, func(r pipelineInputRef) bool { return f.Path == "example/"+r.Path })
+		})
+		for _, r := range old.InputRefs {
+			o.Refs = append(o.Refs, pipelineInputRef{Path: r.Path, Connection: r.Connection, File: r.File})
+		}
+	}
 	if draft {
 		o.draft, o.draftBase, o.hasDraftBase = def, base, true
 	}
-	return startRun(q, o)
+	run, err := startRun(q, o)
+	if err != nil {
+		return nil, err
+	}
+	return run, pipelineRefsEnqueue(q, run)
 }

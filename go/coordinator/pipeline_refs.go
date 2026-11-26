@@ -1,9 +1,13 @@
 // Inputs by reference (docs/designs/fleet-project-apps.md#inputs-by-reference): a pipeline_run input that names a file
-// on one of the project's files grants. Before the run is planned, outside any transaction, the coordinator reads the
-// file through the gateway's files_get with a system read token of the run's project (the gateway records the read as
-// a tool_run with its path in the spool) into a private temporary folder, and stores it as an artifact of the project
-// through the operator-upload path (uploads.go), once per content: a stored artifact of the project with the same
-// SHA-256 is reused.
+// on one of the project's files grants. pipeline_run checks only what needs no network (the connection is a files grant
+// of the project) and answers a run in preparing whose record names each ref as asked (inputRefs); each ref waits as one
+// pipeline_input_ref row on the work kit's input-refs queue. Its step leaves the read as its call, outside any
+// transaction: the gateway's files_get with a system read token of the run's project (the gateway records it as a
+// tool_run with its path in the spool) into a private temporary folder, then the operator-upload path (uploads.go) as
+// the run's director, once per content (a stored artifact of the project with the same SHA-256 is reused). The step
+// after the call records the artifact, its size and the staging time on the run; once every ref is stored the run
+// starts its steps. A ref that cannot be read fails the run with input:<path>: <reason>; any other failure (the object
+// store, the database) is retried with the kit's backoff.
 package main
 
 import (
@@ -15,6 +19,8 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,44 +29,183 @@ import (
 	"fleet/coordinator/db"
 )
 
+func init() {
+	kitRegister(&kitQueue{Name: "input-refs", Period: 5 * time.Second, Limit: 16, Workers: 4, Due: inputRefDue, Step: inputRefStep,
+		Retry: kitRetry{Table: "pipeline_input_ref", Key: "id", Guard: `pipeline_input_ref.attempts=$5::int`, Class: func(error) string { return "input_ref_failed" }}})
+}
+
+// pipelineInputRef: an input by reference of a run as asked (its input path, connection and file on the server) and,
+// once read, its artifact, size and how long the read and store took (stageMs), or why it could not be read.
+type pipelineInputRef struct {
+	Path       string `json:"path"`
+	Connection string `json:"connection"`
+	File       string `json:"file"`
+	ArtifactID string `json:"artifactId,omitempty"`
+	Bytes      int64  `json:"bytes,omitempty"`
+	StageMs    *int64 `json:"stageMs,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
 // refInputError: why input path failed, as `input:<path>: <reason>`.
 func refInputError(code int, input, reason string) error {
 	return fail(code, "input:"+input+": "+reason)
 }
 
-// pipelineRefStage reads ref for input path of a run of projectID and answers the stored artifact holding its bytes.
-func pipelineRefStage(q *Request, projectID, input string, ref contract.PipelineRunRef) (string, error) {
+// pipelineRefCheck: what an input by reference needs that no read decides, checked before the run is created: a person
+// to store it for, a file path, and a files grant connection of projectID. Whether the grant is ready and the file
+// readable is the staging's (inputRefStep).
+func pipelineRefCheck(q *Request, projectID, input string, ref contract.PipelineRunRef) error {
 	if q.person == nil {
-		return "", refInputError(403, input, "an input by reference is stored for a person")
+		return refInputError(403, input, "an input by reference is stored for a person")
 	}
 	if ref.Path == "" {
-		return "", refInputError(400, input, "ref.path names the file on the server")
+		return refInputError(400, input, "ref.path names the file on the server")
 	}
+	_, err := pipelineRefGrant(q, projectID, input, ref.Connection)
+	return err
+}
+
+// pipelineRefGrant: the files grant of projectID that connection names.
+func pipelineRefGrant(q *Request, projectID, input, connection string) (db.AccessGrantOfConnectionRow, error) {
 	var g db.AccessGrantOfConnectionRow
 	err := q.app.store.Read(q.ctx(), q, func(q *Request) (err error) {
-		g, err = q.db().AccessGrantOfConnection(q.ctx(), ref.Connection)
+		g, err = q.db().AccessGrantOfConnection(q.ctx(), connection)
 		return err
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return "", refInputError(400, input, "unknown connection "+ref.Connection+": name a files grant connection of "+projectID)
+		return g, refInputError(400, input, "unknown connection "+connection+": name a files grant connection of "+projectID)
 	case err != nil:
-		return "", err
+		return g, err
 	case g.ProjectID != projectID:
-		return "", refInputError(400, input, ref.Connection+" is not a connection of project "+projectID)
+		return g, refInputError(400, input, connection+" is not a connection of project "+projectID)
 	case g.Kind != "files":
-		return "", refInputError(400, input, ref.Connection+" is a "+g.Kind+" grant, not a files grant")
-	case g.State != "ready":
-		return "", refInputError(409, input, "the grant of "+ref.Connection+" is "+g.State+", not ready")
+		return g, refInputError(400, input, connection+" is a "+g.Kind+" grant, not a files grant")
+	}
+	return g, nil
+}
+
+// pipelineRefsEnqueue: a new run's inputs by reference wait on the input-refs queue, in the run's creating transaction.
+func pipelineRefsEnqueue(q *Request, run *runRecord) error {
+	for _, in := range run.InputRefs {
+		if err := q.db().PipelineInputRefAdd(q.ctx(), db.PipelineInputRefAddParams{ID: newID(), RunID: run.ID, Path: in.Path}); err != nil {
+			return err
+		}
+	}
+	if len(run.InputRefs) == 0 {
+		return nil
+	}
+	return kitNotify(q, "input-refs")
+}
+
+func inputRefDue(q *Request, now time.Time, limit int) ([]*kitClaim, error) {
+	rs, err := q.db().PipelineInputRefDue(q.ctx(), db.PipelineInputRefDueParams{Now: now, Lim: int32(limit)})
+	out := make([]*kitClaim, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, &kitClaim{Key: r.ID, Attempts: int(r.Attempts), Guard: []any{r.Attempts}})
+	}
+	return out, err
+}
+
+// inputRefStaged: what the read of one input by reference found: its artifact, size and time, or why it failed.
+type inputRefStaged struct {
+	artifactID string
+	bytes      int64
+	ms         int64
+	err        error
+}
+
+// pipelineRefFetch reads a ref into a folder (pipelineRefRead; a test stands in for the gateway).
+var pipelineRefFetch = pipelineRefRead
+
+// inputRefStep: one input by reference of a preparing run (the input-refs queue's step, in the kit's transaction). The
+// read is the claim's call; its result is recorded on the run under GLOBAL, as the run's other writes are.
+func inputRefStep(q *Request, _ time.Time, c *kitClaim) error {
+	if err := acquireTxLock(q, GLOBAL); err != nil {
+		return err
+	}
+	row, err := q.db().PipelineInputRefGet(q.ctx(), c.Key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	run, err := getRun(q, row.RunID)
+	if err != nil {
+		return err
+	}
+	if run == nil || run.State != "preparing" { // gone
+		return q.db().PipelineInputRefDrop(q.ctx(), row.RunID)
+	}
+	i := slices.IndexFunc(run.InputRefs, func(r pipelineInputRef) bool { return r.Path == row.Path })
+	if i < 0 {
+		return q.db().PipelineInputRefDone(q.ctx(), c.Key)
+	}
+	in := &run.InputRefs[i]
+	r, ok := c.Result.(inputRefStaged)
+	if !ok {
+		a, p, project, ref := q.app, q.peopleSnapshot().person(run.director()), run.project(), *in
+		c.Call = func(ctx context.Context) any {
+			start := time.Now()
+			id, n, err := pipelineRefStage(ctx, a, p, project, ref)
+			return inputRefStaged{artifactID: id, bytes: n, ms: time.Since(start).Milliseconds(), err: err}
+		}
+		return nil
+	}
+	in.StageMs = &r.ms
+	if r.err != nil {
+		var he *HTTPError
+		if !errors.As(r.err, &he) || !strings.HasPrefix(he.Msg, "input:") {
+			return r.err // not the input's fault: the kit reads it again after its backoff
+		}
+		in.Error = he.Msg
+		run.failure = jsonBytes(pipelineStepError{Code: "input_unavailable", Message: he.Msg})
+		return run.finish(q, "failed", "input_unavailable") // its end drops the run's other refs (pipelineEnded)
+	}
+	in.ArtifactID, in.Bytes = r.artifactID, r.bytes
+	if err := q.db().PipelineInputRefDone(q.ctx(), c.Key); err != nil {
+		return err
+	}
+	left, err := q.db().PipelineInputRefLeft(q.ctx(), run.ID)
+	if err != nil {
+		return err
+	}
+	if left == 0 { // every input is stored: the run's steps start (put gives it its pipeline queue row)
+		inputs := []fileRef{}
+		if run.ExampleInputs != nil {
+			inputs = append(inputs, *run.ExampleInputs...)
+		}
+		for _, in := range run.InputRefs {
+			inputs = append(inputs, fileRef{ArtifactID: in.ArtifactID, Path: "example/" + in.Path})
+		}
+		run.ExampleInputs, run.State = &inputs, "running"
+	}
+	return run.put(q)
+}
+
+// pipelineRefStage reads input in of a run of projectID as person p, the run's director, and answers the stored
+// artifact holding its bytes and their size.
+func pipelineRefStage(ctx context.Context, a *App, p *Person, projectID string, in pipelineInputRef) (string, int64, error) {
+	if p == nil {
+		return "", 0, refInputError(403, in.Path, "the run's director is not a person of this Fleet")
+	}
+	q := scopedRequest(ctx, a, p)
+	g, err := pipelineRefGrant(q, projectID, in.Path, in.Connection)
+	if err != nil {
+		return "", 0, err
+	}
+	if g.State != "ready" {
+		return "", 0, refInputError(409, in.Path, "the grant of "+in.Connection+" is "+g.State+", not ready")
 	}
 	dir, err := os.MkdirTemp("", "fleet-ref-") // 0700: only the coordinator reads the file
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer os.RemoveAll(dir)
-	file, meta, err := pipelineRefRead(q.ctx(), q.app, projectID, input, ref, dir)
+	file, meta, err := pipelineRefFetch(ctx, a, projectID, in.Path, contract.PipelineRunRef{Connection: in.Connection, Path: in.File}, dir)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	return pipelineRefStore(q, projectID, file, meta)
 }
@@ -116,20 +261,20 @@ func pipelineRefRead(ctx context.Context, a *App, projectID, input string, ref c
 
 // pipelineRefStore stores file as an artifact of projectID: the stored one with the same content, else a new upload of
 // q's person (uploadInsert, uploadWritePart, finishNow), part by part on the upload's grid.
-func pipelineRefStore(q *Request, projectID, file string, meta refFile) (string, error) {
+func pipelineRefStore(q *Request, projectID, file string, meta refFile) (string, int64, error) {
 	f, err := os.Open(file)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	size := st.Size()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
 	ctx, a, p := context.WithoutCancel(q.ctx()), q.app, q.person
@@ -147,7 +292,7 @@ func pipelineRefStore(q *Request, projectID, file string, meta refFile) (string,
 		u, err = uploadInsert(q, p.Email, meta.Name, meta.MimeType, size, nil, &projectID)
 		return err
 	}); err != nil || found != "" {
-		return found, err
+		return found, size, err
 	}
 	defer uploadLock(u.ID)()
 	for first := int64(0); first < size; first += u.PartBytes {
@@ -156,7 +301,7 @@ func pipelineRefStore(q *Request, projectID, file string, meta refFile) (string,
 		err := uploadMemory.acquire(wctx, n)
 		cancel()
 		if err != nil {
-			return "", fail(503, "Upload memory busy; call pipeline_run again")
+			return "", 0, fail(503, "Upload memory busy; the input is read again")
 		}
 		body := make([]byte, n)
 		_, err = f.ReadAt(body, first)
@@ -165,22 +310,22 @@ func pipelineRefStore(q *Request, projectID, file string, meta refFile) (string,
 		}
 		uploadMemory.release(n)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 	}
 	if u, err = a.uploadRecord(ctx, p, u.ID); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if u.Received != size {
-		return "", fail(409, "The stored input changed meanwhile")
+		return "", 0, fail(409, "The stored input changed meanwhile")
 	}
 	v, err := a.finishNow(ctx, p, u)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	view, ok := v.(contract.ArtifactView)
 	if !ok || view.Id == "" {
-		return "", fail(500, "The stored input has no artifact")
+		return "", 0, fail(500, "The stored input has no artifact")
 	}
-	return view.Id, nil
+	return view.Id, size, nil
 }
