@@ -14,7 +14,7 @@
   .table-frame.stacked > table > tbody > tr > :is(th, td) { display: block; }
   .table-frame.stacked > table > thead { display: none; }
   .table-frame.stacked > table > tbody > tr { padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
-  /* The row header (the name) leads the block wherever its column is (board no-hscroll.bl, frame 1). */
+  /* The row header (the name) leads the block wherever its column is (patterns/no-horizontal-scroll.md). */
   .table-frame.stacked > table > tbody > tr { display: flex; flex-direction: column; }
   .table-frame.stacked > table > tbody > tr > th[scope=row] { order: -1; }
   .table-frame.stacked > table > tbody > tr:first-child { border-top: 0; }

@@ -2,7 +2,7 @@ bp:v1
 canvas:
   backgroundEnabled: false
 ---
-63796525a633a07e al(h,g(80)) p(0,0) s(hug:3900,hug:948) f[(2b9abab6b1b3230a,solid(#000000,o(0)))] "Frame 1"
+63796525a633a07e al(h,g(80)) p(0,0) s(hug:3900,hug:948) f[(2b9abab6b1b3230a,solid(#000000,o(0)))] "System › Access · Local agents (approved 2026-11-26)"
   ca241a423d29a709 al(v) p(0,0) s(hug:1440,hug:652) f[] "Frame 2"
     8e0f415d81ca0992 al(v,g(12),pad(24)) p(0,0) s(1440,hug:652) f[(99d8306724b05826,#0B0B0C)] "Frame 3"
       02b9b6e09ddbd995 t("System › Access · Local agents · report (draft)",Inter,18,sb,align(l),lh(auto,1.22)) p(24,24) s(fill,hug:22) ext(1392,) f[(9f2f47c4f48481ee,#ECECEC)] "Text 1"

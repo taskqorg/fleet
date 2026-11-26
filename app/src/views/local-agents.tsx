@@ -1,4 +1,4 @@
-// Local agents on System › Access (docs/designs/fleet-connections.md#13-local-agents; board drafts/local-agents.bl):
+// Local agents on System › Access (docs/designs/fleet-connections.md#13-local-agents; board screens/local-agents.bl):
 // a person's own Claude Code, Codex and Antigravity on a Fleet host, connected by choice. The report reads
 // local_agents: one row per machine and harness with its state, connections and last call; a row opens the
 // connections with their last success and failure, Refresh and Disconnect. Connect picks a machine and harnesses and
