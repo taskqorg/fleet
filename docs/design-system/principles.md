@@ -192,7 +192,7 @@ These rules left the sections above on 2026-11-26 (owner, one pass). Their ids s
 | UR-34, UR-36 | component | [controls/status-states.md](controls/status-states.md#rules-kept-here) |
 | UR-35, UR-88 | component | [patterns/list-detail.md](patterns/list-detail.md#rules-kept-here) |
 | UR-37 | component | [controls/offline-marker.md](controls/offline-marker.md#rules-kept-here) |
-| UR-42 | check | `check-design.mjs` contrast: token pairs in `tokens.json` below 4.5:1 (part of the rule: 3:1 for large text and UI parts and the rendered pages are not checked; follow-up) |
+| UR-42 | check | `check-design.mjs` UR-42: text token pairs in `tokens.json` below 4.5:1 and UI part pairs (focus ring, status tones, chart series) below 3:1; `tests/ui/ux.check.mjs` UR-42: each rendered text below 4.5:1 (large text below 3:1) and each icon below 3:1, in light and dark |
 | UR-49, UR-71, UR-86, UR-89 | component | [patterns/app-shell.md](patterns/app-shell.md#rules-kept-here) |
 | UR-50 | component | [patterns/no-horizontal-scroll.md](patterns/no-horizontal-scroll.md#rules-kept-here) |
 | UR-56 | merged | into [OR-51](owner-rules.md#rules) |

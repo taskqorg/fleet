@@ -27,12 +27,18 @@ const RULES = [
   { id: 'tokens', re: /#[0-9a-fA-F]{3,8}\b/g, where: f => !/tokens\.json$/.test(f) && /\.(tsx?|css)$/.test(f), say: 'raw colour; use a colour token (tokens.md)' },
   { id: 'tokens', re: /style=\{\{[^}]*\b\d+px/g, where: f => /\.tsx$/.test(f), say: 'raw px in inline style; use a size token' },
   { id: 'OR-8', re: /<svg\b/g, where: f => /\.tsx?$/.test(f), say: 'inline SVG; use <Icon name> from the registry' },
+  // OR-8: emoji (pictographs, minus the text marks © ® ™ and the arrows OR-7 owns) and icon fonts.
+  { id: 'OR-8', re: /(?![\u00a9\u00ae\u2122\u2190-\u21ff\u2b05-\u2b07])\p{Extended_Pictographic}\ufe0f?/gu, where: f => /\.(tsx?|html)$/.test(f), say: 'emoji; use <Icon name> from the registry, or the word' },
+  { id: 'OR-8', re: /\b(?:material-(?:icons|symbols)[\w-]*|fa[srlbd]? fa-[\w-]+|bi bi-[\w-]+|codicon-[\w-]+|glyphicon-[\w-]+)\b|font-family:[^;}]*(?:Material (?:Icons|Symbols)|Font ?Awesome|bootstrap-icons|codicon)/gi, where: f => /\.(tsx?|css|html)$/.test(f), say: 'icon font; use <Icon name> from the registry' },
   { id: 'OR-2', re: /\b(toLocaleDateString|toLocaleTimeString|Intl\.DateTimeFormat|Intl\.RelativeTimeFormat)\b|new Date\([^)]*\)\.(getHours|getDate|getMonth)/g, where: f => /\.tsx?$/.test(f) && !/src\/format\.ts$/.test(f), say: 'date formatting outside packages/ui/src/format.ts' },
   { id: 'OR-25', re: /100d?vh/g, where: () => true, skip: line => /^\.shell\{/.test(line), say: 'viewport height outside the shell; only .shell takes it (patterns/app-shell.md)' },
   { id: 'OR-7', re: /[↑↓▲▼⬆⬇]/g, where: f => /\.(tsx|html)$/.test(f), say: 'direction arrow; show change with the value tint' },
+  // OR-7: an arrow icon beside a value or in a pill. Icons on or inside buttons (jump, previous/next) and the sort icons are actions, not direction.
+  { id: 'OR-7', re: /<(?!Button\b|MenuTrigger\b)[A-Z]\w*\b[^>]*?\b(?:name|icon)=\{?["'`](?:arrow-(?:up|down)|trending-(?:up|down)|move-(?:up|down)|triangle(?:-down)?)["'`]/g, where: f => /\.tsx$/.test(f), inAction: true, say: 'arrow icon beside a value or in a pill; show change with the value tint and say it in words (`12 new`)' },
   { id: 'OR-9', re: /<select\b/g, where: f => /\.tsx$/.test(f), say: 'select; long collections use VirtualList or a searchable scope control' },
   { id: 'OR-38', re: /\b\w*[iI]d\)?\.slice\(0, ?\d+\)|>T-\{/g, where: f => /\.tsx$/.test(f), say: 'short UUID or hand-made code shown; render <EntityCode> (D17)' },
-  { id: 'OR-36', re: /label="Filter"/g, where: f => /\.tsx$/.test(f), say: 'Filter button; filters are typed in search (query syntax)' },
+  // OR-36: a button or menu labelled Filter or "… filters" (Clear filters and Remove filter chips are allowed).
+  { id: 'OR-36', re: /<(?:Button|MenuTrigger|button)\b[^>]*?\b(?:aria-)?label=\{?["'`](?!Clear\b|Remove\b)(?:[^"'`]*\s)?filters?["'`]|<MenuTrigger\b[^>]*>\s*Filters?\s*</gi, where: f => /\.tsx$/.test(f), say: 'Filter button; filters are typed in search with the query syntax (OR-32)' },
   { id: 'OR-35', re: /seg-label">Group</g, where: f => /\.tsx$/.test(f), say: '"Group" as a word; use GroupControl (registry icon with tooltip)' },
   { id: 'OR-15', re: /Back to /g, where: f => /\.(tsx|html)$/.test(f), say: 'text back link; use an icon, or rely on browser Back' },
   { id: 'OR-45', re: /badge t-attention.*override/g, where: f => /\.tsx$/.test(f), say: 'override attention badge; show only differing values without override badge or t-attention tone' },
@@ -43,12 +49,19 @@ const RULES = [
   { id: 'OR-49', re: /role="tablist"/g, where: f => /\.tsx$/.test(f) && !/controls\/tables\.tsx$/.test(f), say: 'raw role="tablist"; use TabBar from packages/ui' },
   { id: 'OR-65', re: /label=\{?[`'"](?:Show (?:more|less)|Load more|Older|Newer)\b|label=\{`\+\$\{[^`]*\} more`\}/g, where: f => /\.tsx$/.test(f), say: 'toggle pagination; lists load on scroll (InfiniteList, ListEnd) and card previews open the full list from their title' },
 ];
+// An icon that is the child of an open <Button>, <button> or <MenuTrigger> is an action, not a direction mark (OR-7).
+const inAction = (text, at) => {
+  const opens = [...text.slice(Math.max(0, at - 600), at).matchAll(/<(Button|button|MenuTrigger)\b[^>]*?(\/?)>|<\/(Button|button|MenuTrigger)>/g)];
+  let depth = 0;
+  for (const m of opens) if (m[3]) depth = Math.max(0, depth - 1); else if (!m[2]) depth++;
+  return depth > 0;
+};
 const warn = [];
 for (const f of files) {
   const text = readFileSync(f, 'utf8');
   for (const r of RULES) if (r.where(f)) for (const m of text.matchAll(r.re)) {
     const line = text.slice(0, m.index).split('\n').length;
-    if (r.skip?.(text.split('\n')[line - 1])) continue;
+    if (r.skip?.(text.split('\n')[line - 1]) || (r.inAction && inAction(text, m.index))) continue;
     warn.push(`${relative(root, f)}:${line}  ${r.id}  ${r.say}  [${m[0].slice(0, 30)}]`);
   }
 }
@@ -81,7 +94,7 @@ for (const [name, svg] of Object.entries(JSON.parse(readFileSync(join(root, 'pac
   const tag = svg.match(/<svg[^>]*>/)?.[0] ?? '';
   if (!/\sfill=/.test(tag) || /(fill|stroke)="#/.test(svg)) warn.push(`packages/ui/icons.json  icon "${name}"  fixed or default colour; use fill/stroke currentColor`);
 }
-for (const p of contrastProblems()) warn.push(`tokens.json  contrast  ${p} (needs 4.5:1)`);
+for (const p of contrastProblems()) warn.push(`packages/ui/tokens.json  UR-42  contrast ${p}; darken the foreground or change the pair`);
 
 // Performance target: initial JavaScript of the UI package (D6: ≤ 200 KB, a target, not a stop).
 const ui = await build({ entryPoints: [join(root, 'packages/ui/src/index.ts')], bundle: true, minify: true, write: false, format: 'esm', conditions: ['solid'], plugins: [solidEsbuildPlugin()], loader: { '.json': 'json' } });
