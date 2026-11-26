@@ -140,6 +140,7 @@ Repository questions require inspection of the selected repository. Task search 
 *   Visible state is **Held**. Storage reuses `paused` and adds `task.pause_reason text NULL` (`held`, or null for an ordinary pause).
 *   `createTask` with `held` inserts the row directly as `state='paused', state_before_pause='queued', pause_reason='held'`: one write, no transient `queued` state.
 *   `taskTransition()` writes `pause_reason` on `pause` (new trigger `hold`, same rule as `pause` from `queued` only) and clears it on any other trigger, the same way `state_before_pause` is handled.
+*   **Holder.** A held create and `hold` also record who held it: `task.held_by` (the actor id: a person's email, or `execution:<id>` for an agent) and `task.held_by_name` (the person's name, or the agent's bot, profile or harness, at that moment). Both clear with `pause_reason`. Views return them as `heldBy` and `heldByName` (`TaskRow`, `TaskListItem`, `TaskDetail`); rows held before the columns existed have none.
 *   Rules:
 
 | Call | From | Result |

@@ -811,6 +811,8 @@ type TaskRow struct {
 	Code              *string        `json:"code"`
 	CreatedAt         string         `json:"createdAt"`
 	Executions        int64          `json:"executions"`
+	HeldBy            *string        `json:"heldBy,omitempty"`
+	HeldByName        *string        `json:"heldByName,omitempty"`
 	Host              *string        `json:"host"`
 	Id                string         `json:"id"`
 	LastAgent         *string        `json:"lastAgent"`

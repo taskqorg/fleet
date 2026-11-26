@@ -1910,6 +1910,8 @@ type TaskDetail struct {
 	DirectedBy              *string               `json:"directedBy"`
 	Executions              []ExecutionRow        `json:"executions"`
 	ExpectedOutcome         *string               `json:"expectedOutcome"`
+	HeldBy                  *string               `json:"heldBy,omitempty"`
+	HeldByName              *string               `json:"heldByName,omitempty"`
 	History                 []TaskConversation    `json:"history,omitempty"`
 	Id                      string                `json:"id"`
 	LatestResult            json.RawMessage       `json:"latestResult"`
@@ -2066,6 +2068,8 @@ type TaskListItem struct {
 	DeliveryMethod         json.RawMessage `json:"deliveryMethod"`
 	DirectedBy             *string         `json:"directedBy"`
 	ExpectedOutcome        *string         `json:"expectedOutcome"`
+	HeldBy                 *string         `json:"heldBy,omitempty"`
+	HeldByName             *string         `json:"heldByName,omitempty"`
 	Id                     string          `json:"id"`
 	OpenQuestions          json.RawMessage `json:"openQuestions"`
 	PauseReason            *string         `json:"pauseReason"`

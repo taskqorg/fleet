@@ -742,7 +742,7 @@ func (q *Queries) TaskExecutionsSetDirector(ctx context.Context, arg TaskExecuti
 
 const taskGet = `-- name: TaskGet :one
 
-SELECT id, project_id, title, expected_outcome, state, state_before_pause, wait_reason, priority, completion_requirements, result_destination, delivery_method, accepted_by, accepted_at, accepted_artifact_ids, created_by, created_at, updated_at, seq, directed_by, requested_by, taken_from, pause_reason, code, state_at, created_by_session_id, created_by_execution_id, tombstoned_at FROM task WHERE id=$1
+SELECT id, project_id, title, expected_outcome, state, state_before_pause, wait_reason, priority, completion_requirements, result_destination, delivery_method, accepted_by, accepted_at, accepted_artifact_ids, created_by, created_at, updated_at, seq, directed_by, requested_by, taken_from, pause_reason, code, state_at, created_by_session_id, created_by_execution_id, tombstoned_at, held_by, held_by_name FROM task WHERE id=$1
 `
 
 // Tasks, their questions and acceptance (tasks.go), owner problems (problems.go) and execution trace origins
@@ -778,6 +778,8 @@ func (q *Queries) TaskGet(ctx context.Context, id string) (Task, error) {
 		&i.CreatedBySessionID,
 		&i.CreatedByExecutionID,
 		&i.TombstonedAt,
+		&i.HeldBy,
+		&i.HeldByName,
 	)
 	return i, err
 }
@@ -953,11 +955,12 @@ func (q *Queries) TaskIdleDecisions(ctx context.Context, taskID *string) ([]stri
 
 const taskInsert = `-- name: TaskInsert :exec
 INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,created_by_execution_id,created_by_session_id,
- state,state_before_pause,pause_reason,directed_by,requested_by,priority)
+ state,state_before_pause,pause_reason,held_by,held_by_name,directed_by,requested_by,priority)
 VALUES($1,$2,$3,$4,$5,$6,$7,
  $8,$9,
  CASE WHEN $10::boolean THEN 'paused' ELSE 'queued' END::task_state,CASE WHEN $10::boolean THEN 'queued' END::task_state,
- CASE WHEN $10::boolean THEN 'held' END,$11,$11,$12)
+ CASE WHEN $10::boolean THEN 'held' END,CASE WHEN $10::boolean THEN $11::text END,
+ CASE WHEN $10::boolean THEN $12::text END,$13,$13,$14)
 `
 
 type TaskInsertParams struct {
@@ -971,6 +974,8 @@ type TaskInsertParams struct {
 	CreatedByExecutionID   *string
 	CreatedBySessionID     *string
 	Held                   bool
+	HeldBy                 *string
+	HeldByName             *string
 	DirectedBy             *string
 	Priority               string
 }
@@ -988,6 +993,8 @@ func (q *Queries) TaskInsert(ctx context.Context, arg TaskInsertParams) error {
 		arg.CreatedByExecutionID,
 		arg.CreatedBySessionID,
 		arg.Held,
+		arg.HeldBy,
+		arg.HeldByName,
 		arg.DirectedBy,
 		arg.Priority,
 	)
@@ -995,7 +1002,7 @@ func (q *Queries) TaskInsert(ctx context.Context, arg TaskInsertParams) error {
 }
 
 const taskList = `-- name: TaskList :many
-SELECT t.id, t.project_id, t.title, t.expected_outcome, t.state, t.state_before_pause, t.wait_reason, t.priority, t.completion_requirements, t.result_destination, t.delivery_method, t.accepted_by, t.accepted_at, t.accepted_artifact_ids, t.created_by, t.created_at, t.updated_at, t.seq, t.directed_by, t.requested_by, t.taken_from, t.pause_reason, t.code, t.state_at, t.created_by_session_id, t.created_by_execution_id, t.tombstoned_at,v.execution_count,v.executions_by_state,v.open_questions FROM task t JOIN task_view v ON v.task_id=t.id
+SELECT t.id, t.project_id, t.title, t.expected_outcome, t.state, t.state_before_pause, t.wait_reason, t.priority, t.completion_requirements, t.result_destination, t.delivery_method, t.accepted_by, t.accepted_at, t.accepted_artifact_ids, t.created_by, t.created_at, t.updated_at, t.seq, t.directed_by, t.requested_by, t.taken_from, t.pause_reason, t.code, t.state_at, t.created_by_session_id, t.created_by_execution_id, t.tombstoned_at, t.held_by, t.held_by_name,v.execution_count,v.executions_by_state,v.open_questions FROM task t JOIN task_view v ON v.task_id=t.id
 WHERE ($1::text IS NULL OR t.project_id = $1)
  AND ($2::text IS NULL OR (CASE WHEN t.state='paused' AND t.pause_reason='held' THEN 'held' ELSE t.state::text END) = $2)
 ORDER BY t.seq
@@ -1051,6 +1058,8 @@ func (q *Queries) TaskList(ctx context.Context, arg TaskListParams) ([]TaskListR
 			&i.Task.CreatedBySessionID,
 			&i.Task.CreatedByExecutionID,
 			&i.Task.TombstonedAt,
+			&i.Task.HeldBy,
+			&i.Task.HeldByName,
 			&i.ExecutionCount,
 			&i.ExecutionsByState,
 			&i.OpenQuestions,
@@ -1549,7 +1558,7 @@ func (q *Queries) TaskSetDirector(ctx context.Context, arg TaskSetDirectorParams
 
 const taskSetState = `-- name: TaskSetState :exec
 UPDATE task SET state= $1,wait_reason=$2,state_before_pause=$3,
- pause_reason=$4,updated_at=now() WHERE id= $5
+ pause_reason=$4,held_by=$5,held_by_name=$6,updated_at=now() WHERE id= $7
 `
 
 type TaskSetStateParams struct {
@@ -1557,6 +1566,8 @@ type TaskSetStateParams struct {
 	WaitReason       *string
 	StateBeforePause *TaskState
 	PauseReason      *string
+	HeldBy           *string
+	HeldByName       *string
 	ID               string
 }
 
@@ -1566,6 +1577,8 @@ func (q *Queries) TaskSetState(ctx context.Context, arg TaskSetStateParams) erro
 		arg.WaitReason,
 		arg.StateBeforePause,
 		arg.PauseReason,
+		arg.HeldBy,
+		arg.HeldByName,
 		arg.ID,
 	)
 	return err

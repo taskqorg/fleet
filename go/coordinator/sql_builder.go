@@ -1070,7 +1070,7 @@ var sqlActiveExec = `(SELECT e.state::text AS active_state,` + sqlJSONTime("e.st
 
 // sqlTaskListCols: the columns of taskListDBRow (tasks.go), then its group key g and sort key sk. last_started_at: the
 // latest execution's start (index execution_task_seq), so a row shows the time since the latest attempt.
-var sqlTaskListCols = "t.id,t.code,t.project_id,t.title,t.state::text AS state,t.pause_reason,t.wait_reason,t.priority," +
+var sqlTaskListCols = "t.id,t.code,t.project_id,t.title,t.state::text AS state,t.pause_reason,t.held_by,t.held_by_name,t.wait_reason,t.priority," +
 	sqlJSONTime("t.created_at") + " AS created_at," + sqlJSONTime("t.updated_at") + " AS updated_at,d.agent,d.host," +
 	sqlJSONTime("d.started_at") + " AS started_at,coalesce(d.open_questions,0)::bigint AS open_questions," + sqlJSONTime("t.state_at") +
 	" AS state_at,coalesce(d.executions,0)::bigint AS executions,d.last_agent," +

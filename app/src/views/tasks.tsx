@@ -513,7 +513,10 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
           <h2 class="detail-title">{t()!.title}<EntityCode code={t()!.code} id={t()!.id} kind="task" /></h2>
           <div class="state-line">
             <StateBadge family="task" state={t()!.pauseReason === 'held' ? 'held' : t()!.state} unconfirmed={unconfirmed()} reason={t()!.waitReason ?? undefined} />
-            <Show when={t()!.createdBy}><span class="muted">by {actor(t()!.createdBy!)}</span></Show>
+            <Show when={t()!.pauseReason === 'held' && t()!.heldByName}>{who => <span class="muted">by {who()}</span>}</Show>
+            <Show when={t()!.createdBy && !(t()!.pauseReason === 'held' && t()!.heldByName && t()!.heldBy === t()!.createdBy)}>
+              <span class="muted">{t()!.pauseReason === 'held' && t()!.heldByName ? 'created by' : 'by'} {actor(t()!.createdBy!)}</span>
+            </Show>
             <Show when={ms(t()!.createdAt)}>{at => <AgeChip t={at()} />}</Show>
             <Show when={prs()[0]}>{pr => <StageChip stage={CHIP_STAGE[pr().stage]} />}</Show>
           </div>

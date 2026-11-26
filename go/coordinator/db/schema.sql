@@ -1341,7 +1341,9 @@ CREATE TABLE task (
   "state_at" timestamp with time zone NOT NULL,
   "created_by_session_id" text,
   "created_by_execution_id" text,
-  "tombstoned_at" timestamp with time zone
+  "tombstoned_at" timestamp with time zone,
+  "held_by" text,
+  "held_by_name" text
 );
 CREATE TABLE task_dependency (
   "task_id" text NOT NULL,
