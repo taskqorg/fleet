@@ -43,6 +43,10 @@ Every task brief names its stop condition and its time box, the allotted time of
 5. A change that removes a host-protocol field merges only when `hosts_list` shows no host older than the release that added its replacement (section 5).
 6. A new migration is a new file `go/coordinator/migrations/<yyyymmdd>T<hhmm>Z_<slug>.sql` (UTC time, `date -u +%Y%m%dT%H%MZ`), never a numbered section of `schema.sql`; there is no number to take, so parallel branches never clash ([migrations/README.md](go/coordinator/migrations/README.md)).
 
+## Reading the production database
+
+Agents read Fleet's production PostgreSQL only through the `fleet-postgres` connection's `sql_query` (and `sql_schema`), never `ssh … psql`: each query is read-only, refused when it writes, and on record in the gateway spool ([Fleet's own database](docs/designs/fleet-project-access.md#fleets-own-database)). A dev session without the connection mints a personal token that names it (`connections_token_create`) and calls `fleet-executor connection call fleet-postgres sql_query`. Tables with credential, token or host secret material are not in the grant; masked columns are not built.
+
 ## Opening the deployed web app
 
 Agents open `https://fleet.ufobe.com` as person `site-agents` (owner-equivalent rights, own actor) with the Access service token in `~/.config/ufobe-agents/site-access.env` ([design](docs/designs/fleet-people-access.md#agent-access-to-the-web-app)). Source the file inside the process that sends the request; never print, copy or log its values.
