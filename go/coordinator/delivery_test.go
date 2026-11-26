@@ -90,11 +90,25 @@ func TestDeliveryStages(t *testing.T) {
 			{Tag: "ui-ts-v1.2.14", Target: "m22", Published: "2026-11-12T11:45:00Z"}, // not ui-<backend>-v<UI version>: no release
 		},
 	}
-	// Another repository's ui-* tags are no Fleet UI releases: its merges wait for a v* release.
+	// Fleet releases and installs only its own repository: another repository's merges are done (Merged, no release),
+	// listed for the day after the merge; its v* and ui-* tags are no Fleet releases.
 	other, _ := deliveryStages("p", "o/r", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
+	var done []int64
 	for _, it := range other {
-		if it.Number >= 20 && (it.Stage != "releasing" || it.Release != nil) {
-			t.Errorf("o/r #%d: %s %v", it.Number, it.Stage, deref(it.Release))
+		if it.Merged != nil {
+			done = append(done, it.Number)
+			if it.Stage != "merged" || it.Release != nil {
+				t.Errorf("o/r #%d: %s %v", it.Number, it.Stage, deref(it.Release))
+			}
+		}
+	}
+	if !slices.Equal(done, []int64{10, 11, 12, 20, 21, 22}) {
+		t.Errorf("o/r merged rows = %v", done)
+	}
+	old, _ := deliveryStages("p", "o/r", g, nil, "", now.Add(48*time.Hour))
+	for _, it := range old {
+		if it.Stage == "merged" {
+			t.Errorf("o/r #%d merged two days ago is still listed", it.Number)
 		}
 	}
 	items, landing := deliveryStages("fleet", "taskqorg/fleet", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
@@ -222,5 +236,32 @@ func TestDeliveryStatusExclude(t *testing.T) {
 		if s.ProjectId == "p2" {
 			t.Fatalf("a sample names the excluded project: %+v", s)
 		}
+	}
+}
+
+// Requirement: a GitLab repository's merged merge requests are listed for 24 hours after the merge, then they are done.
+// Risk: a repository connected with years of merges (gradus/dam, 2026-11-27) lists its whole history as Merged rows that
+// read as work waiting on delivery, while every merge still reaches the task reconcile.
+func TestGitlabDeliveryMergedLastDay(t *testing.T) {
+	s := func(v string) *string { return &v }
+	now, _ := time.Parse(time.RFC3339, "2026-11-27T12:00:00Z")
+	g := glRepo{
+		open: []glMR{{IID: 20, CreatedAt: "2024-01-02T10:00:00.000Z"}},
+		merged: []glMR{
+			{IID: 1, MergedAt: s("2023-12-23T14:33:55.128Z")},
+			{IID: 19, MergedAt: s("2024-05-07T10:23:13.241Z")},
+			{IID: 21, MergedAt: s("2026-11-27T09:00:00.500Z")},
+		},
+	}
+	its, delivered := gitlabDeliveryStages("dam", "gitlab.example.com", "gradus/dam", g, now)
+	var got []int64
+	for _, it := range its {
+		got = append(got, it.Number)
+	}
+	if !slices.Equal(got, []int64{20, 21}) {
+		t.Fatalf("items = %v, want the open one and the merge of the last day", got)
+	}
+	if len(delivered) != 3 {
+		t.Fatalf("delivered = %d, want every merge read", len(delivered))
 	}
 }
