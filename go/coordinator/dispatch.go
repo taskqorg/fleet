@@ -1173,11 +1173,6 @@ func (a *App) dispatchRun(ctx context.Context, polling string) error {
 			return err
 		}
 	}
-	if st.skipped {
-		// The skipped execution's stall would read as cleared and open again next pass: this pass leaves the stall
-		// problems as they are.
-		return nil
-	}
 	return a.store.Write(ctx, nil, []string{DISPATCH}, func(q *Request) error { return dispatchStallsSet(q, st) })
 }
 
@@ -1447,6 +1442,26 @@ func dispatchStallsSet(q *Request, st *dispatchStalls) error {
 			tail = fmt.Sprintf(" Ask %v, or change the setting.", c.ask)
 		}
 		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: c.projectID})
+	}
+	if st.skipped {
+		// A placement skipped for a busy session raised no cause: closing the causes this pass did not raise would close
+		// its stall and open it again next pass. Raise the new ones, close none.
+		held, err := q.db().ProblemsOpenOf(q.ctx(), db.ProblemsOpenOfParams{Pattern: ptr(dispatchStallCauses)})
+		if err != nil {
+			return err
+		}
+		have := map[string]bool{}
+		for _, h := range held {
+			have[h.Cause] = true
+		}
+		for _, p := range stalls {
+			if !have[p.Cause] {
+				if err := problemRaise(q, "", p); err != nil {
+					return fmt.Errorf("problem %s: %w", p.Cause, err)
+				}
+			}
+		}
+		return nil
 	}
 	return problemsSet(q, "", dispatchStallCauses, stalls)
 }
