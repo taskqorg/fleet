@@ -103,18 +103,25 @@ export function codeMap() {
       imports: [...used(render, new Set())].sort().map(name => ({ name, from: 'packages/ui/src/index.ts', file: ex.get(name) })),
     });
   }
-  // The masters screen frames are drawn with (board/blocks.bl), each with the export it stands for (its name without
-  // spaces, "Session card" -> SessionCard), the generated masters that render that export, and every screen frame that
-  // uses it: what a build agent needs to go from a frame's rows to the control to import.
-  // Block masters whose name is not their export's.
+  // The masters screen frames are drawn with (board/masters.bl, one variant per state, generated from the controls by
+  // board-masters.py), each with its axes (the control's props), the export it stands for (its name without spaces,
+  // "Session card" -> SessionCard), the book section masters that render that export, and every screen frame that uses
+  // it: what a build agent needs to go from a frame's rows to the control to import.
+  // Masters whose name is not their export's.
   const ALIAS = {
     'Bot avatar': 'Avatar', 'Catalogue row': 'CatalogueTree', 'List group': 'CatalogueTree', 'Group head': 'GroupHeader',
     'Key row': 'KvRow', 'Message': 'Thread', 'Nav item': 'NavRail', 'Picker row': 'TargetPicker', 'Target chip': 'TargetPicker',
     'Search': 'SearchBox', 'Shell header': 'AppShell', 'State': 'StateDot', 'State icon': 'StateBadge', 'Status bar': 'StatusLine',
     'Step row': 'StepList', 'Tab': 'TabBar', 'Tab item': 'TabBar', 'View chip': 'FacetChips',
   };
-  const blocks = existsSync(join(BOARD, 'blocks.bl')) ? readFileSync(join(BOARD, 'blocks.bl'), 'utf8') : '';
-  const blockIds = new Map([...blocks.matchAll(/^\s+([0-9a-f]{16}) [^\n]*\bcomp\b[^\n]*"([^"]+)"\s*$/gm)].map(m => [m[2], m[1]]));
+  const blocks = existsSync(join(BOARD, 'masters.bl')) ? readFileSync(join(BOARD, 'masters.bl'), 'utf8') : '';
+  const blockIds = new Map(), blockAxes = new Map();
+  for (const m of blocks.matchAll(/^([0-9a-f]{16}) [^\n]*\bcomp\b([^\n]*)"([^"]+)"\s*$/gm)) {
+    if (m[2].includes('variant(')) continue;
+    blockIds.set(m[3], m[1]);
+    const ax = /axes\[(.*)\]\s/.exec(m[0]);
+    if (ax) blockAxes.set(m[3], Object.fromEntries([...ax[1].matchAll(/([a-z]+)\[([^\]]*)\]/g)].map(a => [a[1], a[2].split(',')])));
+  }
   const usedIn = new Map();
   for (const p of canvases(join(BOARD, 'screens'))) {
     const canvas = relative(BOARD, p).replace(/\.bl$/, '');
@@ -122,7 +129,7 @@ export function codeMap() {
     for (const line of readFileSync(p, 'utf8').split('\n')) {
       const t = TOP.exec(line);
       if (t) top = { canvas, id: t[1], name: t[3].replace(/\\"/g, '"') };
-      for (const [, name] of line.matchAll(/inst\("?([^",)]+)"?,canvas\(blocks\)/g)) {
+      for (const [, name] of line.matchAll(/inst\("?([^",)]+)"?,canvas\(masters\)/g)) {
         const list = usedIn.get(name) ?? usedIn.set(name, []).get(name);
         if (top && !list.some(f => f.id === top.id)) list.push(top);
       }
@@ -131,7 +138,7 @@ export function codeMap() {
   const blockRows = [...new Set([...blockIds.keys(), ...usedIn.keys()])].sort().map(name => {
     const exp = ALIAS[name] ?? name.replace(/(^|\s)(\w)/g, (_, __, c) => c.toUpperCase()).replace(/\s/g, '');
     return {
-      master: name, id: blockIds.get(name) ?? null, canvas: 'blocks',
+      master: name, id: blockIds.get(name) ?? null, canvas: 'masters', axes: blockAxes.get(name) ?? {},
       import: ex.has(exp) ? { name: exp, from: 'packages/ui/src/index.ts', file: ex.get(exp) } : null,
       generated: rows.filter(r => r.imports.some(i => i.name === exp)).map(r => r.master),
       usedIn: usedIn.get(name) ?? [],

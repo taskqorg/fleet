@@ -16,11 +16,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/live",
      "id": "7a8f4e3d91caf590",
      "name": "Live · screens from blocks · 3 states"
@@ -41,11 +36,6 @@
     }
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
@@ -78,11 +68,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/live",
      "id": "7a8f4e3d91caf590",
      "name": "Live · screens from blocks · 3 states"
@@ -107,23 +92,7 @@
      "file": "packages/ui/src/controls/run-strip.tsx"
     }
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Live: worker slot",
@@ -138,23 +107,7 @@
      "file": "packages/ui/src/controls/worker-slot.tsx"
     }
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Live: host band",
@@ -170,11 +123,6 @@
     }
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/live",
      "id": "7a8f4e3d91caf590",
@@ -267,11 +215,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
      "name": "Library: methods, pipelines, agents, bots and skills"
@@ -318,11 +261,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
      "name": "Library: methods, pipelines, agents, bots and skills"
@@ -362,11 +300,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/lab",
@@ -455,11 +388,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
      "name": "Lab: which model, harness or pipeline is best right now"
@@ -534,11 +462,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -632,11 +555,6 @@
      "name": "Work facts · Conversations"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
      "name": "Lab: which model, harness or pipeline is best right now"
@@ -688,11 +606,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/system",
      "id": "43b6cb072b23118a",
      "name": "System: hosts, accounts, connections, spend and people"
@@ -714,11 +627,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
      "name": "Lab: which model, harness or pipeline is best right now"
@@ -739,11 +647,6 @@
     }
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
@@ -779,11 +682,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -840,11 +738,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -913,11 +806,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -977,11 +865,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -1058,11 +941,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -1146,11 +1024,6 @@
      "name": "Work facts · Conversations"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
      "name": "Lab: which model, harness or pipeline is best right now"
@@ -1225,11 +1098,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -1414,11 +1282,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -1523,11 +1386,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -1657,11 +1515,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -1721,11 +1574,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -1850,11 +1698,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -1894,11 +1737,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -1972,11 +1810,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
      "name": "Library: methods, pipelines, agents, bots and skills"
@@ -2026,11 +1859,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -2089,11 +1917,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2104,14 +1927,14 @@
      "name": "Work facts · Home cards"
     },
     {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
      "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
     },
     {
      "canvas": "screens/projects",
@@ -2160,11 +1983,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2175,21 +1993,6 @@
      "name": "Work facts · Home cards"
     },
     {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
-    },
-    {
      "canvas": "screens/projects",
      "id": "1cafe85ae35b6a7c",
      "name": "Projects: products, who works on each, what they produce"
@@ -2198,6 +2001,16 @@
      "canvas": "screens/session",
      "id": "aebda8347e2993ea",
      "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
     },
     {
      "canvas": "screens/system",
@@ -2226,11 +2039,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2239,21 +2047,6 @@
      "canvas": "screens/home",
      "id": "57f7062f7e4db38e",
      "name": "Work facts · Home cards"
-    },
-    {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
     },
     {
      "canvas": "screens/projects",
@@ -2266,9 +2059,9 @@
      "name": "Session view: one view for every bot, PM and run"
     },
     {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
     }
    ]
   },
@@ -2290,11 +2083,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -2378,11 +2166,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2429,11 +2212,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2459,11 +2237,6 @@
     }
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
@@ -2556,11 +2329,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2569,21 +2337,6 @@
      "canvas": "screens/home",
      "id": "57f7062f7e4db38e",
      "name": "Work facts · Home cards"
-    },
-    {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
     },
     {
      "canvas": "screens/projects",
@@ -2596,9 +2349,24 @@
      "name": "Session view: one view for every bot, PM and run"
     },
     {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
      "canvas": "screens/system",
      "id": "43b6cb072b23118a",
      "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
     }
    ]
   },
@@ -2625,11 +2393,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -2678,11 +2441,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2723,26 +2481,6 @@
     }
    ],
    "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/home",
-     "id": "5d1a3719df6354ea",
-     "name": "Home · screens from blocks · 5 states"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    },
     {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
@@ -2825,11 +2563,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2871,11 +2604,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2891,8 +2619,17 @@
  "blocks": [
   {
    "master": "Avatar",
-   "id": "73f13190a1b1f4a6",
-   "canvas": "blocks",
+   "id": "afd95d56706b1334",
+   "canvas": "masters",
+   "axes": {
+    "size": [
+     "md",
+     "sm"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "Avatar",
     "from": "packages/ui/src/index.ts",
@@ -2910,11 +2647,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -2925,21 +2657,6 @@
      "name": "Work facts · Home cards"
     },
     {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
-    },
-    {
      "canvas": "screens/projects",
      "id": "1cafe85ae35b6a7c",
      "name": "Projects: products, who works on each, what they produce"
@@ -2948,18 +2665,14 @@
      "canvas": "screens/session",
      "id": "aebda8347e2993ea",
      "name": "Session view: one view for every bot, PM and run"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
   {
    "master": "Blocker chip",
-   "id": "7f1d321f0cf9854c",
-   "canvas": "blocks",
+   "id": "58c5fd0a702cd626",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "BlockerChip",
     "from": "packages/ui/src/index.ts",
@@ -2968,16 +2681,32 @@
    "generated": [],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
     }
    ]
   },
   {
    "master": "Bot avatar",
-   "id": "87be445ad9d0c0c9",
-   "canvas": "blocks",
+   "id": "8f4d6cba16bb2828",
+   "canvas": "masters",
+   "axes": {
+    "level": [
+     "letter",
+     "image",
+     "eye"
+    ],
+    "size": [
+     "sm",
+     "md",
+     "lg",
+     "xl"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "Avatar",
     "from": "packages/ui/src/index.ts",
@@ -2998,8 +2727,18 @@
   },
   {
    "master": "Bot tile",
-   "id": "ae9fd2156431cf4e",
-   "canvas": "blocks",
+   "id": "8af94c6748769d6f",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "asleep",
+     "waking",
+     "failed"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "BotTile",
     "from": "packages/ui/src/index.ts",
@@ -3010,11 +2749,6 @@
     "Quiet summary"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
@@ -3029,8 +2763,19 @@
   },
   {
    "master": "Bottom bar",
-   "id": "8b5224ba6f3450b9",
-   "canvas": "blocks",
+   "id": "5f300d2fe46b25f1",
+   "canvas": "masters",
+   "axes": {
+    "current": [
+     "home",
+     "live",
+     "conversations",
+     "projects"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "BottomBar",
     "from": "packages/ui/src/index.ts",
@@ -3077,8 +2822,20 @@
   },
   {
    "master": "Button",
-   "id": "546ee01f9d789ae9",
-   "canvas": "blocks",
+   "id": "110d54ecc024de63",
+   "canvas": "masters",
+   "axes": {
+    "kind": [
+     "primary",
+     "default",
+     "quiet",
+     "attention",
+     "danger"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "Button",
     "from": "packages/ui/src/index.ts",
@@ -3103,11 +2860,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -3148,8 +2900,18 @@
   },
   {
    "master": "Catalogue row",
-   "id": "8a90f3a275b72596",
-   "canvas": "blocks",
+   "id": "486eb7d3b52ac5d6",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "rest",
+     "selected",
+     "pinned"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "CatalogueTree",
     "from": "packages/ui/src/index.ts",
@@ -3163,11 +2925,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/lab",
@@ -3198,8 +2955,17 @@
   },
   {
    "master": "Composer",
-   "id": "820a958166965ac1",
-   "canvas": "blocks",
+   "id": "4605a72a925db99c",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "idle",
+     "typing"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "Composer",
     "from": "packages/ui/src/index.ts",
@@ -3219,11 +2985,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -3237,8 +2998,9 @@
   },
   {
    "master": "Context panel",
-   "id": "f54c4eca57445a3f",
-   "canvas": "blocks",
+   "id": "24033d63c461ccb2",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "ContextPanel",
     "from": "packages/ui/src/index.ts",
@@ -3255,11 +3017,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -3273,8 +3030,9 @@
   },
   {
    "master": "Detail head",
-   "id": "d6c8992f353bcbc4",
-   "canvas": "blocks",
+   "id": "7034120d5feddfdb",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "DetailHead",
     "from": "packages/ui/src/index.ts",
@@ -3284,11 +3042,6 @@
     "Sections: detail head, tab bar, detail section and key rows"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
@@ -3313,8 +3066,9 @@
   },
   {
    "master": "Detail section",
-   "id": "fe8e6886dadbd328",
-   "canvas": "blocks",
+   "id": "8e139095cbf4fdb7",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "DetailSection",
     "from": "packages/ui/src/index.ts",
@@ -3328,8 +3082,17 @@
   },
   {
    "master": "Diff row",
-   "id": "80e3224b61e4180a",
-   "canvas": "blocks",
+   "id": "a4e8fc80056aecd5",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "changed",
+     "inherited"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "DiffRow",
     "from": "packages/ui/src/index.ts",
@@ -3337,11 +3100,6 @@
    },
    "generated": [],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
@@ -3361,8 +3119,17 @@
   },
   {
    "master": "Figure tile",
-   "id": "18eb8ff8c4799cb6",
-   "canvas": "blocks",
+   "id": "6e6d76aecfe3f562",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "normal",
+     "alert"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "FigureTile",
     "from": "packages/ui/src/index.ts",
@@ -3372,11 +3139,6 @@
     "Live: figure tile with sparkline"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
@@ -3396,8 +3158,9 @@
   },
   {
    "master": "Filter bar",
-   "id": "8dec040ccb292a6a",
-   "canvas": "blocks",
+   "id": "63ee2119d16e23af",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "FilterBar",
     "from": "packages/ui/src/index.ts",
@@ -3411,11 +3174,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/lab",
@@ -3446,8 +3204,18 @@
   },
   {
    "master": "Gauge",
-   "id": "18f13a6e5607e56b",
-   "canvas": "blocks",
+   "id": "8e57c3c421af9a0a",
+   "canvas": "masters",
+   "axes": {
+    "level": [
+     "normal",
+     "warn",
+     "danger"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "Gauge",
     "from": "packages/ui/src/index.ts",
@@ -3457,11 +3225,6 @@
     "Live: gauge"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/live",
      "id": "7a8f4e3d91caf590",
@@ -3476,8 +3239,9 @@
   },
   {
    "master": "Group head",
-   "id": "ce4609ecbc3ed812",
-   "canvas": "blocks",
+   "id": "247efbaa31717cbc",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "GroupHeader",
     "from": "packages/ui/src/index.ts",
@@ -3489,11 +3253,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -3529,8 +3288,17 @@
   },
   {
    "master": "Host band",
-   "id": "bb152cbda2adf4cf",
-   "canvas": "blocks",
+   "id": "92923a2dfc7bd5d6",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "normal",
+     "problem"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "HostBand",
     "from": "packages/ui/src/index.ts",
@@ -3540,11 +3308,6 @@
     "Live: host band"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/live",
      "id": "7a8f4e3d91caf590",
@@ -3559,8 +3322,9 @@
   },
   {
    "master": "Key row",
-   "id": "7b48b1e2335cefa3",
-   "canvas": "blocks",
+   "id": "72201ebe3ea6cbab",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "KvRow",
     "from": "packages/ui/src/index.ts",
@@ -3581,8 +3345,17 @@
   },
   {
    "master": "List group",
-   "id": "b101e1213808ab34",
-   "canvas": "blocks",
+   "id": "a55ae9faeb316237",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "open",
+     "folded"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "CatalogueTree",
     "from": "packages/ui/src/index.ts",
@@ -3601,11 +3374,6 @@
      "canvas": "screens/conversations",
      "id": "e383471614154c03",
      "name": "Work facts · Conversations"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/lab",
@@ -3646,8 +3414,20 @@
   },
   {
    "master": "Live row",
-   "id": "303b6c51cb84998e",
-   "canvas": "blocks",
+   "id": "521246f8fed26ce7",
+   "canvas": "masters",
+   "axes": {
+    "kind": [
+     "project",
+     "delivery",
+     "runner",
+     "event",
+     "trouble"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "LiveRow",
     "from": "packages/ui/src/index.ts",
@@ -3662,11 +3442,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/library",
@@ -3692,8 +3467,20 @@
   },
   {
    "master": "Matrix cell",
-   "id": "6627e5d91fc92ce2",
-   "canvas": "blocks",
+   "id": "c3b0dab3ee9f6c54",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "pass",
+     "partial",
+     "fail",
+     "running",
+     "excluded"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "MatrixCell",
     "from": "packages/ui/src/index.ts",
@@ -3704,11 +3491,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
      "name": "Lab: which model, harness or pipeline is best right now"
@@ -3717,8 +3499,17 @@
   },
   {
    "master": "Message",
-   "id": "e4905cfccae802e2",
-   "canvas": "blocks",
+   "id": "7ed34715c85bc790",
+   "canvas": "masters",
+   "axes": {
+    "from": [
+     "agent",
+     "operator"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "Thread",
     "from": "packages/ui/src/index.ts",
@@ -3734,11 +3525,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -3752,8 +3538,17 @@
   },
   {
    "master": "Nav item",
-   "id": "e3c8744c5abdd01c",
-   "canvas": "blocks",
+   "id": "15ca86c8dd5d0b3b",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "default",
+     "current"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "NavRail",
     "from": "packages/ui/src/index.ts",
@@ -3763,58 +3558,27 @@
     "Pinned zone in the navigation",
     "Navigation rail with pinned sections"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/home",
-     "id": "5d1a3719df6354ea",
-     "name": "Home · screens from blocks · 5 states"
-    },
-    {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
-    },
-    {
-     "canvas": "screens/projects",
-     "id": "1cafe85ae35b6a7c",
-     "name": "Projects: products, who works on each, what they produce"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Nav rail",
-   "id": "5d75778df2d3254d",
-   "canvas": "blocks",
+   "id": "6258c5dd5c2dbecb",
+   "canvas": "masters",
+   "axes": {
+    "current": [
+     "home",
+     "live",
+     "history",
+     "conversations",
+     "projects",
+     "lab",
+     "library",
+     "system"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "NavRail",
     "from": "packages/ui/src/index.ts",
@@ -3829,11 +3593,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -3874,8 +3633,18 @@
   },
   {
    "master": "Picker row",
-   "id": "72275ea7dc985a9a",
-   "canvas": "blocks",
+   "id": "2b0dab193b9eb03e",
+   "canvas": "masters",
+   "axes": {
+    "kind": [
+     "pm",
+     "bot",
+     "new"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "TargetPicker",
     "from": "packages/ui/src/index.ts",
@@ -3885,18 +3654,21 @@
     "Quiet summary",
     "Composer target picker"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/home",
-     "id": "5d1a3719df6354ea",
-     "name": "Home · screens from blocks · 5 states"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Plan item",
-   "id": "e4b3f9e6fc53e24f",
-   "canvas": "blocks",
+   "id": "bd607d04647ac19a",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "todo",
+     "done"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "PlanItem",
     "from": "packages/ui/src/index.ts",
@@ -3906,33 +3678,21 @@
     "Plan item, timer row, swarm member",
     "Composer command with preview"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/home",
-     "id": "5d1a3719df6354ea",
-     "name": "Home · screens from blocks · 5 states"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Problem row",
-   "id": "353adc7523b09ced",
-   "canvas": "blocks",
+   "id": "e917db63eec3102b",
+   "canvas": "masters",
+   "axes": {
+    "tone": [
+     "attention",
+     "danger"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "ProblemRow",
     "from": "packages/ui/src/index.ts",
@@ -3943,11 +3703,6 @@
     "Problem row"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
@@ -3962,8 +3717,9 @@
   },
   {
    "master": "Project chip",
-   "id": "4932319d438eca17",
-   "canvas": "blocks",
+   "id": "6cb9a82d3c9d3e31",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "ProjectChip",
     "from": "packages/ui/src/index.ts",
@@ -3978,11 +3734,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -4008,8 +3759,17 @@
   },
   {
    "master": "Pulse line",
-   "id": "f52420d03e6ea640",
-   "canvas": "blocks",
+   "id": "c8d00b86452736e5",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "normal",
+     "blocked"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "PulseLine",
     "from": "packages/ui/src/index.ts",
@@ -4021,11 +3781,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -4034,8 +3789,18 @@
   },
   {
    "master": "Question card",
-   "id": "218a700aff3b9fb2",
-   "canvas": "blocks",
+   "id": "16e48ab37a9507cf",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "open",
+     "answered",
+     "failed"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "QuestionCard",
     "from": "packages/ui/src/index.ts",
@@ -4051,11 +3816,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -4091,8 +3851,9 @@
   },
   {
    "master": "Quiet summary",
-   "id": "40024645e9ac30cf",
-   "canvas": "blocks",
+   "id": "a2c0faa21e138938",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "QuietSummary",
     "from": "packages/ui/src/index.ts",
@@ -4111,8 +3872,17 @@
   },
   {
    "master": "Run strip",
-   "id": "71a4e9e7e1521c9f",
-   "canvas": "blocks",
+   "id": "02d6ae469e02dfc8",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "normal",
+     "failing"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "RunStrip",
     "from": "packages/ui/src/index.ts",
@@ -4121,28 +3891,21 @@
    "generated": [
     "Live: run strip"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Search",
-   "id": "4e6c28075a2e7bb7",
-   "canvas": "blocks",
+   "id": "4d77bf45540a25ce",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "icon",
+     "open"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "SearchBox",
     "from": "packages/ui/src/index.ts",
@@ -4151,48 +3914,24 @@
    "generated": [
     "Sections: search, view chip, filter bar"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/projects",
-     "id": "1cafe85ae35b6a7c",
-     "name": "Projects: products, who works on each, what they produce"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Session card",
-   "id": "79f20372b44b79f6",
-   "canvas": "blocks",
+   "id": "96950cb247d0b594",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "working",
+     "waiting",
+     "queued",
+     "failed",
+     "done"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "SessionCard",
     "from": "packages/ui/src/index.ts",
@@ -4203,11 +3942,6 @@
     "Quiet summary"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
@@ -4222,8 +3956,19 @@
   },
   {
    "master": "Setting field",
-   "id": "c3ab4184fe089105",
-   "canvas": "blocks",
+   "id": "944c3e7da9f58c52",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "applied",
+     "editing",
+     "pending",
+     "error"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "SettingField",
     "from": "packages/ui/src/index.ts",
@@ -4236,8 +3981,17 @@
   },
   {
    "master": "Share bar",
-   "id": "8dc09ae7e72f86c5",
-   "canvas": "blocks",
+   "id": "68af1c7cf7b4fb2b",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "normal",
+     "partial"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "ShareBar",
     "from": "packages/ui/src/index.ts",
@@ -4248,11 +4002,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/system",
      "id": "43b6cb072b23118a",
      "name": "System: hosts, accounts, connections, spend and people"
@@ -4261,8 +4010,9 @@
   },
   {
    "master": "Shell header",
-   "id": "bc2af49b31564299",
-   "canvas": "blocks",
+   "id": "8b798dbe58c4c96e",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "AppShell",
     "from": "packages/ui/src/index.ts",
@@ -4274,11 +4024,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -4319,8 +4064,17 @@
   },
   {
    "master": "Sparkline",
-   "id": "43745736afdb61a5",
-   "canvas": "blocks",
+   "id": "4de4323e8d89ed31",
+   "canvas": "masters",
+   "axes": {
+    "tone": [
+     "normal",
+     "alert"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "Sparkline",
     "from": "packages/ui/src/index.ts",
@@ -4332,11 +4086,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/library",
@@ -4362,8 +4111,22 @@
   },
   {
    "master": "State",
-   "id": "acd2ba23ae19f3ab",
-   "canvas": "blocks",
+   "id": "31027fc48364aa19",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "working",
+     "waiting",
+     "queued",
+     "done",
+     "failed",
+     "stopped",
+     "asleep"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "StateDot",
     "from": "packages/ui/src/index.ts",
@@ -4380,11 +4143,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -4395,14 +4153,14 @@
      "name": "Work facts · Home cards"
     },
     {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
      "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
     },
     {
      "canvas": "screens/projects",
@@ -4423,8 +4181,9 @@
   },
   {
    "master": "State counters",
-   "id": "308243c31175f0dd",
-   "canvas": "blocks",
+   "id": "4591cfa590318765",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "StateCounters",
     "from": "packages/ui/src/index.ts",
@@ -4434,48 +4193,25 @@
     "Sections: search, view chip, filter bar",
     "Updating list: pending counters and rows, row checks"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/projects",
-     "id": "1cafe85ae35b6a7c",
-     "name": "Projects: products, who works on each, what they produce"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "State icon",
-   "id": "7c162d5983ea5d24",
-   "canvas": "blocks",
+   "id": "8e0ed62cda6bbabc",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "working",
+     "waiting",
+     "queued",
+     "done",
+     "failed",
+     "stopped"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "StateBadge",
     "from": "packages/ui/src/index.ts",
@@ -4497,11 +4233,6 @@
      "canvas": "screens/conversations",
      "id": "e383471614154c03",
      "name": "Work facts · Conversations"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/lab",
@@ -4542,8 +4273,17 @@
   },
   {
    "master": "Status bar",
-   "id": "a21c6f32d0577098",
-   "canvas": "blocks",
+   "id": "8370622ce5cca0f3",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "working",
+     "problem"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "StatusLine",
     "from": "packages/ui/src/index.ts",
@@ -4560,8 +4300,19 @@
   },
   {
    "master": "Status pill",
-   "id": "d9b76767275a0740",
-   "canvas": "blocks",
+   "id": "ada5bac718bae620",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "working",
+     "problem",
+     "connecting",
+     "stale"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "StatusPill",
     "from": "packages/ui/src/index.ts",
@@ -4572,11 +4323,6 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/live",
      "id": "7a8f4e3d91caf590",
      "name": "Live · screens from blocks · 3 states"
@@ -4585,8 +4331,20 @@
   },
   {
    "master": "Step row",
-   "id": "d977d1fe893c1d12",
-   "canvas": "blocks",
+   "id": "05e2f166471f35b6",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "definition",
+     "pending",
+     "running",
+     "done",
+     "failed"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "StepList",
     "from": "packages/ui/src/index.ts",
@@ -4599,8 +4357,9 @@
   },
   {
    "master": "Swarm member",
-   "id": "c5f912c62b2930df",
-   "canvas": "blocks",
+   "id": "f281a7d64128dfdc",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "SwarmMember",
     "from": "packages/ui/src/index.ts",
@@ -4610,33 +4369,21 @@
     "Plan item, timer row, swarm member",
     "Composer command with preview"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/home",
-     "id": "5d1a3719df6354ea",
-     "name": "Home · screens from blocks · 5 states"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Tab",
-   "id": "4a0beef231f623c3",
-   "canvas": "blocks",
+   "id": "c4c2a1db8866a306",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "default",
+     "current"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "TabBar",
     "from": "packages/ui/src/index.ts",
@@ -4646,11 +4393,6 @@
     "Sections: detail head, tab bar, detail section and key rows"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
@@ -4665,8 +4407,9 @@
   },
   {
    "master": "Tab bar",
-   "id": "01c228c9ee6ca3d3",
-   "canvas": "blocks",
+   "id": "4109c361deeeee0e",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "TabBar",
     "from": "packages/ui/src/index.ts",
@@ -4679,8 +4422,17 @@
   },
   {
    "master": "Tab item",
-   "id": "7f01715f4ee91da3",
-   "canvas": "blocks",
+   "id": "fff7fa104bd683ee",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "default",
+     "current"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "TabBar",
     "from": "packages/ui/src/index.ts",
@@ -4689,48 +4441,22 @@
    "generated": [
     "Sections: detail head, tab bar, detail section and key rows"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/home",
-     "id": "5d1a3719df6354ea",
-     "name": "Home · screens from blocks · 5 states"
-    },
-    {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/projects",
-     "id": "1cafe85ae35b6a7c",
-     "name": "Projects: products, who works on each, what they produce"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Table row",
-   "id": "ca22b39c575cf3e0",
-   "canvas": "blocks",
+   "id": "746f4c4a8b01e71f",
+   "canvas": "masters",
+   "axes": {
+    "kind": [
+     "header",
+     "row",
+     "selected"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "TableRow",
     "from": "packages/ui/src/index.ts",
@@ -4740,11 +4466,6 @@
     "Sections: table rows"
    ],
    "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
     {
      "canvas": "screens/lab",
      "id": "d471a9466962f9f8",
@@ -4759,8 +4480,9 @@
   },
   {
    "master": "Target chip",
-   "id": "2545153e7807ee0b",
-   "canvas": "blocks",
+   "id": "6efe8b4a296be6b2",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "TargetPicker",
     "from": "packages/ui/src/index.ts",
@@ -4777,11 +4499,6 @@
      "name": "Conversations: every session, past and present"
     },
     {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
      "canvas": "screens/home",
      "id": "5d1a3719df6354ea",
      "name": "Home · screens from blocks · 5 states"
@@ -4795,8 +4512,9 @@
   },
   {
    "master": "Target picker",
-   "id": "9e47c8027fda3ff6",
-   "canvas": "blocks",
+   "id": "418fb5fd93611521",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "TargetPicker",
     "from": "packages/ui/src/index.ts",
@@ -4816,8 +4534,18 @@
   },
   {
    "master": "Text field",
-   "id": "f2ecdceb592ca0b2",
-   "canvas": "blocks",
+   "id": "b3c5d978ab34021f",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "editable",
+     "invalid",
+     "disabled"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "TextField",
     "from": "packages/ui/src/index.ts",
@@ -4836,8 +4564,9 @@
   },
   {
    "master": "Timer row",
-   "id": "8230df8ebb844e31",
-   "canvas": "blocks",
+   "id": "351a532e7908e99c",
+   "canvas": "masters",
+   "axes": {},
    "import": {
     "name": "TimerRow",
     "from": "packages/ui/src/index.ts",
@@ -4849,36 +4578,27 @@
    ],
    "usedIn": [
     {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/home",
-     "id": "5d1a3719df6354ea",
-     "name": "Home · screens from blocks · 5 states"
-    },
-    {
      "canvas": "screens/library",
      "id": "f891df993f1fe937",
      "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
     }
    ]
   },
   {
    "master": "Tool line",
-   "id": "fb79b36433c4f58f",
-   "canvas": "blocks",
+   "id": "42081d518d6977eb",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "folded",
+     "open",
+     "running",
+     "failed"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "ToolLine",
     "from": "packages/ui/src/index.ts",
@@ -4893,11 +4613,6 @@
      "canvas": "screens/conversations",
      "id": "a0d0d427ce83447b",
      "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
     },
     {
      "canvas": "screens/home",
@@ -4918,56 +4633,39 @@
   },
   {
    "master": "View chip",
-   "id": "c4edefb61167c8b9",
-   "canvas": "blocks",
+   "id": "b2e81d80c98a701e",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "default",
+     "active"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "FacetChips",
     "from": "packages/ui/src/index.ts",
     "file": "packages/ui/src/controls/lists.tsx"
    },
    "generated": [],
-   "usedIn": [
-    {
-     "canvas": "screens/conversations",
-     "id": "a0d0d427ce83447b",
-     "name": "Conversations: every session, past and present"
-    },
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/lab",
-     "id": "d471a9466962f9f8",
-     "name": "Lab: which model, harness or pipeline is best right now"
-    },
-    {
-     "canvas": "screens/library",
-     "id": "f891df993f1fe937",
-     "name": "Library: methods, pipelines, agents, bots and skills"
-    },
-    {
-     "canvas": "screens/projects",
-     "id": "1cafe85ae35b6a7c",
-     "name": "Projects: products, who works on each, what they produce"
-    },
-    {
-     "canvas": "screens/session",
-     "id": "aebda8347e2993ea",
-     "name": "Session view: one view for every bot, PM and run"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   },
   {
    "master": "Worker slot",
-   "id": "af768b28eddadd81",
-   "canvas": "blocks",
+   "id": "5e20d317d331b603",
+   "canvas": "masters",
+   "axes": {
+    "state": [
+     "busy",
+     "idle",
+     "failing"
+    ],
+    "f": [
+     ""
+    ]
+   },
    "import": {
     "name": "WorkerSlot",
     "from": "packages/ui/src/index.ts",
@@ -4976,23 +4674,7 @@
    "generated": [
     "Live: worker slot"
    ],
-   "usedIn": [
-    {
-     "canvas": "screens/flow",
-     "id": "903c60d389c41101",
-     "name": "Flow: where everything is and how one moves · J1–J5"
-    },
-    {
-     "canvas": "screens/live",
-     "id": "7a8f4e3d91caf590",
-     "name": "Live · screens from blocks · 3 states"
-    },
-    {
-     "canvas": "screens/system",
-     "id": "43b6cb072b23118a",
-     "name": "System: hosts, accounts, connections, spend and people"
-    }
-   ]
+   "usedIn": []
   }
  ]
 }

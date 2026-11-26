@@ -9,7 +9,7 @@ import { slug } from './lab-drift.ts';
 const root = join(import.meta.dirname, '..');
 // Outputs of `pnpm run book`: the page() calls in packages/ui/scripts/build-book.mjs, listed again in .gitignore and the
 // design-report artifact of .github/workflows/ci.yml. Built, never committed, so links and citations to them resolve.
-export const GENERATED = ['docs/design-system/book/index.html', 'docs/design-system/pages/mockups.html', 'docs/design-system/explorations/open-questions-01.html'];
+export const GENERATED = ['docs/design-system/book/index.html', 'docs/design-system/book/masters.html', 'docs/design-system/pages/mockups.html', 'docs/design-system/explorations/open-questions-01.html'];
 const git = (...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] });
 
 export type Kind = 'contract' | 'index' | 'paper' | 'evidence' | 'asset' | 'spec' | null;
