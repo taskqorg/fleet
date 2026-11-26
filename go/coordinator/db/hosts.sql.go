@@ -273,13 +273,32 @@ func (q *Queries) HostDiagnosisAsk(ctx context.Context, hostID string) error {
 	return err
 }
 
+const hostDiagnosisAskOnline = `-- name: HostDiagnosisAskOnline :exec
+INSERT INTO host_diagnosis(host_id, requested_at)
+SELECT id, now() FROM host_observation WHERE last_seen_at > now() - interval '2 minutes' AND tombstoned_at IS NULL
+ON CONFLICT (host_id) DO UPDATE SET requested_at = now()
+`
+
+// The background ask: every host that polled in the last two minutes reports on its next poll.
+func (q *Queries) HostDiagnosisAskOnline(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, hostDiagnosisAskOnline)
+	return err
+}
+
 const hostDiagnosisGet = `-- name: HostDiagnosisGet :one
 SELECT host_id, requested_at, reported_at, report FROM host_diagnosis WHERE host_id = $1::text
 `
 
-func (q *Queries) HostDiagnosisGet(ctx context.Context, hostID string) (HostDiagnosis, error) {
+type HostDiagnosisGetRow struct {
+	HostID      string
+	RequestedAt *time.Time
+	ReportedAt  *time.Time
+	Report      []byte
+}
+
+func (q *Queries) HostDiagnosisGet(ctx context.Context, hostID string) (HostDiagnosisGetRow, error) {
 	row := q.db.QueryRow(ctx, hostDiagnosisGet, hostID)
-	var i HostDiagnosis
+	var i HostDiagnosisGetRow
 	err := row.Scan(
 		&i.HostID,
 		&i.RequestedAt,

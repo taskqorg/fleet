@@ -668,3 +668,8 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** the rule cut found two specs that disagreed with an owner rule: app-shell.md put History in the phone bottom bar, which OR-60 does not; nav-rail.md showed a pin button on hover, which OR-37 forbids in list rows.
 * **Choice (owner, "Как в OR-60 (Projects)"):** the phone bottom bar is Home, Live, Conversations, Projects and More; History goes into More ([app shell](patterns/app-shell.md), [nav rail](controls/nav-rail.md)). The built bar changes later.
 * **Choice (owner, "Без исключений"):** no button appears on hover in a list row or a rail item, the pin included. A pinned item shows its pin always; pinning is in the row menu and on `p` ([row pin](controls/row-pin.md), [nav rail](controls/nav-rail.md)). The built rail changes later.
+
+## 2026-11-26: Host diagnosis without a button
+
+* **Question:** the host detail needed what an agent reads with `host_diagnose` (queued work this host skipped, refused uploads, unconfirmed commands, the executor log); the draft had a Diagnose button.
+* **Choice (owner, "Ок, без кнопки"):** a Diagnosis section between the versions and Updates, as drawn in [screens/host-diagnosis](board/screens/host-diagnosis.bl), with no button: the report refreshes by itself when the host opens and in the background; an operator never presses anything for infrastructure, and agents use `host_diagnose`. With nothing to report the section is hidden ([hosts](pages/hosts.md)).

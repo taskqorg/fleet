@@ -39,6 +39,15 @@ func TestHostDiagnoseThroughPoll(t *testing.T) {
 	if rep == nil || len(rep["logTail"].([]any)) != 1 || len(rep["outboxFailed"].([]any)) != 1 || out["reportedAt"] == nil {
 		t.Fatalf("report %v", out)
 	}
+	var cached map[string]any
+	e.opInto(t, "host_diagnosis", doc{"host": "h-diag"}, e.ownerHeaders(), &cached)
+	if cached["report"] == nil || cached["fresh"] != false {
+		t.Fatalf("host_diagnosis %v", cached)
+	}
+	var changes int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT count(*) FROM change WHERE kind='host' AND id='h-diag' AND host_id='h-diag'`).Scan(&changes); err != nil || changes == 0 {
+		t.Fatalf("a stored report emits no host change (%d, %v)", changes, err)
+	}
 	if code, _ := e.callJSON(t, "POST", "/api/ops/host_diagnose", doc{"host": "nope", "wait": 0}, e.ownerHeaders()); code != 404 {
 		t.Fatalf("unknown host %d", code)
 	}

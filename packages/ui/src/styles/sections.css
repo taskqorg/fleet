@@ -124,5 +124,6 @@
   /* A host's compact version lines (pages/hosts.md, frame 2A): name and version pairs that wrap, never scroll. */
   .host-versions { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); margin: 0; }
   .hv { white-space: nowrap; }
+  .host-log { margin: var(--space-2) 0 0; padding: var(--space-3) var(--space-4); background: var(--surface-sunken); color: var(--fg-muted); font: var(--font-size-sm)/1.4 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
   @media (pointer: coarse) { .pins-cell { min-height: var(--size-row-phone); } }
 }

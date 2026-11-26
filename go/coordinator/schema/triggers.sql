@@ -109,6 +109,9 @@ CREATE OR REPLACE TRIGGER experiment_note_append_only BEFORE DELETE OR UPDATE ON
 -- handoff
 CREATE OR REPLACE TRIGGER handoff_tombstone BEFORE INSERT ON handoff FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
 
+-- host_diagnosis
+CREATE OR REPLACE TRIGGER host_diagnosis_change AFTER INSERT OR DELETE OR UPDATE ON host_diagnosis FOR EACH ROW EXECUTE FUNCTION fleet_change();
+
 -- host_observation
 CREATE OR REPLACE TRIGGER host_observation_change AFTER INSERT OR DELETE OR UPDATE ON host_observation FOR EACH ROW EXECUTE FUNCTION fleet_change();
 

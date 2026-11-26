@@ -201,3 +201,9 @@ SELECT e.id, e.session_id, e.project_id, e.wait_reason, coalesce(e.data->>'waitD
 FROM execution e
 WHERE e.kind = 'agent_run' AND e.state = 'preparing' AND e.host_id IS NULL AND e.tombstoned_at IS NULL
 ORDER BY e.seq LIMIT 100;
+
+-- name: HostDiagnosisAskOnline :exec
+-- The background ask: every host that polled in the last two minutes reports on its next poll.
+INSERT INTO host_diagnosis(host_id, requested_at)
+SELECT id, now() FROM host_observation WHERE last_seen_at > now() - interval '2 minutes' AND tombstoned_at IS NULL
+ON CONFLICT (host_id) DO UPDATE SET requested_at = now();

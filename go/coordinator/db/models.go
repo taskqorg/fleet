@@ -1203,6 +1203,7 @@ type HostDiagnosis struct {
 	RequestedAt *time.Time
 	ReportedAt  *time.Time
 	Report      []byte
+	ProjectID   *string
 }
 
 type HostObservation struct {
