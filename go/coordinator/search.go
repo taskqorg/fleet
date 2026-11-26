@@ -223,7 +223,7 @@ func sessionHits(rs []db.EntSearchSessionsRow, words string) []contract.Found {
 		if r.At.Valid {
 			at = &r.At.Time
 		}
-		t := []rune(firstString(r.Title, plainTitle(r.FirstMessage), deref(r.Code), r.ID))
+		t := []rune(firstString(plainTitle(r.Title), plainTitle(clip(r.FirstMessage, 400)), deref(r.Code), r.ID))
 		out = append(out, contract.Found{Kind: contract.FoundKindConversation, Id: r.ID, Code: optStr(deref(r.Code)), Title: string(t[:min(200, len(t))]),
 			State: optStr(r.State), ProjectId: optStr(deref(r.ProjectID)), Agent: optStr(r.Agent), At: optStr(cardTime(at)),
 			Snippet: optStr(matchSnippet(r.FirstMessage, words))})

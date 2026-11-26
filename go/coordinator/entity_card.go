@@ -271,7 +271,7 @@ func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) 
 	if r.ActivityAt.Valid {
 		at = &r.ActivityAt.Time
 	}
-	title := []rune(firstString(plainTitle(r.FirstMessage), deref(r.Code), "Conversation"))
+	title := []rune(firstString(plainTitle(clip(r.FirstMessage, 400)), deref(r.Code), "Conversation"))
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Code: optStr(deref(r.Code)), Title: string(title[:min(200, len(title))]), State: optStr(r.State),
 		ProjectId: optStr(deref(r.ProjectID)), Harness: optStr(r.Harness), At: optStr(cardTime(at)), AtLabel: ptr("active"), Path: itemPath("conversations", id),
 		Facts: facts(fact("Profile", contract.EntityFactTypeCode, r.Profile), fact("Task", contract.EntityFactTypeCode, deref(r.TaskCode)),
