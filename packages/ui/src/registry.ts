@@ -81,6 +81,17 @@ export type StepKind = keyof typeof stepKinds;
  *  checks, then the release tail. */
 export const DELIVERY_ORDER: StateOf<'delivery'>[] = ['pr_failed', 'mq_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
 
+/** Row facts as glyphs (OR-73, controls/fact-count.md): one glyph and tone per fact everywhere, in this order (needs
+ *  the person first, then trouble, then work). The label is the tooltip and the accessible name. */
+export const factKinds = {
+  setup: { label: 'Needs setup', icon: 'sliders-horizontal', tone: 'attention' },
+  questions: { label: 'Open questions', icon: 'message-circle-question', tone: 'attention' },
+  failed: { label: 'Failed', icon: 'octagon-x', tone: 'danger' },
+  working: { label: 'Sessions working', icon: 'activity', tone: 'running' },
+  inFlight: { label: 'Tasks in flight', icon: 'list', tone: 'neutral' },
+} as const satisfies Record<string, { label: string; icon: IconName; tone: Tone }>;
+export type FactKind = keyof typeof factKinds;
+
 /** Action icons used by controls. One meaning per icon. */
 export const actions = {
   pin: 'pin', unpin: 'pin-off', filter: 'list-filter', search: 'search', clear: 'x', retry: 'rotate-ccw',

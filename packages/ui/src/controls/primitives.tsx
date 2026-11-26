@@ -658,10 +658,10 @@ export function DetailSection(p: { title: string; count?: number; href?: string;
     </section>
   );
 }
-export function KvRow(p: { icon: IconName; label: string; meta?: JSX.Element; value?: JSX.Element }) {
+export function KvRow(p: { icon?: IconName; lead?: JSX.Element; label: string; meta?: JSX.Element; value?: JSX.Element }) {
   return (
     <div class="kv-row">
-      <Icon name={p.icon} />
+      {p.lead ?? (p.icon ? <Icon name={p.icon} /> : null)}
       <b>{p.label}</b>
       <Show when={p.meta} keyed>{m => <span class="muted">{m}</span>}</Show>
       <span class="grow" />

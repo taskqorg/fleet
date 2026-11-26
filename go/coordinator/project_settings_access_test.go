@@ -39,11 +39,11 @@ func TestProjectSettingsAccessKeys(t *testing.T) {
 		}
 	}
 	// The project head's description and domain (board P-A1) are known keys, never unknownKeys; a write checks them.
-	head := map[string]any{"description": "Digital Assets Management", "domain": "revilio.com"}
+	head := map[string]any{"description": "Digital Assets Management", "domain": "revilio.com", "color": "violet", "pattern": "hatch"}
 	if _, unknown, err := projectSettings(raw(head)); err != nil || len(unknown) != 0 || projectHeadText(raw(head)) != nil {
 		t.Fatalf("description and domain: unknown %v, %v", unknown, err)
 	}
-	for _, bad := range []map[string]any{{"description": 7}, {"description": "two\nlines"}, {"description": "Assets\n"}, {"domain": "https://revilio.com/"}} {
+	for _, bad := range []map[string]any{{"description": 7}, {"description": "two\nlines"}, {"description": "Assets\n"}, {"domain": "https://revilio.com/"}, {"color": "#ff0000"}, {"color": 3}, {"pattern": "dots"}} {
 		if projectHeadText(raw(bad)) == nil {
 			t.Errorf("%v accepted", bad)
 		}

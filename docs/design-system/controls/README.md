@@ -39,6 +39,8 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [focus-control](focus-control.md) | The projects the person watches, ignored projects, what needs them outside the focus |
 | [split-button](split-button.md) | Default action with alternatives |
 | [state-counters](state-counters.md) | Counts per state, quick state filter |
+| [fact-count](fact-count.md) | A row fact as glyph and count (OR-73) |
+| [project-tile](project-tile.md) | A project's code in its identity colour (OR-72) |
 | [stat-strip](stat-strip.md) | Operational counts |
 | [harness-counts](harness-counts.md) | Which harness runs it; workers per harness |
 | [stage-chip](stage-chip.md) | Delivery stage of a task |

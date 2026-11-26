@@ -686,3 +686,11 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Options:** A. one Brilliant project (the home), tracked canvases read-only, every change drawn on a `drafts/<task>/` copy and copied into the task worktree; B. the home as a mirror plus a second drafting checkout as a second project; C. one project per session's worktree.
 * **Choice (owner, "Да, вариант A"):** A. Fleet fast-forwards the home after every merge that touches the board; a dirty tracked file equal to main (or only Brilliant's reordering of the style file) is restored, anything else becomes a problem for the owner bot and drift under Changes › Agent environment ([drawing on the board](README.md#design-board)).
 * **Reason:** one project the owner keeps open, no per-session projects, and a home that always shows main.
+
+## 2026-11-27: Projects list: code tile in the project's colour, facts as glyphs
+
+* **Question (owner):** the Projects list looked uneven: the code floated after names of different widths, and "nothing in flight" repeated on most rows. A tracker's list shows a coloured code tile, the bold name and a muted description.
+* **Options:** A neutral code tile with readiness in its bar; B a tile in the project's own colour; C a plain code column. For the facts: F1 toned glyphs in fixed columns; F2 capsules on the tone background.
+* **Choice (owner, "вариант B ... это общее правило", then "F2"):** B, as a general rule for projects and bots: an identity colour set in settings, else derived from the code, with an optional hatched bar ([OR-72](controls/project-tile.md#rules-kept-here)); readiness is a separate fact on the row, not inside the tile. Facts are glyphs with counts, never words ([OR-73](controls/fact-count.md#rules-kept-here)), as F2 capsules. Identity colour is the one exception to D19's hue-less palette: it never shows state.
+* **Decided here:** eight colours (rose, violet, sky, teal, lime, sand, coral, slate) as tokens `id-<colour>` passing 4.5:1 on `bg` and `surface`; settings `color`, `pattern`; the tile sizes 16/20/32/40; the glyph table in `registry.ts` `factKinds`. Bots, the rail and the other screens with word facts follow in their own changes.
+

@@ -24,11 +24,15 @@ export function uiCss(extraCss = '') {
 
 const lum = h => { const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; };
 const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + .05) / (y + .05); };
+/** The identity colours of projects and bots (OR-72, contracts/vocabulary.json identity): tokens id-<name>. */
+export const IDENTITY = JSON.parse(readFileSync(new URL('../../../contracts/vocabulary.json', import.meta.url))).identity.colors;
 // Text-on-background pairs the controls use.
 export const PAIRS = [['fg', 'surface'], ['fg-muted', 'surface'], ['fg-muted', 'bg'], ['fg-muted', 'hover'], ['fg-muted', 'neutral-bg'], ['fg', 'selected'], ['accent', 'surface'], ['accent', 'bg'], ['on-accent', 'accent'],
   ['attention-fg', 'attention-bg'], ['attention-fg', 'attention-soft'], ['fg', 'attention-soft'], ['fg-muted', 'attention-soft'], ['danger-fg', 'danger-bg'], ['fg-muted', 'danger-bg'], ['fg', 'danger-bg'], ['danger-fg', 'surface'], ['danger-fg', 'attention-soft'], ['running-fg', 'running-bg'],
   ['success-fg', 'success-bg'], ['success-fg', 'surface'], ['neutral-fg', 'neutral-bg'], ['estimated-fg', 'surface'], ['fg', 'float'],
-  ['data-1-ink', 'data-1'], ['data-2-ink', 'data-2'], ['data-3-ink', 'data-3'], ['data-4-ink', 'data-4']];
+  ['data-1-ink', 'data-1'], ['data-2-ink', 'data-2'], ['data-3-ink', 'data-3'], ['data-4-ink', 'data-4'],
+  // Identity colours (project tile code, bot letter): text on the page and on surfaces.
+  ...IDENTITY.flatMap(c => [[`id-${c}`, 'bg'], [`id-${c}`, 'surface']])];
 // UI parts on the surfaces they sit on (WCAG 1.4.11): the focus ring, status tones of icons and outlines, chart series.
 export const UI_PAIRS = [['accent', 'surface'], ['accent', 'bg'], ['accent', 'float'], ['attention-fg', 'surface'], ['danger-fg', 'surface'], ['running-fg', 'surface'], ['success-fg', 'surface'],
   ['data-1', 'surface'], ['data-2', 'surface'], ['data-3', 'surface'], ['data-4', 'surface']];

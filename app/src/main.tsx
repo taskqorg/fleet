@@ -4,7 +4,7 @@ import { captureRender, configureErrors } from './errors.ts';
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, Match, onSettled, Show, Switch } from 'solid-js';
 import { render, type JSX } from '@solidjs/web';
 import { createAgent, registerTools } from '@ui-sdk/core/agent';
-import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, refreshDrafts, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, refreshDrafts, setProjectIdentities, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { useLocation, useSearch, syncLocation } from './router.ts';
 import { projectCodesPending, setProjectCodes } from './routes.ts';
 import type { InfraSection } from './views/hosts.tsx';
@@ -347,6 +347,7 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
   const projects = useOp('project_list', {});
   createEffect(() => [projects.data?.projects, projects.error] as const, ([ps, err]) => {
     if (!ps && !err) return;
+    setProjectIdentities((ps ?? []).map(p => ({ code: typeof p.code === 'string' ? p.code : '', color: typeof p.color === 'string' ? p.color : null, pattern: typeof p.pattern === 'string' ? p.pattern : null })));
     if (setProjectCodes((ps ?? []).map(p => ({ id: String(p.id), code: typeof p.code === 'string' ? p.code : null })))) syncLocation();
   });
   const codesPending = createMemo(() => (loc(), search(), projectCodesPending(location.pathname)));

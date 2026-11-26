@@ -1,4 +1,5 @@
 // Floating overlay layers and entity references: tooltips, entity codes/cards, and context menus.
+import { ProjectTile, projectIdentity } from './identity.tsx';
 import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { type IconName, type Harness, type EntityKind, entityKinds, codeKind, ENTITY_CODE, states, actions, harnesses } from '../registry.ts';
@@ -188,7 +189,10 @@ export function EntityCode(p: {
   };
   const what = () => entityKinds[k()!].label;
   const name = () => `${what()}${code() ? ' ' + code() : ''}${st() ? ', ' + st()!.label.toLowerCase() : ''}${live() === null ? ', not visible' : ''}: show details`;
-  const icon = () => <span class={['ec-ico', st() ? `t-${st()!.tone}` : 't-neutral']}><Icon name={entityKinds[k()!].icon} /></span>;
+  // A project shows its tile in its identity colour (OR-72); the other kinds their icon in their state's tone.
+  const icon = () => k() === 'project' && code()
+    ? <span class="ec-ico"><ProjectTile code={code()!} color={projectIdentity(code()!)?.color} pattern={projectIdentity(code()!)?.pattern} size="xs" /></span>
+    : <span class={['ec-ico', st() ? `t-${st()!.tone}` : 't-neutral']}><Icon name={entityKinds[k()!].icon} /></span>;
   return (
     <Show when={ref()}>
       {(() => {
