@@ -441,10 +441,10 @@ export function Markdown(p: {
   const rendered = createMemo(() => {
     const sel = !!p.selectable;
     const literal: TextHook = (value, key, entities) => {
-      if (!sel) return entities ? linkCodes(value.text, key) : value.text;
+      if (!sel) return entities ? linkCodes(value.text, key, undefined, entities === 'uuid') : value.text;
       return value.fragments.map(({ text, at }) => {
         const span = (t: string, start: number) => <span data-thread-offset={at + start}>{t}</span>;
-        return entities ? linkCodes(text, at, span) : span(text, 0);
+        return entities ? linkCodes(text, at, span, entities === 'uuid') : span(text, 0);
       });
     };
     return renderBlocks(

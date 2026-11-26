@@ -262,14 +262,14 @@ export function EntityCode(p: {
   );
 }
 
-/** D17 codes and pull requests (a GitHub URL, owner/repo#n) in a text as references (agent messages, OR-38, OR-44):
- *  every other part stays text. */
-export function linkCodes(text: string, _key: number, literal = (value: string, _start: number): JSX.Element => value): JSX.Element {
+/** D17 codes, pull requests (a GitHub URL, owner/repo#n) and UUIDs in a text as references (agent messages, OR-38,
+ *  OR-44); uuidOnly (inline code) links UUIDs alone. Every other part stays text. */
+export function linkCodes(text: string, _key: number, literal = (value: string, _start: number): JSX.Element => value, uuidOnly = false): JSX.Element {
   const out: JSX.Element[] = []; let last = 0;
   const found = [
-    ...[...text.matchAll(ENTITY_CODE)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode code={m[0]} cls="inline" /> })),
+    ...[...(uuidOnly ? [] : text.matchAll(ENTITY_CODE))].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode code={m[0]} cls="inline" /> })),
     ...[...text.matchAll(UUID_REF)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode id={m[0].toLowerCase()} cls="inline" /> })),
-    ...[...text.matchAll(PR_REF)].map(m => {
+    ...[...(uuidOnly ? [] : text.matchAll(PR_REF))].map(m => {
       const owner = m[1] ?? m[4], repo = m[2] ?? m[5], n = m[3] ?? m[6];
       return { at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode kind="pull_request" id={`${owner}/${repo}#${n}`} code={'#' + n} cls="inline" /> };
     }),
