@@ -200,28 +200,6 @@
    "status": null
   },
   {
-   "id": "0cd4356a8cf30fe3",
-   "canvas": "infinite-lists",
-   "name": "Frame 1",
-   "page": null,
-   "width": null,
-   "frameWidth": 1878,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
-   "id": "63796525a633a07e",
-   "canvas": "local-agents",
-   "name": "Frame 1",
-   "page": null,
-   "width": null,
-   "frameWidth": 3900,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
    "id": "31027fc48364aa19",
    "canvas": "masters",
    "name": "State",
@@ -838,72 +816,6 @@
    "status": null
   },
   {
-   "id": "ecbea69b60344d67",
-   "canvas": "no-hscroll",
-   "name": "Frame 48",
-   "page": null,
-   "width": null,
-   "frameWidth": 1280,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
-   "id": "1d8bd5adb324c3f5",
-   "canvas": "no-hscroll",
-   "name": "Frame 66",
-   "page": null,
-   "width": null,
-   "frameWidth": 1280,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
-   "id": "d4a030a128e40633",
-   "canvas": "no-hscroll",
-   "name": "Frame 81",
-   "page": null,
-   "width": null,
-   "frameWidth": 1280,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
-   "id": "0b53beec48eaf507",
-   "canvas": "no-hscroll",
-   "name": "Frame 116",
-   "page": null,
-   "width": null,
-   "frameWidth": 1280,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
-   "id": "808978c9c1ef2b01",
-   "canvas": "no-hscroll",
-   "name": "Frame 188",
-   "page": null,
-   "width": null,
-   "frameWidth": 1280,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
-   "id": "b1a1a3dc18f7ae07",
-   "canvas": "no-hscroll",
-   "name": "Frame 224",
-   "page": null,
-   "width": null,
-   "frameWidth": 1280,
-   "theme": null,
-   "component": false,
-   "status": null
-  },
-  {
    "id": "90d8cc0285f43fc5",
    "canvas": "patterns",
    "name": "Patterns · index (dark): each pattern spec and the master that shows it",
@@ -911,6 +823,17 @@
    "width": null,
    "frameWidth": 1500,
    "theme": "dark",
+   "component": false,
+   "status": null
+  },
+  {
+   "id": "0cd4356a8cf30fe3",
+   "canvas": "patterns",
+   "name": "Pattern · infinite list (OR-65): loading, end, error, card preview, inner scroll · 1440 and 390",
+   "page": null,
+   "width": 1440,
+   "frameWidth": 1878,
+   "theme": null,
    "component": false,
    "status": null
   },
@@ -1197,6 +1120,17 @@
    "width": null,
    "frameWidth": 1230,
    "theme": "dark",
+   "component": false,
+   "status": "approved"
+  },
+  {
+   "id": "63796525a633a07e",
+   "canvas": "screens/local-agents",
+   "name": "System › Access · Local agents (approved 2026-11-26)",
+   "page": "local-agents",
+   "width": null,
+   "frameWidth": 3900,
+   "theme": null,
    "component": false,
    "status": "approved"
   },
