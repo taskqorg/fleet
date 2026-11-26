@@ -49,7 +49,7 @@ type Person struct {
 
 type App struct {
 	store         *Store
-	draining      sync.Map // host id -> nowMs of its last poll that reported an update drain (rollingDrain)
+	draining      sync.Map // host id -> turnClaim of a busy host offered an update (rollingDrain)
 	people        atomic.Pointer[peopleSnapshot]
 	peopleFile    string
 	browserSecret string

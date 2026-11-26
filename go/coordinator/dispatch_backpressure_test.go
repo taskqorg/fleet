@@ -113,19 +113,25 @@ func TestHostDrainMirrorsExecutorFence(t *testing.T) {
 	}
 }
 
-func TestRollingDrainOneHostAtATime(t *testing.T) {
+func TestRollingDrainFewestRunsFirst(t *testing.T) {
 	a := &App{}
-	if other := a.rollingDrain("pds18", true, true); other != "" {
-		t.Fatalf("a draining host was held: %q", other)
+	if other := a.rollingDrain("pds18", true, 4); other != "" {
+		t.Fatalf("the only busy host was held: %q", other)
 	}
-	if other := a.rollingDrain("windows", false, true); other != "pds18" {
-		t.Fatalf("a second host was offered while pds18 drains: %q", other)
+	if other := a.rollingDrain("windows", true, 6); other != "pds18" {
+		t.Fatalf("a busier host took the turn: %q", other)
 	}
-	if other := a.rollingDrain("windows", false, false); other != "" {
-		t.Fatalf("nothing offered, still held: %q", other)
+	if other := a.rollingDrain("owner-mac", true, 0); other != "" {
+		t.Fatalf("an idle host waited for the turn: %q", other)
 	}
-	a.rollingDrain("pds18", false, false) // pds18 updated: its drain ended
-	if other := a.rollingDrain("windows", false, true); other != "" {
-		t.Fatalf("windows held after pds18 finished: %q", other)
+	if other := a.rollingDrain("windows", true, 1); other != "" {
+		t.Fatalf("the emptier host did not take the turn: %q", other)
+	}
+	if other := a.rollingDrain("pds18", true, 4); other != "windows" {
+		t.Fatalf("pds18 kept the turn from an emptier host: %q", other)
+	}
+	a.rollingDrain("windows", false, 0) // windows updated
+	if other := a.rollingDrain("pds18", true, 4); other != "" {
+		t.Fatalf("pds18 held after windows finished: %q", other)
 	}
 }
