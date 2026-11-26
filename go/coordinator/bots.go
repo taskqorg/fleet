@@ -94,6 +94,9 @@ func botList(q *Request, r *contract.BotListRequest) (contract.BotListReply, err
 			LastRunAt:      formatTimePtr(nonEpoch(row.LastRunAt.Time)),
 			Avatar:         botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
 			NeedsYou:       row.NeedsYou,
+			AutoColor:      nonEmptyPtr(row.AutoColor),
+			Color:          nonEmptyPtr(row.IdentityColor),
+			Pattern:        nonEmptyPtr(row.IdentityPattern),
 		})
 	}
 	return out, err
@@ -123,6 +126,9 @@ func readBotFull(q *Request, id string) (botFull, error) {
 		LastRunState:   botRunStateOf(row.LastRunState),
 		Avatar:         botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
 		NeedsYou:       row.NeedsYou,
+		AutoColor:      nonEmptyPtr(row.AutoColor),
+		Color:          nonEmptyPtr(row.IdentityColor),
+		Pattern:        nonEmptyPtr(row.IdentityPattern),
 		Settings: contract.BotSettings{
 			Name:         row.Name,
 			Purpose:      row.Purpose,

@@ -21,7 +21,7 @@ import { nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { usePins } from '../prefs.ts';
 import { PIN_LISTS } from '../rail-pinned.ts';
-import { botAvatarState, botPicture } from '../bot-view.ts';
+import { botAvatarState, botPicture, botColor } from '../bot-view.ts';
 import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
 import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
@@ -150,7 +150,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const bot = createMemo(() => (bots.data?.bots ?? []).find(b => b.id === s()?.botId));
   const avatar = createMemo<AvatarMark>(() => {
     const b = bot();
-    if (b) return { letter: b.name.slice(0, 1).toUpperCase(), picture: botPicture(b) };
+    if (b) return { letter: b.name.slice(0, 1).toUpperCase(), picture: botPicture(b), color: botColor(b) };
     const h = s()?.agent.harness ?? latest()?.harness ?? undefined;
     return s()?.role === 'pm' ? { letter: 'P' } : isHarness(h) ? { harness: h } : { letter: title().slice(0, 1).toUpperCase() };
   });

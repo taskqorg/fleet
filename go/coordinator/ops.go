@@ -136,6 +136,12 @@ var opLocks = map[string]func(b json.RawMessage) string{
 		}
 		return ""
 	},
+	"bot_identity_set": func(b json.RawMessage) string {
+		if id := jsonPathString(b, "botId"); id != "" {
+			return "bot:" + id
+		}
+		return ""
+	},
 	"bot_avatar_clear": func(b json.RawMessage) string {
 		if id := jsonPathString(b, "botId"); id != "" {
 			return "bot:" + id

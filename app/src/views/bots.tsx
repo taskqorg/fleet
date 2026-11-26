@@ -9,7 +9,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { writeOnce, useAlive, type Ops } from '../api.ts';
 import {
-  BOT_TABS, botAvatarState, botPicture, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, reasonLabel, sourceLabel, wakeLabel,
+  BOT_TABS, botAvatarState, botPicture, botColor, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, reasonLabel, sourceLabel, wakeLabel,
   type BotRunFilter, type BotTab, type BotTaskBucket,
 } from '../bot-view.ts';
 
@@ -25,7 +25,7 @@ import { PIN_LISTS } from '../rail-pinned.ts';
 import { useOpPages } from '../op-pages.ts';
 import { parseMs as ms } from '../task-facts.ts';
 import { BotAutomations } from './bot-automations.tsx';
-import { BotAvatarField } from './bot-avatar.tsx';
+import { BotAvatarField, BotIdentityField } from './bot-avatar.tsx';
 
 type Bot = Ops['bot_get']['reply']['bot'];
 type Settings = Bot['settings'];
@@ -149,7 +149,7 @@ export function BotDetail(props: {
       </div>
       <article class="detail" data-ui="detail" tabindex={-1} aria-label={`${props.bot.settings.name} ${tab()}`}>
         <header class="detail-h">
-          <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={botPicture(props.bot)} state={botAvatarState(props.bot)} />
+          <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={botPicture(props.bot)} color={botColor(props.bot)} state={botAvatarState(props.bot)} />
           <div class="stack" style={{ gap: 'var(--space-1)', 'min-width': 0, flex: '1 1 auto' }}>
             <div class="row" style={{ gap: 'var(--space-2)', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
               <h2 class="detail-title">{props.bot.settings.name}</h2>
@@ -245,7 +245,7 @@ function BotOverviewTab(props: {
   return (
     <div class="stack">
       <div class="bot-hero">
-        <Avatar letter={props.bot.settings.name} tone="success" size="xl" picture={botPicture(props.bot)} state={botAvatarState(props.bot)} />
+        <Avatar letter={props.bot.settings.name} tone="success" size="xl" picture={botPicture(props.bot)} color={botColor(props.bot)} state={botAvatarState(props.bot)} />
         <div class="stack" style={{ gap: 'var(--space-1)', 'min-width': 0 }}>
           <span class="muted type-sm">{botAvatarWords[botAvatarState(props.bot)]}</span>
           <p style={{ margin: 0 }}>{props.bot.settings.purpose || 'No purpose set'}</p>
@@ -531,6 +531,7 @@ function BotSettingsForm(props: {
         <Button label={props.bot ? 'Save settings' : 'Create bot'} kind="primary" busy={busy()} disabledReason={projectId() ? undefined : 'Select a project first'} onClick={() => void save('settings')} />
       </DetailSection>
       <Show when={props.bot}>{bot => <BotAvatarField bot={bot()} onSaved={props.onSaved} />}</Show>
+      <Show when={props.bot}>{bot => <BotIdentityField bot={bot()} onSaved={props.onSaved} />}</Show>
       <Show when={props.bot}>
         <DetailSection title="Project memory">
           <TextField label="Memory" multiline value={memory()} onChange={setMemory} />

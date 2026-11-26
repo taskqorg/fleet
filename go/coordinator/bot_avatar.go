@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 
@@ -12,6 +13,35 @@ import (
 func init() {
 	op("bot_avatar_set", botAvatarSet)
 	op("bot_avatar_clear", botAvatarClear)
+	op("bot_identity_set", botIdentitySet)
+}
+
+// botIdentitySet: the bot's own identity colour and pattern (OR-72); '' returns to the automatic colour and a solid bar.
+func botIdentitySet(q *Request, r *contract.BotIdentitySetRequest) (contract.BotIdentitySetReply, error) {
+	var out contract.BotIdentitySetReply
+	b, err := botAvatarChanger(q, r.BotId)
+	if err != nil {
+		return out, err
+	}
+	if err := identityCheck("bot", map[string]json.RawMessage{"color": jsonBytes(r.Color), "pattern": jsonBytes(r.Pattern)}); err != nil {
+		return out, err
+	}
+	n, err := q.db().BotIdentitySet(q.ctx(), db.BotIdentitySetParams{ID: b.Id, IdentityColor: r.Color, IdentityPattern: r.Pattern})
+	if err != nil {
+		return out, err
+	}
+	if n != 1 {
+		return out, errNotFound
+	}
+	type identity struct {
+		Color   string `json:"color"`
+		Pattern string `json:"pattern"`
+	}
+	if err := audit(q, "bot:"+b.Id, "identity", identity{deref(b.Color), deref(b.Pattern)}, identity{r.Color, r.Pattern}, auditExtra{ProjectID: &b.ProjectId}); err != nil {
+		return out, err
+	}
+	out.Bot, err = readBot(q, r.BotId)
+	return out, err
 }
 
 var glowPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)

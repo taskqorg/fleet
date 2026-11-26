@@ -273,7 +273,9 @@ CREATE TABLE bot (
   "code" text,
   "avatar_artifact_id" text,
   "avatar_still_artifact_id" text,
-  "avatar_glow" text NOT NULL
+  "avatar_glow" text NOT NULL,
+  "identity_color" text NOT NULL,
+  "identity_pattern" text NOT NULL
 );
 CREATE TABLE bot_automation (
   "id" text NOT NULL,

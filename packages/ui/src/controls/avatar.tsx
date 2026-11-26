@@ -3,9 +3,11 @@
 import { For, Match, Show, Switch, createSignal, onCleanup } from 'solid-js';
 import { type Harness, type Tone, harnesses } from '../registry.ts';
 import { HarnessMark } from './primitives.tsx';
+import { identityColors } from './identity.tsx';
 
 /** What an avatar shows: a bot's picture, its harness mark, or a letter (`P` for a project PM) in a tone. */
-export type AvatarMark = { letter?: string; harness?: Harness; tone?: Tone; picture?: AvatarPicture };
+/** `color`: the bot's identity colour (OR-72): the letter avatar fills with it, a picture avatar gets a ring in it. */
+export type AvatarMark = { letter?: string; harness?: Harness; tone?: Tone; picture?: AvatarPicture; color?: string };
 
 /** A bot's picture: `src` the shown file (still, animated image, animated SVG or a muted video loop), `still` its still
  * frame for places that do not play it, `video` when `src` is a video, `glow` the activity light's colour (#RRGGBB). */
@@ -35,7 +37,7 @@ export function Avatar(p: AvatarMark & { size?: AvatarSize; label?: string; stat
   const shown = () => (plays() || !p.picture!.still ? p.picture!.src : p.picture!.still);
   return (
     <span
-      class={['avatar', size(), `t-${p.tone ?? 'running'}`, { mark: mark(), pic: !!p.picture }]}
+      class={['avatar', size(), `t-${p.tone ?? 'running'}`, p.color && (identityColors as string[]).includes(p.color) ? `id-${p.color} idc` : '', { mark: mark(), pic: !!p.picture }]}
       data-ui="avatar"
       data-state={p.state}
       data-tip={p.tip}

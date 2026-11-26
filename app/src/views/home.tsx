@@ -19,7 +19,7 @@ import { useOp, useView } from '../store.ts';
 import { scopeIds, prefsRead, prefs } from '../prefs.ts';
 import type { SessionRow, QuestionRow, HomeBlocker } from '../../../contracts/generated/ops.ts';
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
-import { botPicture, reasonLabel } from '../bot-view.ts';
+import { botPicture, botColor, reasonLabel } from '../bot-view.ts';
 
 /** Chromium's deferred fetch (Fetch spec, deferred fetching): the browser sends it when the page goes away. Not in TypeScript's DOM lib yet. */
 declare function fetchLater(input: string, init?: RequestInit & { activateAfter?: number }): { readonly activated: boolean };
@@ -68,7 +68,7 @@ function blockers(groups: HomeBlocker[]): Blocker[] {
 
 /** Who a session is: its bot, its project's PM, or the work it does. */
 function who(s: SessionRow, bot: BotListItem | undefined): { name: string; avatar: AvatarMark } {
-  if (bot) return { name: bot.name, avatar: { letter: bot.name, tone: 'success', picture: botPicture(bot) } };
+  if (bot) return { name: bot.name, avatar: { letter: bot.name, tone: 'success', picture: botPicture(bot), color: botColor(bot) } };
   if (s.profileId === 'pm') return { name: `PM · ${s.projectId ?? 'Fleet'}`, avatar: { letter: 'P' } };
   return { name: s.title || s.code || 'Session', avatar: s.harness ? { harness: s.harness } : { letter: (s.title || 'S').trim() } };
 }
@@ -252,7 +252,7 @@ function HomePage() {
       const s = pmSession(p);
       return { id: 'pm:' + p, kind: 'pm' as const, name: `PM · ${p}`, about: s?.now ?? 'Project manager', project: p, avatar: { letter: 'P' }, state: s ? lifeOfSession(s.state) : 'asleep' };
     }),
-    ...scopedBots().map(b => ({ id: 'bot:' + b.id, kind: 'bot' as const, name: b.name, about: b.purpose, project: b.projectId, avatar: { letter: b.name, tone: 'success' as const, picture: botPicture(b) }, state: (b.activeRunId ? 'working' : 'asleep') as Life })),
+    ...scopedBots().map(b => ({ id: 'bot:' + b.id, kind: 'bot' as const, name: b.name, about: b.purpose, project: b.projectId, avatar: { letter: b.name, tone: 'success' as const, picture: botPicture(b), color: botColor(b) }, state: (b.activeRunId ? 'working' : 'asleep') as Life })),
   ]);
   const [picked, setPicked] = createSignal<string | null>(typeof localStorage === 'undefined' ? null : localStorage.getItem(TARGET_KEY));
   const target = createMemo(() => targets().find(t => t.id === picked())?.id ?? targets()[0]?.id ?? '');

@@ -138,6 +138,7 @@ SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        ar.id AS active_run_id,
        lr.started_at AS last_run_started_at, lr.updated_at AS last_run_at, lr.state AS last_run_state,
        av.id AS avatar_artifact_id, av.media_type AS avatar_media_type, b.avatar_still_artifact_id, b.avatar_glow,
+       b.identity_color, b.identity_pattern, coalesce((SELECT ic.colour FROM identity_colour ic WHERE ic.kind = 'bot' AND ic.id = b.id), '')::text AS auto_color,
        (coalesce(ar.state = 'waiting', false) OR EXISTS (
          SELECT 1 FROM question q JOIN session qs ON qs.id = q.session_id WHERE q.state = 'open' AND qs.bot_id = b.id
        ))::boolean AS needs_you
@@ -190,6 +191,9 @@ type BotGetRow struct {
 	AvatarMediaType       *string
 	AvatarStillArtifactID *string
 	AvatarGlow            string
+	IdentityColor         string
+	IdentityPattern       string
+	AutoColor             string
 	NeedsYou              bool
 }
 
@@ -224,9 +228,32 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 		&i.AvatarMediaType,
 		&i.AvatarStillArtifactID,
 		&i.AvatarGlow,
+		&i.IdentityColor,
+		&i.IdentityPattern,
+		&i.AutoColor,
 		&i.NeedsYou,
 	)
 	return i, err
+}
+
+const botIdentitySet = `-- name: BotIdentitySet :execrows
+UPDATE bot SET identity_color = $1, identity_pattern = $2
+WHERE id = $3 AND tombstoned_at IS NULL
+`
+
+type BotIdentitySetParams struct {
+	IdentityColor   string
+	IdentityPattern string
+	ID              string
+}
+
+// The bot's own identity colour and pattern (bot_identity_set): ” is automatic and solid.
+func (q *Queries) BotIdentitySet(ctx context.Context, arg BotIdentitySetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, botIdentitySet, arg.IdentityColor, arg.IdentityPattern, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const botLastSessionDispatch = `-- name: BotLastSessionDispatch :one
@@ -285,6 +312,7 @@ SELECT b.id, b.code, b.project_id, b.revision,
        b.paused, s.name, s.purpose,
        coalesce(ar.id, '')::text AS active_run_id, coalesce(lr.state::text, '')::text AS last_run_state, coalesce(lr.started_at, lr.updated_at, 'epoch'::timestamptz)::timestamptz AS last_run_at,
        av.id AS avatar_artifact_id, av.media_type AS avatar_media_type, b.avatar_still_artifact_id, b.avatar_glow,
+       b.identity_color, b.identity_pattern, coalesce((SELECT ic.colour FROM identity_colour ic WHERE ic.kind = 'bot' AND ic.id = b.id), '')::text AS auto_color,
        (coalesce(ar.state = 'waiting', false) OR EXISTS (
          SELECT 1 FROM question q JOIN session qs ON qs.id = q.session_id WHERE q.state = 'open' AND qs.bot_id = b.id
        ))::boolean AS needs_you
@@ -333,6 +361,9 @@ type BotListRow struct {
 	AvatarMediaType       *string
 	AvatarStillArtifactID *string
 	AvatarGlow            string
+	IdentityColor         string
+	IdentityPattern       string
+	AutoColor             string
 	NeedsYou              bool
 }
 
@@ -364,6 +395,9 @@ func (q *Queries) BotList(ctx context.Context, arg BotListParams) ([]BotListRow,
 			&i.AvatarMediaType,
 			&i.AvatarStillArtifactID,
 			&i.AvatarGlow,
+			&i.IdentityColor,
+			&i.IdentityPattern,
+			&i.AutoColor,
 			&i.NeedsYou,
 		); err != nil {
 			return nil, err

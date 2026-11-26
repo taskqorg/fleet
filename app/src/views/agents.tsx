@@ -18,7 +18,7 @@ import { useOp, useView } from '../store.ts';
 import { parseMs as ms } from '../task-facts.ts';
 import { Changes, changesNeedingYou } from './changes.tsx';
 import { BotCreateForm, BotDetail, botPath } from './bots.tsx';
-import { botAvatarState, botPicture } from '../bot-view.ts';
+import { botAvatarState, botPicture, botColor } from '../bot-view.ts';
 import { DefinitionDetail, baseAgentDefaults } from './definitions.tsx';
 import type { DefinitionKey, DefinitionListItem, SkillSummary } from '../../../contracts/generated/ops.ts';
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
@@ -275,7 +275,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
           label: b.name,
           sub: b.code ?? undefined,
           state: { family: 'life', state: botLife(b) },
-          lead: <Avatar letter={b.name} tone="success" size="sm" picture={botPicture(b)} state={botAvatarState(b)} />,
+          lead: <Avatar letter={b.name} tone="success" size="sm" picture={botPicture(b)} color={botColor(b)} state={botAvatarState(b)} />,
           right: at ? <Ago t={at} /> : undefined,
           pinned: pins.has(nodeId),
           href: botPath(b),
