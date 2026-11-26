@@ -7,7 +7,8 @@
 ## Interface
 
 - `fleet-update executor` updates one executor host.
-- `fleet-update pds18` updates the coordinator side, PDS18 executor, and UI independently.
+- `fleet-update pds18` updates the coordinator side, PDS18 executor, and UI independently. It installs the `fleet-postgres-backup` system timer and service from the verified updater.
+- `fleet-update backup-postgres` is the pds18 service entry point. A first run starts after installation, then the timer runs nightly. See the [backup contract](../../docs/designs/fleet-system-management.md#backups).
 - `fleet-update install-local <verified-stage> <releases>` prepares the managed CLI cache and switches the local release under the same lock as auto-update.
 - `fleet-update selftest` verifies the compiled-in Ed25519 release-key setup.
 - The files it shares with the executor are declared in [`contracts/host-files.schema.json`](../../contracts/host-files.schema.json) and generated into `contract`: `update.json` (`contract.UpdateSignal`, written by the executor), `update-state.json` (`contract.UpdateStateFile`, whose `last` the executor sends in its poll), and on PDS18 `pds18-state.json` (`contract.Pds18StateFile`, read by the coordinator). Hosts run mixed versions during an update, so these shapes change only compatibly.

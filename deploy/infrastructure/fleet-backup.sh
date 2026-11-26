@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fleet nightly backup (design Phase 0 item 4). Runs as user fleet from fleet-backup.timer.
 # ClickHouse BACKUP and a Garage bucket mirror into /backup/fleet/YYYY-MM-DD/, keep 5 days (tight D6).
-# No service is stopped. Postgres is covered by the existing nightly pg_dump.
+# No service is stopped. The pds18 fleet-postgres-backup timer handles PostgreSQL separately.
 # Host-only env files (0600, never committed):
 #   /home/fleet/.config/fleet/clickhouse.env      CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
 #   /home/fleet/.config/fleet/backup-garage.env   RCLONE_CONFIG_FLEETSTORE_* for a read-only Garage key

@@ -26,8 +26,8 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 *   Hosts cannot be removed. `pds18-program` and `owner-mac-program` sit paused forever.
 *   A worktree goes only at `session_archive`. Delivered work keeps its checkout on disk until someone archives the session.
 *   Tasks, executions, projects, Lab experiments and connections have no archive or delete. Acceptance runs leave data nobody can clean from the app.
-*   Problems (host silent, disk full, backup missing, stuck run) are designed in parts and not built. Built today: dispatch stall questions and the update question (`update:<host>:<version>`).
-*   Backups are the pre-deploy dumps of self-update only: no schedule, no rotation shown, no restore ever tested.
+*   System anomalies use the Problems rules below. The nightly PostgreSQL freshness check is specified under Backups.
+*   Pre-deploy dumps are managed by self-update. The Fleet PostgreSQL nightly job and restore check are specified under Backups.
 *   Changes are recorded in `setting-change` documents for some settings and `transport-audit` for transport; there is no single journal of who did what.
 *   There is no System screen.
 
@@ -71,9 +71,9 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 
 ### CUJ 4: Backup missing
 
-*   **Given:** the daily dump failed for two days (disk full).
-*   **When:** the problems pass sees no successful backup for 48 hours.
-*   **Then:** the owner gets one question `problem:backup:missing` with the last error. It closes after the next good dump.
+*   **Given:** the nightly PostgreSQL job failed or its archive is missing.
+*   **When:** the backup check sees no completed nightly PostgreSQL dump or its newest dump is older than 26 hours.
+*   **Then:** Fleet opens one HAL0 problem `problem:backup:missing`. It clears after two checks see a fresh dump.
 
 ### CUJ 5: The PM cleans up for its director
 
@@ -139,7 +139,7 @@ An **anomaly** is any signal of a fault or a deviation: a telemetry rule finding
 | `problem:execution:<id>:orphans` | rule `orphan` | processes alive after end | stage 1 |
 | `problem:resource:failing` | rule `resource-failing` | a resource processor item paused at its maximum retry pause | built |
 | `problem:work:stalled` | rule `work-stalled` | a work kit queue whose selection or failure writes keep failing, at the maximum pause | built |
-| `problem:backup:missing` | direct: backup pass | no good dump for 48 h | stage 1 (M6) |
+| `problem:backup:missing` | direct: backup check | no completed nightly PostgreSQL dump, newest older than 26 h, or freshness unknown | implemented for pds18 |
 | `problem:backup:drill-failed` | direct: drill | last drill failed | stage 1 (M6) |
 | `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | built |
 | `problem:bugsink:<issue>` | direct: the Bugsink alert webhook ([error tracking](fleet-error-tracking.md#5-alerts-become-problems)) | a new Bugsink issue, or one that regressed or passed its mute; closes when Bugsink reports it resolved | built |
@@ -153,7 +153,7 @@ An **anomaly** is any signal of a fault or a deviation: a telemetry rule finding
 
 Not built: the batch conversation, `woken_at`, the run-rate breaker and bot failures as problems (today one conversation per problem and Home lists a bot's failed sessions); System › Problems reads at most 200 open problems.
 
-All numbers are settings with these defaults: `breaker.factor` 10, `breaker.window` 1 h, `breaker.floor` 20, `breaker.coolMinutes` 30, `problems.cleanRuns` 2, `problems.reopenHours` 24, `problems.stuckWakes` 3, `problems.stuckHours` 48, `duty.downWakes` 3, `duty.newMinutes` 30, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false.
+All numbers are settings with these defaults: `breaker.factor` 10, `breaker.window` 1 h, `breaker.floor` 20, `breaker.coolMinutes` 30, `problems.cleanRuns` 2, `problems.reopenHours` 24, `problems.stuckWakes` 3, `problems.stuckHours` 48, `duty.downWakes` 3, `duty.newMinutes` 30, `forge.prPollMinutes` 5, `system.confirmDelete` false.
 
 ### Hosts
 
@@ -190,12 +190,13 @@ All numbers are settings with these defaults: `breaker.factor` 10, `breaker.wind
 
 Copy the pattern of `pg_dump` with daily and weekly rotation (as in common `pg_dump` cron scripts and Postgres docs), plus a restore test, which is what makes a backup real.
 
-*   **Backup pass** in the coordinator (`pass.backup`), daily at the setting `backup.at` (default 03:30 host time): `pg_dump -Fc -d fleet -f /backup/fleet/daily/fleet-<YYYYMMDD>.dump` run as `postgres` through the same `runuser` path self-update uses. Writes to `.tmp`, renames on success, records size and SHA-256 in table `backup` (`id`, `kind daily|weekly|pre-deploy|drill`, `path`, `bytes`, `sha256`, `started_at`, `ended_at`, `outcome`, `error`).
-*   **Rotation:** keep 7 daily, 4 weekly (Sunday's daily is hard-linked into `weekly/`), and the pre-deploy dumps of current and previous (self-update keeps that rule). Settings `backup.daily`, `backup.weekly`. Prune after a good dump only, never when the new one failed.
-*   **Off-host copy:** after a good dump, put it into the artifact store as a system artifact with a replica on a second host (data foundation §3 placement); rotation removes the store copy too. This uses the existing store; no new service.
-*   **Restore drill** `backup_drill {id?}` (owner, also weekly by the pass after the Sunday dump): `createdb fleet_drill`, `pg_restore -d fleet_drill <dump>`, run the coordinator's migration check and three counts (`task`, `execution`, `journal`) against the live database's counts at dump time stored in the `backup` row, `dropdb fleet_drill`. Outcome in a `backup` row of kind `drill`. Failure opens `problem:backup:drill-failed`.
+*   **Nightly job:** the pds18 updater installs a system timer at 03:30 UTC. The job runs `pg_dump -Fc -d fleet` as `postgres` and streams it into a private temporary file as `fleet`. A successful dump is synced and renamed to `/backup/fleet/daily/fleet-<YYYYMMDD>.dump`. The coordinator reads these completed files directly. Pre-deploy dumps and incomplete writes do not count.
+*   **Rotation:** keep 7 daily, 4 weekly (Sunday's daily is hard-linked into `weekly/`), and the pre-deploy dumps of current and previous (self-update keeps that rule). Prune after a good dump only.
+*   **Restore check:** the nightly service qualifies its first archive by running `pg_restore` in an isolated PostgreSQL instance over a private socket and reading Fleet tables. It records success in the backup directory and in the service journal.
+*   **Off-host copy (target):** after a good dump, put it into the artifact store as a system artifact with a replica on a second host (data foundation §3 placement); rotation removes the store copy too. This uses the existing store; no new service.
+*   **Recurring restore drill (target)** `backup_drill {id?}` (owner, also weekly by the pass after the Sunday dump): `createdb fleet_drill`, `pg_restore -d fleet_drill <dump>`, run the coordinator's migration check and three counts (`task`, `execution`, `journal`) against the live database's counts at dump time stored in the `backup` row, `dropdb fleet_drill`. Outcome in a `backup` row of kind `drill`. Failure opens `problem:backup:drill-failed`.
 *   **Restore** stays a runbook step (stop coordinator, `pg_restore` into `fleet`), linked from the screen. An in-app restore would replace the database that runs the app.
-*   **`backups_list`** returns rows of `backup` with the last drill.
+*   **`backups_list` (target)** returns rows of `backup` with the last drill.
 
 ### System screen
 
@@ -371,7 +372,3 @@ Tests (`tests/go` and package tests):
 5.  Worktree: unpushed worktree kept with reason; clean merged worktree removed, remote branch untouched.
 6.  Problems: two runs without a cause close it; a host offline absorbs its executions' error findings.
 7.  Backup: rotation keeps 7 and 4 and never prunes after a failed dump; a drill on a corrupted dump fails and opens `problem:backup:drill-failed`.
-
-## Open Questions
-
-*   Default `backup.at` and rotation counts are judgment defaults (settings).

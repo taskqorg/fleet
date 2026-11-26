@@ -59,7 +59,7 @@ func main() {
 }
 
 func run(args []string) error {
-	const usage = "usage: fleet-update pds18 | executor | selftest | install-local <verified-stage> <releases> | stage-candidate <kind> <name> <candidates> <asset json>"
+	const usage = "usage: fleet-update pds18 | executor | backup-postgres | selftest | install-local <verified-stage> <releases> | stage-candidate <kind> <name> <candidates> <asset json>"
 	if len(args) != 1 && (len(args) != 3 || args[0] != "install-local") && (len(args) != 5 || args[0] != "stage-candidate") {
 		return errors.New(usage)
 	}
@@ -111,6 +111,8 @@ func run(args []string) error {
 		return u.runPDS18()
 	case "executor":
 		return u.runExecutor()
+	case "backup-postgres":
+		return backupPostgres()
 	}
 	return errors.New(usage)
 }
@@ -185,6 +187,7 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer unlock()
+	installPostgresBackup()
 	u.cacheDir = s
 	stateFile := filepath.Join(s, "pds18-state.json")
 	var st contract.Pds18StateFile
