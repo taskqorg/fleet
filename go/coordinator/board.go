@@ -533,6 +533,11 @@ func boardWakeTerminal(q *Request, m agentQueued) (bool, error) {
 	if !strings.HasPrefix(m.RequestID, "board-wake:") && !strings.HasPrefix(m.RequestID, "wake:") {
 		return false, nil
 	}
+	if q.wakeTerminal != nil {
+		// Read before the locks: a terminal board stays terminal; one that ended since is checked on the next pass's
+		// read, and its wake meanwhile reaches a run that sees the ended board.
+		return q.wakeTerminal[m.ID], nil
+	}
 	return unscoped(q, func() (bool, error) {
 		terminal, err := q.db().BoardSessionParentTerminal(q.ctx(), m.SessionID)
 		if err != nil || terminal {

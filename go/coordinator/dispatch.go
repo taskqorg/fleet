@@ -170,12 +170,40 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 			}
 			sctx, span := obs.Start(ctx, "dispatch.promote.session", obs.KindInternal)
 			span.Set("fleet.session.id", sid)
-			err := a.store.Write(sctx, nil, []string{DISPATCH}, func(q *Request) error {
-				if busy, err := trySessionLock(q, sid); err != nil || busy {
-					return err // busy: its writer wakes dispatch when it commits
+			// Without locks first: whether the session can promote at all (no active run) and its queued wakes' board
+			// checks, so the transaction under DISPATCH does neither (2026-11-26: promote.terminal-check 28 s there).
+			var terminal map[string]bool
+			idle := false
+			err := a.store.Read(sctx, nil, func(q *Request) error {
+				act, err := agentActive(q, sid)
+				if err != nil || act != nil {
+					return err
 				}
-				return agentPromoteOnly(q, sid)
+				idle = true
+				ms, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid, State: ptr("queued")})
+				if err != nil {
+					return err
+				}
+				terminal = map[string]bool{}
+				for _, m := range ms {
+					t, err := boardWakeTerminal(q, m)
+					if err != nil {
+						return err
+					}
+					terminal[m.ID] = t
+				}
+				return nil
 			})
+			if err == nil && idle {
+				err = a.store.Write(sctx, nil, []string{DISPATCH}, func(q *Request) error {
+					if busy, err := trySessionLock(q, sid); err != nil || busy {
+						return err // busy: its writer wakes dispatch when it commits
+					}
+					q.wakeTerminal = terminal
+					defer func() { q.wakeTerminal = nil }()
+					return agentPromoteOnly(q, sid)
+				})
+			}
 			span.End(err)
 			if err != nil {
 				return err
