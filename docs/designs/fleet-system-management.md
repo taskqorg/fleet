@@ -171,9 +171,9 @@ All numbers are settings with these defaults: `problems.cleanRuns` 2, `problems.
     *   `uncommitted`: `git status --porcelain` non-empty.
     *   `unpushed`: `git rev-list @{u}..HEAD` non-empty, or no upstream.
     *   `teardown-failed`: an earlier teardown of this worktree failed.
-*   **Trigger:** the coordinator sends `teardown` when a session's task is accepted (exists) or its PR is merged. **PR merge detection** (new): the coordinator's forge pass polls open PRs of sessions with a PR link every 5 minutes through the project's GitHub connection (`GET /repos/{o}/{r}/pulls/{n}`, `merged_at`). Webhooks later.
+*   **Trigger:** the coordinator sends `teardown` when a session's task is accepted or its PR is merged. **PR merge detection:** the delivery pass already polls the project's merged pull requests; a merged PR whose head branch is `<branchPrefix>/<session>` names its session. Other run kinds (pipeline steps, Idle chats, sessions without a row) follow [host cleanup, sections 10 and 11](fleet-host-cleanup.md#10-worktree-lifecycle-for-every-run-kind).
 *   **Local branch:** after a merged PR the executor runs `git branch -D <branch>` (today it uses `-d`, which refuses squash-merged branches) (squash merges leave it unmerged locally); the remote branch stays.
-*   **Kept:** abandoned or failed sessions keep their worktree until a person archives or closes the session. A teardown refused by `keepWhen` reports the reason; the session shows "worktree kept: unpushed".
+*   **Kept:** abandoned or failed sessions keep their worktree until they are archived, by a person or by the Idle archive ([host cleanup, section 10](fleet-host-cleanup.md#10-worktree-lifecycle-for-every-run-kind)). A teardown refused by `keepWhen` reports the reason; the session shows "worktree kept: unpushed".
 *   Journal entry per Fleet teardown (`actor.kind = system`).
 
 ### Backups

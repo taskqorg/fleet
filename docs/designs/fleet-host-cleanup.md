@@ -1,7 +1,7 @@
 # Fleet host cleanup: every run leaves nothing behind, and telemetry names what uses a host
 
 *   **Author:** Alex Kirs
-*   **Status:** Accepted (owner decisions 2026-11-25; retention, section 9, the same day)
+*   **Status:** Accepted (owner decisions 2026-11-25; retention, section 9, the same day; worktree lifecycle, inventory, disk readings and their rules, sections 10 to 13, 2026-11-26)
 *   **Date:** 2026-11-25
 *   **Linked design:** [telemetry](fleet-telemetry.md) owns spans, host readings and the rules pass; this document adds the cleanup mechanism, the readings it needs and the `host-saturation` extension. [Executor](../../go/executor/README.md) owns the process journal this builds on.
 
@@ -36,6 +36,10 @@ Process ownership has gaps. The executor tracks a run's descendants by parent li
 7.  Each cleanup pass records what it removed (`host.cleanup` span); each execution span carries `fleet.orphans`.
 8.  Tests never run `initdb` per run and never leave a cluster behind.
 9.  A host keeps only the releases rollback needs, and a session directory goes once it holds no worktree and nothing uses it.
+10. Every run kind's worktree goes once its session is settled, not only delivered ones; a run's outputs never stay in a worktree after they are stored, and a `personal` project's outputs and inputs never stay on disk.
+11. A worktree the coordinator does not know, or no longer needs, is found and removed without a person.
+12. Fleet's disk use on every host is telemetry: bytes by category and by project, with trends.
+13. Leaving or taking too much space, failing to clean up, and starting work too often raise problems owned by a bot (HAL0 by default).
 
 ## Non-Goals
 
@@ -82,7 +86,7 @@ An `mcp connection` server checks once a minute whether its executable still exi
 | `tmpUsed`, `tmpTotal` | `statfs /tmp` when it is tmpfs | absent |
 | `top` | five processes by resident plus swapped memory (`/proc/<pid>/status` `VmSwap`) | five by resident memory |
 
-Each `top` entry is `{pid, user, command, memBytes, ageSeconds, fleet}`. `command` is the program base name only: no arguments or paths, under the telemetry no-content rule. `fleet` is true when the process carries a run marker or is a Fleet program from `fleetProcesses`. On macOS the Docker Desktop VM shows as its own process with its memory.
+Each `top` entry is `{pid, user, command, memBytes, ageSeconds, fleet}`. Every field is filled on both platforms: `pid`, the full `user` name (not cut to eight characters) and `ageSeconds` come from the same `ps` row as the memory, and `command` is the executable's base name even when it contains spaces (`Google Chrome Helper`). `command` is the program base name only: no arguments or paths, under the telemetry no-content rule. `fleet` is true when the process carries a run marker, is a Fleet program from `fleetProcesses`, or runs as a dedicated Fleet user (a name starting with `fleet`: `fleet`, `fleet-agent`, `fleet-ci-vm` on pds18, where the CI guest of [pds18 CI](../../deploy/infrastructure/pds18-ci/README.md) holds 16 GiB by design). On macOS the Docker Desktop VM shows as its own process with its memory.
 
 The poll's `load` and the `host.heartbeat` span carry the same readings. The heartbeat keeps them in `fleet.swap_used`, `fleet.swap_total`, `fleet.mem_compressed`, `fleet.tmp_used` and `fleet.top` (a short `command:memMB` list).
 
@@ -112,11 +116,67 @@ Audit of 2026-11-25: owner-mac `~/releases` 1.3 GB and its sessions root 1399 di
 
     What goes is rebuilt by the next turn: per-run logs were already sent, inputs are fetched per run, caches refill. Native transcripts live in the native home, outside the session directory. The pass is one more source in the `host.cleanup` span (`trigger: sweep`).
 
+### 10. Worktree lifecycle for every run kind
+
+Audit of 2026-11-26: 502 worktree directories held 24 GB of the 26.6 GB in the three sessions roots. Teardown came only from task acceptance and archive, so pipeline step sessions (279 of `fleet`, 29 of `dam` with personal results), project chats without a task (88) and sessions with no row any more (about 85, from before the v3 schema) kept theirs. Each step's `output/` is untracked, so `keepWhen: uncommitted` would have kept them even after a teardown.
+
+A session is **settled** when it has no live or unconfirmed execution, no pending command, no open question, and every artifact of its executions is stored or failed. A settled session's worktree goes on these triggers (teardown command, `keepWhen` still applies):
+
+| Run kind | Trigger |
+|---|---|
+| Task session | the task is accepted (built), or the pull request of the session's branch (`<branchPrefix>/<session>`) is merged, seen by the delivery pass that already polls merges ([system management](fleet-system-management.md#worktree-on-delivery)); `deleteBranch: true` |
+| Pipeline step session | the step's execution has ended; no turn continues a step, so nothing waits for delivery; `deleteBranch: true` |
+| Session archived | archive (built), including the Idle archive below |
+| Project chat without task | Idle archive: no turn, message or execution for `sessions.idleArchiveDays` (default 7, owner decision 2026-11-26), no live execution and no open question; the session is archived as `session_archive` does it, by Fleet (`actor.kind = system`), and unarchive brings it back |
+
+**Outputs are not work.** A teardown removes `worktree/output` before the `keepWhen` checks: the coordinator sends it only when every artifact of the session is stored, so the results are in the store. For a project with `data: personal` ([project access](fleet-project-access.md#personal-data)) the run's `output/` and its fetched inputs are removed at run end, after the upload is queued, whatever the upload's outcome: a failed upload is a `personal-output` problem, not a copy left on disk. A `personal` project's step worktree goes at step end even when `keepWhen` would keep it for `uncommitted`, since steps write no tracked work.
+
+### 11. Inventory reconcile
+
+The hourly pass of section 9 also lists every session directory that still holds a worktree and sends the list in one request, `POST /api/hosts/inventory` (`{sessions: [{id, bytes, changedAt}]}`; a few hundred rows a day per host). The coordinator answers in the same response, from one query over the batch:
+
+*   **keep:** the session exists and is not settled, or a teardown for it is pending.
+*   **teardown:** the session is settled and one of the section 10 triggers holds; the coordinator queues the teardown command as on delivery, and the host gets it on its next poll.
+*   **unknown:** no session row, or a tombstoned one. The executor tears the worktree down itself through the same path (teardown script, `keepWhen`); what `keepWhen` keeps stays, with its reason in the ledger.
+
+No per-worktree round trip, no new poll field. The coordinator keeps the latest inventory per host (counts and bytes per answer) for the `leftovers` rule and the System screen. Removals land in the `host.cleanup` span (`trigger: sweep`).
+
+### 12. Disk readings
+
+The same hourly pass measures what Fleet keeps on the host and writes one `check` span `host.disk`, without a second walk of the sessions root:
+
+| Attribute | What |
+|---|---|
+| `fleet.disk.sessions_worktree`, `fleet.disk.sessions_other` | bytes of session directories with and without a worktree; `_count` for each |
+| `fleet.disk.projects` | bytes per project of worktree sessions, `project:MB` list, largest first |
+| `fleet.disk.run_tmp`, `fleet.disk.tmp_owned` | per-run temporary directories; `/tmp` entries of the executor's own user (dedicated user only) |
+| `fleet.disk.releases`, `fleet.disk.harnesses` | releases root without and with `harnesses/` |
+| `fleet.disk.journal`, `fleet.disk.candidates`, `fleet.disk.spool` | journal with WAL, harness candidates, span and outbox spool |
+| `fleet.disk.free`, `fleet.disk.total` | of the data directory's file system |
+
+`hosts_list` shows the latest reading as `disk`. `telemetry_disk {host?, project?, days}` returns the daily maximum per attribute from ClickHouse for trends. The artifact store keeps its own store readings.
+
+### 13. Rules
+
+Each is a row of the [rules pass](fleet-telemetry.md#6-rules); every number is a setting with a permissive default, and each finding becomes a problem with a bot owner (HAL0 by default), shown on System, never a button for the operator.
+
+| Rule | Fires when | Cause key |
+|---|---|---|
+| `disk-growth` | a host's Fleet bytes (sum of section 12) grew by more than `rules.diskGrowth.share` (0.5) and more than `rules.diskGrowth.bytes` (5 GB) over 24 hours | `problem:host:<id>:disk-growth` |
+| `leftovers` | the latest inventory of a host has worktrees answered `teardown` or `unknown` in two inventories in a row, or `keep` for a settled session over `rules.leftovers.hours` (24); value: count and bytes | `problem:host:<id>:leftovers` |
+| `personal-output` | a `personal` project's run ended with an upload that failed, or the inventory finds a `personal` project worktree with an `output/` | `problem:project:<id>:personal-output` |
+| `cleanup-failing` | a teardown answered `teardown-failed`, or the same directory failed removal in two passes | `problem:host:<id>:cleanup-failing` |
+| `orphan` | as designed in [telemetry](fleet-telemetry.md#6-rules) | `problem:execution:<id>:orphans` |
+| `run-frequency` | executions started by one pipeline, trigger or bot within an hour above `rules.runFrequency.factor` (5) times its 7-day hourly median and above `rules.runFrequency.min` (50) | `problem:frequency:<subject>` |
+
+
 ## Alternatives Considered
 
 *   **Kill by process group or cgroup only.** `setsid` leaves the group. Cgroups exist on Linux only. The environment marker works on both platforms and survives every fork.
 *   **A new rule for swap.** Rejected: one host problem is one finding. `host-saturation` already owns host pressure.
 *   **Remove a session directory at teardown.** Rejected: a teardown comes only on delivery or archive, and most sessions without a worktree get neither, so their directories would never go, and a second removal path would be needed for them. The sweep covers both, and after teardown removes a worktree the next pass takes the directory.
+*   **A per-worktree check from each host.** Rejected: hundreds of requests an hour; the inventory batch asks once per host per hour.
+*   **Time-based worktree expiry.** Still rejected ([system management](fleet-system-management.md#time-based-worktree-expiry)): the Idle archive is a session rule, it acts on settled sessions only and `keepWhen` keeps unpushed work.
 *   **Keep N releases or N days of sessions.** Rejected: a count or a horizon is an invented limit; rollback needs `previous`, and a session directory is needed while it has a worktree or a run.
 *   **Kill containers started during a run.** Rejected: no reliable link from a container to a run on a shared Docker host.
 
@@ -126,3 +186,4 @@ Audit of 2026-11-25: owner-mac `~/releases` 1.3 GB and its sessions root 1399 di
 *   A cleanup pass on the three hosts finds no Fleet leftovers.
 *   `hosts_list` on prod shows swap and top consumers for every host.
 *   After a release with section 9, each releases root holds only `current`, `previous` and `harnesses/`, and each sessions root holds only directories with a worktree or changed within a day.
+*   After a release with sections 10 to 13, an inventory on each host answers no `unknown` and no `teardown` older than a day, no `dam` worktree holds an `output/`, `hosts_list` shows `disk` for every host, and the six rules are in `telemetry_findings`.
