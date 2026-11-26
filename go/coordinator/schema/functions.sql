@@ -421,7 +421,7 @@ CREATE OR REPLACE FUNCTION public.fleet_identity_assign()
 AS $function$
 DECLARE k text := CASE TG_TABLE_NAME WHEN 'bot' THEN 'bot' ELSE 'project' END; c text;
 BEGIN
- IF TG_TABLE_NAME = 'definition' AND NEW.kind <> 'project' THEN RETURN NULL; END IF;
+ IF TG_TABLE_NAME = 'definition' THEN IF NEW.kind <> 'project' THEN RETURN NULL; END IF; END IF;
  PERFORM pg_advisory_xact_lock(hashtext('fleet_identity_assign'));
  SELECT u.p INTO c FROM unnest(ARRAY['rose', 'violet', 'sky', 'teal', 'lime', 'sand', 'coral', 'slate']) WITH ORDINALITY AS u(p, o)
   LEFT JOIN identity_colour i ON i.kind = k AND i.colour = u.p GROUP BY u.p, u.o ORDER BY count(i.id), u.o LIMIT 1;
