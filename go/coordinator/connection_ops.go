@@ -65,6 +65,7 @@ func init() {
 		return connectionsTokenList(q)
 	})
 	op("connections_token_revoke", connectionsTokenRevoke)
+	op("connections_token_set", connectionsTokenSet)
 }
 
 // connectionView: a connection as connections_list shows it.

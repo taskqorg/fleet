@@ -145,3 +145,45 @@ func TestGatewayUsesListed(t *testing.T) {
 		})
 	}
 }
+
+// Requirement: connections_token_set changes a live personal token's connections without a new value: the token's row
+// names the new list, the reply carries the specs a dev session's MCP servers need, and a connection the token may not
+// reach is refused, not added.
+func TestConnectionsTokenSet(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	h := e.ownerHeaders()
+	var ignore map[string]any
+	e.opInto(t, "connections_create", map[string]any{"name": "github", "provider": "github"}, h, &ignore)
+	e.opInto(t, "connections_create", map[string]any{"name": "openai", "provider": "openai"}, h, &ignore)
+	var created contract.ConnectionsTokenCreateReply
+	e.opInto(t, "connections_token_create", map[string]any{"name": "dev-mac", "connections": []string{"github"}}, h, &created)
+	if created.Token == nil || *created.Token == "" {
+		t.Fatalf("create: %+v", created)
+	}
+	var set contract.ConnectionsTokenSetReply
+	e.opInto(t, "connections_token_set", map[string]any{"name": "dev-mac", "connections": []string{"github", "openai", "missing"}}, h, &set)
+	if len(set.Connections) != 2 || !slices.Contains(set.Refused, "missing") {
+		t.Fatalf("set: %+v", set)
+	}
+	var list contract.ConnectionsTokenListReply
+	e.opInto(t, "connections_token_list", map[string]any{}, h, &list)
+	n := 0
+	for _, tok := range list.Tokens {
+		if tok.Name == "dev-mac" {
+			n++
+			if !strings.Contains(string(tok.Connections), "openai") {
+				t.Fatalf("token connections %s", tok.Connections)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("set made %d tokens named dev-mac, want the one", n)
+	}
+	var sha string
+	if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT sha256 FROM run_token WHERE personal = 'dev-mac'`).Scan(&sha); err != nil || sha != sha256hex([]byte(*created.Token)) {
+		t.Fatalf("the token's value changed: %v", err)
+	}
+	if code, _ := e.callJSON(t, "POST", "/api/ops/connections_token_set", map[string]any{"name": "nobody", "connections": []string{"github"}}, h); code != 404 {
+		t.Fatalf("unknown token: %d", code)
+	}
+}
