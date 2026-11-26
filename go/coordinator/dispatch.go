@@ -168,7 +168,11 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if err := a.store.Write(ctx, nil, []string{DISPATCH, "session:" + sid}, func(q *Request) error { return agentPromoteOnly(q, sid) }); err != nil {
+			sctx, span := obs.Start(ctx, "dispatch.promote.session", obs.KindInternal)
+			span.Set("fleet.session.id", sid)
+			err := a.store.Write(sctx, nil, []string{DISPATCH, "session:" + sid}, func(q *Request) error { return agentPromoteOnly(q, sid) })
+			span.End(err)
+			if err != nil {
 				return err
 			}
 		}
