@@ -3,6 +3,7 @@ import { createContext, createEffect, createMemo, createSignal, For, onSettled, 
 import type { JSX } from '@solidjs/web';
 import { type IconName, type Harness, type EntityKind, entityKinds, codeKind, ENTITY_CODE, states, actions, harnesses } from '../registry.ts';
 import { bytes, count, duration } from '../format.ts';
+import { PR_REF } from '../markdown.ts';
 import type { EntityCardReply } from '../../../../contracts/generated/ops.ts';
 import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, HarnessMark, Ago, CopyButton, popoverAttr, type PopoverElement } from './primitives.tsx';
@@ -237,13 +238,22 @@ export function EntityCode(p: {
   );
 }
 
-/** D17 codes in a text as references (agent messages, OR-38): every other part stays text. */
+/** D17 codes and pull requests (a GitHub URL, owner/repo#n) in a text as references (agent messages, OR-38, OR-44):
+ *  every other part stays text. */
 export function linkCodes(text: string, _key: number, literal = (value: string, _start: number): JSX.Element => value): JSX.Element {
   const out: JSX.Element[] = []; let last = 0;
-  for (const m of text.matchAll(ENTITY_CODE)) {
-    if (m.index! > last) out.push(literal(text.slice(last, m.index), last));
-    out.push(<EntityCode code={m[0]} cls="inline" />);
-    last = m.index! + m[0].length;
+  const found = [
+    ...[...text.matchAll(ENTITY_CODE)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode code={m[0]} cls="inline" /> })),
+    ...[...text.matchAll(PR_REF)].map(m => {
+      const owner = m[1] ?? m[4], repo = m[2] ?? m[5], n = m[3] ?? m[6];
+      return { at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode kind="pull_request" id={`${owner}/${repo}#${n}`} code={'#' + n} cls="inline" /> };
+    }),
+  ].sort((a, b) => a.at - b.at);
+  for (const f of found) {
+    if (f.at < last) continue;
+    if (f.at > last) out.push(literal(text.slice(last, f.at), last));
+    out.push(f.el());
+    last = f.end;
   }
   if (!out.length) return literal(text, 0);
   if (last < text.length) out.push(literal(text.slice(last), last));

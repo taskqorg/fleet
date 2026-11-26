@@ -70,3 +70,10 @@ test('a delivery change rereads every pull request reference; changes name their
   assert.deepEqual(changedEntities(change('definition', 'agent/pm')), ['agent:pm']);
   assert.deepEqual(changedEntities(change('execution', 'e1', { taskId: 't1', sessionId: 's1' })), ['execution:e1', 'task:t1', 'conversation:s1']);
 });
+
+test('pull requests in agent text: a GitHub URL and owner/repo#n, never a path or a bare #n', async () => {
+  const { PR_REF } = await import('../../packages/ui/src/markdown.ts');
+  const hits = (t: string) => [...t.matchAll(PR_REF)].map(m => `${m[1] ?? m[4]}/${m[2] ?? m[5]}#${m[3] ?? m[6]}`);
+  assert.deepEqual(hits('Opened https://github.com/taskqorg/fleet/pull/1198 and taskqorg/fleet#1196.'), ['taskqorg/fleet#1198', 'taskqorg/fleet#1196']);
+  assert.deepEqual(hits('see #643, src/app/x#1, https://github.com/a/b/pull/12/files'), []);
+});
