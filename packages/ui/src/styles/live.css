@@ -186,10 +186,14 @@
 
   /* Drift rows (controls/drift-row.md): Changes › Agent environment. Flat one-line rows in a panel: name, detail, state,
      last fact; the list is the size container, so a narrow pane stacks each row (OR-66) with the state on the first line. */
-  .drift-rows { list-style: none; margin: 0; padding: 0; container-type: inline-size; border-top: 1px solid var(--line-soft); }
+  /* The list holds the columns and each row takes them as a subgrid, so names, states and facts line up across rows. */
+  .drift-rows {
+    list-style: none; margin: 0; padding: 0; container-type: inline-size; border-top: 1px solid var(--line-soft);
+    display: grid; grid-template-columns: minmax(7rem, 14rem) minmax(0, 1fr) auto minmax(0, 16rem); column-gap: var(--space-3);
+  }
   .drow {
     position: relative; display: grid; align-items: center; gap: var(--space-1) var(--space-3);
-    grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto minmax(0, max-content); grid-template-areas: "name detail chip fact";
+    grid-column: 1 / -1; grid-template-columns: subgrid; grid-template-areas: "name detail chip fact";
     padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line-soft);
   }
   .drow:has(.drow-link:hover) { background: var(--hover); }
