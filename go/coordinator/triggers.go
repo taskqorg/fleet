@@ -749,6 +749,18 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, al
 		return triggerSendOne(q, t, target, slot, nil, "", manual)
 	}
 	keys, lines := threadGroups(all)
+	if target.bot != nil {
+		// Each subject's conversation takes its bot-subject lock before its session lock (botConversation), so one pass
+		// waking several subjects takes all of them first, in lock order; otherwise the second subject's lock would
+		// come after the first subject's session lock.
+		locks := make([]string, 0, len(keys))
+		for _, k := range keys {
+			locks = append(locks, botSubjectLock(target.bot.Id, firstString(k, "trigger:"+t.ID)))
+		}
+		if err := acquireTxLock(q, locks...); err != nil {
+			return false, err
+		}
+	}
 	sent := false
 	for _, k := range keys {
 		var ok bool

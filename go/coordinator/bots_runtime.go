@@ -177,8 +177,12 @@ func verifyQueuedBotAuthority(q *Request, botID, projectID, directedBy string) e
 // botConversation: the bot's conversation for a subject (fleet-conversations.md#rules), created when it has none and
 // opened again when archived. The empty subject is the bot's newest conversation without one: person messages and
 // direct runs.
+// botSubjectLock: the lock of the one conversation per (bot, subject); a caller waking several subjects in one
+// transaction takes them all before the first session lock (triggerSend).
+func botSubjectLock(botID, subject string) string { return "bot-subject:" + botID + ":" + subject }
+
 func botConversation(q *Request, b *botFull, subject string) (agentSession, error) {
-	if err := acquireTxLock(q, "bot-subject:"+b.Id+":"+subject); err != nil { // one conversation per (bot, subject)
+	if err := acquireTxLock(q, botSubjectLock(b.Id, subject)); err != nil { // one conversation per (bot, subject)
 		return agentSession{}, err
 	}
 	id, err := q.db().BotConversationBySubject(q.ctx(), db.BotConversationBySubjectParams{BotID: &b.Id, Subject: strPtr(subject)})
