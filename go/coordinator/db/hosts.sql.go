@@ -429,7 +429,7 @@ func (q *Queries) HostObservationOf(ctx context.Context, id string) (HostObserva
 const hostObservationPut = `-- name: HostObservationPut :exec
 INSERT INTO host_observation(id, holder, last_seen_at, project_id, payload)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload || jsonb_strip_nulls(jsonb_build_object('inventory', host_observation.payload->'inventory')), updated_at=now(),
  holder=excluded.holder, last_seen_at=excluded.last_seen_at, project_id=excluded.project_id
 `
 

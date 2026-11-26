@@ -1620,6 +1620,28 @@ func (v *HostDiagnosis) Validate() error {
 	return nil
 }
 
+// HostDisk: bytes Fleet keeps on the host (docs/designs/fleet-host-cleanup.md#12-disk-readings)
+type HostDisk struct {
+	Candidates            *float64 `json:"candidates,omitempty"`
+	Free                  *float64 `json:"free,omitempty"`
+	Harnesses             *float64 `json:"harnesses,omitempty"`
+	Journal               *float64 `json:"journal,omitempty"`
+	Releases              *float64 `json:"releases,omitempty"`
+	RunTmp                *float64 `json:"runTmp,omitempty"`
+	SessionsOther         *float64 `json:"sessionsOther,omitempty"`
+	SessionsOtherCount    *int64   `json:"sessionsOtherCount,omitempty"`
+	SessionsWorktree      *float64 `json:"sessionsWorktree,omitempty"`
+	SessionsWorktreeCount *int64   `json:"sessionsWorktreeCount,omitempty"`
+	Spool                 *float64 `json:"spool,omitempty"`
+	TmpOwned              *float64 `json:"tmpOwned,omitempty"`
+	Total                 *float64 `json:"total,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostDisk) Validate() error {
+	return nil
+}
+
 type HostEvent struct {
 	Data      json.RawMessage `json:"data"`
 	Id        string          `json:"id"`
@@ -1652,6 +1674,58 @@ func (v *HostEvents) Validate() error {
 			return err
 		}
 	}
+	return nil
+}
+
+type HostInventoryReply struct {
+	Keep     int64    `json:"keep"`
+	Teardown []string `json:"teardown"`
+	Unknown  []string `json:"unknown"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostInventoryReply) Validate() error {
+	if v.Teardown == nil {
+		return Missing("teardown")
+	}
+	if v.Unknown == nil {
+		return Missing("unknown")
+	}
+	return nil
+}
+
+type HostInventoryRequest struct {
+	Disk     *HostDisk              `json:"disk,omitempty"`
+	Sessions []HostInventorySession `json:"sessions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostInventoryRequest) Validate() error {
+	if v.Disk != nil {
+		if err := Check(v.Disk, "disk"); err != nil {
+			return err
+		}
+	}
+	if v.Sessions == nil {
+		return Missing("sessions")
+	}
+	for i := range v.Sessions {
+		if err := Check(&v.Sessions[i], "sessions"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type HostInventorySession struct {
+	Bytes     float64 `json:"bytes"`
+	ChangedAt float64 `json:"changedAt"`
+	Id        string  `json:"id"`
+	Output    *bool   `json:"output,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostInventorySession) Validate() error {
 	return nil
 }
 
@@ -2374,9 +2448,11 @@ func (v ProjectOperation) Valid() bool {
 
 // ProjectPayload: readiness, base-updated and teardown: the project context plus kind-specific fields
 type ProjectPayload struct {
-	Branch       *bool                      `json:"branch,omitempty"`
-	DeleteBranch *bool                      `json:"deleteBranch,omitempty"`
-	Project      map[string]json.RawMessage `json:"project,omitempty"`
+	Branch        *bool                      `json:"branch,omitempty"`
+	DeleteBranch  *bool                      `json:"deleteBranch,omitempty"`
+	OutputsStored *bool                      `json:"outputsStored,omitempty"`
+	Project       map[string]json.RawMessage `json:"project,omitempty"`
+	Step          *bool                      `json:"step,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -3444,6 +3520,7 @@ var (
 	RouteDelegations       = HostRoute[ChildReceipt, any]{Path: "/api/hosts/delegations", Long: true, Plain: false}
 	RouteEvents            = HostRoute[HostEvents, OkReply]{Path: "/api/hosts/events", Long: true, Plain: true}
 	RouteForgeReview       = HostRoute[ForgeReviewRequest, ForgeReviewReply]{Path: "/api/hosts/forge/review", Long: true, Plain: false}
+	RouteInventory         = HostRoute[HostInventoryRequest, HostInventoryReply]{Path: "/api/hosts/inventory", Long: true, Plain: false}
 	RoutePoll              = HostRoute[PollRequest, PollReply]{Path: "/api/hosts/poll", Long: true, Plain: true}
 	RouteProjectOperations = HostRoute[ProjectReceipt, any]{Path: "/api/hosts/project-operations", Long: true, Plain: false}
 	RoutePublishingRecord  = HostRoute[PublishingHostRecord, OkReply]{Path: "/api/hosts/publishing/record", Long: true, Plain: false}
@@ -3470,6 +3547,7 @@ var HostRoutes = []string{
 	"/api/hosts/delegations",
 	"/api/hosts/events",
 	"/api/hosts/forge/review",
+	"/api/hosts/inventory",
 	"/api/hosts/poll",
 	"/api/hosts/project-operations",
 	"/api/hosts/publishing/record",

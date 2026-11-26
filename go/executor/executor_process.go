@@ -767,6 +767,9 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		l.seq++
 		_ = e.event(l.command, l.seq, "mcp.diagnostics_unavailable", M{"reason": "safe receipt collection failed"})
 	}
+	if c := l.command; c.Start != nil && c.Start.Payload != nil && projectPersonal(c.Start.Payload.Project) {
+		dropPersonal(dir, output)
+	}
 	// The coordinator holds a completed run with required artifacts still uploading as waiting.
 	e.declared = declared
 	if l.trial != nil {

@@ -515,6 +515,22 @@ func deliveryPass(ctx context.Context, a *App) error {
 	return nil
 }
 
+// mergedSessionIDs: the sessions whose branch (<branchPrefix>/<session>) has a merged pull request in the delivery
+// pass's latest snapshot; the inventory tears their worktrees down (fleet-system-management.md#worktree-on-delivery).
+func mergedSessionIDs() map[string]bool {
+	deliveryMu.Lock()
+	defer deliveryMu.Unlock()
+	out := map[string]bool{}
+	for _, r := range deliveryLast.repos {
+		for _, pr := range r.delivered {
+			if i := strings.LastIndexByte(pr.Branch, '/'); i >= 0 && len(pr.Branch)-i-1 == 36 {
+				out[pr.Branch[i+1:]] = true
+			}
+		}
+	}
+	return out
+}
+
 // snapshotDeliveredPRs returns the latest cached delivered pull requests without reading GitHub.
 func snapshotDeliveredPRs() []deliveryMergedPR {
 	deliveryMu.Lock()

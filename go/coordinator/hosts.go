@@ -520,6 +520,7 @@ type hostObservationPayload struct {
 	Update          json.RawMessage               `json:"update"`
 	Load            *hostLoadObservation          `json:"load"`
 	Pacing          *contract.HostUpdatePacing    `json:"pacing"`
+	Inventory       *inventorySummary             `json:"inventory"` // host_inventory.go, kept by the poll's put
 }
 
 type hostObservation struct {
@@ -715,6 +716,10 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 				h.Load = &contract.HostLoadReading{Load1: l.Load1, Cpus: l.Cpus, MemFree: l.MemFree, MemTotal: l.MemTotal, SwapUsed: l.SwapUsed, SwapTotal: l.SwapTotal,
 					MemCompressed: l.MemCompressed, TmpUsed: l.TmpUsed, TmpTotal: l.TmpTotal, Top: l.Top, DiskFree: l.DiskFree, At: float64(l.UpdatedAt)}
 			}
+		}
+		if o != nil && o.Inventory != nil {
+			d := o.Inventory.HostDiskReading
+			h.Disk = &d
 		}
 		h.Runs = runs[id]
 		if h.Runs == nil {

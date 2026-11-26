@@ -10,6 +10,7 @@
     "/api/hosts/delegations": {"$comment": "answers the child request's record", "request": "ChildReceipt", "long": true, "decode": "checked"},
     "/api/hosts/events": {"$comment": "each event's identity is read from the batch as sent", "request": "HostEvents", "reply": "OkReply", "long": true, "decode": "plain"},
     "/api/hosts/spans": {"request": "SpanBatchRequest", "reply": "SpanBatchReply", "long": true, "decode": "plain"},
+    "/api/hosts/inventory": {"$comment": "hourly: the session directories that hold a worktree and the disk reading (docs/designs/fleet-host-cleanup.md#11-inventory-reconcile)", "request": "HostInventoryRequest", "reply": "HostInventoryReply", "long": true, "decode": "checked"},
     "/api/hosts/agent-tools": {"$comment": "answers the raw JSON-RPC reply", "request": "AgentToolsRequest", "long": true, "decode": "plain"},
     "/api/hosts/accounts": {"$comment": "answers the account record", "request": "AccountObservation", "long": false, "decode": "checked"},
     "/api/hosts/artifacts/reserve": {"request": "ArtifactReserveRequest", "reply": "ArtifactReserveReply", "long": true, "decode": "checked"},
@@ -461,6 +462,52 @@
         }
       }
     },
+    "HostInventoryRequest": {
+      "type": "object",
+      "required": ["sessions"],
+      "properties": {
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/HostInventorySession" } },
+        "disk": { "$ref": "#/$defs/HostDisk" }
+      }
+    },
+    "HostInventorySession": {
+      "type": "object",
+      "required": ["id", "bytes", "changedAt"],
+      "properties": {
+        "id": { "$comment": "the session directory's name: the session id", "type": "string" },
+        "bytes": { "type": "number", "minimum": 0 },
+        "changedAt": { "$comment": "ms since epoch of the newest change within two levels", "type": "number" },
+        "output": { "$comment": "a worktree of it holds output/", "type": "boolean" }
+      }
+    },
+    "HostInventoryReply": {
+      "type": "object",
+      "required": ["keep", "teardown", "unknown"],
+      "properties": {
+        "keep": { "type": "integer" },
+        "teardown": { "$comment": "sessions whose teardown the coordinator queued; the host gets the commands on its next poll", "type": "array", "items": { "type": "string" } },
+        "unknown": { "$comment": "sessions the coordinator has no live row for: the host tears their worktrees down itself", "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "HostDisk": {
+      "$comment": "bytes Fleet keeps on the host (docs/designs/fleet-host-cleanup.md#12-disk-readings)",
+      "type": "object",
+      "properties": {
+        "sessionsWorktree": { "type": "number", "minimum": 0 },
+        "sessionsWorktreeCount": { "type": "integer", "minimum": 0 },
+        "sessionsOther": { "type": "number", "minimum": 0 },
+        "sessionsOtherCount": { "type": "integer", "minimum": 0 },
+        "runTmp": { "type": "number", "minimum": 0 },
+        "tmpOwned": { "type": "number", "minimum": 0 },
+        "releases": { "type": "number", "minimum": 0 },
+        "harnesses": { "type": "number", "minimum": 0 },
+        "journal": { "type": "number", "minimum": 0 },
+        "candidates": { "type": "number", "minimum": 0 },
+        "spool": { "type": "number", "minimum": 0 },
+        "free": { "type": "number", "minimum": 0 },
+        "total": { "type": "number", "minimum": 0 }
+      }
+    },
     "HostConsumer": {
       "type": "object",
       "required": ["pid", "command", "memBytes"],
@@ -470,7 +517,7 @@
         "command": { "$comment": "program base name, no arguments or paths", "type": "string" },
         "memBytes": { "type": "number", "minimum": 0 },
         "ageSeconds": { "type": "number", "minimum": 0 },
-        "fleet": { "$comment": "carries a run marker or is a Fleet program", "type": "boolean" }
+        "fleet": { "$comment": "carries a run marker, is a Fleet program or runs as a dedicated Fleet user (fleet*)", "type": "boolean" }
       }
     },
     "HarnessVersion": {
@@ -1106,6 +1153,14 @@
         },
         "deleteBranch": {
           "$comment": "teardown only: the work was delivered (its task accepted), so the local branch is deleted with git branch -D",
+          "type": "boolean"
+        },
+        "outputsStored": {
+          "$comment": "teardown only: every artifact of the session is stored, so worktree/output goes before the keepWhen checks",
+          "type": "boolean"
+        },
+        "step": {
+          "$comment": "teardown only: a pipeline step session; with project data personal its worktree goes even when uncommitted",
           "type": "boolean"
         }
       },

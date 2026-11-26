@@ -180,6 +180,47 @@ func (v SpanOutcome) Valid() bool {
 	return false
 }
 
+type TelemetryDiskPoint struct {
+	Day    string             `json:"day"`
+	HostId string             `json:"hostId"`
+	Values map[string]float64 `json:"values"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryDiskPoint) Validate() error {
+	if v.Values == nil {
+		return Missing("values")
+	}
+	return nil
+}
+
+type TelemetryDiskReply struct {
+	Points []TelemetryDiskPoint `json:"points"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryDiskReply) Validate() error {
+	if v.Points == nil {
+		return Missing("points")
+	}
+	for i := range v.Points {
+		if err := Check(&v.Points[i], "points"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type TelemetryDiskRequest struct {
+	Days *int64  `json:"days,omitempty"`
+	Host *string `json:"host,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryDiskRequest) Validate() error {
+	return nil
+}
+
 // TelemetryFindingsReply: stale: the last rules pass is older than telemetry.staleMinutes (3).
 type TelemetryFindingsReply struct {
 	Findings     []Finding `json:"findings"`
@@ -335,6 +376,7 @@ func (v TelemetryWindow) Valid() bool {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"telemetry_disk":     {Read: false, Long: true, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Daily maximum of each host.disk reading (docs/designs/fleet-host-cleanup.md#12-disk-readings); days defaults to 30.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"days\":{\"minimum\":1,\"type\":\"integer\"},\"host\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Telemetry findings, optionally of one project", InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "window defaults to 1h.", InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.", InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
