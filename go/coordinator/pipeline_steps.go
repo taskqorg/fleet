@@ -75,6 +75,14 @@ func scriptHost(q *Request, projectID, director string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	queued := map[string]int64{}
+	rows, err := q.db().DispQueuedHostJobsByHost(q.ctx())
+	if err != nil {
+		return "", err
+	}
+	for _, r := range rows {
+		queued[r.HostID] = int64(r.N)
+	}
 	now := nowMs()
 	order := append([]string{q.app.hostID}, k.hostIDs...)
 	for _, spare := range []bool{false, true} {
@@ -85,7 +93,9 @@ func scriptHost(q *Request, projectID, director string) (string, error) {
 			case !q.app.holderMayRun(deref(h.Holder), projectID, director): // the same trust gate as dispatch
 			case !(float64(now)-k.seen[id] < onlineMs) || !inList(k.caps[id], "script") || k.updating[id] != "":
 			case hostOverloadReason(id, k.loads[id], now) != "":
-			case hostConcurrencyLimit(h, k.loads[id], now) > 0 && k.running[id] >= hostConcurrencyLimit(h, k.loads[id], now):
+			// Queued steps take no slot (work-allocation B7), but a host full with running and queued work is skipped, so a
+			// burst of unpinned steps spreads over the hosts instead of queueing on the first.
+			case hostConcurrencyLimit(h, k.loads[id], now) > 0 && k.running[id]+queued[id] >= hostConcurrencyLimit(h, k.loads[id], now):
 			default:
 				return id, nil
 			}

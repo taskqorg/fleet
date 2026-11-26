@@ -910,6 +910,39 @@ func (q *Queries) DispPurgesPending(ctx context.Context) ([]DispPurgesPendingRow
 	return items, nil
 }
 
+const dispQueuedHostJobsByHost = `-- name: DispQueuedHostJobsByHost :many
+SELECT host_id::text AS host_id, count(*)::int AS n FROM execution
+WHERE host_id IS NOT NULL AND kind = 'host_job' AND state = 'preparing'
+GROUP BY 1
+`
+
+type DispQueuedHostJobsByHostRow struct {
+	HostID string
+	N      int32
+}
+
+// Host jobs handed to a host that do not run yet: no slot (DispRunningByHost), but scriptHost spreads new unpinned
+// script steps by them so a burst does not queue on one host.
+func (q *Queries) DispQueuedHostJobsByHost(ctx context.Context) ([]DispQueuedHostJobsByHostRow, error) {
+	rows, err := q.db.Query(ctx, dispQueuedHostJobsByHost)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DispQueuedHostJobsByHostRow
+	for rows.Next() {
+		var i DispQueuedHostJobsByHostRow
+		if err := rows.Scan(&i.HostID, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const dispQueuedIDs = `-- name: DispQueuedIDs :many
 SELECT id FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run' ORDER BY seq
 `
@@ -1050,6 +1083,7 @@ func (q *Queries) DispRulePreview(ctx context.Context, arg DispRulePreviewParams
 const dispRunningByHost = `-- name: DispRunningByHost :many
 SELECT host_id::text AS host_id, count(*)::int AS n FROM execution
 WHERE host_id IS NOT NULL AND kind IN ('agent_run','host_job') AND state IN ('preparing','running')
+ AND (kind <> 'host_job' OR state = 'running')
 GROUP BY 1
 `
 
@@ -1058,6 +1092,8 @@ type DispRunningByHostRow struct {
 	N      int32
 }
 
+// A host job counts once it runs: a script step handed to its host and queued in the executor takes no slot
+// (work-allocation B7; 2026-11-26: 26 queued DAM steps showed owner-mac full against 2 that ran).
 func (q *Queries) DispRunningByHost(ctx context.Context) ([]DispRunningByHostRow, error) {
 	rows, err := q.db.Query(ctx, dispRunningByHost)
 	if err != nil {
