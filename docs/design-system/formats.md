@@ -11,6 +11,8 @@ One way to show each kind of value, everywhere ([OR-28](owner-rules.md)). The fo
 
 ## Values
 
+Times follow [OR-2](controls/number.md#rules-kept-here) (compact time), kept in the number spec.
+
 | Kind | Shown as | Long form (tooltip, accessible name) | Helper |
 |---|---|---|---|
 | Entity code | `T-FLT-42` mono, directly after the name (OR-22); never a UUID or hash (OR-38); a kind without a code as its kind icon | Its card on click (OR-44): details, Open, copy code and UUID | `EntityCode` |

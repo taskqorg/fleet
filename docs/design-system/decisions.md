@@ -662,3 +662,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 
 * **Question (owner):** the rule lists grew to 70 owner rules and 93 usability rules, many of them repeated in the control and pattern specs or enforced by a script, so an agent reads the same rule two or three times.
 * **Choice (owner, one pass, not waves):** every rule gets one fate. *Component:* a control or pattern spec carries it in full; its text moves into that spec's "Rules kept here" (an owner rule keeps the owner's words). *Check:* an existing script enforces it; the check is named in the rule table. *Judgment:* it stays in [owner-rules.md](owner-rules.md#rules) or [principles.md](principles.md), merged with its duplicates. No rule is new, no check is added, and every id stays: [owner rules](owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](principles.md#rules-kept-elsewhere) say where each moved id lives. `node scripts/ui-context.ts <page>` prints the judgment rules a page cites in full and one line per spec or check for the rest.
+
+## 2026-11-26: Phone bottom bar and pins without hover
+
+* **Question:** the rule cut found two specs that disagreed with an owner rule: app-shell.md put History in the phone bottom bar, which OR-60 does not; nav-rail.md showed a pin button on hover, which OR-37 forbids in list rows.
+* **Choice (owner, "Как в OR-60 (Projects)"):** the phone bottom bar is Home, Live, Conversations, Projects and More; History goes into More ([app shell](patterns/app-shell.md), [nav rail](controls/nav-rail.md)). The built bar changes later.
+* **Choice (owner, "Без исключений"):** no button appears on hover in a list row or a rail item, the pin included. A pinned item shows its pin always; pinning is in the row menu and on `p` ([row pin](controls/row-pin.md), [nav rail](controls/nav-rail.md)). The built rail changes later.

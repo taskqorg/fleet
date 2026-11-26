@@ -164,6 +164,8 @@ Review at 390 CSS px with a mouse and with touch, at 320 px on touch, and in a n
 | **UR-83.** | One job has one control on every screen ([OR-49](owner-rules.md), [OR-13](owner-rules.md)): a session card is one block, a question one block, an entity reference one `EntityCode`. | `pnpm run check:design`; Review: the screen uses the block named for the job. |
 | **UR-84.** | One action has the same label, icon and place in every list and detail where it appears (row menu, detail header). | Review across the screens in the product map. |
 
+State words follow the one vocabulary of [OR-55](controls/state-badge.md#rules-kept-here) on every label, not only in badges.
+
 ## 19. Phone
 
 | Id | Rule | Check |
@@ -190,7 +192,7 @@ These rules left the sections above on 2026-11-26 (owner, one pass). Their ids s
 | UR-34, UR-36 | component | [controls/status-states.md](controls/status-states.md#rules-kept-here) |
 | UR-35, UR-88 | component | [patterns/list-detail.md](patterns/list-detail.md#rules-kept-here) |
 | UR-37 | component | [controls/offline-marker.md](controls/offline-marker.md#rules-kept-here) |
-| UR-42 | check | `check-design.mjs` contrast: token pairs in `tokens.json` below 4.5:1 |
+| UR-42 | check | `check-design.mjs` contrast: token pairs in `tokens.json` below 4.5:1 (part of the rule: 3:1 for large text and UI parts and the rendered pages are not checked; follow-up) |
 | UR-49, UR-71, UR-86, UR-89 | component | [patterns/app-shell.md](patterns/app-shell.md#rules-kept-here) |
 | UR-50 | component | [patterns/no-horizontal-scroll.md](patterns/no-horizontal-scroll.md#rules-kept-here) |
 | UR-56 | merged | into [OR-51](owner-rules.md#rules) |
