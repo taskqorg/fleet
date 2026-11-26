@@ -326,6 +326,10 @@ Go rules:
 - Release binaries are built with `-trimpath` in one Linux CI job, each with a SHA-256 file: the coordinator for linux/amd64, darwin/arm64 and windows/amd64; the executor and the gateway for linux/amd64 and darwin/arm64. No macOS runner.
 - Checks per change: build, static checks, fast Go and app unit tests and one smoke of the real coordinator binary over HTTP (`tests/trial/slice.test.ts` through `tests/harness.ts`) ([checks per change](docs/designs/fleet-delivery-pipeline.md#checks-per-change)).
 
+## PDS18 database backup
+
+Fleet takes a private PostgreSQL custom-format dump nightly at 03:30 UTC under `/backup/fleet/daily/`. It keeps seven daily and four Sunday dumps and qualifies the first successful run by restoring its archive into an isolated PostgreSQL instance. The coordinator opens `problem:backup:missing` when it finds no completed nightly dump or the newest is older than 26 hours. An unreadable backup directory is reported as unknown. See [system management](docs/designs/fleet-system-management.md#backups).
+
 ## Verification
 
 Pull requests reach `main` only through the GitHub merge queue. A worker runs `/code-review` before it opens its pull request and enables auto-merge on it after the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
