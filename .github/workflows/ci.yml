@@ -16,8 +16,9 @@ on:
   merge_group:
   push:
     branches: [main]
-  # The managed CLI update (harness-pins.yml) writes with its GITHUB_TOKEN, which starts no workflow: it dispatches this
-  # one on its pull request's head and, when needed, on the queue's group branch, so go and app report there.
+  # The pins proposals (pins-kind.yml, pins-merge.yml) write with their GITHUB_TOKEN, which starts no workflow: they
+  # dispatch this one on the proposal's head and, when needed, on the queue's group branch. Job dispatched reports the
+  # result there as the commit statuses go and app.
   workflow_dispatch:
 permissions: {}
 # A newer push of a pull request supersedes its running check; queue and main runs are never cancelled.
@@ -49,6 +50,29 @@ jobs:
         with:
           node-version: 22
       - run: scripts/check.sh go
+  # A dispatched run's check runs belong to no pull request, so the ruleset never counts them (#1055 stayed BLOCKED with
+  # go and app green on its head). On a pins proposal or a queue branch the run reports both jobs' results as commit
+  # statuses on the commit it tested, which the ruleset counts like code-review.
+  dispatched:
+    needs: [go, app]
+    if: always() && github.event_name == 'workflow_dispatch' && (startsWith(github.ref_name, 'gh-readonly-queue/') || (startsWith(github.ref_name, 'automation/') && endsWith(github.ref_name, '-pins')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GO: ${{ needs.go.result }}
+          APP: ${{ needs.app.result }}
+        run: |
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          report() {
+            state=failure; [ "$2" = success ] && state=success
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context="$1" -f target_url="$run" -f description="ci $2 (dispatched run)"
+          }
+          report go "$GO"
+          report app "$APP"
   # Contract lint, a branch without merge commits, typecheck and bundle, the app unit tests. A merge group or push uploads
   # the bundle as fleet-ui for the UI-only release (release.yml).
   app:
