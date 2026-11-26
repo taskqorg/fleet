@@ -201,7 +201,8 @@ run its connections (§4), whatever the host's own harness settings say.
     the command without one. `reissue: true` mints a new value and revokes the old one.
 *   **The command:** `fleet-executor local-agent <harness>` (the token, when new, on standard input). It writes the
     token to `~/.config/fleet/tokens/<machine>-<harness>` (0600), asks the gateway for the token's connections
-    (`GET /v1/connections` with the token: the specs the snapshot holds) and registers one
+    (`POST /v1/call/-/connections` with the token, the one gateway path other hosts reach: the specs the snapshot
+    holds) and registers one
     `fleet-executor mcp connection <name>` server per connection in the harness's own settings: Claude Code with
     `claude mcp add-json -s user`, Codex with `codex mcp add`, Antigravity in `~/.gemini/antigravity/mcp_config.json`.
     Servers it did not register are left alone; a server of a connection the token no longer names is removed. Without
@@ -212,8 +213,8 @@ run its connections (§4), whatever the host's own harness settings say.
 *   **`local_agents {}`** (person): the report, per machine: each local agent with its token state (live, revoked),
     its connections, and per connection the last successful call and the last failure of that token (`tool_run` rows
     with `data.tokenName`), plus drift: connections the person may use that the token lacks (run `local_agent_connect`
-    again, then the command), and a token unused since it was connected. Every write is a change (kind
-    `local-agent`), so the page rereads at once.
+    again, then the command), and a token unused since it was connected. The last calls are kept on the token as its
+    calls are recorded (`connRecord`), so the report reads no call history.
 *   **`local_agent_disconnect {machine, harness}`** (owner or full access): revokes the token; the report shows the
     machine's servers as disconnected until the command runs again.
 *   Not built: machines that are not Fleet hosts (no `fleet-executor` there); Claude Desktop chat, which has no
