@@ -756,9 +756,17 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, al
 		// Each subject's conversation takes its bot-subject lock before its session lock (botConversation), so one pass
 		// waking several subjects takes all of them first, in lock order; otherwise the second subject's lock would
 		// come after the first subject's session lock.
-		locks := make([]string, 0, len(keys))
+		locks := make([]string, 0, 2*len(keys))
 		for _, k := range keys {
-			locks = append(locks, botSubjectLock(target.bot.Id, firstString(k, "trigger:"+t.ID)))
+			subject := firstString(k, "trigger:"+t.ID)
+			locks = append(locks, botSubjectLock(target.bot.Id, subject))
+			// The subject's conversation, when it exists, is locked now too, in order with the others; a new one takes
+			// its lock when it is created (acquireNewObjectLock).
+			if id, err := q.db().BotConversationBySubject(q.ctx(), db.BotConversationBySubjectParams{BotID: &target.bot.Id, Subject: strPtr(subject)}); err == nil {
+				locks = append(locks, "session:"+id)
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return false, err
+			}
 		}
 		if err := acquireTxLock(q, locks...); err != nil {
 			return false, err

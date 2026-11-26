@@ -220,6 +220,34 @@ func acquireTxLocksMode(ctx context.Context, tx pgx.Tx, noWait bool, keys ...str
 	return nil
 }
 
+// acquireNewObjectLock takes the lock of an object this transaction has just created (a new session's id): nobody
+// else can know the key before the commit, so it cannot deadlock and skips the order check. A later acquire of it in
+// the transaction is a no-op; the order of the other locks is unchanged.
+func acquireNewObjectLock(q *Request, key string) error {
+	if _, err := lockRank(key); err != nil {
+		return err
+	}
+	v, ok := txLockStates.Load(q.tx)
+	if !ok {
+		return errors.New("acquireNewObjectLock: transaction has no registered lock state")
+	}
+	st := v.(*txLockState)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.held[key] {
+		return nil
+	}
+	held, err := tryAdvisoryLock(q.ctx(), q.tx, key)
+	if err != nil {
+		return err
+	}
+	if !held {
+		return advisoryBusyError(key)
+	}
+	st.held[key] = true
+	return nil
+}
+
 func acquireTxLock(q *Request, keys ...string) error {
 	return acquireTxLocks(q.ctx(), q.tx, keys...)
 }
