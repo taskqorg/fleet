@@ -20,7 +20,9 @@ The board has one home, like a shared design file: the persistent board worktree
 
 | Canvas | Holds | Changes when |
 |---|---|---|
-| [styles](board/styles.bl) | Every Fleet colour in both themes and the type scale, drawn from the tokens | `tokens.json` changes (`pnpm run board:tokens`) |
+| [styles](board/styles.bl) | Foundations: every Fleet colour in both themes, the type scale, spacing, radius and sizes, drawn from the tokens; the board draws Inter for the product's system-ui, so a board-versus-prod check compares layout and colour, not glyph widths | `tokens.json` changes (`pnpm run board:tokens`) |
+| [components](board/components.bl) | One master per book section (the controls of `packages/ui`), generated from the built book with every colour bound to a token by its dark and light pair, plus a light-theme row of the core masters. [code-map.json](board/code-map.json) names each master's id, exports, spec and book anchor | The book changes: `pnpm run book`, then `node packages/ui/scripts/board-extract.mjs <json>` and `python3 packages/ui/scripts/board-components.py <json> <dir>`, and send the batches from the board home |
+| [patterns](board/patterns.bl) | Each [pattern](patterns/README.md) and the master that shows it | A pattern spec changes |
 | [ia](board/ia.bl) | The sections, the question each answers, the journeys | The [information architecture](../designs/fleet-ia-and-journeys.md) changes |
 | [blocks](board/blocks.bl) | Every block of Home, Live and the session view as a component with all its states ([block list](controls/README.md#blocks-of-home-live-and-the-session-view)) | A block's spec changes; screens use its instances, so the change reaches them |
 | `screens/<page>` ([home](board/screens/home.bl), [people](board/screens/people.bl), [live](board/screens/live.bl), [session](board/screens/session.bl), [conversations](board/screens/conversations.bl), [projects](board/screens/projects.bl), [lab](board/screens/lab.bl), [library](board/screens/library.bl), [system](board/screens/system.bl)) | The approved states of one page: a row at 1440 px, then phone 390 px, then the parts it adds | The owner approves a state; the [page spec](pages/README.md) links its canvas |
@@ -28,6 +30,8 @@ The board has one home, like a shared design file: the persistent board worktree
 | [screens/host-updates](board/screens/host-updates.bl) | The approved frames of the host updates design: 1A Changes grouped by kind, 2A a host's update history, at 1440 and 390 px | The [Changes](pages/changes.md) component groups or the [Hosts](pages/hosts.md) Updates change |
 | [screens/shell](board/screens/shell.bl) | The rail's user block: update strip, avatar, version and its overview in every state, expanded, collapsed and phone | The [nav rail](controls/nav-rail.md) user block or version changes |
 | [screens/flow](board/screens/flow.bl) | The journeys J1–J5, answering a question from Home and waking a bot as click paths over instances of the screens | A screen or a journey changes; screens are components, so their changes reach it |
+
+[index.json](board/index.json) lists every committed frame (id, canvas, page, width, theme, status); `pnpm run board:index` regenerates it and the code map. A task names its frame by id; an agent finds it there without opening a canvas.
 
 How a screen moves through the board:
 
