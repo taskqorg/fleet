@@ -54,9 +54,12 @@ export function boardDs(t = JSON.parse(readFileSync(new URL('../tokens.json', im
   L.push('// Spacing: space.1 to space.7 of packages/ui, as xs, sm, md, lg, xl, 2xl, 3xl.');
   L.push(`spacing: tshirt(number([${Object.values(t.space).map(px).join(', ')}]), min: { none: 0 }, transforms: none)`);
   L.push('');
-  L.push('// Strokes: 1 px borders (line, line-soft) and the focus ring.');
+  L.push('// Strokes: 1 px borders (line, line-soft), the focus ring, and the icons: Lucide draws a 2 px stroke on 24 px,');
+  L.push('// scaled to the icon sizes.');
   L.push('stroke.width.subtle: 1');
   L.push(`stroke.width.mid: ${px(t.size['focus-ring'])}`);
+  L.push(`stroke.width.icon: ${Math.round(px(t.size.icon) / 12 * 100) / 100}`);
+  L.push(`stroke.width.icon-sm: ${Math.round(px(t.size['icon-sm']) / 12 * 100) / 100}`);
   L.push('');
   L.push('// Radius and fixed sizes: Fleet is square-cornered and dense.');
   for (const [k, v] of Object.entries(t.radius)) L.push(`fleet.radius.${k}: ${px(v)}`);

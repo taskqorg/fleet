@@ -90,9 +90,12 @@ font.weight.bold:    600
 // Spacing: space.1 to space.7 of packages/ui, as xs, sm, md, lg, xl, 2xl, 3xl.
 spacing: tshirt(number([2, 4, 8, 12, 16, 24, 32]), min: { none: 0 }, transforms: none)
 
-// Strokes: 1 px borders (line, line-soft) and the focus ring.
+// Strokes: 1 px borders (line, line-soft), the focus ring, and the icons: Lucide draws a 2 px stroke on 24 px,
+// scaled to the icon sizes.
 stroke.width.subtle: 1
 stroke.width.mid: 2
+stroke.width.icon: 1.33
+stroke.width.icon-sm: 1.17
 
 // Radius and fixed sizes: Fleet is square-cornered and dense.
 fleet.radius.sm: 2
