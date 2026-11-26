@@ -114,6 +114,204 @@ func (v *AgentEffectiveRequest) Validate() error {
 	return nil
 }
 
+type AgentGapClass struct {
+	Class         string            `json:"class"`
+	Count         int64             `json:"count"`
+	Daily         []AgentGapDay     `json:"daily"`
+	Examples      []AgentGapExample `json:"examples"`
+	Executions    int64             `json:"executions"`
+	Family        string            `json:"family"`
+	FirstAt       string            `json:"firstAt"`
+	Harnesses     []AgentGapCount   `json:"harnesses"`
+	Hosts         []AgentGapCount   `json:"hosts"`
+	LastAt        string            `json:"lastAt"`
+	PreviousCount int64             `json:"previousCount"`
+	Profiles      []AgentGapCount   `json:"profiles"`
+	Projects      []AgentGapCount   `json:"projects"`
+	Setting       AgentGapSetting   `json:"setting"`
+	Title         string            `json:"title"`
+	Tools         []AgentGapCount   `json:"tools"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapClass) Validate() error {
+	if v.Daily == nil {
+		return Missing("daily")
+	}
+	for i := range v.Daily {
+		if err := Check(&v.Daily[i], "daily"); err != nil {
+			return err
+		}
+	}
+	if v.Examples == nil {
+		return Missing("examples")
+	}
+	for i := range v.Examples {
+		if err := Check(&v.Examples[i], "examples"); err != nil {
+			return err
+		}
+	}
+	if v.Harnesses == nil {
+		return Missing("harnesses")
+	}
+	for i := range v.Harnesses {
+		if err := Check(&v.Harnesses[i], "harnesses"); err != nil {
+			return err
+		}
+	}
+	if v.Hosts == nil {
+		return Missing("hosts")
+	}
+	for i := range v.Hosts {
+		if err := Check(&v.Hosts[i], "hosts"); err != nil {
+			return err
+		}
+	}
+	if v.Profiles == nil {
+		return Missing("profiles")
+	}
+	for i := range v.Profiles {
+		if err := Check(&v.Profiles[i], "profiles"); err != nil {
+			return err
+		}
+	}
+	if v.Projects == nil {
+		return Missing("projects")
+	}
+	for i := range v.Projects {
+		if err := Check(&v.Projects[i], "projects"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Setting, "setting"); err != nil {
+		return err
+	}
+	if v.Tools == nil {
+		return Missing("tools")
+	}
+	for i := range v.Tools {
+		if err := Check(&v.Tools[i], "tools"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AgentGapCount: Most first.
+type AgentGapCount struct {
+	Count int64  `json:"count"`
+	Key   string `json:"key"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapCount) Validate() error {
+	return nil
+}
+
+type AgentGapDay struct {
+	Count int64  `json:"count"`
+	Day   string `json:"day"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapDay) Validate() error {
+	return nil
+}
+
+type AgentGapExample struct {
+	At          string  `json:"at"`
+	ExecutionId string  `json:"executionId"`
+	Harness     *string `json:"harness,omitempty"`
+	HostId      *string `json:"hostId,omitempty"`
+	Line        string  `json:"line"`
+	Path        *string `json:"path,omitempty"`
+	ProfileId   *string `json:"profileId,omitempty"`
+	ProjectId   *string `json:"projectId,omitempty"`
+	Source      string  `json:"source"`
+	Tool        string  `json:"tool"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapExample) Validate() error {
+	return nil
+}
+
+type AgentGapSetting struct {
+	Kind string `json:"kind"`
+	Ref  string `json:"ref"`
+	Text string `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapSetting) Validate() error {
+	return nil
+}
+
+type AgentGapsReclassifyReply struct {
+	Executions int64  `json:"executions"`
+	Failures   int64  `json:"failures"`
+	Gaps       int64  `json:"gaps"`
+	Rules      string `json:"rules"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapsReclassifyReply) Validate() error {
+	return nil
+}
+
+type AgentGapsReclassifyRequest struct {
+	Days *int64 `json:"days,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapsReclassifyRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AgentGapsReclassifyRequest) Closed() bool { return true }
+
+type AgentGapsReply struct {
+	Classes        []AgentGapClass `json:"classes"`
+	ClassifiedWith []string        `json:"classifiedWith,omitempty"`
+	Days           int64           `json:"days"`
+	From           string          `json:"from"`
+	Other          int64           `json:"other"`
+	Rules          string          `json:"rules"`
+	To             string          `json:"to"`
+	Total          int64           `json:"total"`
+	Truncated      *bool           `json:"truncated,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapsReply) Validate() error {
+	if v.Classes == nil {
+		return Missing("classes")
+	}
+	for i := range v.Classes {
+		if err := Check(&v.Classes[i], "classes"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type AgentGapsRequest struct {
+	Class     *string `json:"class,omitempty"`
+	Days      *int64  `json:"days,omitempty"`
+	HostId    *string `json:"hostId,omitempty"`
+	ProfileId *string `json:"profileId,omitempty"`
+	ProjectId *string `json:"projectId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapsRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AgentGapsRequest) Closed() bool { return true }
+
 // AgentListFacts: harness defaults as at session start; roles: the project roles (project.json roles) that name this profile.
 type AgentListFacts struct {
 	Category   *string         `json:"category,omitempty"`
@@ -1691,6 +1889,8 @@ func init() {
 	for n, o := range map[string]Operation{
 		"agent_compatibility":        {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "Hosts and harnesses an agent definition (id) can run on, with the reason for each host that cannot", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"agent_effective":            {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "The effective configuration of an agent definition (id) in a project (projectId), optionally of its draft", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"id\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"id\",\"projectId\"],\"type\":\"object\"}")},
+		"agent_gaps":                 {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "What agents lack: failed agent tool calls and gateway calls of the last days (default 7, at most 30) grouped by gap class (config/agent-gaps.json), each with its daily counts, the previous window's count, counts by host, harness, profile, tool and project, the newest examples (execution, its conversation or task, the decisive line) and the setting that controls the class. class narrows to one class or family; hostId, profileId and projectId narrow the failures counted.", Changes: []string{"execution"}, InputSchema: json.RawMessage("{\"properties\":{\"class\":{\"$comment\":\"One class (missing-command:jq) or a family (missing-command).\",\"type\":\"string\"},\"days\":{\"$comment\":\"The window in days back from now, 1 to 30; default 7.\",\"minimum\":1,\"type\":\"integer\"},\"hostId\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"agent_gaps_reclassify":      {Read: false, Long: true, Errors: []int{400}, Auth: "owner", Agent: "tool", Description: "Owner or full access: classify the failures of the last days (default 30, at most 90) again with the current rules of config/agent-gaps.json; answers how many executions and failures it read and the gaps it recorded", InputSchema: json.RawMessage("{\"properties\":{\"days\":{\"$comment\":\"1 to 90; default 30.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"catalogue":                  {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "tool", Description: "The method catalogue of a project's capability (projectId): methods, the recommended one and its source", Changes: []string{"definition", "experiment", "score", "execution", "project-recommendation"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"definition_add_skill":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Add a shipped skill to named agents or all agents in a category (skill, agents[] or category, message, preview)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"agents\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"category\":{\"type\":\"string\"},\"message\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"},\"skill\":{\"type\":\"string\"}},\"required\":[\"skill\",\"preview\"],\"type\":\"object\"}")},
 		"definition_create":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Create a definition (kind, id, content, message) as its first revision", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"$comment\":\"Exactly one property, matching the kind.\",\"properties\":{\"agent\":{\"additionalProperties\":false,\"properties\":{\"category\":{\"$comment\":\"Agent Library category (coding, research, review, operations, design, lab).\",\"type\":\"string\"},\"codeMode\":{\"enum\":[\"add\",\"only\"],\"type\":\"string\"},\"collaborationTools\":{\"type\":\"boolean\"},\"connections\":{\"$comment\":\"At most 32 granted connection names.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"delegationProfiles\":{\"$comment\":\"At most 8 profile ids this profile may delegate to.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"effort\":{\"$comment\":\"Codex only (required there); null or absent for the other harnesses.\",\"type\":[\"string\",\"null\"]},\"experiment\":{\"$comment\":\"Lab experiment id that created this variant.\",\"type\":\"string\"},\"fleetOperations\":{\"type\":\"boolean\"},\"fleetTools\":{\"type\":\"boolean\"},\"gitNetwork\":{\"$comment\":\"The agent may use the network for git; on Codex the sandbox network, read-only runs included.\",\"type\":\"boolean\"},\"harness\":{\"enum\":[\"codex\",\"claude\",\"antigravity\",\"acp\"],\"type\":\"string\"},\"harnessCandidate\":{\"additionalProperties\":false,\"properties\":{\"asset\":{\"additionalProperties\":false,\"properties\":{\"entry\":{\"type\":\"string\"},\"sha256\":{\"type\":\"string\"},\"sha512\":{\"type\":\"string\"},\"url\":{\"type\":\"string\"},\"version\":{\"type\":\"string\"}},\"required\":[\"version\",\"url\"],\"type\":\"object\"},\"name\":{\"enum\":[\"codex\",\"claude\",\"antigravity\",\"acp\"],\"type\":\"string\"}},\"required\":[\"name\",\"asset\"],\"type\":\"object\"},\"icon\":{\"$comment\":\"Optional library icon identifier.\",\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"imageGeneration\":{\"$comment\":\"Codex only: true turns on Codex's built-in image generation, which draws on the run's ChatGPT subscription; absent or false keeps it off.\",\"type\":\"boolean\"},\"instructionRole\":{\"$comment\":\"codex: developer (or absent); claude: system; antigravity and acp: user.\",\"type\":\"string\"},\"instructions\":{\"type\":\"string\"},\"mcpServers\":{\"$comment\":\"Unique named MCP selections with explicit tool allowlists; legacy design-rules data retained.\",\"items\":{\"additionalProperties\":false,\"properties\":{\"data\":{\"$comment\":\"Legacy design-rules experiment data, otherwise only tools: explicit unique tool names.\",\"type\":\"object\"},\"id\":{\"$comment\":\"Named host MCP binding or design-rules; no executable or environment values.\",\"type\":\"string\"}},\"required\":[\"id\",\"data\"],\"type\":\"object\"},\"type\":\"array\"},\"model\":{\"type\":\"string\"},\"monogram\":{\"$comment\":\"Optional 1-4 character monogram for card avatars.\",\"type\":\"string\"},\"publishing\":{\"$comment\":\"The agent publishes to the project's forge (project-publishing: publish_draft, request_merge). Its runs in a project with execution.forge, pipeline steps included, need a forge login; a pipeline step of a profile without it never publishes. Absent: false.\",\"type\":\"boolean\"},\"purpose\":{\"$comment\":\"Short one-line summary shown in the Agent Library.\",\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"includeDefaultCustomizations\":{\"$comment\":\"Only false is supported.\",\"type\":\"boolean\"},\"mode\":{\"enum\":[\"plan\",\"accept-edits\"],\"type\":\"string\"},\"sandbox\":{\"type\":\"boolean\"}},\"type\":\"object\"},\"skills\":{\"$comment\":\"At most 32 skill ids.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"tags\":{\"$comment\":\"At most 16 library filter tags.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"tools\":{\"$comment\":\"Claude only: absent preserves ordinary native tools; an explicit list restricts them.\",\"items\":{\"enum\":[\"Read\",\"Edit\",\"Write\",\"Bash\",\"Glob\",\"Grep\",\"Task\",\"TaskStop\"],\"type\":\"string\"},\"type\":\"array\"},\"variantOf\":{\"$comment\":\"Base profile id when created as a Lab variant.\",\"type\":\"string\"}},\"required\":[\"id\",\"model\",\"instructions\",\"mcpServers\"],\"type\":\"object\"},\"catalogue\":{\"$comment\":\"The whole config/catalogue.json as it is today (one capability).\",\"properties\":{\"capability\":{\"type\":\"string\"},\"methods\":{\"items\":{\"properties\":{\"agentProfile\":{\"type\":\"string\"},\"capability\":{\"type\":\"string\"},\"configRef\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipeline\":{\"type\":\"string\"},\"scope\":{\"type\":\"string\"},\"sourceExperiment\":{\"type\":\"string\"},\"status\":{\"enum\":[\"experimental\",\"recommended\",\"deprecated\"],\"type\":\"string\"}},\"required\":[\"id\",\"name\",\"scope\",\"pipeline\"],\"type\":\"object\"},\"type\":\"array\"},\"sharedDefault\":{\"type\":\"string\"}},\"required\":[\"capability\",\"methods\"],\"type\":\"object\"},\"pipeline\":{\"$comment\":\"A pipeline file (config/pipelines/\\u003cid\\u003e.json); validatePipeline is its full check.\",\"additionalProperties\":false,\"properties\":{\"description\":{\"$comment\":\"What the pipeline does, one or two plain sentences.\",\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"input\":{\"$comment\":\"What it reads, a short phrase.\",\"type\":\"string\"},\"output\":{\"$comment\":\"What it returns, a short phrase.\",\"type\":\"string\"},\"resultStep\":{\"type\":\"string\"},\"steps\":{\"items\":{\"$comment\":\"kind api (connection, tool, arguments, mode, output), agent (profile, prompt, optional output mode review-reply) or script (command, timeout_ms, host); validatePipeline is the full check.\",\"properties\":{\"arguments\":{},\"command\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\"},\"description\":{\"$comment\":\"What the step does, a short phrase (the outline line).\",\"type\":\"string\"},\"host\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"mode\":{\"type\":\"string\"},\"output\":{},\"profile\":{\"type\":\"string\"},\"prompt\":{\"type\":\"string\"},\"recent_tool\":{\"type\":\"string\"},\"status_tool\":{\"type\":\"string\"},\"timeout_ms\":{\"type\":\"integer\"},\"tool\":{\"type\":\"string\"},\"when\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"equals\":{\"type\":\"boolean\"},\"kind\":{\"const\":\"boolean\"},\"source\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"step\":{\"type\":\"string\"}},\"required\":[\"step\",\"path\"],\"type\":\"object\"}},\"required\":[\"kind\",\"source\",\"equals\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"domain\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"equals\":{\"type\":\"string\"},\"kind\":{\"const\":\"enum\"},\"source\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"step\":{\"type\":\"string\"}},\"required\":[\"step\",\"path\"],\"type\":\"object\"}},\"required\":[\"kind\",\"source\",\"domain\",\"equals\"],\"type\":\"object\"}]}},\"required\":[\"id\",\"kind\"],\"type\":\"object\"},\"type\":\"array\"},\"version\":{\"type\":\"integer\"}},\"required\":[\"version\",\"id\",\"steps\"],\"type\":\"object\"},\"project\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false}},\"type\":\"object\"},\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"},\"message\":{\"type\":\"string\"}},\"required\":[\"kind\",\"id\",\"content\",\"message\"],\"type\":\"object\"}")},

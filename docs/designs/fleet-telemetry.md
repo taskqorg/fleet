@@ -292,6 +292,16 @@ One System screen (owner decision), built from `packages/ui`. Telemetry supplies
 
 Spans cover server-side work only; JavaScript errors of the operator app, and unexpected errors and panics of the coordinator and the executor, go to Bugsink, the shared error tracker. Agents read them through the `bugsink` connection and the owner gets new issues in Needs you ([error tracking](fleet-error-tracking.md)). Fleet keeps no error store of its own.
 
+### 10. Agent gaps
+
+What agents lack, read as data: a failed tool call of an agent run, or a failed gateway call, gets a gap class at ingest from the rule table [`config/agent-gaps.json`](../../config/agent-gaps.json) ([agent_gaps.go](../../go/coordinator/agent_gaps.go)).
+
+*   **Sources.** Agent: a tool block with state `failed` in a stored event of an agent run (`fleetNormalized.blocks`); its text is the tool's output, or the Codex item's error when the output is empty; its server is the MCP name prefix or the Codex item's server. Gateway: a `tool_run` row of spool ingest with outcome other than `ok`; its text is the call's `errorCode`.
+*   **Rules.** In order, the first whose source, `shell` and `match` hold wins; `class` may take match groups, `{tool}` and `{connection}`. `skip` records nothing (a gateway error the agent saw is counted from the call row; a local server not up is no gap). A shell command no rule names is no gap: its exit status is the program's answer. Any other unmatched failure is `other` with its decisive line (the first line naming an error).
+*   **Classes.** `missing-command:<name>`, `missing-module:<name>`, `sandbox-write`, `sandbox-shm`, `sandbox-network`, `sandbox-code`, `approval-denied`, `tool-unavailable:<tool>`, `browser-unready`, `auth-unready`, `model-unsupported`, `fleet-refused:<tool>`, `fleet-unconfirmed:<tool>`, `mcp-refused:<connection>/<tool>`, `gateway-unknown-tool`, `gateway-quota`, `gateway-rejected:<connection>/<tool>`, `gateway-provider-down:<connection>`, `other`. Each family names its controlling setting (`setting`: kind, the file or operation, what a fix there does for every future agent).
+*   **Storage.** `agent_gap`: one row per classified failure (event id and block index, or the call id), on the agent run that lacked something (a gateway call's parent run, else the call's row), with the rules digest. Host, harness, profile and project come from the run. `agent_gap_pass` records each classification of a window with the rules it used; the `agent-gaps` pass (at start, then hourly) classifies the last 30 days again when no pass used the current rules, and `agent_gaps_reclassify` (owner) does it on request.
+*   **Read.** `agent_gaps` (agent tool): per class the count, the previous window's count, daily counts with empty days, distinct executions, counts by host, harness, profile, tool and project, the five newest examples (one per execution, with the app path of its conversation, task or Lab experiment) and the setting; filters by class or family, host, profile and project.
+
 ## Settings
 
 All numbers in this design are settings; these are their defaults, tuned from the first week of data.

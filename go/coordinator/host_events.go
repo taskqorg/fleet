@@ -378,6 +378,9 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	if err := putEventBatch(q, prepared, execution.ProjectID); err != nil {
 		return none, err
 	}
+	if err := ingestGaps(q, execution, prepared); err != nil {
+		return none, err
+	}
 	for _, p := range prepared {
 		if c := p.conflict; c != nil && c.State != "delivered" {
 			at := nowMs()

@@ -37,6 +37,13 @@ CREATE POLICY project_scope ON activity FOR ALL TO public USING ((fleet_visible(
    FROM session s
   WHERE (s.id = activity.session_id)))) OR ((project_id IS NULL) AND (holder = current_setting('fleet.person'::text, true)))));
 
+-- agent_gap
+ALTER TABLE agent_gap ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON agent_gap;
+CREATE POLICY live ON agent_gap AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON agent_gap;
+CREATE POLICY project_scope ON agent_gap FOR ALL TO public USING (fleet_visible(project_id));
+
 -- api_connection
 ALTER TABLE api_connection ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON api_connection;

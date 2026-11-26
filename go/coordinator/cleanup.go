@@ -300,6 +300,7 @@ var referenceMap = []objectRef{
 	{table: "transport_conflict", column: "original_event_id", mode: refNone},
 	{table: "transport_conflict", column: "collision_event_id", mode: refNone},
 	{table: "problem_dismissal", column: "project_id", kind: "project", mode: refOwn},
+	{table: "agent_gap", column: "project_id", kind: "project", mode: refOwn},
 	{table: "project_recommendation", column: "id", mode: refNone},
 	{table: "project_recommendation", column: "project_id", kind: "project", mode: refOwn},
 	{table: "project_recommendation", column: "method_id", mode: refNone}, // a catalogue method
@@ -372,7 +373,7 @@ var objectTables = []struct{ kind, table, filter string }{
 var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "score", "experiment_note",
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
 	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
-	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict", "bot", "bot_task", "work_plan", "board_message"}, deliveryTables...)
+	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "agent_gap", "project_recommendation", "transport_conflict", "bot", "bot_task", "work_plan", "board_message"}, deliveryTables...)
 
 // keptRows: rows of a table that neither go with an object nor keep one. None now: the audit records that outlive what
 // they describe (the journal of M0) have their own tables without a refOwn column (migration 82).
@@ -380,7 +381,7 @@ var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
 var purgeOrder = append([]string{"bot_task", "trigger_log", "trigger", "bot", "board_message", "work_plan", "score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
-	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
+	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal", "agent_gap",
 	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",
 	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "telegram_turn", "telegram_work", "session", "execution",

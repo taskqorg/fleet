@@ -95,6 +95,24 @@ CREATE TABLE activity (
   "group_key" text NOT NULL,
   "detail" jsonb
 );
+CREATE TABLE agent_gap (
+  "id" text NOT NULL,
+  "execution_id" text NOT NULL,
+  "project_id" text,
+  "source" text NOT NULL,
+  "at" timestamp with time zone NOT NULL,
+  "class" text NOT NULL,
+  "family" text NOT NULL,
+  "tool" text NOT NULL,
+  "line" text NOT NULL,
+  "rules" text NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE agent_gap_pass (
+  "rules" text NOT NULL,
+  "days" integer NOT NULL,
+  "at" timestamp with time zone NOT NULL
+);
 CREATE TABLE agent_tool_receipt (
   "id" text NOT NULL,
   "execution_id" text NOT NULL,
