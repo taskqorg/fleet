@@ -239,6 +239,104 @@ func (q *Queries) PipelineHostShare(ctx context.Context, id string) (PipelineHos
 	return i, err
 }
 
+const pipelineInputRefAdd = `-- name: PipelineInputRefAdd :exec
+INSERT INTO pipeline_input_ref(id, run_id, path) VALUES($1, $2, $3) ON CONFLICT (run_id, path) DO NOTHING
+`
+
+type PipelineInputRefAddParams struct {
+	ID    string
+	RunID string
+	Path  string
+}
+
+// A preparing run's input by reference waits on the input-refs queue (pipeline_refs.go).
+func (q *Queries) PipelineInputRefAdd(ctx context.Context, arg PipelineInputRefAddParams) error {
+	_, err := q.db.Exec(ctx, pipelineInputRefAdd, arg.ID, arg.RunID, arg.Path)
+	return err
+}
+
+const pipelineInputRefDone = `-- name: PipelineInputRefDone :exec
+DELETE FROM pipeline_input_ref WHERE id=$1
+`
+
+// One stored input leaves the queue.
+func (q *Queries) PipelineInputRefDone(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, pipelineInputRefDone, id)
+	return err
+}
+
+const pipelineInputRefDrop = `-- name: PipelineInputRefDrop :exec
+DELETE FROM pipeline_input_ref WHERE run_id=$1
+`
+
+// A run that ended (a failed input, a cancel) stages nothing more.
+func (q *Queries) PipelineInputRefDrop(ctx context.Context, runID string) error {
+	_, err := q.db.Exec(ctx, pipelineInputRefDrop, runID)
+	return err
+}
+
+const pipelineInputRefDue = `-- name: PipelineInputRefDue :many
+SELECT id, attempts FROM pipeline_input_ref WHERE next_attempt_at<=$1::pg_catalog.timestamptz ORDER BY next_attempt_at, id LIMIT $2
+`
+
+type PipelineInputRefDueParams struct {
+	Now time.Time
+	Lim int32
+}
+
+type PipelineInputRefDueRow struct {
+	ID       string
+	Attempts int32
+}
+
+func (q *Queries) PipelineInputRefDue(ctx context.Context, arg PipelineInputRefDueParams) ([]PipelineInputRefDueRow, error) {
+	rows, err := q.db.Query(ctx, pipelineInputRefDue, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PipelineInputRefDueRow
+	for rows.Next() {
+		var i PipelineInputRefDueRow
+		if err := rows.Scan(&i.ID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineInputRefGet = `-- name: PipelineInputRefGet :one
+SELECT run_id, path FROM pipeline_input_ref WHERE id=$1
+`
+
+type PipelineInputRefGetRow struct {
+	RunID string
+	Path  string
+}
+
+func (q *Queries) PipelineInputRefGet(ctx context.Context, id string) (PipelineInputRefGetRow, error) {
+	row := q.db.QueryRow(ctx, pipelineInputRefGet, id)
+	var i PipelineInputRefGetRow
+	err := row.Scan(&i.RunID, &i.Path)
+	return i, err
+}
+
+const pipelineInputRefLeft = `-- name: PipelineInputRefLeft :one
+SELECT count(*)::bigint FROM pipeline_input_ref WHERE run_id=$1
+`
+
+// The run's inputs by reference not stored yet.
+func (q *Queries) PipelineInputRefLeft(ctx context.Context, runID string) (int64, error) {
+	row := q.db.QueryRow(ctx, pipelineInputRefLeft, runID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const pipelineOpenJobs = `-- name: PipelineOpenJobs :many
 SELECT id FROM execution WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') ORDER BY id FOR UPDATE
 `

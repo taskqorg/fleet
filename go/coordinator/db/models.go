@@ -1378,6 +1378,15 @@ type PersonalLabDraft struct {
 	UpdatedAt        time.Time
 }
 
+type PipelineInputRef struct {
+	ID            string
+	RunID         string
+	Path          string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
 type PipelineRun struct {
 	RunID            string
 	DefinitionSha256 string
