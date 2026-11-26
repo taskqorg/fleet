@@ -970,9 +970,11 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 			}
 		}
 		cursor = next
-		if len(page) < 500 {
-			break
-		}
+		// One page per pass: the cursor commits after it, so a long backlog (a busy hour of 50 runs, a pass lost to a
+		// restart) moves forward page by page instead of being read whole again each pass and never committing
+		// (pass.triggers ran 111 to 334 s on prod, 2026-11-26, and was cancelled by each release). The trigger runs
+		// again at its next pass for the rest.
+		break
 	}
 	if target.bot != nil && !target.bot.Paused && slices.Contains(t.IfChanged, "problem") { // a paused bot is woken by nothing
 		more, err := problemTriggerParts(q, target.bot.Id, seen, ownedProblems)
