@@ -1832,7 +1832,8 @@ func init() {
 		if r.Limit != nil && *r.Limit <= 0 {
 			return contract.QuestionsListReply{}, fail(400, "Expected positive integer limit")
 		}
-		qs, err := questionsList(q, deref(r.TaskId), deref(r.BotId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds, r.Limit)
+		qs, err := questionRows(q, db.TaskQuestionsParams{TaskID: strPtr(deref(r.TaskId)), BotID: strPtr(deref(r.BotId)), State: strPtr(deref(r.State)), Kind: strPtr(deref(r.Kind)), Lim: r.Limit,
+			PeopleOnly: r.ForPeople != nil && *r.ForPeople}, r.ProjectIds, r.ExcludeProjectIds)
 		return contract.QuestionsListReply{Questions: qs}, err
 	})
 	// questions_withdraw: the owner (or full access) withdraws open questions that no longer need anyone, with one

@@ -431,7 +431,7 @@ function Focus(props: { go: (to: string) => void }) {
 function useOutside() {
   const focused = createMemo(() => prefs.value.focus.some(p => !prefs.value.ignored.includes(p)));
   // The server leaves ignored projects out (scopeIds without the focus); outsideFocus drops the focused ones.
-  const q = useOp('questions_list', () => (focused() ? { state: 'open', ...scopeIds(false) } : null));
+  const q = useOp('questions_list', () => (focused() ? { state: 'open', forPeople: true, ...scopeIds(false) } : null));
   // Executions change many times a second (gateway calls): problems are read again at most once a minute.
   const e = useOp('executions_list', () => (focused() ? { needsYou: true, ...scopeIds(false) } : null), { quiet: 60_000, every: 60_000 });
   return createMemo(() => {
