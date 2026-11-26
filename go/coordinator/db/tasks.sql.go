@@ -1074,6 +1074,19 @@ func (q *Queries) TaskList(ctx context.Context, arg TaskListParams) ([]TaskListR
 	return items, nil
 }
 
+const taskManagingBot = `-- name: TaskManagingBot :one
+SELECT bot_id FROM bot_task WHERE task_id = $1 AND link_kind IN ('created', 'managed') AND tombstoned_at IS NULL
+ORDER BY created_at LIMIT 1
+`
+
+// The bot that created or manages a task: a question in the task goes to it, not to a person (askQuestionAs).
+func (q *Queries) TaskManagingBot(ctx context.Context, taskID string) (string, error) {
+	row := q.db.QueryRow(ctx, taskManagingBot, taskID)
+	var bot_id string
+	err := row.Scan(&bot_id)
+	return bot_id, err
+}
+
 const taskNotFoundDiag = `-- name: TaskNotFoundDiag :one
 SELECT
   coalesce(project_id, '')::text AS project_id,
@@ -1261,8 +1274,9 @@ WHERE ($1::text IS NULL OR id = $1)
  AND ($5::text IS NULL OR kind::text = $5)
  AND ($6::text[] IS NULL OR project_id = ANY($6::text[]) OR ($7::boolean AND project_id IS NULL))
  AND NOT coalesce(project_id = ANY($8::text[]), false) AND (NOT $9::boolean OR project_id IS NOT NULL)
+ AND (NOT $10::boolean OR coalesce(addressed_to, '') NOT LIKE 'bot:%')
 ORDER BY seq
-LIMIT $10::bigint
+LIMIT $11::bigint
 `
 
 type TaskQuestionsParams struct {
@@ -1275,6 +1289,7 @@ type TaskQuestionsParams struct {
 	ProjectsNull bool
 	Excluded     []string
 	ExcludeNull  bool
+	PeopleOnly   bool
 	Lim          *int64
 }
 
@@ -1311,6 +1326,7 @@ func (q *Queries) TaskQuestions(ctx context.Context, arg TaskQuestionsParams) ([
 		arg.ProjectsNull,
 		arg.Excluded,
 		arg.ExcludeNull,
+		arg.PeopleOnly,
 		arg.Lim,
 	)
 	if err != nil {

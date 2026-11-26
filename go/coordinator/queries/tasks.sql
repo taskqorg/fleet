@@ -139,6 +139,7 @@ WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
  AND (sqlc.narg(kind)::text IS NULL OR kind::text = sqlc.narg(kind))
  AND (sqlc.narg(projects)::text[] IS NULL OR project_id = ANY(sqlc.narg(projects)::text[]) OR (@projects_null::boolean AND project_id IS NULL))
  AND NOT coalesce(project_id = ANY(sqlc.narg(excluded)::text[]), false) AND (NOT @exclude_null::boolean OR project_id IS NOT NULL)
+ AND (NOT @people_only::boolean OR coalesce(addressed_to, '') NOT LIKE 'bot:%')
 ORDER BY seq
 LIMIT sqlc.narg(lim)::bigint;
 
@@ -385,3 +386,8 @@ JOIN session s ON s.id = t.created_by_session_id OR s.task_id = t.id OR (s.bot_i
 LEFT JOIN session_summary ss ON ss.session_id = s.id
 WHERE t.id = $1 AND s.tombstoned_at IS NULL AND coalesce(s.actor, '') <> 'program-worker'
 ORDER BY s.seq;
+
+-- name: TaskManagingBot :one
+-- The bot that created or manages a task: a question in the task goes to it, not to a person (askQuestionAs).
+SELECT bot_id FROM bot_task WHERE task_id = $1 AND link_kind IN ('created', 'managed') AND tombstoned_at IS NULL
+ORDER BY created_at LIMIT 1;

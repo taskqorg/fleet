@@ -104,7 +104,8 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 	}
 
 	// Questions: every open question is a card's question, oldest first; problems are a summary, never questions.
-	qs, err := questionsList(q, "", "", "open", "", r.ProjectIds, r.ExcludeProjectIds, nil)
+	// Only questions to people: one a bot owns (a question in a task it manages) is the bot's to answer.
+	qs, err := questionRows(q, db.TaskQuestionsParams{State: ptr("open"), PeopleOnly: true}, r.ProjectIds, r.ExcludeProjectIds)
 	if err != nil {
 		return out, err
 	}

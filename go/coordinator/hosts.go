@@ -219,9 +219,14 @@ type holderNoticeData struct {
 
 // notifyHolder: someone with full access changed a setting of a row another person holds; tell the holder with a
 // question addressed to them. what is the change without its subject ("changed autoUpdate of your host x."): the
-// notice names who made it (an agent person such as Site agents too), never "the owner" by default.
+// notice names who made it, never "the owner" by default; an agent's change asks nothing.
 func notifyHolder(q *Request, holder, what string) error {
 	if q.person == nil || !fullAccess(q.person) || q.person.Email == holder {
+		return nil
+	}
+	// An agent's change (a machine identity such as Site agents, or an agent run) is in the journal; it never asks the
+	// holder to acknowledge it (OR-71: Needs you holds only what a person alone can give).
+	if q.agent != "" || q.person.AccessCommonName != "" {
 		return nil
 	}
 	by := q.person.Email

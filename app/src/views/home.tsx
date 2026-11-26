@@ -156,7 +156,9 @@ function HomePage() {
     for (const s of rows) {
       const mine = qs.get(s.id) ?? [];
       const l = lifeOfSession(s.state);
-      const group = mine.length || l === 'waiting' ? 'waiting' : GROUPS.find(g => g.id === l)?.id;
+      // Waiting for you holds only a question to this person (home.md); a session waiting on other work (its task, a
+      // worker, a review) is in work, so it is Working, and its card still says what it waits for.
+      const group = mine.length ? 'waiting' : l === 'waiting' ? 'working' : GROUPS.find(g => g.id === l)?.id;
       if (!group) continue;
       const card: Card = { key: s.id, group, at: group === 'waiting' && mine.length ? ms(mine[0].askedAt) : ms(s.activityAt), s, qs: mine };
       const f = group === 'failed' ? failureOf().get(s.id) : undefined;
@@ -204,7 +206,7 @@ function HomePage() {
   createEffect(() => [loaded(), view.data?.bots] as const, () => { requestAnimationFrame(measure); });
   const quiet = createMemo(() => loaded() && !grouped().some(g => (g.id === 'waiting' || g.id === 'failed') && g.cards.length > 0));
 
-  // Pulse: working and queued sessions, sessions done today, then blockers.
+  // Pulse: the Working group's count (one source with the group below), queued sessions, done today, then problems.
   const rows = () => view.data?.sessions ?? [];
   const chips = createMemo(() => blockers(view.data?.blockers ?? []));
   const problems = createMemo((): PulseProblems | undefined => {
@@ -404,7 +406,7 @@ function HomePage() {
           <Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} />
         </Show>
         <PulseLine
-          working={rows().filter(s => lifeOfSession(s.state) === 'working').length}
+          working={grouped().find(g => g.id === 'working')?.cards.length ?? 0}
           queued={rows().filter(s => lifeOfSession(s.state) === 'queued').length}
           done={view.data?.counts.doneToday ?? 0}
           blockers={chips()}
