@@ -8,7 +8,7 @@ import {
   OpsSummary, KvRow, Num, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, finishedStates,
   OpenQuestion, Preview, StateDot, statesOf, type Tone,
-  ShellStatus, ShellActions, WorkFacts, peerFence, useTick, FacetChips, FactCount,
+  ShellStatus, ShellActions, WorkFacts, peerFence, useTick, FacetChips, FactCount, ProjectTile,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -232,6 +232,8 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
   const groups = createMemo(() => props.page.list.groups.filter(g => g.count > 0 && !isWaitingGroup(props.page.rowsGroup, g.key)));
   const projects = useOp('project_list', () => (props.page.rowsGroup === 'project' ? {} : null));
   const projectNames = createMemo(() => new Map<string, string>((projects.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)])));
+  // A project group leads with the project's tile in its identity colour (OR-72), not the folder icon.
+  const projectTiles = createMemo(() => new Map((projects.data?.projects ?? []).map(p => [String(p.id), { code: typeof p.code === 'string' ? p.code : '', color: (typeof p.color === 'string' && p.color) || (typeof p.autoColor === 'string' ? p.autoColor : ''), pattern: typeof p.pattern === 'string' ? p.pattern : '' }])));
   const groupTitle = createMemo(() => GROUPS.find(g => g[0] === props.page.rowsGroup)?.[1] ?? props.page.rowsGroup);
   const open = (id: string) => go(nextUrl(currentUrl(), 'conversations', { focus: id }));
   return (
@@ -247,6 +249,9 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
                   {g => (
                     <KvRow
                       icon={groupIcon(props.page.rowsGroup, g.key)}
+                      lead={props.page.rowsGroup === 'project' && projectTiles().get(g.key)?.code
+                        ? (() => { const t = projectTiles().get(g.key)!; return <ProjectTile code={t.code} color={t.color} pattern={t.pattern} size="sm" />; })()
+                        : undefined}
                       label={groupLabel(props.page.rowsGroup, props.page.rowsGroup === 'project' ? projectNames().get(g.key) ?? g.label : g.label) || g.key}
                       value={<Num m={{ value: g.count, basis: 'measured' }} kind="count" />}
                     />

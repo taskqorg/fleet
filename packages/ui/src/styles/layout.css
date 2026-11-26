@@ -192,6 +192,10 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* A counter with its fact glyph (OR-73): the capsule of fact-count.md, square-cornered. */
+  .nav-count.glyph { display: inline-flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-sm); }
+  .nav-count.glyph .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .rail.mini .nav-count.glyph .icon, .tab-count.glyph .icon { display: none; }
   .nav-out { color: var(--fg-muted); }
   .nav-count.t-neutral .nav-in { color: var(--fg); }
   .nav-count.out-only { background: none; }

@@ -5,7 +5,7 @@ import { For, Match, Show, Switch, createMemo, createSignal } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  Ago, Button, DataTable, DetailSection, Empty, ErrorBanner, Fact, Icon, LiveRow, OpenQuestion, PipelineOutline, RowFacts,
+  Ago, Button, DataTable, DetailSection, Empty, ErrorBanner, Fact, FactCounts, Icon, LiveRow, OpenQuestion, PipelineOutline, RowFacts,
   Skeleton, StateBadge, TabBar, TableRow, day, duration, fileLabel, score, states, statesOf, type IconName, type StateOf, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import type { Ops } from '../api.ts';
@@ -167,9 +167,14 @@ export function ProjectOverview(props: { projectId: string }) {
               </div>
             </DetailSection>
           </Show>
+          {/* A project with nothing in flight and nothing merged has no Delivery block (OR-68). */}
+          <Show when={v().delivery.length > 0 || v().merged > 0}>
           <DetailSection title="Delivery" count={v().delivery.length || undefined} href={facet('delivery')} onOpen={() => go(facet('delivery'))}>
             <Show when={v().delivery.length > 0} fallback={
-              <p class="pw-muted-line">{['Nothing in flight', v().merged > 0 ? `${v().merged} merged` : '', v().lastMergedAt ? `last ${day(Date.parse(v().lastMergedAt!))}` : ''].filter(Boolean).join(' · ')}</p>
+              <p class="pw-muted-line pw-facts">
+                <FactCounts facts={{ merged: v().merged }} tips={{ merged: `${v().merged} merged${v().lastMergedAt ? `, last on ${day(Date.parse(v().lastMergedAt!))}` : ''}` }} />
+                <Show when={v().lastMergedAt}>{at => <span class="mono">{day(Date.parse(at()))}</span>}</Show>
+              </p>
             }>
               <ul class="live-list">
                 <For each={v().delivery}>{d => (
@@ -180,6 +185,7 @@ export function ProjectOverview(props: { projectId: string }) {
               </ul>
             </Show>
           </DetailSection>
+          </Show>
         </>
       )}</Loaded>
     </article>

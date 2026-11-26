@@ -992,6 +992,17 @@
    "status": null
   },
   {
+   "id": "f869c9d231c88821",
+   "canvas": "screens/fact-glyphs",
+   "name": "Fact glyphs · remaining screens (approved 2026-11-27)",
+   "page": "fact-glyphs",
+   "width": null,
+   "frameWidth": 1504,
+   "theme": null,
+   "component": false,
+   "status": "approved"
+  },
+  {
    "id": "903c60d389c41101",
    "canvas": "screens/flow",
    "name": "Flow: where everything is and how one moves · J1–J5",

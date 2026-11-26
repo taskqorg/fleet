@@ -4,7 +4,7 @@ import { captureRender, configureErrors } from './errors.ts';
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, Match, onSettled, Show, Switch } from 'solid-js';
 import { render, type JSX } from '@solidjs/web';
 import { createAgent, registerTools } from '@ui-sdk/core/agent';
-import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, refreshDrafts, setProjectIdentities, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, refreshDrafts, setProjectIdentities, factKinds, type FactKind, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { useLocation, useSearch, syncLocation } from './router.ts';
 import { projectCodesPending, setProjectCodes } from './routes.ts';
 import type { InfraSection } from './views/hosts.tsx';
@@ -96,6 +96,10 @@ const PAGES = workspaces.filter(w => !w.nav);
 const ROOT: Record<string, string> = Object.fromEntries(workspaces.filter(w => w.nav).map(w => [w.id, (w as { root?: string }).root ?? w.id]));
 // The counter each section shows (nav-rail.md, Counters): Projects its Tasks facet, System its Hosts.
 const COUNTER: Record<string, string> = { conversations: 'conversations', projects: 'tasks', system: 'hosts' };
+// The fact glyph of each counter on its default view (OR-73): running conversations, tasks in flight, hosts offline; a
+// counter the person set to another view keeps its plain number (its glyph would say the wrong thing).
+const COUNTER_GLYPH: Record<string, { view: string; kind: FactKind }> = { conversations: { view: 'Running', kind: 'working' }, projects: { view: 'Running', kind: 'inFlight' }, system: { view: 'Offline', kind: 'failed' } };
+const counterGlyph = (section: string, label: string) => { const g = COUNTER_GLYPH[section]; return g && g.view.toLowerCase() === label.toLowerCase() ? factKinds[g.kind].icon : undefined; };
 // Each kind the server finds: its group label, icon, the registry state family of its hits, where a hit opens (a question
 // opens its task) and the list section that takes the same query (the "All N" row).
 type Hit = Ops['search']['reply']['hits'][number];
@@ -312,7 +316,7 @@ function App() {
   const counts = useNavCounts(() => access.value.state === 'open');
   const nav = createMemo(() => {
     const c = counts();
-    return NAV.filter(n => !viewer() || n.id === 'live').map(n => c[COUNTER[n.id]] ? { ...n, count: c[COUNTER[n.id]] } : n);
+    return NAV.filter(n => !viewer() || n.id === 'live').map(n => c[COUNTER[n.id]] ? { ...n, count: { ...c[COUNTER[n.id]], icon: counterGlyph(n.id, c[COUNTER[n.id]].label) } } : n);
   });
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = entityCards(go);
