@@ -139,7 +139,7 @@ export function context(page: string): string {
     if (!ps) continue;
     L.push(`${g}:`, ...ps.map(p => `- ${p}`));
     if (g === 'Canvas') {
-      L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; a visible change is drawn first in ~/Projects/fleet-board and approved by the owner (OR-62, README.md#design-board).');
+      L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; a visible change is drawn first on a drafts/<task>/ copy in ~/Projects/fleet-board (never on its tracked canvases) and approved by the owner, then copied into your worktree (OR-62, README.md#design-board).');
       const fs = frames(index, ps);
       if (fs.length) L.push('', 'Frames (board/index.json):', ...fs);
       L.push('', 'Before you build: frame vs prod data (board frames carry illustrative data):',
