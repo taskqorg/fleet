@@ -10,6 +10,9 @@
   "mcpServers": [],
   "model": "gpt-6.2-sol",
   "publishing": true,
+  "settings": {
+    "sandbox": false
+  },
   "skills": [
     "code-review",
     "modern-web-guidance"

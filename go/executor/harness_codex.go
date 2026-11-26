@@ -293,6 +293,10 @@ func (s *codexSession) config() any {
 	return s.profile
 }
 
+// codexUnsandboxed: the profile turns Codex's sandbox off (settings.sandbox false), as Fleet runs Claude's Bash. A
+// read-only start stays read-only.
+func codexUnsandboxed(profile any) bool { return jAt(profile, "settings", "sandbox") == false }
+
 func (s *codexSession) turnRequest() M {
 	input := []any{M{"type": "text", "text": s.profile["text"], "text_elements": []any{}}}
 	for _, path := range jArr(s.profile, "localImages") { // attached images (attachments.go)
@@ -300,7 +304,9 @@ func (s *codexSession) turnRequest() M {
 	}
 	params := M{"threadId": s.thread, "model": s.profile["model"], "effort": s.profile["effort"], "input": input}
 	if jIsTrue(s.profile, "readOnly") {
-		params["sandboxPolicy"] = M{"type": "readOnly"}
+		params["sandboxPolicy"] = M{"type": "readOnly", "networkAccess": s.profile["gitNetwork"] == true}
+	} else if codexUnsandboxed(s.config()) {
+		params["sandboxPolicy"] = M{"type": "dangerFullAccess"}
 	} else if has(s.profile, "writableRoots") {
 		params["sandboxPolicy"] = M{"type": "workspaceWrite", "writableRoots": s.profile["writableRoots"], "networkAccess": s.profile["gitNetwork"] == true}
 	}
@@ -334,6 +340,8 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 			"config": M{"model_reasoning_effort": p["effort"], "sandbox_workspace_write.network_access": p["gitNetwork"] == true}}
 		if jIsTrue(p, "readOnly") {
 			params["sandbox"] = "read-only"
+		} else if codexUnsandboxed(s.config()) {
+			params["sandbox"] = "danger-full-access"
 		} else if has(p, "writableRoots") {
 			params["config"].(M)["sandbox_workspace_write.writable_roots"] = p["writableRoots"]
 		}

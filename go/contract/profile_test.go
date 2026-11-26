@@ -47,6 +47,7 @@ func TestParseProfile(t *testing.T) {
 		`{"id":"p","harness":"claude","model":"m","effort":null,"instructionRole":"system","instructions":"x","mcpServers":[],"tools":["Read","Bash"],"gitNetwork":true}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"fleetTools":true,"codeMode":"only"}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"imageGeneration":true}`,
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"settings":{"sandbox":false}}`, // Codex sandbox off
 	} {
 		if _, err := ParseProfile([]byte(good)); err != nil {
 			t.Error(good, err)
@@ -66,6 +67,8 @@ func TestParseProfile(t *testing.T) {
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"codeMode":"only","fleetTools":false}`,
 		`{"id":"p","harness":"claude","model":"m","instructionRole":"system","instructions":"x","mcpServers":[],"imageGeneration":true}`, // Codex only
 		`{"id":"p","harness":"antigravity","model":"m","instructionRole":"user","instructions":"x","mcpServers":[],"imageGeneration":false}`,
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"settings":{"mode":"plan"}}`, // Codex takes only sandbox
+		`{"id":"p","harness":"claude","model":"m","instructionRole":"system","instructions":"x","mcpServers":[],"settings":{"sandbox":false}}`,
 	} {
 		if _, err := ParseProfile([]byte(bad)); err == nil {
 			t.Error("accepted", bad)

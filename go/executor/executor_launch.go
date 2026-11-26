@@ -845,6 +845,7 @@ func codexLaunchProfile(cmd *exec.Cmd, dir string, p M, gitRoots []any) (M, erro
 	}
 	setEnv(cmd, "GOCACHE", filepath.Join(cache, "build"))
 	setEnv(cmd, "GOMODCACHE", filepath.Join(cache, "modules"))
+	setEnv(cmd, "GOPATH", filepath.Join(cache, "path")) // go install and tools that read GOPATH, not $HOME/go
 	profile := maps.Clone(p)
 	profile["writableRoots"] = append([]any{cache}, gitRoots...)
 	return profile, nil

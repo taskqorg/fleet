@@ -324,6 +324,13 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	if _, spec, _ := launch("only", "codex", M{}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":true,"read":["/work","/input"],"sandbox":true,"write":["/work","/git"]}` || spec["write"] != true || spec["edit"] != true {
 		t.Fatalf("codex authority: %v", spec)
 	}
+	// Codex with its sandbox off (settings.sandbox false): sh unsandboxed, as Claude's Bash; a read-only start stays sandboxed.
+	if _, spec, _ := launch("only", "codex", M{"settings": M{"sandbox": false}}, "/journal"); enc(spec["shell"]) != `{"sandbox":false}` || spec["write"] != true {
+		t.Fatalf("unsandboxed codex authority: %v", spec)
+	}
+	if _, spec, _ := launch("only", "codex", M{"readOnly": true, "settings": M{"sandbox": false}}, "/journal"); jAt(spec, "shell", "readOnly") != true {
+		t.Fatalf("unsandboxed codex read-only: %v", spec)
+	}
 	// Claude: each host function only with its native tool; no Bash, no sh.
 	if _, spec, _ := launch("add", "claude", M{"tools": []any{"Edit"}}, "/journal"); enc(spec["read"]) != `[]` || has(spec, "shell") || spec["write"] != false || spec["edit"] != true {
 		t.Fatalf("restricted claude: %v", spec)
@@ -339,7 +346,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 		}
 	}
 	// A read-only start: Codex's sh runs read-only, Claude keeps reads only, ACP agents get nothing that writes.
-	if _, spec, _ := launch("add", "codex", M{"readOnly": true}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":false,"read":["/work","/input"],"readOnly":true,"sandbox":true,"write":["/work"]}` || spec["write"] != false || spec["edit"] != false {
+	if _, spec, _ := launch("add", "codex", M{"readOnly": true}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":true,"read":["/work","/input"],"readOnly":true,"sandbox":true,"write":["/work"]}` || spec["write"] != false || spec["edit"] != false {
 		t.Fatalf("codex read-only: %v", spec)
 	}
 	if _, spec, _ := launch("add", "claude", M{"readOnly": true}, "/journal"); has(spec, "shell") || spec["write"] != false || spec["edit"] != false || len(jArr(spec, "read")) != 2 {
