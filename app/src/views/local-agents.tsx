@@ -4,15 +4,16 @@
 // connections with their last success and failure, Refresh and Disconnect. Connect picks a machine and harnesses and
 // shows one command per harness (local_agent_connect); a new token's value is inside its command, shown once.
 import { createMemo, createSignal, For, Show } from 'solid-js';
-import { AgeChip, Button, Choice, CopyButton, DetailSection, ErrorBanner, KvRow, ReflowRow, ReflowTable, StateBadge } from '../../../packages/ui/src/index.ts';
+import { AgeChip, Button, Choice, CopyButton, DetailSection, ErrorBanner, KvRow, ReflowRow, ReflowTable, StateBadge, harnesses } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 
 type Agent = Ops['local_agents']['reply']['agents'][number];
 type Connected = Ops['local_agent_connect']['reply'];
 
-const HARNESS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity' };
-const HARNESSES = ['claude', 'codex', 'antigravity'];
+// The harnesses a local agent can be: those of the vocabulary with a command-line agent (not a bound ACP agent).
+const HARNESSES = Object.keys(harnesses).filter(id => id !== 'acp');
+const HARNESS = (id: string) => harnesses[id]?.label ?? id;
 
 /** The row's sentence: what works, what to do. */
 function sentence(a: Agent): string {
@@ -61,7 +62,7 @@ export function LocalAgents() {
     <Show when={agents().length}>
       <ReflowTable label="Local agents" head={['Agent', 'State', 'Connections', 'Last call']} cols="minmax(10rem, 1fr) minmax(12rem, 3fr) auto auto">
         <For each={agents()}>{a =>
-          <ReflowRow name={`${HARNESS[a.harness] ?? a.harness} · ${a.machine}`} selected={open() === a.name} onOpen={() => setOpen(o => o === a.name ? '' : a.name)}
+          <ReflowRow name={`${HARNESS(a.harness)} · ${a.machine}`} selected={open() === a.name} onOpen={() => setOpen(o => o === a.name ? '' : a.name)}
             cells={[
               { part: 'state', el: <span class="res-bar"><StateBadge family="localAgent" state={a.state} /> <span class="muted">{sentence(a)}</span></span> },
               { part: 'meta', el: a.state === 'refresh' ? `${a.connections.length} of ${a.connections.length + a.missing.length}` : `${a.connections.length} connections` },
@@ -105,7 +106,7 @@ function Command(props: { c: Connected }) {
 function ConnectFlow(props: { busy: string; commands: Connected[]; onConnect: (machine: string, harness: string) => Promise<unknown> }) {
   const hosts = useOp('hosts_list', {});
   const [machine, setMachine] = createSignal('');
-  const [harnesses, setHarnesses] = createSignal<string[]>(['claude', 'codex', 'antigravity']);
+  const [harnesses, setHarnesses] = createSignal<string[]>(HARNESSES);
   const machines = createMemo(() => (hosts.data?.hosts ?? []).map(h => h.id));
   const pick = () => machine() || machines()[0] || '';
   const toggle = (h: string) => setHarnesses(hs => hs.includes(h) ? hs.filter(x => x !== h) : [...hs, h]);
@@ -114,13 +115,13 @@ function ConnectFlow(props: { busy: string; commands: Connected[]; onConnect: (m
     <span class="muted">1. Machine: a Fleet host you work on</span>
     <Choice label="Machine" options={machines().map(id => ({ id, label: id }))} value={pick()} onChange={setMachine} />
     <span class="muted">2. Harnesses</span>
-    <Choice label="Harnesses" options={HARNESSES.map(id => ({ id, label: HARNESS[id] }))} value={harnesses()} onChange={toggle} />
+    <Choice label="Harnesses" options={HARNESSES.map(id => ({ id, label: HARNESS(id) }))} value={harnesses()} onChange={toggle} />
     <div class="res-bar">
       <Button label={props.busy ? 'Getting commands' : 'Get commands'} icon="terminal" kind="primary"
         disabledReason={!pick() ? 'No host' : !harnesses().length ? 'Pick a harness' : props.busy ? 'Working' : undefined} onClick={() => void go()} />
     </div>
     <span class="muted">3. Run each command on {pick() || 'the machine'}. It saves the key, adds Fleet tools to that harness and calls each connection once. Settings that are not Fleet tools stay as they are.</span>
     <For each={props.commands.filter(c => c.machine === pick())}>{c =>
-      <div class="stack"><b>{HARNESS[c.harness] ?? c.harness}</b><Command c={c} /></div>}</For>
+      <div class="stack"><b>{HARNESS(c.harness)}</b><Command c={c} /></div>}</For>
   </div>;
 }
