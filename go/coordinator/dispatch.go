@@ -1673,12 +1673,12 @@ const continuationHostWait = 15 * 60 * 1000 // milliseconds
 
 // nativeFor: the session's native id when the run starts on the host of its last run. A native session lives in that
 // host's harness home, so on another host the executor refuses to resume it ("native account/session binding
-// mismatch") on every run; there the run starts a fresh native session instead.
+// mismatch") on every run. Omit the ID when starting a fresh native session.
 func nativeFor(native, last *string, host string) *string {
-	if native == nil || last == nil || *last == "" || *last == host {
-		return native
+	if lastHost := deref(last); lastHost != "" && lastHost != host {
+		return nil
 	}
-	return ptr("")
+	return strPtr(native)
 }
 
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
@@ -1736,7 +1736,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	// fields, never a blind merge over the fields above (C7).
 	p := &contract.StartPayload{Harness: ptr(harnessOfProfile(liveSession.AgentConfig)), Text: strPtr(d.Input), Setup: strPtr(setup),
 		WorkspaceKey: strPtr(d.WorkspaceKey), WorkingDirectory: strPtr(d.WorkingDirectory), Model: strPtr(e.Model), Effort: strPtr(effort),
-		Instructions: ptr(defaultInstructions), NativeSessionId: liveSession.NativeSessionID} // "" still reaches the executor's check
+		Instructions: ptr(defaultInstructions)}
 	if liveSession.Account != nil || binding != nil {
 		if binding != nil {
 			p.Account = strPtr(binding.Binding)
