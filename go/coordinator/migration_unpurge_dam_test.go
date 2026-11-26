@@ -64,7 +64,7 @@ func TestMigrationUnpurgeDamPagesSeesRows(t *testing.T) {
 	}
 	run(body["20261126T1249Z_unpurge_dam_pages"])
 	if count("dam") != 1 {
-		t.Fatal("the first migration was expected to see no row under row level security")
+		t.Fatal("run outside the runner (as before MigrationScope), the first migration was expected to see no row under row level security")
 	}
 	run(body["20261126T1410Z_unpurge_dam_pages_rls"])
 	if count("dam") != 0 || count("_") != 1 {

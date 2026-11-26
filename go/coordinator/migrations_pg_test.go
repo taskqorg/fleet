@@ -79,3 +79,57 @@ func latestNumbered(t *testing.T) int {
 	}
 	return n
 }
+
+// Requirement: a data migration sees every row of a table with FORCE ROW LEVEL SECURITY, whichever project holds it,
+// without setting the project scope itself. Risk: the owner role is subject to the table's policies, so the migration's
+// UPDATE or DELETE matches no row and nothing fails (20261126T1249Z_unpurge_dam_pages left dam's purge marks in place).
+func TestMigrationSeesRowsUnderForcedRLS(t *testing.T) {
+	sock, port, _ := ensureTestPostgres(t)
+	name := fmt.Sprintf("fleet_go_test_%d_%d", os.Getpid(), testDBSeq.Add(1))
+	cloneTestDB(t, name)
+	ctx := context.Background()
+	url := testPGURL("fleet", name, sock, port)
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	var forced bool
+	if err := conn.QueryRow(ctx, `SELECT relforcerowsecurity FROM pg_class WHERE oid = 'purged_hash'::regclass`).Scan(&forced); err != nil || !forced {
+		t.Fatalf("purged_hash FORCE ROW LEVEL SECURITY = %v, %v: pick another forced table for this check", forced, err)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('fleet.project_ids', '*', true);
+		INSERT INTO purged_hash(project_id, scope, content_hash, reason) VALUES
+		 ('dam', 'prod', 'probe-update', 'before'), ('other', 'prod', 'probe-update', 'before'), ('dam', 'prod', 'probe-delete', 'before')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := migration{id: "20991231T2357Z_forced_rls_probe", body: `UPDATE purged_hash SET reason = 'after' WHERE content_hash = 'probe-update';
+DELETE FROM purged_hash WHERE content_hash = 'probe-delete';`}
+	if err := applyMigrations(ctx, url, append(ms, probe)); err != nil {
+		t.Fatal(err)
+	}
+	var updated, deletedLeft int
+	if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('fleet.project_ids', '*', true)`); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT count(*) FILTER (WHERE content_hash = 'probe-update' AND reason = 'after'),
+			count(*) FILTER (WHERE content_hash = 'probe-delete') FROM purged_hash`).Scan(&updated, &deletedLeft)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if updated != 2 || deletedLeft != 0 {
+		t.Fatalf("migration under FORCE RLS: %d rows updated (want 2), %d rows left to delete (want 0)", updated, deletedLeft)
+	}
+}
