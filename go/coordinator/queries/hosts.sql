@@ -185,10 +185,12 @@ SELECT host_id, requested_at, reported_at, report FROM host_diagnosis WHERE host
 SELECT holder, last_seen_at, payload FROM host_observation WHERE id = @id::text AND tombstoned_at IS NULL;
 
 -- name: HostDiagnoseCommands :many
--- host_diagnose: commands for the host it has not confirmed as settled, oldest first.
-SELECT id, kind, execution_id, status::text AS status, updated_at FROM command
-WHERE host_id = @host_id::text AND status IN ('pending', 'accepted', 'started', 'unknown') AND tombstoned_at IS NULL
-ORDER BY seq LIMIT 50;
+-- host_diagnose: commands for the host it has not confirmed as settled, of work still open (a command of an execution
+-- the coordinator settled meanwhile, by reconcile or abandon, is history, not held), oldest first.
+SELECT c.id, c.kind, c.execution_id, c.status::text AS status, c.updated_at FROM command c
+WHERE c.host_id = @host_id::text AND c.status IN ('pending', 'accepted', 'started', 'unknown') AND c.tombstoned_at IS NULL
+  AND (c.execution_id IS NULL OR EXISTS (SELECT 1 FROM execution e WHERE e.id = c.execution_id AND e.state IN ('preparing', 'running', 'waiting')))
+ORDER BY c.seq LIMIT 50;
 
 -- name: HostDiagnoseWaiting :many
 -- host_diagnose: queued agent runs no host took, with their first and latest dispatch decision (ms, 0: none).
