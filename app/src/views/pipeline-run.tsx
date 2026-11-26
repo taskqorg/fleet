@@ -10,7 +10,7 @@ import {
 import { op, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { useAttachments } from '../uploads.ts';
-import { inputPaths, recordColumns, resultRecords, type Rec } from '../pipeline-run-model.ts';
+import { inputPaths, recordColumns, resultRecords, stepErrorText, type Rec } from '../pipeline-run-model.ts';
 
 type Run = Ops['pipeline_get']['reply'];
 
@@ -122,7 +122,7 @@ function steps(r: Run): StepItem[] {
       id: entry.id, kind: def?.kind === 'agent' ? 'agent' : def?.kind === 'api' ? 'tool' : 'program', executor: def?.description ?? '', reads: '', writes: '',
       activation: entry.activation, activationReason: entry.problem?.message ?? entry.decision?.reason, result: entry.id === r.canonicalResult?.stepId,
       run: x ? { state: x.state, reason: x.waitDetail ?? x.observation, time: msMeasured(x.durationMs), cost: { value: null, basis: 'unavailable' as const },
-        error: x.error ? (typeof x.error === 'string' ? x.error : JSON.stringify(x.error)) : undefined } : undefined,
+        error: stepErrorText(x.error) } : undefined,
     } satisfies StepItem;
   });
 }
