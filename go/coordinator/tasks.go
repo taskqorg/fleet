@@ -542,12 +542,38 @@ func askQuestionAs(q *Request, a questionAsk) (string, error) {
 		ExecutionID: a.ExecutionID, SessionID: a.SessionID, Text: a.Text, Options: a.Options, AskedBy: a.AskedBy, AskedAt: at, RequestID: a.RequestID, Data: a.Data}); err != nil {
 		return "", err
 	}
+	if err := addressToManagingBot(q, a); err != nil {
+		return "", err
+	}
 	if a.TaskID != "" && a.Kind != "acceptance" {
 		if _, err := settleTask(q, a.TaskID, ""); err != nil {
 			return "", err
 		}
 	}
 	return a.ID, nil
+}
+
+// addressToManagingBot: a decision or an agent's question in a task a bot created or manages goes to that bot (its
+// Needs you trigger wakes it; it answers with question_answer or asks its owner itself), never to Needs you: on
+// 2026-11-26 Home's Waiting for you held a dozen "route a reviewer" and "fail task" items of HAL0's own tasks. The
+// bot's own questions and secret requests stay with the person they ask.
+func addressToManagingBot(q *Request, a questionAsk) error {
+	if a.TaskID == "" || (a.Kind != "operator_decision" && a.Kind != "agent_question") {
+		return nil
+	}
+	bot, err := q.db().TaskManagingBot(q.ctx(), a.TaskID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && bot == "" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if eid, ok := strings.CutPrefix(deref(a.AskedBy), "execution:"); ok {
+		if own, err := q.db().ExecutionBotID(q.ctx(), eid); err == nil && own == bot {
+			return nil // the bot asks: its question goes where it asks
+		}
+	}
+	return q.db().AddressQuestion(q.ctx(), db.AddressQuestionParams{Holder: "bot:" + bot, ID: a.ID})
 }
 
 // settleIdleTask reconciles offers and generated decisions against the task's current evidence.
