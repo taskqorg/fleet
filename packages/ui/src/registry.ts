@@ -85,10 +85,18 @@ export const DELIVERY_ORDER: StateOf<'delivery'>[] = ['pr_failed', 'mq_failed', 
  *  the person first, then trouble, then work). The label is the tooltip and the accessible name. */
 export const factKinds = {
   setup: { label: 'Needs setup', icon: 'sliders-horizontal', tone: 'attention' },
+  need: { label: 'Need you', icon: 'bell', tone: 'attention' },
   questions: { label: 'Open questions', icon: 'message-circle-question', tone: 'attention' },
   failed: { label: 'Failed', icon: 'octagon-x', tone: 'danger' },
+  behind: { label: 'Hosts behind', icon: 'clock', tone: 'attention' },
+  reverting: { label: 'Reverts in flight', icon: 'undo-2', tone: 'attention' },
+  drift: { label: 'Drifting', icon: 'circle-alert', tone: 'attention' },
   working: { label: 'Sessions working', icon: 'activity', tone: 'running' },
+  installing: { label: 'Hosts installing', icon: 'download', tone: 'running' },
   inFlight: { label: 'Tasks in flight', icon: 'list', tone: 'neutral' },
+  onWay: { label: 'On their way to the repository', icon: 'git-pull-request', tone: 'neutral' },
+  lab: { label: 'Lab experiments', icon: 'chart-no-axes-column', tone: 'neutral' },
+  merged: { label: 'Merged', icon: 'check-check', tone: 'success' },
 } as const satisfies Record<string, { label: string; icon: IconName; tone: Tone }>;
 export type FactKind = keyof typeof factKinds;
 

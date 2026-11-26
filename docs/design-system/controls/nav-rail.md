@@ -25,7 +25,7 @@ Each item has a registry icon (OR-3), a name, an optional counter (**Counters** 
 * The collapse button shrinks the rail to icons: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20).
 * At phone width (760 px and below) the bottom bar of five replaces the rail ([OR-60](../patterns/app-shell.md#rules-kept-here), [app shell](../patterns/app-shell.md)): Home, Live, Conversations, Projects and More, whose short menu holds the Pinned zone when it is on, History, Lab, Library, System and the user block.
 
-**Counters.** A section's counter counts its *counter view*, a person setting (`navCounters` in `person_settings_get`/`person_settings_set`; agents write it too):
+**Counters.** On its default view a counter leads with the [fact glyph](fact-count.md) of what it counts (Conversations running: `activity`; Projects tasks in flight: `list`; System hosts offline: `octagon-x`; OR-73), the words in its accessible name; a counter set to another view shows its number alone; the collapsed rail and the phone bar show the number only. A section's counter counts its *counter view*, a person setting (`navCounters` in `person_settings_get`/`person_settings_set`; agents write it too):
 
 | Section | Default | Choice |
 |---|---|---|

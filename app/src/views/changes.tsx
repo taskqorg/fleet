@@ -2,7 +2,7 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  Button, ChangeRow, DataTable, DetailSection, Empty, ErrorBanner, OfflineMarker,
+  Button, ChangeRow, FactCounts, DataTable, DetailSection, Empty, ErrorBanner, OfflineMarker,
   Icon, LiveRow, ProblemRow, ShellStatus, timeOf, type IconName, type Life, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
@@ -120,25 +120,23 @@ export function Changes(props: { onClose?: () => void } = {}) {
   const installingBehind = createMemo(() => behindHosts().filter(h => installing().includes(h)).length);
   const reverting = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'reverting').length ?? 0);
   const envDrift = createMemo(() => changesOp.data ? agentEnvironmentDrift(changesOp.data) : 0);
-  // The summary line: the definitions first (on their way, need you, Lab experiments), then the hosts, each in its tone.
-  const driftParts = createMemo<{ text: string; tone: string }[]>(() => {
+  // The summary line as fact glyphs (OR-73): what needs the person, then trouble, then work; all hosts aligned shows none.
+  const summary = createMemo(() => {
     const data = changesOp.data;
-    if (!data) return [];
+    if (!data) return null;
     const onWay = definitions().filter(r => r.v.onWay).length, need = definitions().filter(r => r.v.need).length;
-    const hosts = [
-      installing().length > 0 && { text: `${plural(installing().length, 'host', 'hosts')} installing`, tone: 't-running' },
-      behindHosts().length > installingBehind() && { text: `${plural(behindHosts().length - installingBehind(), 'host', 'hosts')} behind`, tone: 't-attention' },
-      failedProposals() > 0 && { text: `${failedProposals()} qualification failed`, tone: 't-danger' },
-      reverting() > 0 && { text: `${plural(reverting(), 'revert', 'reverts')} in flight`, tone: 't-attention' },
-      behindHarnesses().length > 0 && { text: `${behindHarnesses().length} harness pins drifting`, tone: 't-attention' },
-    ].filter((x): x is { text: string; tone: string } => !!x);
-    return [
-      onWay > 0 && { text: `${plural(onWay, 'definition', 'definitions')} on ${onWay === 1 ? 'its' : 'their'} way to the repository`, tone: 'muted' },
-      need > 0 && { text: `${need} need${need === 1 ? 's' : ''} you`, tone: 't-attention' },
-      data.experiments.length > 0 && { text: plural(data.experiments.length, 'Lab experiment', 'Lab experiments'), tone: 'muted' },
-      ...(hosts.length ? hosts : [{ text: 'hosts aligned', tone: 'muted' }]),
-      envDrift() > 0 && { text: `${plural(envDrift(), 'agent environment drift', 'agent environment drifts')}`, tone: 't-attention' },
-    ].filter((x): x is { text: string; tone: string } => !!x);
+    const behind = behindHosts().length - installingBehind(), pins = behindHarnesses().length, env = envDrift();
+    const tips = {
+      need: `${need} need${need === 1 ? 's' : ''} you`,
+      failed: `${failedProposals()} qualification failed`,
+      behind: `${plural(behind, 'host', 'hosts')} behind`,
+      reverting: `${plural(reverting(), 'revert', 'reverts')} in flight`,
+      drift: [pins && `${pins} harness pins drifting`, env && plural(env, 'agent environment drift', 'agent environment drifts')].filter(Boolean).join(', '),
+      installing: `${plural(installing().length, 'host', 'hosts')} installing`,
+      onWay: `${plural(onWay, 'definition', 'definitions')} on ${onWay === 1 ? 'its' : 'their'} way to the repository`,
+      lab: plural(data.experiments.length, 'Lab experiment', 'Lab experiments'),
+    };
+    return { facts: { need, failed: failedProposals(), behind, reverting: reverting(), drift: pins + env, installing: installing().length, onWay, lab: data.experiments.length }, tips };
   });
 
   return (
@@ -147,7 +145,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
       <header class="detail-h">
         <Show when={props.onClose}>{onClose => <Button label="Close" icon="x" iconOnly onClick={onClose()} />}</Show>
         <span class="pins-summary">{changesOp.data
-          ? <For each={driftParts()}>{(p, i) => <><Show when={i() > 0}><span class="muted"> · </span></Show><span class={['pins-tone', p.tone]}>{p.text}</span></>}</For>
+          ? <Show when={summary()}>{x => <FactCounts facts={x().facts} tips={x().tips} />}</Show>
           : <span class="muted">Checking repository and host drift…</span>}</span>
         <span class="grow" />
         <Button label="Refresh" icon="rotate-ccw" iconOnly kind="quiet" onClick={changesOp.reload} />

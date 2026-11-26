@@ -252,14 +252,16 @@ export function FocusControl(p: {
  */
 /** A rail section. `group` puts it under a small heading; the app's eight sections have none (OR-46). */
 export type NavItem = { id: string; label: string; icon: IconName; group?: string; count?: NavCount };
-export type NavCount = { n: number; outside?: number; tone: Tone; label: string };
+/** `icon`: the fact glyph of what is counted (OR-73, registry factKinds), shown before the number. */
+export type NavCount = { n: number; outside?: number; tone: Tone; label: string; icon?: IconName };
 /** The counter after a section name: `12·30` (in focus bright, outside dim), `·30` with none in focus, `12` without a focus; nothing at zero. */
 function NavCounter(p: { c: NavCount }) {
   const out = () => p.c.outside ?? 0;
   const words = () => p.c.outside === undefined ? `${p.c.n} ${p.c.label}` : `${p.c.n > 0 ? p.c.n : 'none'} ${p.c.label} in focus, ${out()} outside`;
   return (
     <Show when={p.c.n > 0 || out() > 0}>
-      <span class={['nav-count', `t-${p.c.tone}`, { 'out-only': p.c.n <= 0 }]} aria-label={words()}>
+      <span class={['nav-count', `t-${p.c.tone}`, { 'out-only': p.c.n <= 0, glyph: !!p.c.icon }]} aria-label={words()}>
+        <Show when={p.c.icon} keyed>{ic => <Icon name={ic} />}</Show>
         <Show when={p.c.n > 0}><span class="nav-in">{p.c.n.toLocaleString('en')}</span></Show>
         <Show when={out() > 0}><span class="nav-out">·{out().toLocaleString('en')}</span></Show>
       </span>
@@ -435,7 +437,7 @@ export function BottomBar(p: {
             aria-current={it.id === p.current ? 'page' : undefined}
             onClick={e => { e.preventDefault(); go(it.id); }}
           >
-            <span class="tab-ic"><Icon name={it.icon} /><Show when={it.count && it.count.n > 0 ? it.count : null} keyed>{c => <span class={['nav-count', 'tab-count', `t-${c.tone}`]} aria-label={`${c.n} ${c.label}`}>{c.n.toLocaleString('en')}</span>}</Show></span>
+            <span class="tab-ic"><Icon name={it.icon} /><Show when={it.count && it.count.n > 0 ? it.count : null} keyed>{c => <span class={['nav-count', 'tab-count', `t-${c.tone}`, { glyph: !!c.icon }]} aria-label={`${c.n} ${c.label}`}><Show when={c.icon} keyed>{ic => <Icon name={ic} />}</Show>{c.n.toLocaleString('en')}</span>}</Show></span>
             <span class="nm">{it.label}</span>
           </a>
         )}
