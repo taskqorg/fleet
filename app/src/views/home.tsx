@@ -160,6 +160,9 @@ function HomePage() {
       // worker, a review) is in work, so it is Working, and its card still says what it waits for.
       const group = mine.length ? 'waiting' : l === 'waiting' ? 'working' : GROUPS.find(g => g.id === l)?.id;
       if (!group) continue;
+      // A bot's failed conversation is that bot's problem (run-failed:<bot>:<cause>), not a card here: Failed lists the
+      // person's own sessions; an aggregated failure shows only as the pulse line's chip.
+      if (group === 'failed' && s.botId) continue;
       const card: Card = { key: s.id, group, at: group === 'waiting' && mine.length ? ms(mine[0].askedAt) : ms(s.activityAt), s, qs: mine };
       const f = group === 'failed' ? failureOf().get(s.id) : undefined;
       if (f) failedBy.set(f.cause, [...(failedBy.get(f.cause) ?? []), card]);
@@ -406,7 +409,7 @@ function HomePage() {
           <Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} />
         </Show>
         <PulseLine
-          working={grouped().find(g => g.id === 'working')?.cards.length ?? 0}
+          working={grouped().find(g => g.id === 'working')?.cards.filter(c => c.s && lifeOfSession(c.s.state) === 'working').length ?? 0}
           queued={rows().filter(s => lifeOfSession(s.state) === 'queued').length}
           done={view.data?.counts.doneToday ?? 0}
           blockers={chips()}

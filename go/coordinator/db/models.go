@@ -1479,6 +1479,7 @@ type Problem struct {
 	ClosedAt     *time.Time
 	CloseReason  *string
 	TombstonedAt *time.Time
+	WokenAt      *time.Time
 }
 
 type ProblemDismissal struct {

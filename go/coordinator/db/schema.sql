@@ -1021,7 +1021,8 @@ CREATE TABLE problem (
   "phase_at" timestamp with time zone NOT NULL,
   "closed_at" timestamp with time zone,
   "close_reason" text,
-  "tombstoned_at" timestamp with time zone
+  "tombstoned_at" timestamp with time zone,
+  "woken_at" timestamp with time zone
 );
 CREATE TABLE problem_dismissal (
   "execution_id" text NOT NULL,

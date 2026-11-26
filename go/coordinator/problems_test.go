@@ -159,4 +159,36 @@ func TestProblemLifecycle(t *testing.T) {
 	if err != nil || !slices.Contains(ids, g.ID) {
 		t.Fatalf("unstarted %v (%v), want %s", ids, err, g.ID)
 	}
+
+	// The run-rate breaker: 25 runs in the last hour against no usual pauses the bot and raises one problem without an
+	// owner; after the cool time the bot resumes on probation; a person's question is never asked.
+	if _, err := tx.Exec(ctx, "UPDATE execution SET started_at = now() - interval '2 days' WHERE bot_id = 'hal'"); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 25 {
+		if _, err := tx.Exec(ctx, "INSERT INTO execution(id, kind, state, bot_id, started_at) VALUES ($1, 'agent_run', 'succeeded', 'hal', now() - interval '10 minutes')", fmt.Sprintf("burst-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	if err := botBreaker(q, now); err != nil {
+		t.Fatal(err)
+	}
+	var paused bool
+	if err := tx.QueryRow(ctx, "SELECT paused FROM bot WHERE id = 'hal'").Scan(&paused); err != nil || !paused {
+		t.Fatalf("bot paused %v (%v), want paused", paused, err)
+	}
+	burst := get("burst:hal")
+	if burst.OwnerBotID != nil || burst.QuestionID != nil {
+		t.Fatalf("burst problem: %+v", burst)
+	}
+	if err := botBreaker(q, now.Add(31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT paused FROM bot WHERE id = 'hal'").Scan(&paused); err != nil || paused {
+		t.Fatalf("bot paused %v after the cool time (%v), want resumed on probation", paused, err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state = 'open'").Scan(&questions); err != nil || questions != 0 {
+		t.Fatalf("the breaker asked %d questions (%v)", questions, err)
+	}
 }

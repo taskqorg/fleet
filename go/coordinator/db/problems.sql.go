@@ -7,12 +7,128 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const botBreakerPause = `-- name: BotBreakerPause :exec
+UPDATE bot SET paused = $1, paused_at = CASE WHEN $1 THEN now() ELSE paused_at END,
+ paused_by = CASE WHEN $1 THEN 'fleet:burst' ELSE paused_by END WHERE id = $2
+`
+
+type BotBreakerPauseParams struct {
+	Paused bool
+	ID     string
+}
+
+func (q *Queries) BotBreakerPause(ctx context.Context, arg BotBreakerPauseParams) error {
+	_, err := q.db.Exec(ctx, botBreakerPause, arg.Paused, arg.ID)
+	return err
+}
+
+const botFailedSessions = `-- name: BotFailedSessions :many
+SELECT s.bot_id::text AS bot_id, bs.name, coalesce(nullif(e.problem, ''), 'unknown')::text AS cause, count(*)::int AS n
+FROM session s
+JOIN bot b ON b.id = s.bot_id AND b.tombstoned_at IS NULL
+JOIN bot_revision bs ON bs.bot_id = b.id AND bs.revision = b.revision
+JOIN LATERAL (
+ SELECT x.state, x.problem, x.ended_at FROM execution x WHERE x.session_id = s.id AND x.kind = 'agent_run' AND x.tombstoned_at IS NULL
+ ORDER BY x.seq DESC LIMIT 1
+) e ON true
+WHERE s.bot_id IS NOT NULL AND s.archived_at IS NULL AND s.tombstoned_at IS NULL AND e.state = 'failed' AND e.ended_at > now() - interval '1 day'
+GROUP BY 1, 2, 3 ORDER BY 1, 3
+`
+
+type BotFailedSessionsRow struct {
+	BotID string
+	Name  string
+	Cause string
+	N     int32
+}
+
+// Open conversations of live bots whose latest run failed in the last day, by bot and stored cause: each is that bot's
+// problem (run-failed:<bot>:<cause>), not a card on a person's Home.
+func (q *Queries) BotFailedSessions(ctx context.Context) ([]BotFailedSessionsRow, error) {
+	rows, err := q.db.Query(ctx, botFailedSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotFailedSessionsRow
+	for rows.Next() {
+		var i BotFailedSessionsRow
+		if err := rows.Scan(
+			&i.BotID,
+			&i.Name,
+			&i.Cause,
+			&i.N,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const botRunRates = `-- name: BotRunRates :many
+WITH runs AS (
+ SELECT e.bot_id, coalesce(to_timestamp((e.data->>'createdAt')::float8 / 1000), e.started_at, e.updated_at) AS at
+ FROM execution e WHERE e.bot_id IS NOT NULL AND e.kind = 'agent_run'
+  AND coalesce(to_timestamp((e.data->>'createdAt')::float8 / 1000), e.started_at, e.updated_at) > now() - interval '7 days'
+), hours AS (SELECT bot_id, date_trunc('hour', at) AS h, count(*) AS n FROM runs WHERE at <= now() - make_interval(mins => $1::int) GROUP BY 1, 2)
+SELECT b.id, s.name, b.paused, coalesce(b.paused_by, '')::text AS paused_by, b.paused_at,
+ (SELECT count(*) FROM runs r WHERE r.bot_id = b.id AND r.at > now() - make_interval(mins => $1::int))::int AS recent,
+ coalesce((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY n) FROM hours WHERE hours.bot_id = b.id), 0)::float8 AS median
+FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL ORDER BY b.id
+`
+
+type BotRunRatesRow struct {
+	ID       string
+	Name     string
+	Paused   bool
+	PausedBy string
+	PausedAt *time.Time
+	Recent   int32
+	Median   float64
+}
+
+// Each live bot's runs in the last window against its usual: the median of its runs per hour over 7 days (hours with
+// runs, before the window), for the run-rate breaker (problems.go botBreaker).
+func (q *Queries) BotRunRates(ctx context.Context, windowMinutes int32) ([]BotRunRatesRow, error) {
+	rows, err := q.db.Query(ctx, botRunRates, windowMinutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotRunRatesRow
+	for rows.Next() {
+		var i BotRunRatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Paused,
+			&i.PausedBy,
+			&i.PausedAt,
+			&i.Recent,
+			&i.Median,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const problemBySeq = `-- name: ProblemBySeq :one
-SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at FROM problem WHERE seq = $1
+SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at, woken_at FROM problem WHERE seq = $1
 `
 
 func (q *Queries) ProblemBySeq(ctx context.Context, seq int64) (Problem, error) {
@@ -43,6 +159,7 @@ func (q *Queries) ProblemBySeq(ctx context.Context, seq int64) (Problem, error) 
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.TombstonedAt,
+		&i.WokenAt,
 	)
 	return i, err
 }
@@ -96,7 +213,7 @@ func (q *Queries) ProblemDutyHealth(ctx context.Context) ([]ProblemDutyHealthRow
 }
 
 const problemGet = `-- name: ProblemGet :one
-SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at FROM problem WHERE id = $1
+SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at, woken_at FROM problem WHERE id = $1
 `
 
 func (q *Queries) ProblemGet(ctx context.Context, id string) (Problem, error) {
@@ -127,6 +244,7 @@ func (q *Queries) ProblemGet(ctx context.Context, id string) (Problem, error) {
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.TombstonedAt,
+		&i.WokenAt,
 	)
 	return i, err
 }
@@ -206,7 +324,7 @@ func (q *Queries) ProblemOpenByCause(ctx context.Context, cause string) (Problem
 }
 
 const problemOpenGet = `-- name: ProblemOpenGet :one
-SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at FROM problem WHERE cause = $1 AND state = 'open'
+SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at, woken_at FROM problem WHERE cause = $1 AND state = 'open'
 `
 
 func (q *Queries) ProblemOpenGet(ctx context.Context, cause string) (Problem, error) {
@@ -237,6 +355,7 @@ func (q *Queries) ProblemOpenGet(ctx context.Context, cause string) (Problem, er
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.TombstonedAt,
+		&i.WokenAt,
 	)
 	return i, err
 }
@@ -441,7 +560,7 @@ func (q *Queries) ProblemsClose(ctx context.Context, arg ProblemsCloseParams) er
 }
 
 const problemsList = `-- name: ProblemsList :many
-SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at FROM problem
+SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at, woken_at FROM problem
 WHERE ($1::text IS NULL OR state = $1::text)
  AND ($2::text IS NULL OR phase = $2::text)
  AND ($3::text IS NULL OR owner_bot_id = $3::text)
@@ -500,6 +619,7 @@ func (q *Queries) ProblemsList(ctx context.Context, arg ProblemsListParams) ([]P
 			&i.ClosedAt,
 			&i.CloseReason,
 			&i.TombstonedAt,
+			&i.WokenAt,
 		); err != nil {
 			return nil, err
 		}
@@ -677,13 +797,10 @@ func (q *Queries) ProblemsSummary(ctx context.Context) ([]ProblemsSummaryRow, er
 }
 
 const problemsUnstarted = `-- name: ProblemsUnstarted :many
-SELECT p.id FROM problem p WHERE p.state = 'open' AND p.owner_bot_id = $1::text AND p.phase = 'new'
- AND NOT EXISTS (SELECT 1 FROM session s WHERE s.bot_id = p.owner_bot_id AND s.subject = 'problem:' || p.id)
-ORDER BY p.seq
+SELECT p.id FROM problem p WHERE p.state = 'open' AND p.owner_bot_id = $1::text AND p.woken_at IS NULL ORDER BY p.seq
 `
 
-// Open problems a bot owns that it never started: no conversation of the bot for them yet (a problem adopted with a
-// duty, or one whose wake was lost). The owner's problem trigger takes them up.
+// Open problems a bot owns that no wake carried yet (a problem adopted with a duty, or one whose wake was lost).
 func (q *Queries) ProblemsUnstarted(ctx context.Context, bot string) ([]string, error) {
 	rows, err := q.db.Query(ctx, problemsUnstarted, bot)
 	if err != nil {
@@ -702,4 +819,13 @@ func (q *Queries) ProblemsUnstarted(ctx context.Context, bot string) ([]string, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const problemsWoken = `-- name: ProblemsWoken :exec
+UPDATE problem SET woken_at = now() WHERE id = ANY($1::text[])
+`
+
+func (q *Queries) ProblemsWoken(ctx context.Context, ids []string) error {
+	_, err := q.db.Exec(ctx, problemsWoken, ids)
+	return err
 }
