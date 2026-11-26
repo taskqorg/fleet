@@ -45,8 +45,10 @@ type answer struct {
 	usage       *int64
 	disabled    int // HTTP status that disabled `key`, or 0
 	attemptedAt int64
-	// A provider 403 on this key: the provider's message. Recorded, never disabling (one bad body must not take out keys).
-	problem *string
+	// A provider 403 on this key, or a plan or credit limit (432, 433): the provider's message and status. Recorded, never
+	// disabling (one bad body must not take out keys; credits come back with a top-up or the next billing cycle).
+	problem       *string
+	problemStatus int
 	// What a project access call read (the SQL text, the file path): its spool line's detail.
 	detail string
 }
@@ -494,11 +496,11 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 				a.outcome = "unknown"
 			}
 		}
-		if status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall) {
+		if (status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall)) || status == 432 || status == 433 {
 			// Redact over the whole body first, so a key cut at the 500-character mark cannot leave a prefix behind.
 			message := []rune(strings.ReplaceAll(strings.ToValidUTF8(string(data), "\ufffd"), value, "[key]"))
 			text := string(message[:min(len(message), 500)])
-			a.problem = &text
+			a.problem, a.problemStatus = &text, status
 		}
 		return a
 	}
@@ -661,7 +663,7 @@ func (g *gateway) line(q *request, a *answer) contract.CallLine {
 		line.Disabled = &contract.CallKeyDisabled{Key: a.key, Status: int64(a.disabled)}
 	}
 	if a.problem != nil {
-		line.KeyProblem = &contract.CallKeyProblem{Key: a.key, Status: 403, Message: *a.problem}
+		line.KeyProblem = &contract.CallKeyProblem{Key: a.key, Status: int64(a.problemStatus), Message: *a.problem}
 	}
 	return line
 }

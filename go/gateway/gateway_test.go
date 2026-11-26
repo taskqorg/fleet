@@ -317,6 +317,17 @@ func Test403IsRecordedOnKeyAndNeverDisablesIt(t *testing.T) {
 	expect(t, field(gw.health(), "keys", "usable"), 1, "usable")
 }
 
+// Risk: a key out of plan credits (Tavily 432) fails every call while the owner sees nothing on the key.
+func TestCreditLimitIsRecordedOnKeyWithItsStatus(t *testing.T) {
+	upstream := newProvider(t, func(string) int { return 432 })
+	gw := newFixture(t, upstream.url, "invented-key-a")
+	if s, _, _ := gw.call("web_search", testToken); s != 432 {
+		t.Fatal(s)
+	}
+	lines, _ := gw.spool()
+	expect(t, []any{lines[0]["disabled"], field(lines[0], "keyProblem", "status")}, []any{nil, float64(432)}, "credit problem")
+}
+
 func TestUsageReportsEachKeyFromProvider(t *testing.T) {
 	upstream := newProvider(t, func(k string) int {
 		if k == "invented-key-b" {

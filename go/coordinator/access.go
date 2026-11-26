@@ -374,18 +374,32 @@ func (g accessGuide) view() *contract.AccessGuide {
 	return v
 }
 
+// creditStatus: a provider status that says the account's plan or credits ran out (Tavily: 432 plan limit, 433
+// pay-as-you-go limit), so the owner tops up or upgrades instead of replacing the key.
+func creditStatus(status int64) bool { return status == 432 || status == 433 }
+
 func accessConnection(c apiConnection, keys []connKey, call db.AccessLastCallsRow, b *contract.Budget, profiles []accessProfile) contract.AccessItem {
 	g, known := accessGuides[c.Provider]
 	if !known {
 		g = accessGuide{group: contract.AccessGroupService, label: c.Provider}
 	}
-	active, problem := 0, ""
+	active, problem, credits := 0, "", false
+	for _, k := range keys {
+		if k.State == "active" {
+			active++
+		}
+	}
 	for _, k := range keys {
 		switch k.State {
 		case "active":
-			active++
-			if k.Problem != nil && problem == "" {
+			// With one active key, a call that succeeded after the complaint (a top-up, a new billing cycle) went through
+			// that key, so the complaint is over; with several, the success may be another key's.
+			if k.Problem != nil && problem == "" && (active > 1 || k.Problem.At > call.OkStartedAt) {
 				problem = fmt.Sprintf("Key %s: HTTP %d", k.Fingerprint, k.Problem.Status)
+				if creditStatus(k.Problem.Status) {
+					// An account problem, not a bad key: the plan or the credits ran out (Tavily 432 and 433).
+					problem, credits = fmt.Sprintf("Key %s: the plan's credits are used up (HTTP %d)", k.Fingerprint, k.Problem.Status), true
+				}
 			}
 		case "disabled":
 			if problem == "" {
@@ -433,13 +447,20 @@ func accessConnection(c apiConnection, keys []connKey, call db.AccessLastCallsRo
 		it.Next = &contract.AccessNext{Action: contract.AccessActionAddKey, Label: "Paste a key", Url: it.Guide.KeyUrl}
 	case c.Intake == "paused":
 		it.State, it.StateText = contract.AccessStatePaused, "Takes no new calls (intake paused)"
+	case problem != "" && credits:
+		it.State, it.StateText = contract.AccessStateFailing, problem
+		// Tavily's dashboard (the key page) shows the plan, the credits left and the upgrade.
+		it.Next = &contract.AccessNext{Action: contract.AccessActionBilling, Label: "Top up or upgrade the plan", Url: it.Guide.KeyUrl}
+		if it.Guide.BillingUrl != nil {
+			it.Next.Url = it.Guide.BillingUrl
+		}
 	case problem != "":
 		it.State, it.StateText = contract.AccessStateFailing, problem
 		it.Next = &contract.AccessNext{Action: contract.AccessActionAddKey, Label: "Replace the key", Url: it.Guide.KeyUrl}
 	case it.LastCheck != nil && !it.LastCheck.Ok:
 		it.State, it.StateText = contract.AccessStateFailing, "Last call failed: "+it.LastCheck.Text
 		it.Next = &contract.AccessNext{Action: contract.AccessActionCheck, Label: "Check again"}
-		if strings.Contains(call.LastProblem, "429") && it.Guide.BillingUrl != nil {
+		if (strings.Contains(call.LastProblem, "429") || strings.Contains(call.LastProblem, "432") || strings.Contains(call.LastProblem, "433")) && it.Guide.BillingUrl != nil {
 			it.Next = &contract.AccessNext{Action: contract.AccessActionBilling, Label: "Check billing", Url: it.Guide.BillingUrl}
 		}
 	case it.LastCheck == nil:

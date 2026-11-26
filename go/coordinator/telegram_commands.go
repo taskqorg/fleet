@@ -293,15 +293,25 @@ func telegramMenu(ctx context.Context, a *App) error {
 			continue
 		}
 		lang := or(p.Language, "en")
-		if err := set("private", lang, tgScope{Type: "chat", ChatID: p.TelegramUserID}, ""); err != nil {
+		// A person who never opened the bot's private chat has no chat for the scope: Telegram answers "chat not
+		// found". The defaults below still give them a menu, so the refusal is skipped, not retried every pass.
+		if err := set("private", lang, tgScope{Type: "chat", ChatID: p.TelegramUserID}, ""); err != nil && !tgChatNotFound(err) {
 			return err
 		}
 		for g := range groups {
-			// A group the person is not in refuses the scope; that is no reason to stop the menu.
-			_ = set("group", lang, tgScope{Type: "chat_member", ChatID: g, UserID: p.TelegramUserID}, "")
+			// A group the person is not in refuses the scope; that is no reason to stop the menu. A group the bot
+			// left is not found for anyone, so it is not asked again for the next person.
+			if err := set("group", lang, tgScope{Type: "chat_member", ChatID: g, UserID: p.TelegramUserID}, ""); tgChatNotFound(err) {
+				delete(groups, g)
+			}
 		}
 	}
 	return telegramMenuDefaults(ctx, a)
+}
+
+// tgChatNotFound: Telegram refused a call because the bot has no such chat (never opened, left or deleted).
+func tgChatNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "chat not found")
 }
 
 // tgScope: a BotCommandScope.
