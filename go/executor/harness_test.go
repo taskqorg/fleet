@@ -451,9 +451,21 @@ func TestReadOnlyStart(t *testing.T) {
 	if jAt(r[1], "params", "sandbox") != "read-only" {
 		t.Fatal(r[1])
 	}
-	if jAt(s.turnRequest(), "params", "sandboxPolicy", "type") != "readOnly" {
+	if jAt(s.turnRequest(), "params", "sandboxPolicy", "type") != "readOnly" || jAt(s.turnRequest(), "params", "sandboxPolicy", "networkAccess") != false {
 		t.Fatal(s.turnRequest())
 	}
+	// A read-only run with gitNetwork reaches the forge (git fetch, gh) and stays read-only, settings.sandbox false included.
+	n := &codexSession{root: "/w", profile: j(`{"model":"m","readOnly":true,"gitNetwork":true,"agentConfig":{"settings":{"sandbox":false}},"text":"t"}`), nextID: 100}
+	if r, _, _, _ := n.Receive(j(`{"id":1,"result":{}}`)); jAt(r[1], "params", "sandbox") != "read-only" {
+		t.Fatal(r[1])
+	}
+	eq(t, jAt(n.turnRequest(), "params", "sandboxPolicy"), `{"networkAccess":true,"type":"readOnly"}`)
+	// settings.sandbox false: a writable run has no Codex sandbox.
+	u := &codexSession{root: "/w", profile: j(`{"model":"m","writableRoots":["/c"],"agentConfig":{"settings":{"sandbox":false}},"text":"t"}`), nextID: 100}
+	if r, _, _, _ := u.Receive(j(`{"id":1,"result":{}}`)); jAt(r[1], "params", "sandbox") != "danger-full-access" {
+		t.Fatal(r[1])
+	}
+	eq(t, jAt(u.turnRequest(), "params", "sandboxPolicy"), `{"type":"dangerFullAccess"}`)
 	w := &codexSession{root: "/w", profile: j(`{"model":"m","text":"t"}`), nextID: 100}
 	if r, _, _, _ := w.Receive(j(`{"id":1,"result":{}}`)); jAt(r[1], "params", "sandbox") != "workspace-write" {
 		t.Fatal("a write start keeps the workspace sandbox", r[1])
@@ -494,7 +506,7 @@ func TestCodexGoCacheLaunch(t *testing.T) {
 			t.Fatal("launch modified the input profile")
 		}
 		wantRoots := append([]any{cache}, gitRoots...)
-		for _, kv := range []string{"GOCACHE=" + filepath.Join(cache, "build"), "GOMODCACHE=" + filepath.Join(cache, "modules")} {
+		for _, kv := range []string{"GOCACHE=" + filepath.Join(cache, "build"), "GOMODCACHE=" + filepath.Join(cache, "modules"), "GOPATH=" + filepath.Join(cache, "path")} {
 			if !slices.Contains(codexAppServer(cmd).Env, kv) {
 				t.Fatalf("missing %q in app-server environment", kv)
 			}

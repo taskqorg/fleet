@@ -201,8 +201,8 @@ func (p Profile) check() error {
 	}
 	switch harness {
 	case ProfileHarnessCodex:
-		if p.Effort == nil || badArg(*p.Effort) || role != "" && role != "developer" || p.Tools != nil || p.Settings != nil {
-			return errors.New("unsupported Codex profile: effort, instruction role, tools or settings")
+		if p.Effort == nil || badArg(*p.Effort) || role != "" && role != "developer" || p.Tools != nil || p.Settings != nil && (p.Settings.Mode != nil || p.Settings.IncludeDefaultCustomizations != nil) {
+			return errors.New("unsupported Codex profile: effort, instruction role, tools or settings other than sandbox")
 		}
 	case ProfileHarnessClaude:
 		if p.ImageGeneration != nil {

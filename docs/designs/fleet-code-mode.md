@@ -119,7 +119,7 @@ The host functions mirror what the harness's own tools may do in this execution:
 
 | Harness | `read`, `glob`, `grep` | `write`, `edit` | `sh` |
 |---|---|---|---|
-| `codex` | Read roots. | Yes. | Sandboxed. Writes: the worktree, the profile's writable roots (with `gitNetwork`, the checkout's Git directories) and the temporary directories. Network only with `gitNetwork`. |
+| `codex` | Read roots. | Yes. | Sandboxed. Writes: the worktree, the profile's writable roots (with `gitNetwork`, the checkout's Git directories) and the temporary directories. Network only with `gitNetwork`, read-only starts included. With `settings.sandbox: false`, a writable start runs `sh` without a sandbox, as Codex runs. |
 | `claude` | With `Read`, `Grep`, `Glob` or `Bash` in `tools`. | `write` with `Write`, `edit` with `Edit`. | With `Bash`, without a sandbox, because Fleet runs Claude's own `Bash` without one (`--permission-mode dontAsk`). |
 | `antigravity`, `acp` | Read roots. | Unavailable. | Unavailable. |
 

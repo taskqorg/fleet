@@ -1230,12 +1230,15 @@ func codeAuthorityFor(harness string, profile any, work string, read []string, w
 			a.shell = M{"sandbox": false} // Fleet runs Claude's own Bash without a sandbox
 		}
 	case "codex":
-		if readOnly { // Codex's read-only sandbox: commands run, nothing is written, no network
-			a.shell = sandboxed(nil, false)
+		if readOnly { // Codex's read-only sandbox: commands run, nothing is written, network as the profile's
+			a.shell = sandboxed(nil, network)
 			a.shell["readOnly"] = true
 			return a
 		}
 		a.write, a.edit, a.shell = true, true, sandboxed(writable, network)
+		if codexUnsandboxed(profile) {
+			a.shell = M{"sandbox": false}
+		}
 	}
 	return a
 }
