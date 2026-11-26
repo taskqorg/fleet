@@ -308,7 +308,7 @@ func normalizeTriggerSettings(s *contract.TriggerSettings) error {
 	kinds := []string{}
 	for _, k := range s.IfChanged {
 		if !slices.Contains(triggerKinds, k) {
-			return fail(400, "Unknown change kind "+k+": use task, question, execution, host, limits")
+			return fail(400, "Unknown change kind "+k+": use task, question, execution, host, limits, problem")
 		}
 		if !slices.Contains(kinds, k) {
 			kinds = append(kinds, k)
@@ -381,6 +381,9 @@ func saveTrigger(q *Request, in triggerSaveIn) (db.Trigger, error) {
 	applyTriggerInput(&s, in.input)
 	if err := normalizeTriggerSettings(&s); err != nil {
 		return none, err
+	}
+	if in.target.bot == nil && slices.Contains(s.IfChanged, "problem") {
+		return none, fail(400, "Change kind problem wakes a bot only: a problem goes to the bot that owns it")
 	}
 	if exists {
 		same := triggerSettingsOf(current)

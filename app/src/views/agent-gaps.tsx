@@ -189,7 +189,9 @@ function GapDetail(p: { c: AgentGapClass; days: number; onClose?: () => void; on
       <Show when={problem.data?.problem}>{pb => (
         <DetailSection title="Problem">
           <KvRow icon="bot" label={`${pb().code} · ${pb().ownerName ?? 'No owner yet'}`} meta={<span class="muted">{pb().note || PHASE_WORDS[pb().phase]}</span>}
-            value={<a href={`/system/problems/${pb().code}`} onClick={e => { e.preventDefault(); p.onOpen(`/system/problems/${pb().code}`); }}>Open</a>} />
+            value={<Show when={pb().conversationId} fallback={<span class="muted">{PHASE_WORDS[pb().phase]}</span>}>{cid => (
+              <a href={`/conversations/${encodeURIComponent(cid())}`} onClick={e => { e.preventDefault(); p.onOpen(`/conversations/${encodeURIComponent(cid())}`); }}>Open conversation</a>
+            )}</Show>} />
         </DetailSection>
       )}</Show>
       <Show when={f()?.sessionId}>{sid => (

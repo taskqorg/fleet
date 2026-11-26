@@ -309,7 +309,11 @@ func gapVerdict(q *Request, rules *gapRules, f gapFinding, c contract.AgentGapCl
 	}
 	f.BeforeCount, f.BeforeRuns, f.AfterCount, f.AfterRuns, f.VerdictAt = &bc, &br, &ac, &ar, &now
 	if gapFixed(bc, br, ac, ar, fr.FixedRatio) {
-		if err := problemClose(q, gapCause(f.Class)); err != nil {
+		if f.ProblemID != nil {
+			if err := problemsCloseIDs(q, []string{*f.ProblemID}, "fixed"); err != nil {
+				return err
+			}
+		} else if err := problemClose(q, gapCause(f.Class)); err != nil {
 			return err
 		}
 		_, err := agentGapFindingTransition(q, f, "fixed")

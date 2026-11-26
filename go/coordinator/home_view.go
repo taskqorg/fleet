@@ -124,6 +124,31 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		b.N = 1
 		blockers[key] = &b
 	}
+	// Open problems as blockers by family (a host problem by host and kind), so Home keeps showing them passively
+	// until its pulse line reads home_view.problems (docs/design-system/controls/pulse-line.md).
+	ps, err := q.db().ProblemsList(q.ctx(), db.ProblemsListParams{State: ptr("open"), Lim: 200})
+	if err != nil {
+		return out, err
+	}
+	for _, p := range ps {
+		if len(r.ProjectIds) > 0 && (p.ProjectID == nil || !slices.Contains(r.ProjectIds, *p.ProjectID)) ||
+			p.ProjectID != nil && slices.Contains(r.ExcludeProjectIds, *p.ProjectID) {
+			continue
+		}
+		parts := strings.Split(p.Cause, ":")
+		family := parts[0]
+		if family == "problem" && len(parts) > 1 {
+			family = parts[1]
+		}
+		key, host := "problem:"+family, (*string)(nil)
+		if family == "host" && parts[0] == "problem" {
+			key = strings.Join(parts[:min(4, len(parts))], ":")
+			if len(parts) > 2 && parts[2] != "" {
+				host = &parts[2]
+			}
+		}
+		add(key, contract.HomeBlocker{Kind: contract.HomeBlockerKindProblem, Cause: key, Text: p.Text, HostId: host, At: p.SeenAt.UnixMilli()})
+	}
 	sort.SliceStable(out.Questions, func(i, j int) bool { return textMs(out.Questions[i].AskedAt) < textMs(out.Questions[j].AskedAt) })
 
 	// Failed runs that need a look (executions_list needsYou): blockers by plain cause and host, and the failures since

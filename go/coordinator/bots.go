@@ -219,6 +219,7 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 		return out, errNotFound
 	}
 	var prevName string
+	var prevDuty *contract.BotDuty
 	bot, err := readBot(q, r.BotId)
 	switch {
 	case err == nil:
@@ -234,7 +235,7 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 		if bot.Revision != r.BaseRevision {
 			return out, fail(409, "Bot settings changed. Reload before saving")
 		}
-		prevName = bot.Settings.Name
+		prevName, prevDuty = bot.Settings.Name, bot.Settings.Duty
 	case errors.Is(err, errNotFound):
 		if r.BaseRevision != 0 {
 			return out, err
@@ -244,6 +245,10 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	}
 	if err := validateBotSettings(q, r.Settings); err != nil {
 		return out, err
+	}
+	// A duty decides who owns problems across projects: only the owner (a person with full access) changes it.
+	if string(botDutyJSON(prevDuty)) != string(botDutyJSON(r.Settings.Duty)) && (q.agent != "" || !fullAccess(q.person)) {
+		return out, fail(403, "Only the owner changes a bot's duty")
 	}
 	var changed int64
 	if r.BaseRevision == 0 {

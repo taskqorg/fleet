@@ -90,11 +90,11 @@ func TestHomeView(t *testing.T) {
 		if b.Kind == contract.HomeBlockerKindRun && deref(b.HostId) == "mac" {
 			run = &got.Blockers[i]
 		}
-		if b.Kind == contract.HomeBlockerKindProblem {
-			t.Fatalf("a problem is no blocker: %+v", b)
+		if b.Kind == contract.HomeBlockerKindProblem && (b.Cause != "problem:host:mac:saturated" || deref(b.HostId) != "mac") {
+			t.Fatalf("problem blocker by host and kind: %+v", b)
 		}
 	}
-	if run == nil || run.N != 2 || run.Cause != "provider-down" || len(got.Blockers) != 2 {
+	if run == nil || run.N != 2 || run.Cause != "provider-down" || len(got.Blockers) != 3 {
 		t.Fatalf("run blocker: two provider-down failures on mac: %+v", got.Blockers)
 	}
 	// A problem is the pulse line's count, owned by no bot here; never a question.

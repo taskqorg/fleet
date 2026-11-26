@@ -540,3 +540,22 @@ func problemChangePart(q *Request, id, bot string) (threadPart, bool, error) {
 	return threadPart{problemSubject(p.ID), fmt.Sprintf("%s %s ×%d (cause %s): %s. Work it here: problem_get, then problem_update or problem_escalate.",
 		what, problemCode(p.Seq), p.Count, p.Cause, cutRunes(p.Text, 400))}, true, nil
 }
+
+// problemAnswerAfter (runAnswerAfter): an answered escalation hands its problem back to the owner bot (phase working);
+// the answer itself reaches the bot in the conversation that asked.
+func problemAnswerAfter(q *Request, questionID string, data json.RawMessage) error {
+	var d struct {
+		ProblemID string `json:"problemId"`
+	}
+	if json.Unmarshal(data, &d) != nil || d.ProblemID == "" {
+		return nil
+	}
+	p, err := q.db().ProblemGet(q.ctx(), d.ProblemID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (p.QuestionID == nil || *p.QuestionID != questionID || p.State != "open") {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return q.db().ProblemUpdate(q.ctx(), db.ProblemUpdateParams{ID: p.ID, Phase: ptr("working"), ClearQuestion: true})
+}
