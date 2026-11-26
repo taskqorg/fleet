@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ type Problem struct {
 	Cause, Text, Rule string
 	ProjectID         string // "" for a system cause
 	RefreshText       bool   // Refresh the text while this problem is open.
+	Unowned           bool   // No duty owns it (the watchdog's: the duty bot itself is down).
 	Data              any    // a struct whose JSON fields join the problem's data: hostId, storeId, executionId, exemplars, value
 }
 
@@ -70,9 +72,11 @@ func problemRaiseID(q *Request, source string, p Problem) (string, error) {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
-	owner, err := problemOwner(q, p.ProjectID)
-	if err != nil {
-		return "", err
+	var owner *string
+	if !p.Unowned {
+		if owner, err = problemOwner(q, p.ProjectID); err != nil {
+			return "", err
+		}
 	}
 	since := tsOf(new(time.Now().Add(-problemReopenHours * time.Hour)))
 	id, err := q.db().ProblemRecentClosed(q.ctx(), db.ProblemRecentClosedParams{Cause: p.Cause, Since: since})
@@ -284,6 +288,11 @@ func problemsAdopt(q *Request, botID string, d *contract.BotDuty) error {
 // Operations.
 
 func init() {
+	onStart(func(ctx context.Context, a *App) {
+		every(ctx, "problems-watch", envMs("FLEET_PROBLEMS_WATCH_TICK_MS", 60_000), func(ctx context.Context) error {
+			return a.store.Write(ctx, nil, []string{"problems:watch"}, problemsWatch)
+		})
+	})
 	op("problems_list", problemsList)
 	op("problem_get", problemGetOp)
 	op("problem_update", problemUpdateOp)
@@ -480,7 +489,9 @@ func problemEscalateOp(q *Request, r *contract.ProblemEscalateRequest) (contract
 		return contract.ProblemEscalateReply{}, fail(409, "The problem is closed")
 	}
 	if p.QuestionID != nil {
-		if qu, err := agentQuestionGet(q, *p.QuestionID); err == nil && qu.State == "open" {
+		if open, err := q.db().ProblemQuestionOpen(q.ctx(), *p.QuestionID); err != nil {
+			return contract.ProblemEscalateReply{}, err
+		} else if open {
 			return contract.ProblemEscalateReply{}, fail(409, "The problem already has an open escalation")
 		}
 	}
@@ -594,4 +605,87 @@ func problemTalkOp(q *Request, r *contract.ProblemTalkRequest) (contract.Problem
 		return out, err
 	}
 	return contract.ProblemTalkReply{Problem: problemOut(q, p), SessionId: sid, Admitted: admitted}, nil
+}
+
+const (
+	dutyNewMinutes = 30 // duty.newMinutes
+	dutyCause      = "duty:%s:down"
+)
+
+// problemsWatch: the watchdog (rule 6): a working problem past problems.stuckHours turns stuck; a duty bot whose
+// problem trigger fails, or whose oldest new problem waits duty.newMinutes with no run of the bot since, is down: one
+// problem without an owner and one only-you question to the owner, never one per waiting problem. Both close when the
+// bot runs again.
+func problemsWatch(q *Request) error {
+	if err := q.db().ProblemsStale(q.ctx(), problemStuckHours); err != nil {
+		return err
+	}
+	bots, err := q.db().ProblemDutyHealth(q.ctx())
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, b := range bots {
+		cause := fmt.Sprintf(dutyCause, b.ID)
+		reason := ""
+		switch {
+		case b.Failing > 0:
+			reason = "its triggers fail"
+		case b.OldestNew.Valid && now.Sub(b.OldestNew.Time) > dutyNewMinutes*time.Minute && (!b.LastRun.Valid || b.LastRun.Time.Before(b.OldestNew.Time)):
+			reason = fmt.Sprintf("it has not run for %s while problems wait", now.Sub(b.OldestNew.Time).Round(time.Minute))
+		}
+		if reason == "" {
+			if err := dutyRecovered(q, cause); err != nil {
+				return err
+			}
+			continue
+		}
+		text := fmt.Sprintf("%s is not working: %s. %d problems wait for it. A PM can fix it or take the problems duty: tell one on Home.", b.Name, reason, b.Waiting)
+		id, err := problemRaiseID(q, "watchdog", Problem{Cause: cause, Text: text, RefreshText: true, Unowned: true})
+		if err != nil {
+			return err
+		}
+		p, err := q.db().ProblemGet(q.ctx(), id)
+		if err != nil {
+			return err
+		}
+		if p.QuestionID != nil {
+			if open, err := q.db().ProblemQuestionOpen(q.ctx(), *p.QuestionID); err != nil {
+				return err
+			} else if open {
+				continue
+			}
+		}
+		fleet := "fleet"
+		data := jsonBytes(struct {
+			ProblemID  string `json:"problemId"`
+			Problem    string `json:"problem"`
+			Escalation string `json:"escalation"`
+		}{p.ID, problemCode(p.Seq), "only-you"})
+		qid, err := askQuestionAs(q, questionAsk{Kind: "operator_decision", Text: text + " (" + problemCode(p.Seq) + ", only you can do this)", AskedBy: &fleet, Data: data})
+		if err != nil {
+			return err
+		}
+		if err := q.db().ProblemUpdate(q.ctx(), db.ProblemUpdateParams{ID: p.ID, Phase: ptr("escalated"), QuestionID: &qid}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dutyRecovered: the bot works again: its down problem closes and the question, if still open, is withdrawn.
+func dutyRecovered(q *Request, cause string) error {
+	p, err := q.db().ProblemOpenGet(q.ctx(), cause)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if p.QuestionID != nil {
+		if err := questionsWithdraw(q, []string{*p.QuestionID}); err != nil {
+			return err
+		}
+	}
+	return problemsCloseIDs(q, []string{p.ID}, "cleared")
 }

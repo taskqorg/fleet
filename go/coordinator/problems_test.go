@@ -109,4 +109,35 @@ func TestProblemLifecycle(t *testing.T) {
 	if _, err := q.db().ProblemOpenGet(ctx, "host:windows:offline"); err == nil {
 		t.Fatal("an absent set cause stayed open")
 	}
+
+	// The watchdog: HAL0 owns a new problem an hour old and has not run since: one problem without an owner and one
+	// only-you question; a run of HAL0 closes both.
+	if _, err := tx.Exec(ctx, "UPDATE problem SET opened_at = now() - interval '1 hour' WHERE cause = 'problem:bugsink:1'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := problemsWatch(q); err != nil {
+		t.Fatal(err)
+	}
+	down := get("duty:hal:down")
+	if down.OwnerBotID != nil || down.QuestionID == nil || down.Phase != "escalated" {
+		t.Fatalf("duty down: %+v", down)
+	}
+	if err := problemsWatch(q); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state = 'open'").Scan(&questions); err != nil || questions != 1 {
+		t.Fatalf("watchdog asked %d open questions, want 1 (%v)", questions, err)
+	}
+	if _, err := tx.Exec(ctx, "INSERT INTO execution(id, kind, state, bot_id, started_at) VALUES ('hal-run', 'agent_run', 'running', 'hal', now())"); err != nil {
+		t.Fatal(err)
+	}
+	if err := problemsWatch(q); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.db().ProblemOpenGet(ctx, "duty:hal:down"); err == nil {
+		t.Fatal("duty down stayed open after the bot ran")
+	}
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state = 'open'").Scan(&questions); err != nil || questions != 0 {
+		t.Fatalf("watchdog question still open: %d (%v)", questions, err)
+	}
 }

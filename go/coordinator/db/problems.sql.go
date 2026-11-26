@@ -47,6 +47,54 @@ func (q *Queries) ProblemBySeq(ctx context.Context, seq int64) (Problem, error) 
 	return i, err
 }
 
+const problemDutyHealth = `-- name: ProblemDutyHealth :many
+SELECT b.id, coalesce(s.name, '')::text AS name,
+ (SELECT count(*) FROM trigger t WHERE t.bot_id = b.id AND t.enabled AND coalesce(t.last_error, '') <> '')::int AS failing,
+ (SELECT min(p.opened_at) FROM problem p WHERE p.owner_bot_id = b.id AND p.state = 'open' AND p.phase = 'new')::timestamptz AS oldest_new,
+ (SELECT max(e.started_at) FROM execution e WHERE e.bot_id = b.id AND e.kind = 'agent_run')::timestamptz AS last_run,
+ (SELECT count(*) FROM problem p WHERE p.owner_bot_id = b.id AND p.state = 'open')::int AS waiting
+FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL AND s.duty ? 'problems' ORDER BY b.id
+`
+
+type ProblemDutyHealthRow struct {
+	ID        string
+	Name      string
+	Failing   int32
+	OldestNew pgtype.Timestamptz
+	LastRun   pgtype.Timestamptz
+	Waiting   int32
+}
+
+// Each duty bot's health for the watchdog: enabled triggers that wake on problems and failed their last pass, its
+// oldest new problem, and its last run.
+func (q *Queries) ProblemDutyHealth(ctx context.Context) ([]ProblemDutyHealthRow, error) {
+	rows, err := q.db.Query(ctx, problemDutyHealth)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProblemDutyHealthRow
+	for rows.Next() {
+		var i ProblemDutyHealthRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Failing,
+			&i.OldestNew,
+			&i.LastRun,
+			&i.Waiting,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const problemGet = `-- name: ProblemGet :one
 SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at FROM problem WHERE id = $1
 `
@@ -206,6 +254,17 @@ type ProblemPresentParams struct {
 func (q *Queries) ProblemPresent(ctx context.Context, arg ProblemPresentParams) error {
 	_, err := q.db.Exec(ctx, problemPresent, arg.Text, arg.ID)
 	return err
+}
+
+const problemQuestionOpen = `-- name: ProblemQuestionOpen :one
+SELECT EXISTS(SELECT 1 FROM question WHERE id = $1 AND state = 'open')
+`
+
+func (q *Queries) ProblemQuestionOpen(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, problemQuestionOpen, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const problemQuietWake = `-- name: ProblemQuietWake :exec
