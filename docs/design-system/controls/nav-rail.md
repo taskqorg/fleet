@@ -74,9 +74,9 @@ Nothing else tones it: this tab not yet checked, a gateway probe older than a mi
 
 Collapsed, the strip keeps its row with only its button over the avatar column (the seconds while it counts, pause while held, the spinner while reloading, Retry after a failure; its tooltip says the full state), and the version gives way to a toned icon button that floats above the block when the mark would be toned; it opens the overview. No row or icon moves (OR-42). At phone width the user block, with its strip, is in the More menu.
 
-**Keyboard.** `g` then a letter goes to a section ([principles §5](../principles.md#5-keyboard)). Up and down arrows move through items, `p` pins or unpins the focused item, and Alt+Up and Alt+Down move a focused pinned item.
+**Keyboard.** `g` then a letter goes to a section ([principles §5](../principles.md#5-keyboard)). Up and down arrows move through items, `p` pins or unpins the focused item, and on a focused pinned item Space grabs it, the arrows move it, Space or Enter drops and Escape cancels.
 
-**Accessibility.** `nav` named "Sections". Each pinned and group list is named. Pin buttons are named "Pin Tasks" or "Unpin Tasks" and expose `aria-pressed`. Counters have accessible names such as "12 running in focus, 30 outside" (**Counters**).
+**Accessibility.** `nav` named "Sections". Each pinned and group list is named. Only a pinned item has a pin button, named "Unpin Projects" with `aria-pressed` true; Pin is in the item's menu and on `p`. Counters have accessible names such as "12 running in focus, 30 outside" (**Counters**).
 
 **Do.** Keep the order the person chose. **Don't.** Reorder sections automatically by frequency (specq "stable adaptation"). Don't add a separate Favourites page (OR-12).
 

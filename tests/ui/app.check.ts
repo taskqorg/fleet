@@ -138,9 +138,10 @@ try {
   const t0 = Date.now(); await fetch(origin + '/api/ops/task_update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: firstId, action: 'pause' }) });
   let ms = -1; for (let i = 0; i < 100; i++) { if (await page.$(`.pw-facet .vl-row [aria-label^="Paused"]`)) { ms = Date.now() - t0; break; } await page.waitForTimeout(20); }
   out.push(`change-to-screen: ${ms < 0 ? 'NOT SEEN within 2 s' : ms + ' ms'} (target <= 1000 ms)${ms > 1000 ? '  OVER TARGET' : ''}`);
-  // Pins (nav-rail.md): pin from the item, it stays in its group too; Space, ArrowUp, Space reorders (reorder.tsx); the order survives a reload (person settings).
+  // Pins (nav-rail.md): `p` on the focused item pins it (no pin shows on hover, OR-37), it stays in its group too with its
+  // pin shown; Space, ArrowUp, Space reorders (reorder.tsx); the order survives a reload (person settings).
   await page.goto(origin + '/home'); await page.waitForSelector('[data-ui=nav-rail]');
-  for (const n of ['Projects', 'System']) { await page.locator('.rail-g:not(.pinned)').getByRole('button', { name: 'Pin ' + n, exact: true }).click(); await page.waitForTimeout(150); }
+  for (const id of ['projects', 'system']) { await page.locator(`.rail-g:not(.pinned) [data-id=${id}] a`).focus(); await page.keyboard.press('p'); await page.waitForTimeout(150); }
   const pinsOf = () => page.$$eval('.rail-g.pinned .nav-i', els => els.map(e => e.getAttribute('data-id')));
   const twice = await page.locator('.rail-g:not(.pinned) .nav-i.pinned[data-id=projects]').count();
   await page.locator('.rail-g.pinned [data-id=system] a').focus(); for (const k of ['Space', 'ArrowUp', 'Space']) { await page.keyboard.press(k); await page.waitForTimeout(80); } await page.waitForTimeout(300);

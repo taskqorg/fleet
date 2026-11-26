@@ -37,7 +37,7 @@
   .rail-head { display: flex; align-items: center; gap: var(--space-2); padding-left: var(--space-3); height: var(--size-control); }
   /* OR-42: collapsed and expanded map 1:1. Same items, same heights; only labels go. */
   .rail.mini { width: calc(2 * var(--space-2) + 2 * var(--space-3) + var(--size-icon) + 1px); }
-  .rail.mini .nm, .rail.mini .nav-pin, .rail.mini .rail-menu:not(.up), .rail.mini .brand, .rail.mini .waiting { display: none; }
+  .rail.mini .nm, .rail.mini :is(.nav-pin, .nav-pin-slot), .rail.mini .rail-menu:not(.up), .rail.mini .brand, .rail.mini .waiting { display: none; }
   .rail.mini .rail-h { visibility: hidden; width: 0; padding: var(--space-1) 0; overflow: hidden; white-space: nowrap; }
   /* The user block (board screens/shell): update strip, then avatar, name and version; collapsed, icon buttons above the avatar. */
   .rail-user { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
@@ -134,10 +134,6 @@
   .pin-age { font-size: var(--font-size-sm); color: var(--fg-faint); }
   .pin-age.t-attention, .pin-age.t-running { color: var(--tone-fg); }
   .rail-pinned .nav-i { position: relative; -webkit-touch-callout: none; }
-  .reorder-grip { position: absolute; left: 0; top: 50%; translate: 0 -50%; display: inline-grid; color: var(--fg-faint); line-height: 0; opacity: 0; pointer-events: none; }
-  .reorder-grip .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
-  .nav-i:is(:hover, :focus-within) > .reorder-grip, .nav-i[data-reorder] > .reorder-grip { opacity: 1; }
-  .rail.mini .reorder-grip { display: none; }
   .pinned-strip { --avatar-ring: var(--float); display: flex; flex-direction: column; }
   .pinned-strip-h { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); letter-spacing: 0.04em; text-transform: uppercase; }
   .pinned-strip-h .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
@@ -200,12 +196,12 @@
   .nav-count.t-neutral .nav-in { color: var(--fg); }
   .nav-count.out-only { background: none; }
   .rail.mini .nav-out, .rail.mini .nav-count.out-only { display: none; }
-  .nav-pin { display: inline-flex; align-items: center; justify-content: center; width: var(--size-control); height: var(--size-control); border: 0; background: none; color: var(--fg-muted); cursor: pointer; opacity: 0; }
+  .nav-pin { display: inline-flex; align-items: center; justify-content: center; width: var(--size-control); height: var(--size-control); border: 0; background: none; color: var(--fg-muted); cursor: pointer; }
+  .nav-pin-slot { flex: none; width: var(--size-control); }
   .nav-pin .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
-  .nav-i:hover .nav-pin, .nav-pin:focus-visible, .nav-i:focus-within .nav-pin, .nav-pin.on { opacity: 1; }
+  /* Only a pinned item has its pin, always shown (OR-37, no exceptions); the row itself is the drag handle, no grip. */
   .nav-pin.on { color: var(--fg); }
-  .rail-g.pinned .nav-i { cursor: grab; }
-  @media (pointer: coarse) { .nav-pin { opacity: 1; } }
+  .rail-g.pinned .nav-i, .rail-pinned .nav-i[data-reorder-key] { cursor: grab; }
 
   /* Phone bottom bar (OR-60): hidden above 760 px, where the rail shows. */
   .bottom-bar { display: none; }
@@ -410,7 +406,7 @@
     .rail, .rail.mini { width: auto; padding: var(--space-2) var(--space-1); }
     .nav-toggle, .divider { display: none; }
     .shell-h { padding-left: var(--space-3); }
-    .rail .nm, .rail .rail-h, .rail .nav-pin, .rail .rail-menu:not(.up), .rail .rail-g:not(.pinned) .nav-i.pinned, .rail .brand, .rail .waiting, .rail-head { display: none; }
+    .rail .nm, .rail .rail-h, .rail :is(.nav-pin, .nav-pin-slot), .rail .rail-menu:not(.up), .rail .rail-g:not(.pinned) .nav-i.pinned, .rail .brand, .rail .waiting, .rail-head { display: none; }
     .rail .rail-ver, .rail .rail-prob, .rail .upd-strip { display: none; }
     .rail:not(.mini) .menu-ver { display: flex; }
     .rail .nav-i a { padding: 0 var(--space-2); position: relative; }

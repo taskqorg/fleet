@@ -73,7 +73,7 @@ The board is `docs/design-system/board/drafts/history.bl`.
   - a row click opens its details on the right.
 - **Each section** gets a History view chip (Lab: All · Mine · Waiting · History). With nothing selected, its detail pane shows the newest 5 to 10 entries of its history. The heading opens the full scoped History.
 - **Objects** (task, conversation, host, bot, experiment) get a History tab. The task's History tab (`task_get.history`, #1006) becomes `history_view {taskId}`, so state moves, delivery and questions interleave with its conversations.
-- **Phone:** History takes a bottom-bar slot. A section's History is a chip, and an object's is a tab.
+- **Phone:** History is in the bottom bar's More menu (OR-60, owner 2026-11-26). A section's History is a chip, and an object's is a tab.
 - **Live "Just now"** becomes the newest entries of this feed, and its heading opens History.
 
 ## Not yet recorded

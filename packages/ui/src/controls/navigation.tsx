@@ -297,11 +297,11 @@ export function NavRail(p: {
     };
   });
 
-  // An item unpinned from the pinned group leaves it: focus follows to the same item in its group.
+  // An unpinned item leaves the pinned group and loses its pin button: focus goes to the same item's link in its group.
   const toggle = (id: string, inPinned = false) => {
-    const cur = pinned();
-    p.onPins(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
-    if (inPinned) focusItem(id, false);
+    const cur = pinned(), unpin = cur.includes(id);
+    p.onPins(unpin ? cur.filter(x => x !== id) : [...cur, id]);
+    if (inPinned || unpin) focusItem(id, false);
   };
   // Pinned sections reorder by drag (reorder.tsx; owner 26 Nov: no Move up / Move down).
   let pinnedRef: HTMLUListElement | undefined;
@@ -337,16 +337,21 @@ export function NavRail(p: {
           <span class="nm">{it.label}</span>
           <Show when={it.count} keyed>{c => <NavCounter c={c} />}</Show>
         </a>
-        <button
-          type="button"
-          class={['nav-pin', { on: isPinned() }]}
-          aria-pressed={isPinned() ? 'true' : 'false'}
-          aria-label={`${isPinned() ? 'Unpin' : 'Pin'} ${it.label}`}
-          data-tip={isPinned() ? 'Unpin' : 'Pin'}
-          onClick={() => toggle(it.id, inPinned)}
-        >
-          <Icon name="pin" />
-        </button>
+        {/* OR-37, no exceptions: no pin appears on hover. A pinned item always shows its pin, pressed, and a click unpins;
+            pinning is in the item's menu and on `p`. */}
+        {/* An unpinned item keeps the pin's slot empty, so counters stay in one column. */}
+        <Show when={isPinned()} fallback={<span class="nav-pin-slot" aria-hidden="true" />}>
+          <button
+            type="button"
+            class="nav-pin on"
+            aria-pressed="true"
+            aria-label={`Unpin ${it.label}`}
+            data-tip="Unpin"
+            onClick={() => toggle(it.id, inPinned)}
+          >
+            <Icon name="pin" />
+          </button>
+        </Show>
         <Show when={menu() === menuKey()}>
           <span class="menu rail-menu" role="menu" aria-label={it.label}>
             <button type="button" role="menuitem" ref={focusOnMount} onClick={act(() => toggle(it.id, inPinned))}>
@@ -392,17 +397,20 @@ export function NavRail(p: {
 }
 
 /**
- * The phone navigation (OR-60): below 760 px a bottom bar of five replaces the rail. The first four sections are tabs, the
+ * The phone navigation (OR-60): below 760 px a bottom bar of five replaces the rail. Four sections are tabs (`tabs`), the
  * fifth tab, More, opens a short menu above it (OR-14) with the other sections and `foot` (the user block). The tab of the
  * current section, or More when the current one is in its menu, is marked. Counters show as the in-focus badge.
  */
 export function BottomBar(p: {
   items: NavItem[]; current: string; onGo: (id: string) => void; foot?: JSX.Element;
+  /** The ids of the four tabs in bar order (OR-60: Home, Live, Conversations, Projects); the other items go into More in
+   *  their rail order. Without it, the first four items. */ tabs?: readonly string[];
   /** First in the More menu: the Pinned zone when it is on (RailPinnedStrip); done closes the menu. */ extra?: (done: () => void) => JSX.Element;
 }) {
   const [open, setOpen] = createSignal(false);
-  const tabs = createMemo(() => p.items.slice(0, 4));
-  const more = createMemo(() => p.items.slice(4));
+  const tabIds = createMemo(() => p.tabs ?? p.items.slice(0, 4).map(i => i.id));
+  const tabs = createMemo(() => tabIds().map(id => p.items.find(i => i.id === id)).filter((x): x is NavItem => !!x));
+  const more = createMemo(() => p.items.filter(i => !tabIds().includes(i.id)));
   const inMore = createMemo(() => more().some(i => i.id === p.current));
   let ref: HTMLElement | undefined;
   createEffect(open, on => {

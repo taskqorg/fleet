@@ -5,7 +5,7 @@ import { SidePanels, ownPanelStore, clampWidth, PanelToggle, ResizeDivider, type
 import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead, RailPinned, RailPinnedStrip, type RailPinnedProps } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
-import { states, statesOf, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
+import { states, statesOf, actions, harnesses, barTabs, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
@@ -417,7 +417,7 @@ export function AppShell(p: {
           pinnedZone={zoneSwitch()}
         />
         {/* OR-60: below 760 px the bottom bar of five replaces the rail (CSS shows one of them). */}
-        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} extra={p.pinnedZone?.on ? done => <RailPinnedStrip {...p.pinnedZone!.zone} onDone={done} /> : undefined} foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} pinned={zoneSwitch()} />}</Show>} />
+        <BottomBar items={p.nav} tabs={barTabs} current={p.current} onGo={p.onGo} extra={p.pinnedZone?.on ? done => <RailPinnedStrip {...p.pinnedZone!.zone} onDone={done} /> : undefined} foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} pinned={zoneSwitch()} />}</Show>} />
         <div class="shell-col">
           <Show when={!mini()}><Divider name="rail" /></Show>
           {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42),

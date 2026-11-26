@@ -250,8 +250,8 @@ function spotDemo(focus: string[], onFocus: (f: string[]) => void): SpotlightPro
 }
 
 function RailDemo() {
-  const [cur, setCur] = createSignal('tasks');
-  const [pinned, setPinned] = createSignal<string[]>(['tasks', 'hosts']);
+  const [cur, setCur] = createSignal('projects');
+  const [pinned, setPinned] = createSignal<string[]>(['projects', 'system']);
   // Counters (nav-rail.md): without a focus, with a focus (in focus bright, outside dim) and collapsed (the in-focus badge only).
   return <div class="rail-demos"><For each={[['No focus', NAV, false], ['Focus', NAV_FOCUS, false], ['Collapsed, focus', NAV_FOCUS, true]] as const}>{([t, items, mini]) =>
     <figure class="pane rail-demo"><figcaption class="muted type-sm">{t}</figcaption><NavRail items={items} pinned={pinned()} current={cur()} onGo={setCur} onPins={setPinned} mini={mini} /></figure>}</For></div>;
@@ -469,8 +469,8 @@ function StartDemo() {
 const SECTIONS: [string, string, string | undefined, () => JSX.Element, (() => JSX.Element)?][] = [
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, () => <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, () => <>OR-3: one stable icon per workspace, from the registry.</>],
-  ['rail-pinned', 'Pinned zone in the navigation', 'nav-rail', () => <RailPinnedDemo />, () => <>Turned on per person (railPinned): the conversations and bots the person pinned, in their order. Drag a row (or Space, arrows, Space) to reorder; right-click a row: Unpin, Open; right-click the heading: hide the zone.</>],
-  ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, () => <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters count each section's counter view; with a focus they split into in focus and outside, collapsed only the in-focus badge stays. Search is the icon in the shell header (OR-31, OR-43).</>],
+  ['rail-pinned', 'Pinned zone in the navigation', 'nav-rail', () => <RailPinnedDemo />, () => <>Turned on per person (railPinned): the conversations and bots the person pinned, in their order. Press and drag the row itself, no grip (or Space, arrows, Space or Enter; Escape cancels; long-press on touch) to reorder; right-click a row: Unpin, Open; right-click the heading: hide the zone.</>],
+  ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, () => <>Pin a section from its menu (right-click, Shift+F10) or with `p`: it moves to the pinned group at the top (D9). Nothing shows on hover (OR-37); a pinned section always shows its pin, and a click on it unpins. Drag a pinned section to reorder. Counters count each section's counter view; with a focus they split into in focus and outside, collapsed only the in-focus badge stays. Search is the icon in the shell header (OR-31, OR-43).</>],
   ['spotlight', 'Spotlight palette', 'spotlight', () => <SpotlightDemo />, () => <>OR-32. Empty, it shows the focus presets (a preset of only ignored projects is not offered), recent items and the terms; type <code>deploy</code> for state icons, ages, the results outside the focus and the "All N" row. Close and reopen: the query and the highlighted row stay.</>],
   ['focus-control', 'Focus chip in the shell header', 'focus-control', () => <div class="stack"><HeaderDemo start={[]} /><HeaderDemo start={['fleet', 'desiign', 'cs']} /></div>, () => <>OR-34, OR-43. Neutral with every project; toned with a focus, names two projects then +N. The bell counts what needs you outside the focus. The panel floats under the chip: presets, projects with an ignore action, and the folded Ignored section to restore them.</>],
   ['split-button', 'Split button', 'split-button', () => <SplitDemo />, () => <>Click runs the default action; the chevron opens a short menu of alternatives for the same place (allowed by OR-14).</>],
