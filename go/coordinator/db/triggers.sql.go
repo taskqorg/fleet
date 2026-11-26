@@ -378,6 +378,48 @@ func (q *Queries) TriggerState(ctx context.Context, arg TriggerStateParams) erro
 	return err
 }
 
+const triggerSubjectScope = `-- name: TriggerSubjectScope :one
+SELECT coalesce(bot_id, '')::text AS bot_id, coalesce(subject, '')::text AS subject FROM session WHERE id = $1
+`
+
+type TriggerSubjectScopeRow struct {
+	BotID   string
+	Subject string
+}
+
+// A bot's conversation for one subject (a problem, a question): its bot and subject; a session trigger on it sees
+// only the tasks it works (bot_task with its session), not the whole project (triggerChanges).
+func (q *Queries) TriggerSubjectScope(ctx context.Context, id string) (TriggerSubjectScopeRow, error) {
+	row := q.db.QueryRow(ctx, triggerSubjectScope, id)
+	var i TriggerSubjectScopeRow
+	err := row.Scan(&i.BotID, &i.Subject)
+	return i, err
+}
+
+const triggerSubjectTasks = `-- name: TriggerSubjectTasks :many
+SELECT task_id FROM bot_task WHERE session_id = $1 AND tombstoned_at IS NULL
+`
+
+func (q *Queries) TriggerSubjectTasks(ctx context.Context, sessionID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, triggerSubjectTasks, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var task_id string
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const triggerUpdate = `-- name: TriggerUpdate :execrows
 UPDATE trigger
 SET revision = revision + 1, name = $1, preset_id = $2, text = $3, when_kind = $4,

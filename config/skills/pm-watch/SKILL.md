@@ -6,6 +6,7 @@ description: Watch a focus for questions, failures and task changes. Use when th
 # Watch
 
 - Set the focus first: `focus_set {projectIds}` (a list, or `"*"` for every project you may see).
+- In a bot's conversation for one subject (a problem's, subject `problem:<id>`), your bot's problem trigger already wakes you for it; a focus watch you start there sees only the tasks linked to this conversation (`session_task_attach`), never the whole project.
 - Start watching with a trigger: `trigger_list {sessionId}` shows your triggers and the presets; `trigger_save {id: <new UUID>, baseRevision: 0, sessionId, presetId: "focus-changes"}` wakes you within one pass of a change in your focus, and `presetId: "conversation-check"` checks every 5 minutes. Change the kinds with `settings.ifChanged` (task, question, execution, host, limits) and the interval with `settings.everyMs`; pause with `settings.enabled: false`; `trigger_delete` ends it. A trigger with `ifChanged` sends nothing while nothing changed, so it costs no turn.
 - A wake is a message starting with `Fleet:` that lists IDs and states only. Read each item with `task_get`, `questions_list` or `execution_status` before acting.
 - Answer a worker's question yourself with `reply` when the task text settles it; otherwise ask the person through `ask`, quoting the question.

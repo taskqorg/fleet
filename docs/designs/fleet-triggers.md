@@ -35,6 +35,8 @@ Unchanged defaults: no limits (no minimum interval, no trigger count cap); the s
 | `revision` | Optimistic concurrency for saves and deletes. |
 | state | `cursor` (change log position), `nextAt`, `lastSlot` (daily date), `fires`, `lastFireAt`, `quietChecks` and `quietSince` (checks without change since the last fire), `lastError`, `limitsSignaled`. |
 
+A session trigger on a bot's conversation for one subject (a problem's) counts only changes of the tasks linked to that conversation (`bot_task` with its session): its bot's own trigger wakes it for its subject, and a project-wide watch in every such conversation woke all of them for every change (2026-11-26).
+
 Focus for the condition: a session target uses the session's focus (`focus_set` projects, else every project its director may see), as watch does today. A bot target uses the bot's project.
 
 ## Pass

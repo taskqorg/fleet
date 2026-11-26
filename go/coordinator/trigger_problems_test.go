@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,5 +39,36 @@ func TestTriggerWakesOwnerOnManyProblems(t *testing.T) {
 	var n int
 	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM session WHERE bot_id = $1 AND subject LIKE 'problem:%'", bot).Scan(&n); err != nil || n != 6 {
 		t.Fatalf("problem conversations %d, want 6 (%v)", n, err)
+	}
+
+	// A focus watch the bot's agent starts in one of those conversations (pm-watch) sees only the tasks it works: a
+	// change of another task of the project wakes nobody there.
+	var sid string
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT id FROM session WHERE bot_id = $1 AND subject LIKE 'problem:%' LIMIT 1", bot).Scan(&sid); err != nil {
+		t.Fatal(err)
+	}
+	e.opInto(t, "trigger_save", map[string]any{"id": "33333333-4444-4555-8666-777777777777", "baseRevision": 0, "sessionId": sid, "presetId": "focus-changes"}, h, &trig)
+	if _, err := e.ownerStore.pool.Exec(e.ctx, "SET fleet.project_ids = '*'; INSERT INTO task(id, title, project_id) VALUES ('t-other', 'other work', 'specq'); UPDATE task SET state = 'in_progress' WHERE id = 't-other'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		row, err := q.db().TriggerGet(q.ctx(), "33333333-4444-4555-8666-777777777777")
+		if err != nil {
+			return err
+		}
+		row.ChangeCursor = 0
+		target, err := triggerTargetOfRow(q, row)
+		if err != nil {
+			return err
+		}
+		parts, _, _, err := triggerChanges(q, row, target)
+		for _, p := range parts {
+			if strings.Contains(p.Text, "t-other") || strings.Contains(p.Text, "other work") {
+				t.Errorf("a problem conversation sees another task: %+v", p)
+			}
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

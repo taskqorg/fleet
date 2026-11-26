@@ -902,6 +902,26 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 	} else {
 		focus, directedBy, self = target.session.focus(), deref(target.session.DirectedBy), target.sessionID
 	}
+	// A bot's conversation for one subject (a problem's) sees only the tasks it works, never the whole project: each
+	// of HAL0's 48 problem conversations kept a project-wide focus watch (pm-watch), and every change in project fleet
+	// woke all of them (129 of 178 HAL0 runs in 1.5 h, 2026-11-26). Its bot's own trigger wakes it for its subject.
+	var subjectTasks map[string]bool
+	if target.session != nil {
+		sc, err := q.db().TriggerSubjectScope(q.ctx(), target.sessionID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, t.ChangeCursor, t.LimitsSignaled, err
+		}
+		if sc.BotID != "" && sc.Subject != "" {
+			ids, err := q.db().TriggerSubjectTasks(q.ctx(), &target.sessionID)
+			if err != nil {
+				return nil, t.ChangeCursor, t.LimitsSignaled, err
+			}
+			subjectTasks = map[string]bool{}
+			for _, id := range ids {
+				subjectTasks[id] = true
+			}
+		}
+	}
 	dir := q.peopleSnapshot().person(firstString(directedBy, ownerEmail(q)))
 	if dir == nil {
 		return nil, t.ChangeCursor, t.LimitsSignaled, fail(403, "Director of the trigger's target is not a person of this Fleet")
@@ -953,6 +973,9 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 		}
 		for _, c := range page {
 			p := deref(c.ProjectID)
+			if subjectTasks != nil && (c.TaskId == nil || !subjectTasks[*c.TaskId]) {
+				continue
+			}
 			if c.Kind == "problem" {
 				// A problem wakes only its owner bot, whatever its project (problems without one included); the bot's
 				// own updates are its own (actor) and wake nobody.
