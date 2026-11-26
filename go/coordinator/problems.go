@@ -731,7 +731,7 @@ func dutyRecovered(q *Request, cause string) error {
 // problemTriggerParts: after the changes, the owner's problems it never started (adopted with a duty, or a wake that
 // was lost) join its wake, one conversation each; and every problem in this wake counts one wake, so a problem woken
 // problems.stuckWakes times with no update of its owner turns stuck (problem_update resets the count).
-func problemTriggerParts(q *Request, bot string, seen map[string]bool) ([]threadPart, error) {
+func problemTriggerParts(q *Request, bot string, seen, owned map[string]bool) ([]threadPart, error) {
 	ids, err := q.db().ProblemsUnstarted(q.ctx(), bot)
 	if err != nil {
 		return nil, err
@@ -745,12 +745,12 @@ func problemTriggerParts(q *Request, bot string, seen map[string]bool) ([]thread
 		if part, ok, err := problemChangePart(q, id, bot); err != nil {
 			return nil, err
 		} else if ok {
-			parts = append(parts, part)
+			parts, owned[id] = append(parts, part), true
 		}
 	}
 	woken := []string{}
 	for k := range seen {
-		if id, ok := strings.CutPrefix(k, "problem"); ok {
+		if id, ok := strings.CutPrefix(k, "problem"); ok && owned[id] {
 			woken = append(woken, id)
 		}
 	}

@@ -2,5 +2,5 @@
 -- open delivery problem's links already sit in data.links and its text is rewritten by the next delivery check.
 UPDATE problem SET
  data = data || jsonb_build_object('url', substring(text from '(https?://\S+/issues/issue/[^/\s]+/)')),
- text = regexp_replace(text, ':\s*https?://\S+.*$', '.')
+ text = regexp_replace(text, ':\s*https?://\S+.*$', ' (issue ' || left(split_part(cause, ':', 3), 8) || ').')
 WHERE state = 'open' AND cause LIKE 'problem:bugsink:%' AND text ~ 'https?://';

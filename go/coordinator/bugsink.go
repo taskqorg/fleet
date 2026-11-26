@@ -417,7 +417,7 @@ func bugsinkText(issue, project, reason string) string {
 	if project != "" {
 		where = " in Bugsink project " + project
 	}
-	return what + where + "." // the issue link is the problem's data (url), never its words (OR-38)
+	return what + where + " (issue " + issue[:min(8, len(issue))] + ")." // its link is the problem's data (url), never its words (OR-38)
 }
 
 // bugsinkFleetProject: the live Fleet project whose settings errors.bugsink list the Bugsink project; "" for none. A

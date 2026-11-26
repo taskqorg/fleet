@@ -187,8 +187,13 @@ func agentGapFindingsPass(q *Request, rules *gapRules, now time.Time) error {
 			// An open finding's problem shows the class's current failures and its last one (a still-failing verdict
 			// keeps its own text with both rates).
 			if f.State == "open" || f.State == "linked" || f.State == "watching" {
-				if _, err := gapProblem(q, c, gapProblemText(c, fr.Days, "")); err != nil {
+				// Only while it is open: a problem its owner closed (fixed, duplicate) stays closed.
+				if open, err := q.db().ProblemIsOpen(q.ctx(), gapCause(c.Class)); err != nil {
 					return err
+				} else if open {
+					if _, err := gapProblem(q, c, gapProblemText(c, fr.Days, "")); err != nil {
+						return err
+					}
 				}
 			}
 			continue
