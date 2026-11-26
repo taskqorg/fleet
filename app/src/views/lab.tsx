@@ -196,6 +196,10 @@ export function Lab(props: { id?: string }) {
 
   const now = Date.now();
   const rawExperiments = createMemo(() => experiments.data?.experiments ?? []);
+  // The experiments waiting for this person's choice (lab_view waiting: ones they created, two variants or more); an
+  // agent's decision or a gate is not theirs (fleet-lab.md, Experiment record).
+  const mineToDecide = createMemo(() => new Set(view.data?.waiting ?? []));
+  const waitsForMe = (e: LabExperimentRecord) => mineToDecide().has(e.id);
   const rawUseCases = createMemo<RegistryUseCase[]>(() => registry.data?.useCases ?? []);
   const rawRatings = createMemo(() => ratings.data?.ratings ?? []);
   const rawExamples = createMemo(() => approvedExamples.data?.examples ?? []);
@@ -221,7 +225,7 @@ export function Lab(props: { id?: string }) {
   const viewMatch = createMemo(() => {
     const p = preset(), email = me.data?.email ?? null;
     return p === VIEW_MINE ? (e: LabExperimentRecord) => !!email && e.requestedBy === email
-      : p === VIEW_WAITING ? undecided
+      : p === VIEW_WAITING ? waitsForMe
         : () => true;
   });
   const sortedExperiments = createMemo(
@@ -248,8 +252,8 @@ export function Lab(props: { id?: string }) {
         state: { family: 'experiment', state: e.state, reason: e.stopReason ?? undefined },
         href: `/lab/${encodeURIComponent(e.id)}`,
         pinned: runPins.has(e.id),
-        problem: undecided(e),
-        right: <>{undecided(e) && <Icon name="bell" label="Undecided" />}<AgeChip t={ms(e.createdAt)} /></>,
+        problem: waitsForMe(e),
+        right: <>{waitsForMe(e) && <Icon name="bell" label="Undecided" />}<AgeChip t={ms(e.createdAt)} /></>,
         searchText: [e.id, e.labGroup, e.goal, e.pipelineId, e.projectId, e.kind, e.state, ...e.variants.map(v => v.label)].filter(Boolean).join(' '),
       })),
     }));
@@ -423,7 +427,7 @@ export function Lab(props: { id?: string }) {
   const approvals = createMemo(() => rawRatings().filter(r => r.exampleArtifactId));
   const openRatings = createMemo(() => rawRatings().filter(r => r.experimentId));
   const groupedUseCases = createMemo(() => groupUseCases(rawUseCases()));
-  const waitingExperiments = createMemo(() => rawExperiments().filter(undecided).toSorted((a, b) => ms(b.launchedAt ?? b.createdAt) - ms(a.launchedAt ?? a.createdAt)));
+  const waitingExperiments = createMemo(() => rawExperiments().filter(waitsForMe).toSorted((a, b) => ms(b.launchedAt ?? b.createdAt) - ms(a.launchedAt ?? a.createdAt)));
 
   const comparison = (title: string, onRun?: () => void) => (
     <LabComparison
@@ -507,8 +511,6 @@ export function Lab(props: { id?: string }) {
 
 const title = (e: LabExperimentRecord) => `${e.pipelineId} · ${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.map(v => v.label).join(' vs ')}`;
 const subtitle = (e: LabExperimentRecord) => `${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.length > 2 ? `${e.variants.length} variants` : e.variants.map(v => v.label).join(' vs ')}`;
-/** A finished experiment nobody has decided yet (decision pending). */
-const undecided = (e: LabExperimentRecord) => e.state === 'done' && e.decision === 'pending';
 
 const QUESTIONS_SHOWN = 1;
 const shorten = (t: string, n = 90) => t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t;

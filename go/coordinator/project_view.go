@@ -45,7 +45,7 @@ func projectView(q *Request, r *contract.ProjectViewRequest) (contract.ProjectVi
 		}
 	}
 
-	qs, err := questionsList(q, "", "", "open", "", []string{id}, nil, nil)
+	qs, err := questionRows(q, db.TaskQuestionsParams{State: ptr("open"), PeopleOnly: true}, []string{id}, nil) // to people only, as Needs you
 	if err != nil {
 		return out, err
 	}

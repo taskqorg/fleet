@@ -400,7 +400,7 @@ func (q *Queries) LabExecutionDefinitions(ctx context.Context, arg LabExecutionD
 }
 
 const labExperiment = `-- name: LabExperiment :one
-SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id=$1
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at, gate, title, requested_by_execution FROM experiment WHERE id=$1
 `
 
 func (q *Queries) LabExperiment(ctx context.Context, id string) (Experiment, error) {
@@ -434,6 +434,9 @@ func (q *Queries) LabExperiment(ctx context.Context, id string) (Experiment, err
 		&i.RequestedBy,
 		&i.RequesterRemovedAt,
 		&i.TombstonedAt,
+		&i.Gate,
+		&i.Title,
+		&i.RequestedByExecution,
 	)
 	return i, err
 }
@@ -474,7 +477,7 @@ func (q *Queries) LabExperimentDecide(ctx context.Context, arg LabExperimentDeci
 }
 
 const labExperimentForShare = `-- name: LabExperimentForShare :one
-SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id=$1 FOR SHARE
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at, gate, title, requested_by_execution FROM experiment WHERE id=$1 FOR SHARE
 `
 
 // The experiment row, shared-locked before its requester's person rows (lab.go labRequester).
@@ -509,12 +512,15 @@ func (q *Queries) LabExperimentForShare(ctx context.Context, id string) (Experim
 		&i.RequestedBy,
 		&i.RequesterRemovedAt,
 		&i.TombstonedAt,
+		&i.Gate,
+		&i.Title,
+		&i.RequestedByExecution,
 	)
 	return i, err
 }
 
 const labExperimentForUpdate = `-- name: LabExperimentForUpdate :one
-SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id=$1 FOR UPDATE
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at, gate, title, requested_by_execution FROM experiment WHERE id=$1 FOR UPDATE
 `
 
 // The experiment row, locked for this transaction (a record change reads and writes it once).
@@ -549,33 +555,41 @@ func (q *Queries) LabExperimentForUpdate(ctx context.Context, id string) (Experi
 		&i.RequestedBy,
 		&i.RequesterRemovedAt,
 		&i.TombstonedAt,
+		&i.Gate,
+		&i.Title,
+		&i.RequestedByExecution,
 	)
 	return i, err
 }
 
 const labExperimentInsert = `-- name: LabExperimentInsert :exec
-INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by)
+INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by,
+  gate,title,requested_by_execution)
 VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8::jsonb,
-  $9,$10::jsonb,$11,$12,$13,$14,$15::jsonb,$16)
+  $9,$10::jsonb,$11,$12,$13,$14,$15::jsonb,$16,
+  $17,$18,$19)
 `
 
 type LabExperimentInsertParams struct {
-	ID               string
-	ProjectID        string
-	Kind             string
-	PipelineID       string
-	Examples         []byte
-	Variants         []byte
-	Repeats          int32
-	Evaluators       []byte
-	PrimaryEvaluator *string
-	Budgets          []byte
-	Goal             *string
-	Hypothesis       *string
-	DecisionRule     *string
-	LabGroup         *string
-	Strategy         []byte
-	RequestedBy      *string
+	ID                   string
+	ProjectID            string
+	Kind                 string
+	PipelineID           string
+	Examples             []byte
+	Variants             []byte
+	Repeats              int32
+	Evaluators           []byte
+	PrimaryEvaluator     *string
+	Budgets              []byte
+	Goal                 *string
+	Hypothesis           *string
+	DecisionRule         *string
+	LabGroup             *string
+	Strategy             []byte
+	RequestedBy          *string
+	Gate                 bool
+	Title                *string
+	RequestedByExecution *string
 }
 
 func (q *Queries) LabExperimentInsert(ctx context.Context, arg LabExperimentInsertParams) error {
@@ -596,6 +610,9 @@ func (q *Queries) LabExperimentInsert(ctx context.Context, arg LabExperimentInse
 		arg.LabGroup,
 		arg.Strategy,
 		arg.RequestedBy,
+		arg.Gate,
+		arg.Title,
+		arg.RequestedByExecution,
 	)
 	return err
 }
@@ -642,7 +659,7 @@ func (q *Queries) LabExperimentTouch(ctx context.Context, id string) error {
 }
 
 const labExperiments = `-- name: LabExperiments :many
-SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment ORDER BY seq DESC LIMIT $1::bigint
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at, gate, title, requested_by_execution FROM experiment ORDER BY seq DESC LIMIT $1::bigint
 `
 
 func (q *Queries) LabExperiments(ctx context.Context, lim *int64) ([]Experiment, error) {
@@ -682,6 +699,9 @@ func (q *Queries) LabExperiments(ctx context.Context, lim *int64) ([]Experiment,
 			&i.RequestedBy,
 			&i.RequesterRemovedAt,
 			&i.TombstonedAt,
+			&i.Gate,
+			&i.Title,
+			&i.RequestedByExecution,
 		); err != nil {
 			return nil, err
 		}
@@ -694,7 +714,7 @@ func (q *Queries) LabExperiments(ctx context.Context, lim *int64) ([]Experiment,
 }
 
 const labExperimentsByIDs = `-- name: LabExperimentsByIDs :many
-SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id = ANY($1::text[])
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at, gate, title, requested_by_execution FROM experiment WHERE id = ANY($1::text[])
 `
 
 func (q *Queries) LabExperimentsByIDs(ctx context.Context, ids []string) ([]Experiment, error) {
@@ -734,6 +754,9 @@ func (q *Queries) LabExperimentsByIDs(ctx context.Context, ids []string) ([]Expe
 			&i.RequestedBy,
 			&i.RequesterRemovedAt,
 			&i.TombstonedAt,
+			&i.Gate,
+			&i.Title,
+			&i.RequestedByExecution,
 		); err != nil {
 			return nil, err
 		}

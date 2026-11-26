@@ -368,7 +368,7 @@ func pinsExperimentRequest(group string, pr ghPull, example string, variants []p
 	hypothesis := "Every changed CLI runs every configured model on every host with a ready account: one shell call, one Fleet MCP call and the result file."
 	project := ciProject
 	return contract.LabExperimentCreateRequest{ProjectId: &project, PipelineId: ptr(pinsQualifyPipeline), Kind: &kind,
-		Variants: jsonBytes(vs), Examples: jsonBytes([]string{example}),
+		Gate: ptr(true), Title: ptr(pinsTitle(variants, pr.Number)), Variants: jsonBytes(vs), Examples: jsonBytes([]string{example}),
 		Evaluators: json.RawMessage(`[{"kind":"script","ref":"example.checks","form":"pass_fail"}]`),
 		Goal:       &goal, Hypothesis: &hypothesis, LabGroup: jsonBytes(group)}
 }
@@ -573,4 +573,28 @@ func pinsCandidateOf(b []byte, sha string) (pinsCandidate, error) {
 		}
 	}
 	return out, nil
+}
+
+// pinsTitle: the experiment's human name, "antigravity 1.5.18 pin · PR #1175" (Lab shows it instead of its group).
+func pinsTitle(variants []pinsVariant, pr int64) string {
+	seen, names := map[string]bool{}, []string{}
+	tools := map[string]bool{}
+	for _, v := range variants {
+		n := v.Harness + " " + v.Asset.Version
+		tools[v.Harness] = true
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	noun := " pin"
+	if len(tools) > 1 {
+		noun = " pins"
+	}
+	t := strings.Join(names, ", ") + noun
+	if pr > 0 {
+		t += fmt.Sprintf(" · PR #%d", pr)
+	}
+	return t
 }

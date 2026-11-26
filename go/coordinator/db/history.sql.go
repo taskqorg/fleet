@@ -13,7 +13,7 @@ const historyObjectTitle = `-- name: HistoryObjectTitle :one
 SELECT coalesce(
   (SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = $1::text),
   (SELECT coalesce(s.title, s.code) FROM session s WHERE s.id = $2::text),
-  (SELECT coalesce(x.lab_group, x.goal, x.kind::text) FROM experiment x WHERE x.id = $3::text),
+  (SELECT coalesce(x.title, x.lab_group, x.goal, x.kind::text) FROM experiment x WHERE x.id = $3::text),
   (SELECT coalesce(b.code, b.id) FROM bot b WHERE b.id = $4::text),
   $5::text,
   '')::text AS title

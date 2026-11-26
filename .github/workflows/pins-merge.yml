@@ -20,7 +20,7 @@ jobs:
   merge:
     if: github.event_name == 'workflow_dispatch' || (github.event.context == 'code-review' && github.event.state == 'success')
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     permissions:
       actions: write
       contents: write
@@ -55,21 +55,48 @@ jobs:
           check qualify-hosts "$PINS_STATUS_LOGIN"
           check code-review "$PINS_STATUS_LOGIN"
           [ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)" = "$SHA" ] || { echo "head moved"; exit 0; }
-          # Auto-merge turned on for an earlier head stays on after the proposal is rebuilt, but GitHub never enqueues it
-          # (#1055 sat outside the queue with every required check green): turn it off and on again for this head. A
-          # proposal already in the queue is left alone, since turning auto-merge off would take it out.
+          # 4. The ruleset's other required statuses, go and app, come from the ci run step 3 dispatched; they may still
+          #    run when code-review arrives. Auto-merge turned on while a required status is pending is never enqueued
+          #    once it turns green (#1175 sat armed and green outside the queue for 9 h): wait for both first. Their
+          #    statuses come from the workflow token, which raises no status event, so this run waits for them itself.
+          green() {
+            now=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/statuses?per_page=100" --jq '.[]' | jq -s .)
+            for c in go app; do
+              got=$(jq -r --arg c "$c" 'map(select(.context == $c)) | sort_by(.created_at) | last | .state // "missing"' <<< "$now")
+              [ "$got" = success ] || { echo "$c: $got"; return 1; }
+            done
+          }
+          for i in $(seq 60); do
+            out=$(green) && break
+            case "$out" in *failure*|*error*) echo "a required status failed: $out"; exit 1 ;; esac
+            [ "$i" = 60 ] && { echo "required statuses not green within the wait: $out"; exit 1; }
+            sleep 30
+          done
           # shellcheck disable=SC2016 # GraphQL variables, not shell ones
-          armed=$(gh api graphql -F n="$pr" -f o="${GITHUB_REPOSITORY%/*}" -f r="${GITHUB_REPOSITORY#*/}" -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){autoMergeRequest{enabledAt} mergeQueueEntry{state}}}}' --jq '.data.repository.pullRequest | if .mergeQueueEntry then "queued" elif .autoMergeRequest then "armed" else "off" end')
-          [ "$armed" = queued ] && { echo "already in the merge queue"; exit 0; }
-          if [ "$armed" = armed ]; then
-            gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --disable-auto
-          fi
-          gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --auto
+          armed() { gh api graphql -F n="$pr" -f o="${GITHUB_REPOSITORY%/*}" -f r="${GITHUB_REPOSITORY#*/}" -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){autoMergeRequest{enabledAt} mergeQueueEntry{state}}}}' --jq '.data.repository.pullRequest | if .mergeQueueEntry then "queued" elif .autoMergeRequest then "armed" else "off" end'; }
+          # 5. Arm auto-merge on the green head. Auto-merge turned on earlier (for an earlier head, or while a status was
+          #    pending) stays on but GitHub never enqueues it (#1055, #1175): turn it off and on again. A proposal already
+          #    in the queue is left alone, since turning auto-merge off would take it out.
+          arm() {
+            case "$(armed)" in
+              queued) return 0 ;;
+              armed) gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --disable-auto ;;
+            esac
+            gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --auto
+          }
+          arm
           declare -A dispatched=()
-          for _ in $(seq 170); do
+          rearmed=0
+          for i in $(seq 170); do
             state=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json state --jq .state)
             [ "$state" = MERGED ] && exit 0
             [ "$state" = CLOSED ] && { echo "pull request closed"; exit 1; }
+            # Armed and green but still outside the queue after five minutes: arm it once more.
+            if [ "$i" -ge 10 ] && [ "$rearmed" = 0 ] && [ "$(armed)" = armed ]; then
+              echo "armed but not queued: re-arming"
+              arm
+              rearmed=1
+            fi
             while read -r qsha ref; do
               [ -n "$ref" ] && [ -z "${dispatched[$qsha]:-}" ] || continue
               sleep 60

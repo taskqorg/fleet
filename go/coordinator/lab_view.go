@@ -19,7 +19,7 @@ func init() {
 const labHistoryShown = 8
 
 func labView(q *Request, r *contract.LabViewRequest) (contract.LabViewReply, error) {
-	out := contract.LabViewReply{Experiments: []contract.LabExperimentRecord{}, Ratings: []contract.LabRating{}}
+	out := contract.LabViewReply{Experiments: []contract.LabExperimentRecord{}, Ratings: []contract.LabRating{}, Waiting: []string{}, WithBots: []contract.LabWithBot{}}
 	if err := excludeCheck(r.ExcludeProjectIds); err != nil {
 		return out, err
 	}
@@ -43,6 +43,9 @@ func labView(q *Request, r *contract.LabViewRequest) (contract.LabViewReply, err
 			out.Experiments = append(out.Experiments, x)
 			kept[x.Id] = true
 		}
+	}
+	if out.Waiting, out.WithBots, err = labViewDecisions(q, out.Experiments); err != nil {
+		return out, err
 	}
 	reg, err := labRegistry()
 	if err != nil {
