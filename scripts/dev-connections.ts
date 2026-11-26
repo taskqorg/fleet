@@ -58,8 +58,12 @@ const run = (cmd: string, args: string[], quiet = false) => {
 for (const spec of set.connections) {
   const args = ['mcp', 'connection', spec.name, JSON.stringify(spec)];
   if (harness === 'claude') {
-    run('claude', ['mcp', 'remove', '-s', 'user', spec.name], true);
-    const ok = run('claude', ['mcp', 'add-json', '-s', 'user', spec.name, JSON.stringify({ type: 'stdio', command: executor, args, env })]);
+    const json = JSON.stringify({ type: 'stdio', command: executor, args, env });
+    // Add first: an existing server is removed only to be replaced, so a refused add never loses one.
+    let ok = run('claude', ['mcp', 'add-json', '-s', 'user', spec.name, json], true);
+    if (!ok && run('claude', ['mcp', 'get', spec.name], true)) {
+      ok = run('claude', ['mcp', 'remove', '-s', 'user', spec.name], true) && run('claude', ['mcp', 'add-json', '-s', 'user', spec.name, json]);
+    }
     console.log(`${spec.name}: ${ok ? 'registered' : 'FAILED'} in Claude Code (user scope)`);
   } else if (run('codex', ['mcp', 'get', spec.name], true)) {
     console.log(`${spec.name}: kept in Codex`);

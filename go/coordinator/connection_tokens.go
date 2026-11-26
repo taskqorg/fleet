@@ -53,15 +53,15 @@ func connectionsTokenSet(q *Request, r *contract.ConnectionsTokenSetRequest) (co
 		if deref(t.Personal) != r.Name || t.revoked() {
 			continue
 		}
-		director := directorOf(q)
-		g, err := mintSpecs(q, mintRun{ExecutionID: t.ExecutionID, DirectedBy: &director, Personal: t.Personal}, append([]string{}, r.Connections...))
+		// The token keeps its director: its calls stay attributed to whoever minted it.
+		g, err := mintSpecs(q, mintRun{ExecutionID: t.ExecutionID, DirectedBy: t.DirectedBy, Personal: t.Personal}, append([]string{}, r.Connections...))
 		if err != nil {
 			return no, err
 		}
 		if len(g.names) == 0 {
 			return no, fail(409, "No usable connection: "+strings.Join(g.Refused, ", "))
 		}
-		t.Connections, t.FileDownloads, t.DirectedBy = g.names, g.fileDownloads, &director
+		t.Connections, t.FileDownloads = g.names, g.fileDownloads
 		if err := runTokenPut(q, t); err != nil {
 			return no, err
 		}
