@@ -998,7 +998,18 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 				return err
 			}
 		}
-		return agentPromote(q)
+		// Its own session only, under GLOBAL+DISPATCH; the woken dispatch pass promotes the others. Every session here
+		// made the start-up recovery of 17 waiting runs outlast the updater's health window (2026-11-26, 1.261126.116
+		// rolled back three times).
+		var own struct {
+			SessionID string `json:"sessionId"`
+		}
+		lenientDecode(jsonBytes(e), &own)
+		if err := agentPromoteOnly(q, own.SessionID); err != nil {
+			return err
+		}
+		afterCommit(q, func() { a.wakeDispatch() })
+		return nil
 	})
 	return err
 }
