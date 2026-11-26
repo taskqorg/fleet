@@ -1074,6 +1074,23 @@ func (q *Queries) TaskList(ctx context.Context, arg TaskListParams) ([]TaskListR
 	return items, nil
 }
 
+const taskManagedBy = `-- name: TaskManagedBy :one
+SELECT EXISTS (SELECT 1 FROM bot_task WHERE task_id = $1 AND bot_id = $2 AND link_kind IN ('created', 'managed') AND tombstoned_at IS NULL)
+`
+
+type TaskManagedByParams struct {
+	TaskID string
+	BotID  string
+}
+
+// Whether the bot created or manages the task (any of its links), so its runs may act on the task's sessions.
+func (q *Queries) TaskManagedBy(ctx context.Context, arg TaskManagedByParams) (bool, error) {
+	row := q.db.QueryRow(ctx, taskManagedBy, arg.TaskID, arg.BotID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const taskManagingBot = `-- name: TaskManagingBot :one
 SELECT bot_id FROM bot_task WHERE task_id = $1 AND link_kind IN ('created', 'managed') AND tombstoned_at IS NULL
 ORDER BY created_at LIMIT 1

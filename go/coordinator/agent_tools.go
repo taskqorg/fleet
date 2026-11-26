@@ -816,11 +816,11 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 					return nil
 				}
 				if s.TaskID != "" {
-					bot, err := q.db().TaskManagingBot(q.ctx(), s.TaskID)
-					if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					managed, err := q.db().TaskManagedBy(q.ctx(), db.TaskManagedByParams{TaskID: s.TaskID, BotID: caller})
+					if err != nil {
 						return err
 					}
-					if err == nil && bot == caller {
+					if managed {
 						return nil
 					}
 				}
