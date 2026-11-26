@@ -202,23 +202,25 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 		text(&f, fmt.Sprintf("%s %s%s: %d of %d calls failed in the last %d minutes.", s.Service, name, where, s.Errors, s.Calls, int(ruleSpikeWindow.Minutes())))
 		out = append(out, f)
 	}
-	// host-saturation: the last ruleSaturationBeats heartbeats all have load1 above the CPU count, swap use above
-	// ruleSwapUsedShare of swap total, or memory free below ruleMemFreeShare of the total
-	// (docs/designs/fleet-host-cleanup.md#6-host-saturation). The text names the latest beat's swap and its top three
-	// consumers (fleet.top), as hostOverloadReason does for dispatch.
+	// host-saturation: every heartbeat in the window crosses at least one pressure threshold.
+	// Count the thresholds independently for the text (docs/designs/fleet-host-cleanup.md#6-host-saturation).
 	var sat []struct {
-		HostID              string
-		Beats               uint64
-		Hot                 uint64
-		MaxLoad             float64
-		Exemplar            string
-		SwapUsed, SwapTotal float64
-		Top                 string
+		HostID                   string
+		Beats, Hot               uint64
+		LoadHot, MemHot, SwapHot uint64
+		MaxLoad                  float64
+		Exemplar                 string
+		SwapUsed, SwapTotal      float64
+		Top                      string
 	}
-	if err := spanStore.Query(ctx, `SELECT host_id AS HostID, count() AS Beats,
-	countIf(load1 > toFloat64OrZero(attrs['fleet.cpus']) OR mem_free < {m:Float64} * toFloat64OrZero(attrs['fleet.mem_total'])
-		OR toFloat64OrZero(attrs['fleet.swap_used']) > {s:Float64} * toFloat64OrZero(attrs['fleet.swap_total']) AND toFloat64OrZero(attrs['fleet.swap_total']) > 0) AS Hot,
-	max(ifNull(load1, 0)) AS MaxLoad, any(trace_id) AS Exemplar,
+	if err := spanStore.Query(ctx, `WITH
+		load1 > toFloat64OrZero(attrs['fleet.cpus']) AS over_load,
+		mem_free < {m:Float64} * toFloat64OrZero(attrs['fleet.mem_total']) AS low_mem,
+		toFloat64OrZero(attrs['fleet.swap_used']) > {s:Float64} * toFloat64OrZero(attrs['fleet.swap_total'])
+			AND toFloat64OrZero(attrs['fleet.swap_total']) > 0 AS over_swap
+	SELECT host_id AS HostID, count() AS Beats, countIf(over_load OR low_mem OR over_swap) AS Hot,
+	countIf(over_load) AS LoadHot, countIf(low_mem) AS MemHot, countIf(over_swap) AS SwapHot,
+	max(ifNull(load1, 0)) AS MaxLoad, argMax(trace_id, start) AS Exemplar,
 	argMax(toFloat64OrZero(attrs['fleet.swap_used']), start) AS SwapUsed, argMax(toFloat64OrZero(attrs['fleet.swap_total']), start) AS SwapTotal,
 	argMax(attrs['fleet.top'], start) AS Top
 	FROM (SELECT * FROM span WHERE name = 'host.heartbeat' AND start >= now64() - toIntervalMinute(30) ORDER BY start DESC LIMIT {b:UInt32} BY host_id)
@@ -228,24 +230,19 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 	for _, s := range sat {
 		if s.Beats >= uint64(ruleSaturationBeats) && s.Hot == s.Beats {
 			f := contract.Finding{Rule: "host-saturation", Subject: s.HostID, Value: s.MaxLoad, Cause: "problem:host:" + s.HostID + ":saturated", HostId: ptr(s.HostID), Exemplars: []string{s.Exemplar}}
-			text(&f, saturationText(s.HostID, s.SwapUsed, s.SwapTotal, s.Top))
+			t := fmt.Sprintf("Host %s is saturated. In the last %d heartbeats, one-minute load exceeded the CPU count in %d, free memory fell below %.3g%% in %d, and swap use exceeded %.3g%% in %d.",
+				s.HostID, s.Beats, s.LoadHot, ruleMemFreeShare*100, s.MemHot, ruleSwapUsedShare*100, s.SwapHot)
+			if s.SwapTotal > 0 && s.SwapUsed > ruleSwapUsedShare*s.SwapTotal {
+				t += fmt.Sprintf(" Latest swap use %s/%s GB.", gb(s.SwapUsed), gb(s.SwapTotal))
+			}
+			if c := topConsumers(parseHostTop(s.Top), 3); c != "" {
+				t += " Latest top memory consumers were " + c + "."
+			}
+			text(&f, t)
 			out = append(out, f)
 		}
 	}
 	return out, nil
-}
-
-// saturationText: the host-saturation finding, with swap when above ruleSwapUsedShare and the top three consumers of
-// the heartbeat's fleet.top.
-func saturationText(hostID string, swapUsed, swapTotal float64, top string) string {
-	t := fmt.Sprintf("Host %s is saturated: CPU load above its cores, swap above %d%% or memory below %d%% for %d heartbeats", hostID, int(ruleSwapUsedShare*100), int(ruleMemFreeShare*100), ruleSaturationBeats)
-	if swapTotal > 0 && swapUsed > ruleSwapUsedShare*swapTotal {
-		t += fmt.Sprintf("; swap %s/%s GB", gb(swapUsed), gb(swapTotal))
-	}
-	if c := topConsumers(parseHostTop(top), 3); c != "" {
-		t += "; top: " + c
-	}
-	return t + "."
 }
 
 // stateRules: rules over Postgres state (store-fill, absence-store, stuck, unknown) and the host filter of the span rules.

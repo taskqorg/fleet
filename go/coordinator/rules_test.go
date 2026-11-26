@@ -52,14 +52,14 @@ func TestPassAbsenceUsesLastCompletion(t *testing.T) {
 	}
 }
 
-// Requirement: host-saturation names the latest beat's swap and its top three consumers from fleet.top
-// (docs/designs/fleet-host-cleanup.md#6-host-saturation), one finding per host.
-// Risk: the finding says only "saturated" and the owner hunts for what holds the memory by hand.
+// Requirement: one finding per saturated host gives threshold counts, latest swap and the top three memory consumers
+// (docs/designs/fleet-host-cleanup.md#6-host-saturation).
+// Risk: a mixed window hides the trigger or the reader treats the memory ranking as CPU evidence.
 func TestHostSaturationNamesSwapAndTopConsumers(t *testing.T) {
 	ch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(query), "AS Hot") {
-			fmt.Fprintf(w, "{\"HostID\":\"owner-mac\",\"Beats\":5,\"Hot\":5,\"MaxLoad\":2,\"Exemplar\":\"t1\",\"SwapUsed\":%d,\"SwapTotal\":%d,\"Top\":%q}\n",
+			fmt.Fprintf(w, "{\"HostID\":\"owner-mac\",\"Beats\":5,\"Hot\":5,\"LoadHot\":4,\"MemHot\":0,\"SwapHot\":2,\"MaxLoad\":9,\"Exemplar\":\"t1\",\"SwapUsed\":%d,\"SwapTotal\":%d,\"Top\":%q}\n",
 				37<<30, 38<<30, "com.apple.Virtualization.VirtualMachine:20480,postgres:2048*,node:1024,go:512")
 		}
 	}))
@@ -71,7 +71,7 @@ func TestHostSaturationNamesSwapAndTopConsumers(t *testing.T) {
 	if err != nil || len(findings) != 1 || findings[0].Rule != "host-saturation" || findings[0].Text == nil {
 		t.Fatalf("findings=%+v err=%v", findings, err)
 	}
-	want := "Host owner-mac is saturated: CPU load above its cores, swap above 80% or memory below 5% for 5 heartbeats; swap 37/38 GB; top: com.apple.Virtualization.VirtualMachine 20 GB, postgres 2 GB (fleet), node 1 GB."
+	want := "Host owner-mac is saturated. In the last 5 heartbeats, one-minute load exceeded the CPU count in 4, free memory fell below 5% in 0, and swap use exceeded 80% in 2. Latest swap use 37/38 GB. Latest top memory consumers were com.apple.Virtualization.VirtualMachine 20 GB, postgres 2 GB (fleet), node 1 GB."
 	if *findings[0].Text != want {
 		t.Fatalf("text = %q, want %q", *findings[0].Text, want)
 	}
