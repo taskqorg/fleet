@@ -322,6 +322,30 @@ func (v *AgentGapThreshold) Validate() error {
 	return nil
 }
 
+type AgentGapsInvestigateReply struct {
+	Finding AgentGapFinding `json:"finding"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapsInvestigateReply) Validate() error {
+	if err := Check(&v.Finding, "finding"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type AgentGapsInvestigateRequest struct {
+	Class string `json:"class"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentGapsInvestigateRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AgentGapsInvestigateRequest) Closed() bool { return true }
+
 type AgentGapsLinkReply struct {
 	Finding AgentGapFinding `json:"finding"`
 }
@@ -1996,6 +2020,7 @@ func init() {
 		"agent_compatibility":        {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "Hosts and harnesses an agent definition (id) can run on, with the reason for each host that cannot", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"agent_effective":            {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "The effective configuration of an agent definition (id) in a project (projectId), optionally of its draft", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"id\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"id\",\"projectId\"],\"type\":\"object\"}")},
 		"agent_gaps":                 {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "What agents lack: failed agent tool calls and gateway calls of the last days (default 7, at most 30) grouped by gap class (config/agent-gaps.json), each with its daily counts, the previous window's count, counts by host, harness, profile, tool and project, the newest examples (execution, its conversation or task, the decisive line) and the setting that controls the class. class narrows to one class or family; hostId, profileId and projectId narrow the failures counted.", View: true, Changes: []string{"execution", "question"}, InputSchema: json.RawMessage("{\"properties\":{\"class\":{\"$comment\":\"One class (missing-command:jq) or a family (missing-command).\",\"type\":\"string\"},\"days\":{\"$comment\":\"The window in days back from now, 1 to 30; default 7.\",\"minimum\":1,\"type\":\"integer\"},\"hostId\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"agent_gaps_investigate":     {Read: false, Long: false, Errors: []int{404, 409}, Auth: "person", Agent: "tool", Description: "Start the PM conversation of an agent gap finding (class) that has none: the same as answering its question Investigate, for a finding whose start failed or that an agent investigates; answers the finding with its sessionId, or with the reason the start was refused in its note", InputSchema: json.RawMessage("{\"properties\":{\"class\":{\"type\":\"string\"}},\"required\":[\"class\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"agent_gaps_link":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Link the pull request (pr, a taskqorg/fleet number) that changes the setting of an agent gap finding (class); the finding then watches its class: when that release runs on every host it compares the class's rate per agent run before and after over the same window, and closes as fixed or asks again as still failing", InputSchema: json.RawMessage("{\"properties\":{\"class\":{\"type\":\"string\"},\"pr\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"class\",\"pr\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"agent_gaps_reclassify":      {Read: false, Long: true, Errors: []int{400}, Auth: "owner", Agent: "tool", Description: "Owner or full access: classify the failures of the last days (default 30, at most 90) again with the current rules of config/agent-gaps.json; answers how many executions and failures it read and the gaps it recorded", InputSchema: json.RawMessage("{\"properties\":{\"days\":{\"$comment\":\"1 to 90; default 30.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"catalogue":                  {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "tool", Description: "The method catalogue of a project's capability (projectId): methods, the recommended one and its source", Changes: []string{"definition", "experiment", "score", "execution", "project-recommendation"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},

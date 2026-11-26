@@ -21,6 +21,7 @@ import (
 
 func init() {
 	op("agent_gaps_link", agentGapsLink)
+	op("agent_gaps_investigate", agentGapsInvestigate)
 }
 
 const gapSource = "agent-gaps"
@@ -358,32 +359,65 @@ func agentGapAnswerAfter(q *Request, id string) error {
 	if err != nil || f == nil || deref(f.QuestionID) != id || (qu.Answer != "dismiss" && qu.Answer != "investigate") {
 		return err
 	}
-	var sid string
-	var startErr error
-	if qu.Answer == "investigate" {
-		sid, startErr = startGapInvestigation(q, *f, id)
-	}
-	if err := acquireTxLock(q, gapLock); err != nil {
-		return err
-	}
-	if f, err = agentGapFindingOf(q, qu.Class); err != nil || f == nil || deref(f.QuestionID) != id {
-		return err
-	}
 	if qu.Answer == "dismiss" {
+		if err := acquireTxLock(q, gapLock); err != nil {
+			return err
+		}
+		if f, err = agentGapFindingOf(q, qu.Class); err != nil || f == nil || deref(f.QuestionID) != id {
+			return err
+		}
 		_, err := agentGapFindingTransition(q, *f, "dismissed")
 		return err
 	}
+	_, err = investigateGap(q, *f)
+	return err
+}
+
+// investigateGap starts the finding's PM conversation and records it on the finding; a start the coordinator refuses
+// leaves the finding investigating with the reason in its note (agent_gaps_investigate starts it again). The
+// conversation starts before the findings lock is taken: a start takes project and session locks, which rank below it.
+func investigateGap(q *Request, f gapFinding) (gapFinding, error) {
+	sid, startErr := startGapInvestigation(q, f, deref(f.QuestionID))
+	if err := acquireTxLock(q, gapLock); err != nil {
+		return f, err
+	}
+	g, err := agentGapFindingOf(q, f.Class)
+	if err != nil || g == nil {
+		return f, err
+	}
 	if startErr != nil {
-		f.Note = cutRunes("Investigate could not start: "+startErr.Error(), 300)
+		g.Note = cutRunes("Investigate could not start: "+startErr.Error(), 300)
 	} else {
-		f.SessionID, f.Note = &sid, ""
+		g.SessionID, g.Note = &sid, ""
 	}
 	to := "investigating"
-	if f.State == "linked" {
-		to = f.State
+	if g.State == "linked" {
+		to = g.State
 	}
-	_, err = agentGapFindingTransition(q, *f, to)
-	return err
+	return agentGapFindingTransition(q, *g, to)
+}
+
+func agentGapsInvestigate(q *Request, r *contract.AgentGapsInvestigateRequest) (contract.AgentGapsInvestigateReply, error) {
+	var none contract.AgentGapsInvestigateReply
+	f, err := agentGapFindingOf(q, r.Class)
+	if err != nil {
+		return none, err
+	}
+	if f == nil {
+		return none, errNotFound
+	}
+	if f.SessionID != nil || !slices.Contains([]string{"open", "investigating", "still-failing"}, f.State) {
+		if f.SessionID != nil {
+			return none, fail(409, fmt.Sprintf("finding %s has its conversation already (%s)", f.Class, *f.SessionID))
+		}
+		return none, fail(409, fmt.Sprintf("finding %s is %s", f.Class, f.State))
+	}
+	g, err := investigateGap(q, *f)
+	if err != nil {
+		return none, err
+	}
+	// A refused start answers the finding with the reason in its note (an error would roll the note back).
+	return contract.AgentGapsInvestigateReply{Finding: findingOut(g)}, nil
 }
 
 // startGapInvestigation starts the PM conversation (preset investigate, project fleet) as the person who answered,
@@ -403,7 +437,7 @@ func startGapInvestigation(q *Request, f gapFinding, questionID string) (string,
 	reply := agentGapsReplyOf(rules, rows, &contract.AgentGapsRequest{Class: &f.Class}, nil, from, now, rules.Finding.Days)
 	text := gapInvestigationText(f.Class, reply, rules.Finding.Days)
 	r := contract.SessionStartRequest{ProjectId: ptr(ciProject), Preset: ptr("investigate"), RequestId: ptr("agent-gap:" + questionID), Text: &text,
-		Subject: ptr("Agent gap " + f.Class)}
+		Subject: ptr("question:" + questionID)}
 	body := q.body
 	q.body = jsonBytes(r)
 	defer func() { q.body = body }()
