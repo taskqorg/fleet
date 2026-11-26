@@ -3,7 +3,7 @@
 // still speaks the earlier path (Library speaks its target routes). Unknown paths stay as they are, so the app's not-found page shows them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toInternal, toTarget, setProjectCodes } from '../../app/src/routes.ts';
+import { toInternal, toTarget, setProjectCodes, projectCodesPending } from '../../app/src/routes.ts';
 
 const table: [earlier: string, target: string, internal: string][] = [
   ['/', '/home', '/overview'],
@@ -60,6 +60,16 @@ test('earlier routes redirect to their target route and open the same view', () 
     assert.equal(toInternal(target), internal, target);
     assert.equal(toTarget(target), target, `${target} is stable`);
   }
+});
+
+test('a screen that names a project waits for the codes, so a code is never read as an id', () => {
+  assert.equal(projectCodesPending('/projects/DAM'), true);
+  assert.equal(projectCodesPending('/projects/DAM/tasks?state=x'), true);
+  assert.equal(projectCodesPending('/projects/tasks'), false);
+  assert.equal(projectCodesPending('/projects'), false);
+  assert.equal(projectCodesPending('/home'), false);
+  setProjectCodes([]); // a failed project_list: ids stand in, nothing waits
+  assert.equal(projectCodesPending('/projects/DAM'), false);
 });
 
 test('a project facet names the project by its code once codes are known; the id still opens it', () => {
