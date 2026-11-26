@@ -1107,8 +1107,9 @@ type dispatchStall struct{ reason, director, ask, projectID string }
 
 // dispatchStalls: the stall causes of one pass in the order it raised them.
 type dispatchStalls struct {
-	causes map[string]dispatchStall
-	order  []string
+	causes  map[string]dispatchStall
+	order   []string
+	skipped bool // a placement was skipped for a busy session: its cause is unknown this pass
 }
 
 func (st *dispatchStalls) add(cause string, s dispatchStall) {
@@ -1172,6 +1173,11 @@ func (a *App) dispatchRun(ctx context.Context, polling string) error {
 			return err
 		}
 	}
+	if st.skipped {
+		// The skipped execution's stall would read as cleared and open again next pass: this pass leaves the stall
+		// problems as they are.
+		return nil
+	}
 	return a.store.Write(ctx, nil, []string{DISPATCH}, func(q *Request) error { return dispatchStallsSet(q, st) })
 }
 
@@ -1190,6 +1196,9 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 				// Tried, not waited for: a wait here would hold DISPATCH (and every write queued behind it) until the session's
 				// writer commits; that writer wakes dispatch when it does, and the fallback pass comes back anyway.
 				if busy, err := trySessionLock(q, sid); err != nil || busy {
+					if busy {
+						st.skipped = true
+					}
 					return err
 				}
 				// Re-read after acquiring the session lock so any concurrent session write is visible (a stop does not take it:

@@ -489,7 +489,7 @@ func agentPromoteOnly(q *Request, sessions ...string) error {
 		if err := acquireTxLock(q, orderable...); err != nil {
 			return err
 		}
-		queued, err = queuedMessages(q, db.QueuedMessagesParams{State: ptr("queued")})
+		queued, err = queuedMessages(q, p) // under the locks, the same sessions as the first read
 		if err != nil {
 			return err
 		}
