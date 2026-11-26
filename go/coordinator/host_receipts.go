@@ -380,9 +380,10 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 		}
 		if e.terminal() {
 			if txHasLock(q.tx, DISPATCH) || txHasLock(q.tx, GLOBAL) {
-				if err := agentPromote(q); err != nil {
+				if err := agentPromoteOnly(q, e.SessionID); err != nil {
 					return nil, "", err
 				}
+				afterCommit(q, func() { a.wakeDispatch() }) // the other sessions' queued messages
 			} else {
 				afterCommit(q, func() {
 					a.wakeDispatch()

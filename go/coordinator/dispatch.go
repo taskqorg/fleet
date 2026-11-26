@@ -141,17 +141,12 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	}); err != nil {
 		return err
 	}
-	// Three steps, each in transactions of its own, so no step holds DISPATCH (and GLOBAL) while the next one works:
-	// reconcile, problems and promotion of queued messages under DISPATCH and the pending sessions' locks; the task
+	// Steps in transactions of their own, so no step holds DISPATCH (and GLOBAL) while the next one works: reconcile
+	// and problems under DISPATCH; promotion of queued messages, one transaction per pending session; the task
 	// autostart under GLOBAL (it creates sessions, serialized with task_create, session_start and project_archive); then
 	// the placement of each queued execution (dispatchRun, GLOBAL for a pipeline step). A step sees what the earlier ones committed.
-	locks := make([]string, 0, 1+len(sessionIDs))
-	locks = append(locks, DISPATCH)
-	for _, sid := range sessionIDs {
-		locks = append(locks, "session:"+sid)
-	}
 	if err := dispatchStep(ctx, "dispatch.prepare", func(ctx context.Context) error {
-		return a.store.Write(ctx, nil, locks, func(q *Request) error {
+		return a.store.Write(ctx, nil, []string{DISPATCH}, func(q *Request) error {
 			if err := a.delegationReconcile(q); err != nil {
 				return err
 			}
@@ -163,11 +158,21 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 			if err != nil {
 				return err
 			}
-			if err := detectProblems(q, ids, envs); err != nil {
+			return detectProblems(q, ids, envs)
+		})
+	}); err != nil {
+		return err
+	}
+	if err := dispatchStep(ctx, "dispatch.promote", func(ctx context.Context) error {
+		for _, sid := range sessionIDs {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err := a.store.Write(ctx, nil, []string{DISPATCH, "session:" + sid}, func(q *Request) error { return agentPromoteOnly(q, sid) }); err != nil {
 				return err
 			}
-			return agentPromote(q)
-		})
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
