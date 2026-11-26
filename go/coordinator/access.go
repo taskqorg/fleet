@@ -385,11 +385,16 @@ func accessConnection(c apiConnection, keys []connKey, call db.AccessLastCallsRo
 	}
 	active, problem, credits := 0, "", false
 	for _, k := range keys {
+		if k.State == "active" {
+			active++
+		}
+	}
+	for _, k := range keys {
 		switch k.State {
 		case "active":
-			active++
-			// A call that succeeded after the complaint (a top-up, a new billing cycle) shows the complaint is over.
-			if k.Problem != nil && problem == "" && k.Problem.At > call.OkStartedAt {
+			// With one active key, a call that succeeded after the complaint (a top-up, a new billing cycle) went through
+			// that key, so the complaint is over; with several, the success may be another key's.
+			if k.Problem != nil && problem == "" && (active > 1 || k.Problem.At > call.OkStartedAt) {
 				problem = fmt.Sprintf("Key %s: HTTP %d", k.Fingerprint, k.Problem.Status)
 				if creditStatus(k.Problem.Status) {
 					// An account problem, not a bad key: the plan or the credits ran out (Tavily 432 and 433).
