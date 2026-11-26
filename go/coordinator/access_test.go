@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // Requirement: the names Fleet derives for a project are names fleet-provision accepts, so a grant never fails on its
@@ -220,5 +221,19 @@ func TestAccessRecipesKnown(t *testing.T) {
 	}
 	if accessEnrollCommand("KEY") == "" || fleetProvisionVersion() == "0" {
 		t.Error("enroll command or version missing")
+	}
+}
+
+// Risk: a Tavily key out of plan credits (432) reads as a bad key to replace, or stays failing after a top-up.
+func TestAccessCreditLimitAsksForTopUp(t *testing.T) {
+	c := apiConnection{Name: "tavily", Provider: "tavily"}
+	keys := []connKey{{Fingerprint: "k1", State: "active", Problem: &keyProblem{Status: 432, Message: "plan limit", At: 2000}}}
+	it := accessConnection(c, keys, db.AccessLastCallsRow{OkStartedAt: 1000}, nil, nil)
+	if it.State != contract.AccessStateFailing || it.Next == nil || it.Next.Action != contract.AccessActionBilling || !strings.Contains(it.StateText, "credits") {
+		t.Fatalf("credit limit: %+v %+v", it.State, it.Next)
+	}
+	it = accessConnection(c, keys, db.AccessLastCallsRow{OkStartedAt: 3000}, nil, nil)
+	if it.State == contract.AccessStateFailing {
+		t.Fatalf("a later success still fails: %s", it.StateText)
 	}
 }
