@@ -242,6 +242,62 @@ func TestAgentGapQueries(t *testing.T) {
 	if done, _ := q.AgentGapPassDone(ctx, db.AgentGapPassDoneParams{Rules: "r3", Days: 30}); done {
 		t.Fatal("another digest counted as done")
 	}
+
+	t.Run("gateway rebuild preserves occurrence windows", func(t *testing.T) {
+		testGatewayGapRebuild(t, ctx, conn, name, sockDir, port)
+	})
+}
+
+// Requirement: legacy gateway failures use the call's retained time, even when a previous rebuild put them in a
+// newer window. Risk: a narrow rebuild loses history, or a wide or repeated rebuild counts an old failure as new.
+func testGatewayGapRebuild(t *testing.T, ctx context.Context, conn *pgx.Conn, name, sockDir string, port int) {
+	t.Helper()
+	t.Setenv("FLEET_PROJECT_CONFIG_DIRECTORY", filepath.Join("..", "..", "config"))
+	store, err := openStore(ctx, testPGURL("fleet_app", name, sockDir, port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	app := &App{store: store}
+	now := time.Now().UTC().Truncate(time.Second)
+	legacy, tavily, google := now.AddDate(0, 0, -16), now.AddDate(0, 0, -5), now.AddDate(0, 0, -2)
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO execution(id, kind, state, started_at, updated_at, data) VALUES
+		('call:legacy','tool_run','failed',NULL,$1,'{"tool":"generate_content","connection":"google-ai","errorCode":"provider-429"}'),
+		('call:tavily','tool_run','failed',$2,$4,'{"tool":"web_search","connection":"tavily","errorCode":"provider-432"}'),
+		('call:google','tool_run','failed',$3,$4,'{"tool":"generate_content","connection":"google-ai","errorCode":"provider-429"}')
+	`, legacy, tavily, google, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO agent_gap(id, execution_id, source, at, class, family, rules)
+		VALUES ('call:legacy','call:legacy','gateway',$1,'gateway-quota','gateway-quota','old')
+	`, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, days := range []int{7, 30, 3} {
+		if _, err := reclassifyGaps(ctx, app, nil, days); err != nil {
+			t.Fatalf("rebuild %d days: %v", days, err)
+		}
+		for id, want := range map[string]time.Time{"call:legacy": legacy, "call:tavily": tavily, "call:google": google} {
+			var got time.Time
+			err := conn.QueryRow(ctx, "SELECT at FROM agent_gap WHERE id = $1", id).Scan(&got)
+			if err != nil || !got.Equal(want) {
+				t.Errorf("rebuild %d days: %s at %v, want %v (%v)", days, id, got, want, err)
+			}
+		}
+		rows, err := db.New(conn).AgentGapRows(ctx, db.AgentGapRowsParams{
+			Since: gapTime(now.AddDate(0, 0, -days)), Until: gapTime(now.Add(time.Minute)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, want := range map[string]bool{"call:legacy": days == 30, "call:tavily": days >= 7, "call:google": true} {
+			if got := slices.ContainsFunc(rows, func(row db.AgentGapRowsRow) bool { return row.ID == id }); got != want {
+				t.Errorf("rebuild %d days: %s in current window = %v, want %v", days, id, got, want)
+			}
+		}
+	}
 }
 
 // Requirement: a finding's class shows in the read with its finding even when the window holds no failure of it (the

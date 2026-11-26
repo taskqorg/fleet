@@ -401,7 +401,10 @@ func ingestGaps(q *Request, execution db.Execution, prepared []preparedEvent) er
 
 // recordCallGap writes the gap of one failed gateway call (id its tool_run row): on the agent run that made it
 // (parent), else on the call's own row.
-func recordCallGap(q *Request, r *gapRules, id string, parent *string, projectID *string, at time.Time, tool, connection, code string) (bool, error) {
+func recordCallGap(q *Request, r *gapRules, id string, parent *string, projectID *string, at pgtype.Timestamptz, tool, connection, code string) (bool, error) {
+	if !at.Valid {
+		return false, nil
+	}
 	class, line, ok := r.classify(gapFailure{Source: "gateway", Tool: tool, Connection: connection, Text: code})
 	if !ok {
 		return false, nil
@@ -419,7 +422,7 @@ func recordCallGap(q *Request, r *gapRules, id string, parent *string, projectID
 	if line == "" {
 		line = code
 	}
-	err := q.db().AgentGapPut(q.ctx(), db.AgentGapPutParams{ID: id, ExecutionID: owner, ProjectID: projectID, Source: "gateway", At: gapTime(at),
+	err := q.db().AgentGapPut(q.ctx(), db.AgentGapPutParams{ID: id, ExecutionID: owner, ProjectID: projectID, Source: "gateway", At: at,
 		Class: class, Family: gapFamilyOf(class), Tool: connection + "/" + tool, Line: line, Rules: r.digest})
 	return err == nil, err
 }
@@ -460,9 +463,15 @@ func ingestCallGap(q *Request, id string, parent, projectID *string, startedAt *
 	if err != nil {
 		return nil
 	}
-	at := time.Now()
+	var at pgtype.Timestamptz
 	if startedAt != nil {
-		at = time.UnixMilli(*startedAt)
+		at = gapTime(time.UnixMilli(*startedAt))
+	} else {
+		recorded, err := q.db().AgentGapLegacyCallTime(q.ctx(), id)
+		if err != nil {
+			return err
+		}
+		at = gapTime(recorded)
 	}
 	code := firstString(deref(l.ErrorCode), string(l.Outcome))
 	_, err = recordCallGap(q, r, id, parent, projectID, at, l.Tool, l.Connection, code)
@@ -545,6 +554,9 @@ func reclassifyGaps(ctx context.Context, a *App, q *Request, days int) (contract
 		after = runs[len(runs)-1].ID
 	}
 	err = a.store.Write(ctx, q, []string{gapLock}, func(q *Request) error {
+		if err := q.db().AgentGapsRestoreOlderGatewayTimes(q.ctx(), since); err != nil {
+			return err
+		}
 		if _, err := q.db().AgentGapsClearGateway(q.ctx(), since); err != nil {
 			return err
 		}
@@ -553,11 +565,7 @@ func reclassifyGaps(ctx context.Context, a *App, q *Request, days int) (contract
 			return err
 		}
 		for _, c := range calls {
-			at := time.Now()
-			if c.StartedAt != nil {
-				at = *c.StartedAt
-			}
-			wrote, err := recordCallGap(q, r, c.ID, c.ParentExecutionID, c.ProjectID, at, c.Tool, c.Connection, firstString(c.ErrorCode, c.Outcome))
+			wrote, err := recordCallGap(q, r, c.ID, c.ParentExecutionID, c.ProjectID, c.OccurredAt, c.Tool, c.Connection, firstString(c.ErrorCode, c.Outcome))
 			if err != nil {
 				return err
 			}

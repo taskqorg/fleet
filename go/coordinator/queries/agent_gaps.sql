@@ -14,6 +14,14 @@ DELETE FROM agent_gap WHERE source = 'agent' AND execution_id = ANY(@ids::text[]
 -- The gateway rows of a window about to be classified again.
 DELETE FROM agent_gap WHERE source = 'gateway' AND at >= @since::timestamptz;
 
+-- name: AgentGapsRestoreOlderGatewayTimes :exec
+-- Preserve legacy gaps misdated into the rebuild window whose calls are too old to be reclassified.
+UPDATE agent_gap g SET at = e.updated_at
+FROM execution e
+WHERE g.source = 'gateway' AND g.at >= @since::timestamptz
+  AND e.id = g.id AND e.kind = 'tool_run' AND e.state = 'failed'
+  AND e.started_at IS NULL AND e.updated_at < @since::timestamptz;
+
 -- name: AgentGapRows :many
 -- The failures of a window with the run they belong to, newest first (the reply groups them).
 SELECT g.id, g.execution_id, g.project_id, g.source, g.at, g.class, g.family, g.tool, g.line, g.rules,
@@ -46,11 +54,15 @@ ORDER BY seq;
 
 -- name: AgentGapFailedCalls :many
 -- Failed gateway calls since since: the tool_run rows spool ingest wrote (connection_ingest.go).
-SELECT id, parent_execution_id, project_id, started_at,
+SELECT id, parent_execution_id, project_id, coalesce(started_at, updated_at)::timestamptz AS occurred_at,
   coalesce(data->>'tool', '')::text AS tool, coalesce(data->>'connection', '')::text AS connection,
   coalesce(data->>'errorCode', '')::text AS error_code, coalesce(data->>'outcome', '')::text AS outcome
 FROM execution
 WHERE kind = 'tool_run' AND state = 'failed' AND coalesce(started_at, updated_at) >= @since::timestamptz;
+
+-- name: AgentGapLegacyCallTime :one
+-- The durable fallback used by the rebuild, for a newly ingested call with no start time.
+SELECT updated_at FROM execution WHERE id = @id::text AND kind = 'tool_run';
 
 -- name: AgentGapRunExists :one
 SELECT EXISTS (SELECT 1 FROM execution WHERE id = @id::text)::bool;

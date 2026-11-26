@@ -70,7 +70,7 @@ func (q *Queries) AgentGapDispatchRows(ctx context.Context, since pgtype.Timesta
 }
 
 const agentGapFailedCalls = `-- name: AgentGapFailedCalls :many
-SELECT id, parent_execution_id, project_id, started_at,
+SELECT id, parent_execution_id, project_id, coalesce(started_at, updated_at)::timestamptz AS occurred_at,
   coalesce(data->>'tool', '')::text AS tool, coalesce(data->>'connection', '')::text AS connection,
   coalesce(data->>'errorCode', '')::text AS error_code, coalesce(data->>'outcome', '')::text AS outcome
 FROM execution
@@ -81,7 +81,7 @@ type AgentGapFailedCallsRow struct {
 	ID                string
 	ParentExecutionID *string
 	ProjectID         *string
-	StartedAt         *time.Time
+	OccurredAt        pgtype.Timestamptz
 	Tool              string
 	Connection        string
 	ErrorCode         string
@@ -102,7 +102,7 @@ func (q *Queries) AgentGapFailedCalls(ctx context.Context, since pgtype.Timestam
 			&i.ID,
 			&i.ParentExecutionID,
 			&i.ProjectID,
-			&i.StartedAt,
+			&i.OccurredAt,
 			&i.Tool,
 			&i.Connection,
 			&i.ErrorCode,
@@ -326,6 +326,18 @@ func (q *Queries) AgentGapFindings(ctx context.Context) ([]AgentGapFindingsRow, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const agentGapLegacyCallTime = `-- name: AgentGapLegacyCallTime :one
+SELECT updated_at FROM execution WHERE id = $1::text AND kind = 'tool_run'
+`
+
+// The durable fallback used by the rebuild, for a newly ingested call with no start time.
+func (q *Queries) AgentGapLegacyCallTime(ctx context.Context, id string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, agentGapLegacyCallTime, id)
+	var updated_at time.Time
+	err := row.Scan(&updated_at)
+	return updated_at, err
 }
 
 const agentGapPassDone = `-- name: AgentGapPassDone :one
@@ -566,4 +578,18 @@ func (q *Queries) AgentGapsClearGateway(ctx context.Context, since pgtype.Timest
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const agentGapsRestoreOlderGatewayTimes = `-- name: AgentGapsRestoreOlderGatewayTimes :exec
+UPDATE agent_gap g SET at = e.updated_at
+FROM execution e
+WHERE g.source = 'gateway' AND g.at >= $1::timestamptz
+  AND e.id = g.id AND e.kind = 'tool_run' AND e.state = 'failed'
+  AND e.started_at IS NULL AND e.updated_at < $1::timestamptz
+`
+
+// Preserve legacy gaps misdated into the rebuild window whose calls are too old to be reclassified.
+func (q *Queries) AgentGapsRestoreOlderGatewayTimes(ctx context.Context, since pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, agentGapsRestoreOlderGatewayTimes, since)
+	return err
 }
