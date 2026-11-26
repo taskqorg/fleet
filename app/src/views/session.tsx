@@ -439,7 +439,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
                 <span class="muted">·</span><span class="muted">Projects</span>
                 <ProjectSetMenu label="Conversation projects" value={s()?.projectIds ?? []} disabledReason={off() ? 'offline' : undefined}
                   projects={(projects.data?.projects ?? []).map(p => ({ id: str(rec(p).id) ?? '', name: str(rec(p).name) ?? str(rec(p).id) ?? '' })).filter(p => p.id)}
-                  onChange={ids => { void op('session_update', { sessionId: props.id, projectIds: ids }).then(() => sDoc.reload(), () => {}); }} />
+                  onChange={ids => { void run(async () => { await op('session_update', { sessionId: props.id, projectIds: ids }); sDoc.reload(); }); }} />
               </div>
             </Show>
 

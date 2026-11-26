@@ -1,7 +1,7 @@
 // Primitive controls, badges, numbers, age clocks, harness marks, status states, copy, and search input.
 import { createEffect, createMemo, createSignal, For, onSettled, Repeat, Show, untrack, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { Button as SdkButton, Input, Menu, MenuCheckboxItem, MenuContent, MenuGroupLabel, MenuItem, MenuTrigger } from '@ui-sdk/solid';
+import { Button as SdkButton, Input, Menu, MenuCheckboxItem, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from '../registry.ts';
 import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, exact } from '../format.ts';
 import { isSubmitEnter } from '../keys.ts';
@@ -551,7 +551,6 @@ export function ProjectSetMenu(p: {
           <Icon name="plus" />
         </MenuTrigger>
         <MenuContent class="menu" side="bottom" align="start">
-          <MenuGroupLabel class="muted">{p.label}</MenuGroupLabel>
           <For each={p.projects}>
             {pr => (
               <MenuCheckboxItem value={pr.id} checked={p.value.includes(pr.id)} onCheckedChange={on => toggle(pr.id, on)}>
