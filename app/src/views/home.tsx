@@ -214,7 +214,7 @@ function HomePage() {
   createEffect(() => [loaded(), view.data?.bots] as const, () => { requestAnimationFrame(measure); });
   const quiet = createMemo(() => loaded() && !grouped().some(g => (g.id === 'waiting' || g.id === 'failed') && g.cards.length > 0));
 
-  // Pulse: the Working group's count (one source with the group below), queued sessions, done today, then problems.
+  // Pulse: the Working and Queued groups' card counts (one source with the groups below), done today, then problems.
   const rows = () => view.data?.sessions ?? [];
   const chips = createMemo(() => blockers(view.data?.blockers ?? []));
   const problems = createMemo((): PulseProblems | undefined => {
@@ -414,8 +414,8 @@ function HomePage() {
           <Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} />
         </Show>
         <PulseLine
-          working={grouped().find(g => g.id === 'working')?.cards.filter(c => c.s && lifeOfCard(c.s) === 'working').length ?? 0}
-          queued={rows().filter(s => lifeOfCard(s) === 'queued').length}
+          working={grouped().find(g => g.id === 'working')?.cards.length ?? 0}
+          queued={grouped().find(g => g.id === 'queued')?.cards.length ?? 0}
           done={view.data?.counts.doneToday ?? 0}
           blockers={chips()}
           problems={problems()}

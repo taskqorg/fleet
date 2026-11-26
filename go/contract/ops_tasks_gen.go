@@ -1532,8 +1532,9 @@ func (v QuestionKind) Valid() bool {
 	return false
 }
 
-// QuestionRow: One question row (questionCols in go/coordinator/tasks.go); artifactIds and cause only when set.
+// QuestionRow: One question row (questionCols in go/coordinator/tasks.go); artifactIds, cause and addressedTo only when set.
 type QuestionRow struct {
+	AddressedTo *string         `json:"addressedTo,omitempty"`
 	Answer      *string         `json:"answer"`
 	AnsweredAt  *string         `json:"answeredAt"`
 	AnsweredBy  *string         `json:"answeredBy"`
