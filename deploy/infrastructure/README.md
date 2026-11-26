@@ -13,6 +13,7 @@ Host service definitions and administrative scripts for coordinator storage, ori
 - [agent-browser-open.sh](agent-browser-open.sh): opens the production origin in Orca using host-scoped access headers and checks identity; returns a browser page ID for later commands.
 - [sse-smoke.sh](sse-smoke.sh): live SSE smoke against an explicitly selected test task, using the operator's Access session.
 - [pds18-ci/](pds18-ci/README.md): isolated trusted-main CI guest setup and runner registration.
+- PDS18 memory (owner decision 2026-11-26): [fleet-postgres-memory.conf](fleet-postgres-memory.conf) goes to `/etc/postgresql/18/main/conf.d/10-fleet-memory.conf` (`shared_buffers`, applied by a PostgreSQL restart); [postgresql-memory.conf](postgresql-memory.conf) to `/etc/systemd/system/postgresql@18-main.service.d/fleet-memory.conf` and [fleet-user-memory.conf](fleet-user-memory.conf) to `/etc/systemd/system/user-1005.slice.d/fleet-memory.conf` (`MemoryLow`, applied by `systemctl daemon-reload`). `MemoryLow` spares a cgroup from reclaim while others have reclaimable memory; it is no reservation and no cap.
 - Service/socket, Quadlet, Caddy, tunnel and launch-helper definitions in this directory are deployment inputs; `.candidate` files remain proposed configuration.
 
 ## Invariants
