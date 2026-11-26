@@ -654,6 +654,27 @@ func accessOnboard(q *Request, r *contract.AccessOnboardRequest) (contract.Acces
 	return contract.AccessOnboardReply{}, fail(400, "kind: key, login or limit")
 }
 
+// accessKeylessOf: a connection of provider without an active key, or nil.
+func accessKeylessOf(q *Request, provider string) (*apiConnection, error) {
+	all, err := apiConnectionAll(q)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range all {
+		if c.Provider != provider || isAccessProvider(c.Provider) {
+			continue
+		}
+		keys, err := connKeys(q, c.Name)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.ContainsFunc(keys, func(k connKey) bool { return k.State == "active" }) {
+			return &c, nil
+		}
+	}
+	return nil, nil
+}
+
 func accessOnboardKey(q *Request, r *contract.AccessOnboardRequest) (contract.AccessOnboardReply, error) {
 	var no contract.AccessOnboardReply
 	provider := deref(r.Provider)
@@ -664,6 +685,20 @@ func accessOnboardKey(q *Request, r *contract.AccessOnboardRequest) (contract.Ac
 	c, err := apiConnectionMaybe(q, "connection:"+name)
 	if err != nil {
 		return no, err
+	}
+	// A key for a provider fills its connection that has no key yet, instead of a second connection beside it (openai
+	// and an empty openai-2, 2026-11-25), unless the person asks for a second one by name with second.
+	if c == nil && !(r.Second != nil && *r.Second) {
+		empty, err := accessKeylessOf(q, provider)
+		if err != nil {
+			return no, err
+		}
+		switch {
+		case empty != nil && r.Connection == nil:
+			c = empty
+		case empty != nil:
+			return no, fail(409, "Connection "+empty.Name+" of "+provider+" has no key yet: add the key there, or pass second: true for a second connection")
+		}
 	}
 	created := false
 	if c == nil {
