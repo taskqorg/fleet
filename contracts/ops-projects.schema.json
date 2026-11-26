@@ -47,7 +47,16 @@
       "auth": "owner",
       "agent": "tool",
       "description": "Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too."
-    }
+    },
+    "project_apps": {"read": true, "errors": [400, 404], "auth": "project:projectId", "agent": "tool", "changes": ["project-app"], "description": "The project's apps (docs/designs/fleet-project-apps.md): state, pipelines, callback origins, limits, keys (created, last use, taken, retired) and last use. Never a key value."},
+    "project_app_ask": {"read": false, "errors": [400, 403, 404, 409], "auth": "project:projectId", "agent": "tool", "description": "Asks for a project app (docs/designs/fleet-project-apps.md): the project's own application calling its pipelines. projectId, requestId (the same id reads the app), id (a name such as dam-site), name, pipelines (default [\"*\"]), callbackOrigins, limits, reason. Creates the owner's approval card; once approved the app is active and project_app_key_take answers its key once."},
+    "project_app_key_take": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "tool", "description": "Answers an active app's newest key once, with the Cloudflare edge token (clientId and secret) the app sends with it; a second call is 409. Store both in the app's own secret store; never print them."},
+    "project_app_rotate": {"read": false, "errors": [403, 404, 409], "auth": "owner", "agent": "tool", "description": "Owner or full access: mints a new key for an active app; the previous key works until the new key's first use. Take it with project_app_key_take."},
+    "project_app_revoke": {"read": false, "errors": [403, 404], "auth": "owner", "agent": "tool", "description": "Owner or full access: retires every key of an app at once and revokes it (an asked app's card is withdrawn)."},
+    "project_app_set": {"read": false, "errors": [400, 403, 404, 409], "auth": "owner", "agent": "tool", "description": "Owner or full access: changes an active app's pipelines, callback origins or limits (each given field replaces the old one)."},
+    "apps_edge_status": {"read": true, "errors": [], "auth": "person", "agent": "tool", "description": "The Cloudflare edge for project apps (docs/designs/fleet-project-apps.md, Edge setup): ready, missing, asked, working or failed; the Access application and service token ids, the token's expiry, the last error and any missing Cloudflare permission."},
+    "apps_edge_setup": {"read": false, "errors": [400, 409], "auth": "person", "agent": "tool", "description": "Asks the owner (one approval card) to let Fleet create the Cloudflare service token fleet-apps and the Access application for fleet.ufobe.com/api/apps/* through the Cloudflare API, then probes it. requestId; rotate true refreshes the token's secret instead. Read the state with apps_edge_status."},
+    "apps_ping": {"read": true, "errors": [], "auth": "person", "agent": "no", "description": "The calling app and its project: the probe of the /api/apps route."}
   },
   "$defs": {
     "ProjectCreateRequest": {
@@ -196,6 +205,31 @@
         }
       },
       "additionalProperties": false
-    }
+    },
+    "ProjectAppLimits": {"type": "object", "additionalProperties": false, "$comment": "Empty or absent: no limit.", "properties": {"runsPerDay": {"type": "integer", "minimum": 1}, "concurrentRuns": {"type": "integer", "minimum": 1}, "spendPerMonth": {"$ref": "#/$defs/ProjectAppSpend"}}},
+    "ProjectAppSpend": {"type": "object", "additionalProperties": false, "required": ["amount", "currency"], "properties": {"amount": {"type": "number"}, "currency": {"type": "string"}}},
+    "ProjectAppState": {"type": "string", "enum": ["asked", "active", "declined", "revoked"]},
+    "ProjectAppKeyView": {"type": "object", "additionalProperties": false, "required": ["id", "createdAt"], "properties": {"id": {"type": "string"}, "createdAt": {"type": "integer"}, "lastUsedAt": {"type": "integer"}, "takenAt": {"type": "integer"}, "retiredAt": {"type": "integer"}}},
+    "ProjectAppView": {"type": "object", "additionalProperties": false, "required": ["id", "projectId", "name", "state", "pipelines", "callbackOrigins", "limits", "requestId", "askedBy", "reason", "keys", "createdAt"], "properties": {"id": {"type": "string"}, "projectId": {"type": "string"}, "name": {"type": "string"}, "state": {"$ref": "#/$defs/ProjectAppState"}, "pipelines": {"type": "array", "items": {"type": "string"}}, "callbackOrigins": {"type": "array", "items": {"type": "string"}}, "limits": {"$ref": "#/$defs/ProjectAppLimits"}, "requestId": {"type": "string"}, "askedBy": {"type": "string"}, "approvedBy": {"type": "string"}, "questionId": {"type": "string"}, "reason": {"type": "string"}, "keys": {"type": "array", "items": {"$ref": "#/$defs/ProjectAppKeyView"}}, "createdAt": {"type": "integer"}, "lastUsedAt": {"type": "integer"}}},
+    "ProjectAppsRequest": {"type": "object", "additionalProperties": false, "required": ["projectId"], "properties": {"projectId": {"type": "string"}}},
+    "ProjectAppsReply": {"type": "object", "additionalProperties": false, "required": ["apps"], "properties": {"apps": {"type": "array", "items": {"$ref": "#/$defs/ProjectAppView"}}}},
+    "ProjectAppAskRequest": {"type": "object", "additionalProperties": false, "required": ["projectId", "requestId", "id", "name", "reason"], "properties": {"projectId": {"type": "string"}, "requestId": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "pipelines": {"type": "array", "items": {"type": "string"}}, "callbackOrigins": {"type": "array", "items": {"type": "string"}}, "limits": {"$ref": "#/$defs/ProjectAppLimits"}, "reason": {"type": "string"}}},
+    "ProjectAppAskReply": {"$ref": "#/$defs/ProjectAppView"},
+    "ProjectAppKeyTakeRequest": {"type": "object", "additionalProperties": false, "required": ["appId"], "properties": {"appId": {"type": "string"}, "requestId": {"type": "string"}}},
+    "ProjectAppKeyTakeReply": {"type": "object", "additionalProperties": false, "required": ["appId", "keyId", "key"], "properties": {"appId": {"type": "string"}, "keyId": {"type": "string"}, "key": {"type": "string", "$comment": "Send as Authorization: Bearer <key> to /api/apps/*."}, "edgeClientId": {"type": "string", "$comment": "CF-Access-Client-Id; absent while the edge is not ready."}, "edgeClientSecret": {"type": "string", "$comment": "CF-Access-Client-Secret."}, "url": {"type": "string", "$comment": "The app route's base, https://<site>/api/apps."}}},
+    "ProjectAppIdRequest": {"type": "object", "additionalProperties": false, "required": ["appId"], "properties": {"appId": {"type": "string"}}},
+    "ProjectAppRotateRequest": {"$ref": "#/$defs/ProjectAppIdRequest"},
+    "ProjectAppRotateReply": {"$ref": "#/$defs/ProjectAppView"},
+    "ProjectAppRevokeRequest": {"$ref": "#/$defs/ProjectAppIdRequest"},
+    "ProjectAppRevokeReply": {"$ref": "#/$defs/ProjectAppView"},
+    "ProjectAppSetRequest": {"type": "object", "additionalProperties": false, "required": ["appId"], "properties": {"appId": {"type": "string"}, "pipelines": {"type": "array", "items": {"type": "string"}}, "callbackOrigins": {"type": "array", "items": {"type": "string"}}, "limits": {"$ref": "#/$defs/ProjectAppLimits"}}},
+    "ProjectAppSetReply": {"$ref": "#/$defs/ProjectAppView"},
+    "AppsEdgeState": {"type": "string", "enum": ["missing", "asked", "working", "ready", "failed"]},
+    "AppsEdgeStatusRequest": {"type": "object", "additionalProperties": false, "properties": {}},
+    "AppsEdgeStatusReply": {"type": "object", "additionalProperties": false, "required": ["state", "configured"], "properties": {"state": {"$ref": "#/$defs/AppsEdgeState"}, "configured": {"type": "boolean", "$comment": "The coordinator has Cloudflare API settings."}, "applicationId": {"type": "string"}, "serviceTokenId": {"type": "string"}, "expiresAt": {"type": "integer"}, "questionId": {"type": "string"}, "error": {"type": "string"}, "missingPermissions": {"type": "array", "items": {"type": "string"}}, "checkedAt": {"type": "integer"}}},
+    "AppsEdgeSetupRequest": {"type": "object", "additionalProperties": false, "required": ["requestId"], "properties": {"requestId": {"type": "string"}, "rotate": {"type": "boolean"}}},
+    "AppsEdgeSetupReply": {"$ref": "#/$defs/AppsEdgeStatusReply"},
+    "AppsPingRequest": {"type": "object", "additionalProperties": false, "properties": {}},
+    "AppsPingReply": {"type": "object", "additionalProperties": false, "required": ["app", "projectId"], "properties": {"app": {"type": "string"}, "projectId": {"type": "string"}}}
   }
 }

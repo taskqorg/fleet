@@ -327,11 +327,6 @@ func problemFind(q *Request, id, cause string) (db.Problem, error) {
 }
 
 func problemOut(q *Request, p db.Problem) contract.ProblemRow {
-	return problemOutNamed(q, p, map[string]*string{})
-}
-
-// problemOutNamed: problemOut with the owners' names read once per call (names: bot id to name, nil when unknown).
-func problemOutNamed(q *Request, p db.Problem, names map[string]*string) contract.ProblemRow {
 	out := contract.ProblemRow{Id: p.ID, Code: problemCode(p.Seq), Cause: p.Cause, Source: p.Source, ProjectId: p.ProjectID,
 		Text: p.Text, Data: p.Data, State: contract.ProblemState(p.State), Phase: contract.ProblemPhase(p.Phase),
 		OwnerBotId: p.OwnerBotID, Note: p.Note, Work: p.Work, QuestionId: p.QuestionID, Count: int64(p.Count),
@@ -341,16 +336,11 @@ func problemOutNamed(q *Request, p db.Problem, names map[string]*string) contrac
 		out.Rule = &p.Rule
 	}
 	if p.OwnerBotID != nil {
-		name, ok := names[*p.OwnerBotID]
-		if !ok {
-			if n, err := q.db().ProblemOwnerName(q.ctx(), *p.OwnerBotID); err == nil {
-				name = &n
+		if b, err := readBotFull(q, *p.OwnerBotID); err == nil {
+			out.OwnerName = &b.Settings.Name
+			if id, err := q.db().BotConversationBySubject(q.ctx(), db.BotConversationBySubjectParams{BotID: &b.Id, Subject: strPtr(problemSubject(p.ID))}); err == nil {
+				out.ConversationId = &id
 			}
-			names[*p.OwnerBotID] = name
-		}
-		out.OwnerName = name
-		if id, err := q.db().BotConversationBySubject(q.ctx(), db.BotConversationBySubjectParams{BotID: p.OwnerBotID, Subject: strPtr(problemSubject(p.ID))}); err == nil {
-			out.ConversationId = &id
 		}
 	}
 	return out
@@ -395,9 +385,8 @@ func problemsList(q *Request, r *contract.ProblemsListRequest) (contract.Problem
 	if len(rows) > lim {
 		rows, out.HasMore = rows[:lim], true
 	}
-	names := map[string]*string{}
 	for _, p := range rows {
-		out.Problems = append(out.Problems, problemOutNamed(q, p, names))
+		out.Problems = append(out.Problems, problemOut(q, p))
 	}
 	return out, nil
 }

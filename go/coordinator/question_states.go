@@ -53,6 +53,9 @@ func questionTransition(q *Request, id string, ev questionEvent) (bool, error) {
 	if err == nil { // an access card's answer moves its grant (access_grants.go)
 		err = accessQuestionEnded(q, id, ev)
 	}
+	if err == nil { // an app or edge card's answer (apps.go)
+		err = appQuestionEnded(q, id, ev)
+	}
 	return err == nil, err
 }
 
@@ -67,6 +70,9 @@ func questionsWithdraw(q *Request, ids []string) error {
 	}
 	for _, id := range withdrawn {
 		if err := accessQuestionEnded(q, id, questionEvent{To: "withdrawn"}); err != nil {
+			return err
+		}
+		if err := appQuestionEnded(q, id, questionEvent{To: "withdrawn"}); err != nil {
 			return err
 		}
 	}

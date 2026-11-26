@@ -23,7 +23,7 @@ func (q *Queries) ExecutionBotID(ctx context.Context, id string) (string, error)
 
 const executionByID = `-- name: ExecutionByID :one
 
-SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id, app_id FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
 `
 
 // Execution record reads, updates and leaf totals (executions.go).
@@ -68,6 +68,7 @@ func (q *Queries) ExecutionByID(ctx context.Context, id string) (Execution, erro
 		&i.TombstonedAt,
 		&i.SystemActor,
 		&i.BotID,
+		&i.AppID,
 	)
 	return i, err
 }
@@ -399,7 +400,7 @@ func (q *Queries) ExecutionUpdate(ctx context.Context, arg ExecutionUpdateParams
 }
 
 const executions = `-- name: Executions :many
-SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id FROM execution
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id, app_id FROM execution
 WHERE kind IN ('agent_run','host_job')
  AND ($1::text IS NULL OR session_id=$1::text)
 ORDER BY seq
@@ -452,6 +453,7 @@ func (q *Queries) Executions(ctx context.Context, sessionID *string) ([]Executio
 			&i.TombstonedAt,
 			&i.SystemActor,
 			&i.BotID,
+			&i.AppID,
 		); err != nil {
 			return nil, err
 		}

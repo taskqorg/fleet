@@ -45,17 +45,9 @@ func cloudflarePeopleFromEnv() (*peopleCloudflare, error) {
 	if !cloudflareAccountID.MatchString(account) || !cloudflareGroupID.MatchString(group) || !filepath.IsAbs(tokenFile) {
 		return nil, errors.New("Cloudflare sync needs a valid account ID, fleet-people group ID and API token file in the coordinator settings")
 	}
-	info, err := os.Stat(tokenFile)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("Cloudflare API token file must be a private regular file on the coordinator")
-	}
-	raw, err := os.ReadFile(tokenFile)
+	token, err := cloudflareTokenFromFile(tokenFile)
 	if err != nil {
-		return nil, errors.New("Could not read the Cloudflare API token file")
-	}
-	token := strings.TrimSpace(string(raw))
-	if token == "" || strings.ContainsAny(token, " \t\r\n") {
-		return nil, errors.New("Cloudflare API token file must contain one token")
+		return nil, err
 	}
 	return &peopleCloudflare{
 		client: &http.Client{
@@ -68,6 +60,23 @@ func cloudflarePeopleFromEnv() (*peopleCloudflare, error) {
 		groupID: group,
 		token:   token,
 	}, nil
+}
+
+// cloudflareTokenFromFile: the one API token in a private regular file of the coordinator.
+func cloudflareTokenFromFile(tokenFile string) (string, error) {
+	info, err := os.Stat(tokenFile)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return "", errors.New("Cloudflare API token file must be a private regular file on the coordinator")
+	}
+	raw, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return "", errors.New("Could not read the Cloudflare API token file")
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" || strings.ContainsAny(token, " \t\r\n") {
+		return "", errors.New("Cloudflare API token file must contain one token")
+	}
+	return token, nil
 }
 
 type accessGroup struct {

@@ -443,7 +443,7 @@ func analyticsQuery(q *Request, r *contract.AnalyticsQueryRequest) (contract.Ana
 			{contract.AnalyticsDimensionVariant, f.Variant}, {contract.AnalyticsDimensionState, f.State},
 			{contract.AnalyticsDimensionOutcome, f.Outcome}, {contract.AnalyticsDimensionPerson, f.Person},
 			{contract.AnalyticsDimensionPurpose, f.Purpose}, {contract.AnalyticsDimensionCategory, f.Category},
-			{contract.AnalyticsDimensionBot, f.Bot},
+			{contract.AnalyticsDimensionBot, f.Bot}, {contract.AnalyticsDimensionApp, f.App},
 		}
 	}
 	needHidden := q.person != nil && !fullAccess(q.person)
