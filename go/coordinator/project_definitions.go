@@ -72,9 +72,6 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := projectHeadText(recOf(bundle["settings"])); err != nil {
-		return nil, err
-	}
 	text, err := canonicalText(bundle)
 	if err != nil {
 		return nil, err
@@ -91,6 +88,9 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 		return prior.Result, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if err := projectHeadText(recOf(bundle["settings"])); err != nil { // new writes only: a retry gets its stored result
 		return nil, err
 	}
 	if !create && !mayAccessProjectID(q.person, id) {

@@ -168,7 +168,7 @@ func projectHeadText(in map[string]json.RawMessage) error {
 		if !ok {
 			return fail(400, "Invalid project setting "+k+": expected text")
 		}
-		oneLine := !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == ' ' || r == ' ' })
+		oneLine := !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' })
 		switch {
 		case k == "description" && (!oneLine || s != strings.TrimSpace(s) || utf8.RuneCountInString(s) > 160):
 			return fail(400, "Invalid project setting description: one line, at most 160 characters, no surrounding spaces")

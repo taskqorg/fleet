@@ -331,8 +331,8 @@ type ProjectContextReply struct {
 	Context           []ProjectContextEntry      `json:"context"`
 	ContextFiles      json.RawMessage            `json:"contextFiles,omitempty"`
 	ContextSources    json.RawMessage            `json:"contextSources,omitempty"`
-	Description       *string                    `json:"description,omitempty"`
-	Domain            *string                    `json:"domain,omitempty"`
+	Description       json.RawMessage            `json:"description,omitempty"`
+	Domain            json.RawMessage            `json:"domain,omitempty"`
 	Environments      json.RawMessage            `json:"environments,omitempty"`
 	Execution         json.RawMessage            `json:"execution,omitempty"`
 	Id                *string                    `json:"id,omitempty"`
