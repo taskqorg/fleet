@@ -122,8 +122,8 @@ BEGIN
   WHERE NOT stale
     AND started_at >= NEW.effective_from
     AND (
-     (kind <> 'tool_run' AND NOT has_conn_cost AND NOT has_direct_cost AND model = NEW.subject)
-     OR ((kind = 'tool_run' OR has_conn_cost) AND NOT has_direct_cost AND conn_subject = NEW.subject AND conn_unit = NEW.unit)
+     ((CASE WHEN kind = 'tool_run' THEN nullif(model, '') IS NOT NULL ELSE NOT has_conn_cost END) AND NOT has_direct_cost AND model = NEW.subject)
+     OR (NOT (CASE WHEN kind = 'tool_run' THEN nullif(model, '') IS NOT NULL ELSE NOT has_conn_cost END) AND NOT has_direct_cost AND conn_subject = NEW.subject AND conn_unit = NEW.unit)
     );
  EXCEPTION WHEN OTHERS THEN
   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
@@ -651,6 +651,7 @@ BEGIN
      THEN coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit'))::numeric
     END AS conn_amount,
     (t.connection_cost IS NOT NULL) AS has_conn_cost,
+    (CASE WHEN e.kind = 'tool_run' THEN nullif(coalesce(t.model, e.model), '') IS NOT NULL ELSE t.connection_cost IS NULL END) AS by_tokens,
     CASE WHEN t.connection_cost IS NOT NULL AND t.connection_cost_basis = 'measured' THEN
      CASE
       WHEN nullif(t.connection_cost->>'currency', '') ~ '^[A-Z]{3}$'
@@ -700,11 +701,11 @@ BEGIN
     pcw.id AS pcw_id, pcw.price AS pcw_price, pcw.currency AS pcw_currency, pcw.obs_ms AS pcw_obs,
     pc.id AS pc_id, pc.price AS pc_price, pc.currency AS pc_currency, pc.obs_ms AS pc_obs
    FROM leaves l
-   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_input > 0 AND p.subject = l.model AND p.unit = 'input_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pi ON true
-   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_output > 0 AND p.subject = l.model AND p.unit = 'output_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) po ON true
-   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_cache_read > 0 AND p.subject = l.model AND p.unit = 'cache_read_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcr ON true
-   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_cache_write > 0 AND p.subject = l.model AND p.unit = 'cache_write_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcw ON true
-   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE (l.kind = 'tool_run' OR l.has_conn_cost) AND l.direct_currency IS NULL AND l.conn_unit IS NOT NULL AND l.conn_amount IS NOT NULL AND p.subject = l.conn_subject AND p.unit = l.conn_unit AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pc ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_input > 0 AND p.subject = l.model AND p.unit = 'input_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pi ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_output > 0 AND p.subject = l.model AND p.unit = 'output_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) po ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_cache_read > 0 AND p.subject = l.model AND p.unit = 'cache_read_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcr ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.by_tokens AND l.model IS NOT NULL AND l.tokens_cache_write > 0 AND p.subject = l.model AND p.unit = 'cache_write_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcw ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE NOT l.by_tokens AND l.direct_currency IS NULL AND l.conn_unit IS NOT NULL AND l.conn_amount IS NOT NULL AND p.subject = l.conn_subject AND p.unit = l.conn_unit AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pc ON true
   ),
   cost_items AS (
    SELECT p.execution_id, ci.currency, ci.cost_basis, ci.amount, ci.price_id, ci.obs_ms, ci.unpriced
@@ -717,19 +718,19 @@ BEGIN
      CASE WHEN p.direct_currency IS NULL THEN p.pc_id END AS price_id,
      CASE WHEN p.direct_currency IS NULL THEN p.pc_obs END AS obs_ms,
      CASE WHEN p.direct_currency IS NULL AND p.pc_id IS NULL THEN 1::bigint ELSE 0::bigint END AS unpriced
-    WHERE p.kind = 'tool_run' OR p.has_conn_cost
+    WHERE NOT p.by_tokens
     UNION ALL
     SELECT p.pi_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pi_price * p.tokens_input::numeric, p.pi_id, p.pi_obs, CASE WHEN p.pi_id IS NULL THEN 1::bigint ELSE 0::bigint END
-    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_input > 0
+    WHERE p.by_tokens AND p.tokens_input > 0
     UNION ALL
     SELECT p.po_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.po_price * p.tokens_output::numeric, p.po_id, p.po_obs, CASE WHEN p.po_id IS NULL THEN 1::bigint ELSE 0::bigint END
-    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_output > 0
+    WHERE p.by_tokens AND p.tokens_output > 0
     UNION ALL
     SELECT p.pcr_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcr_price * p.tokens_cache_read::numeric, p.pcr_id, p.pcr_obs, CASE WHEN p.pcr_id IS NULL THEN 1::bigint ELSE 0::bigint END
-    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_cache_read > 0
+    WHERE p.by_tokens AND p.tokens_cache_read > 0
     UNION ALL
     SELECT p.pcw_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcw_price * p.tokens_cache_write::numeric, p.pcw_id, p.pcw_obs, CASE WHEN p.pcw_id IS NULL THEN 1::bigint ELSE 0::bigint END
-    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_cache_write > 0
+    WHERE p.by_tokens AND p.tokens_cache_write > 0
     UNION ALL
     SELECT NULL::text, NULL::text, NULL::numeric, NULL::text, NULL::bigint, 1::bigint
     WHERE p.kind IN ('agent_run', 'child_agent') AND NOT p.has_conn_cost AND coalesce(p.tokens_input, p.tokens_output, p.tokens_cache_read, p.tokens_cache_write) IS NULL

@@ -43,6 +43,8 @@ type answer struct {
 	err         string
 	key         string
 	usage       *int64
+	tokens      *contract.CallTokens // a model tool's split (usageFields), with model
+	model       string
 	disabled    int // HTTP status that disabled `key`, or 0
 	attemptedAt int64
 	// A provider 403 on this key, or a plan or credit limit (432, 433): the provider's message and status. Recorded, never
@@ -477,24 +479,28 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if t.UsageField != nil {
 			field = *t.UsageField
 		}
-		if amount, ok := usageAt(data, field); ok && (t.UsageWhen == nil || stringAt(data, t.UsageWhen.Field) == t.UsageWhen.Equals) {
-			a.usage = &amount
+		counts := t.UsageWhen == nil || stringAt(data, t.UsageWhen.Field) == t.UsageWhen.Equals
+		if f := t.UsageFields; f != nil && counts && status >= 200 && status <= 299 {
+			if tokens, model, ok := tokensAt(data, f); ok {
+				if total, ok := tokenSum(tokens.Input, tokens.Output, ptrValue(tokens.CacheRead), ptrValue(tokens.CacheWrite)); ok {
+					a.usage, a.tokens, a.model = &total, tokens, model
+				}
+			}
+		}
+		// Without a split (no usageFields, or a reply they do not read), the usage amount alone: a connection budget
+		// still counts a model call whose reply names no model.
+		if a.usage == nil && (t.UsageFields == nil || t.UsageField != nil && status >= 200 && status <= 299) {
+			if amount, ok := usageAt(data, field); ok && counts {
+				a.usage = &amount
+			}
 		}
 		if status < 200 || status > 299 {
 			a.outcome, a.err = "error", fmt.Sprintf("provider-%d", status)
 		}
-		if status >= 500 && b.open != nil {
-			a.outcome = "unknown" // a failing upload reply does not establish whether the provider saved the file
-		}
-		if c.Provider == "anthropic" && t.Path == "/v1/messages" {
-			a.usage = nil
-			if status >= 200 && status <= 299 {
-				if amount, ok := anthropicTokens(data); ok {
-					a.usage = &amount
-				}
-			} else if status >= 500 {
-				a.outcome = "unknown"
-			}
+		if status >= 500 && (b.open != nil || c.Provider == "anthropic" && t.Path == "/v1/messages") {
+			// A failing upload reply does not establish whether the provider saved the file, nor an Anthropic 5xx
+			// whether it ran the message.
+			a.outcome = "unknown"
 		}
 		if (status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall)) || status == 432 || status == 433 {
 			// Redact over the whole body first, so a key cut at the 500-character mark cannot leave a prefix behind.
@@ -649,6 +655,9 @@ func (g *gateway) line(q *request, a *answer) contract.CallLine {
 	}
 	if a.detail != "" {
 		line.Detail = &a.detail
+	}
+	if a.tokens != nil {
+		line.Tokens, line.Model = a.tokens, &a.model
 	}
 	if a.usage != nil {
 		line.Usage = &contract.CallUsage{Unit: q.t.Unit, Amount: *a.usage}
@@ -1360,28 +1369,71 @@ func anthropicPath(path string, body map[string]json.RawMessage) (string, bool) 
 	return path, true
 }
 
-// Total reported tokens, not monetary cost. Do not count nested cache/think
-// breakdowns again: they are subsets of the four top-level usage counts.
-func anthropicTokens(data []byte) (int64, bool) {
-	var reply struct {
-		Usage map[string]json.RawMessage `json:"usage"`
+// tokensAt reads a model reply's token split and model by its usageFields: input without cache reads, output with
+// reasoning, as an agent run's totals count them. Input, output and model are required; an optional count that is
+// absent or null is none.
+func tokensAt(data []byte, f *contract.GatewayUsageFields) (*contract.CallTokens, string, bool) {
+	model := stringAt(data, f.Model)
+	input, inOK := usageAt(data, f.Input)
+	output, outOK := usageAt(data, f.Output)
+	if model == "" || !inOK || !outOK {
+		return nil, "", false
 	}
-	if json.Unmarshal(data, &reply) != nil {
-		return 0, false
-	}
-	var total int64
-	for _, field := range []string{"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"} {
-		raw := reply.Usage[field]
-		if (len(raw) == 0 || string(raw) == "null") && strings.HasPrefix(field, "cache_") {
-			continue
+	optional := func(field *string) (*int64, bool) {
+		if field == nil {
+			return nil, true
 		}
-		var count int64
-		if len(raw) == 0 || string(raw) == "null" || json.Unmarshal(raw, &count) != nil || count < 0 || count > (1<<63-1)-total {
+		if raw, ok := jsonAt(data, *field); !ok || string(raw) == "null" {
+			return nil, true
+		}
+		n, ok := usageAt(data, *field)
+		return &n, ok
+	}
+	cacheRead, ok1 := optional(f.CacheRead)
+	cacheWrite, ok2 := optional(f.CacheWrite)
+	reasoning, ok3 := optional(f.Reasoning)
+	extra, ok4 := optional(f.InputExtra)
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return nil, "", false
+	}
+	if extra != nil {
+		var ok bool
+		if input, ok = tokenSum(input, *extra); !ok {
+			return nil, "", false
+		}
+	}
+	if f.InputHasCacheRead != nil && *f.InputHasCacheRead && cacheRead != nil {
+		if *cacheRead > input {
+			return nil, "", false
+		}
+		input -= *cacheRead
+	}
+	if reasoning != nil && (f.OutputHasReasoning == nil || !*f.OutputHasReasoning) {
+		var ok bool
+		if output, ok = tokenSum(output, *reasoning); !ok {
+			return nil, "", false
+		}
+	}
+	return &contract.CallTokens{Input: input, Output: output, CacheRead: cacheRead, CacheWrite: cacheWrite, Reasoning: reasoning}, model, true
+}
+
+// tokenSum adds non-negative counts; false when the sum does not fit.
+func tokenSum(ns ...int64) (int64, bool) {
+	var total int64
+	for _, n := range ns {
+		if n > math.MaxInt64-total {
 			return 0, false
 		}
-		total += count
+		total += n
 	}
 	return total, true
+}
+
+func ptrValue(n *int64) int64 {
+	if n == nil {
+		return 0
+	}
+	return *n
 }
 
 func jsonAt(data []byte, field string) (json.RawMessage, bool) {

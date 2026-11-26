@@ -119,6 +119,16 @@ func pricesList(q *Request, b *contract.PricesListRequest) (contract.PricesListR
 	return out, err
 }
 
+// pricedByTokens: whether an execution's cost is its tokens priced by model and token kind (an agent run without a
+// connection cost, a model tool call whose reply named its model: gateway usageFields), else its connection usage priced
+// by <connection>/<tool> and unit. The SQL leaves compute the same as by_tokens.
+func pricedByTokens(kind string, model *string, connectionCost bool) bool {
+	if kind == "tool_run" {
+		return deref(model) != ""
+	}
+	return !connectionCost
+}
+
 // usage: one measured amount of a unit, for a subject, at a time (a tool_run's connection_cost).
 type usage struct {
 	subject, unit string

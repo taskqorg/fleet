@@ -66,6 +66,7 @@ const providersJSON = `
       "method": "POST",
       "path": "/v1/messages",
       "unit": "tokens",
+      "usageFields": {"input": "usage.input_tokens", "output": "usage.output_tokens", "cacheRead": "usage.cache_read_input_tokens", "cacheWrite": "usage.cache_creation_input_tokens", "model": "model"},
       "idempotent": false,
       "headers": {
         "anthropic-version": "2026-10-21"
@@ -294,6 +295,7 @@ const providersJSON = `
     "method": "POST",
     "path": "/v1/responses",
     "unit": "tokens",
+    "usageFields": {"input": "usage.input_tokens", "output": "usage.output_tokens", "cacheRead": "usage.input_tokens_details.cached_tokens", "reasoning": "usage.output_tokens_details.reasoning_tokens", "model": "model", "inputHasCacheRead": true, "outputHasReasoning": true},
     "usageField": "usage.total_tokens",
     "idempotent": false,
     "description": "Create a model response (Responses API, nonstreaming). Body {model, input, instructions?, max_output_tokens?, tools?, reasoning?, text?}.",
@@ -957,8 +959,9 @@ const providersJSON = `
     "pathPatterns": {
      "model": "^[A-Za-z0-9._-]+$"
     },
+    "usageFields": {"input": "usageMetadata.promptTokenCount", "output": "usageMetadata.candidatesTokenCount", "cacheRead": "usageMetadata.cachedContentTokenCount", "reasoning": "usageMetadata.thoughtsTokenCount", "inputExtra": "usageMetadata.toolUsePromptTokenCount", "model": "modelVersion", "inputHasCacheRead": true},
     "usageField": "usageMetadata.totalTokenCount",
-    "description": "Generate content. Body {model, contents, generationConfig?, systemInstruction?}; usage is usageMetadata.totalTokenCount.",
+    "description": "Generate content. Body {model, contents, generationConfig?, systemInstruction?}; usage is usageMetadata (prompt, candidates, cached and thoughts token counts) of modelVersion.",
     "inputSchema": {
      "type": "object",
      "required": [

@@ -37,6 +37,7 @@ type CallLine struct {
 	ExecutionId       *string          `json:"executionId,omitempty"`
 	KeyFingerprint    *string          `json:"keyFingerprint,omitempty"`
 	KeyProblem        *CallKeyProblem  `json:"keyProblem,omitempty"`
+	Model             *string          `json:"model,omitempty"`
 	Ms                int64            `json:"ms"`
 	Outcome           CallOutcome      `json:"outcome"`
 	Output            json.RawMessage  `json:"output,omitempty"`
@@ -45,6 +46,7 @@ type CallLine struct {
 	StartedAt         int64            `json:"startedAt"`
 	Status            int64            `json:"status"`
 	TokenSha256       *string          `json:"tokenSha256,omitempty"`
+	Tokens            *CallTokens      `json:"tokens,omitempty"`
 	Tool              string           `json:"tool"`
 	Transfer          *CallTransfer    `json:"transfer,omitempty"`
 	Usage             *CallUsage       `json:"usage,omitempty"`
@@ -68,6 +70,11 @@ func (v *CallLine) Validate() error {
 	}
 	if v.Phase != nil {
 		if err := Check(v.Phase, "phase"); err != nil {
+			return err
+		}
+	}
+	if v.Tokens != nil {
+		if err := Check(v.Tokens, "tokens"); err != nil {
 			return err
 		}
 	}
@@ -123,6 +130,20 @@ func (v CallPhase) Valid() bool {
 		}
 	}
 	return false
+}
+
+// CallTokens: A model tool's token split (usageFields): input without cache reads, output with reasoning; reasoning is the part of output spent on it.
+type CallTokens struct {
+	CacheRead  *int64 `json:"cacheRead,omitempty"`
+	CacheWrite *int64 `json:"cacheWrite,omitempty"`
+	Input      int64  `json:"input"`
+	Output     int64  `json:"output"`
+	Reasoning  *int64 `json:"reasoning,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CallTokens) Validate() error {
+	return nil
 }
 
 // CallTransfer: The file of a file tool call: bytes moved, and their sha256 (absent on a download's started line).
@@ -488,6 +509,7 @@ type GatewayTool struct {
 	TextReply       *bool                      `json:"textReply,omitempty"`
 	Unit            string                     `json:"unit"`
 	UsageField      *string                    `json:"usageField,omitempty"`
+	UsageFields     *GatewayUsageFields        `json:"usageFields,omitempty"`
 	UsageOnce       *string                    `json:"usageOnce,omitempty"`
 	UsageWhen       *GatewayUsageWhen          `json:"usageWhen,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
@@ -521,6 +543,11 @@ func (v *GatewayTool) Validate() error {
 			return err
 		}
 	}
+	if v.UsageFields != nil {
+		if err := Check(v.UsageFields, "usageFields"); err != nil {
+			return err
+		}
+	}
 	if v.UsageWhen != nil {
 		if err := Check(v.UsageWhen, "usageWhen"); err != nil {
 			return err
@@ -548,6 +575,24 @@ func (v GatewayTransport) Valid() bool {
 		}
 	}
 	return false
+}
+
+// GatewayUsageFields: A model tool's dotted reply fields of its token counts by kind and of the model that answered (docs/designs/fleet-project-apps.md, Attribution and cost). The gateway writes the split as the line's tokens (input without cache reads, output with reasoning, as an agent run's totals count them) and the model; the usage amount is their sum. A 2xx reply without input, output or model has no split; its usage amount is then usageField's, when the tool declares one.
+type GatewayUsageFields struct {
+	CacheRead          *string `json:"cacheRead,omitempty"`
+	CacheWrite         *string `json:"cacheWrite,omitempty"`
+	Input              string  `json:"input"`
+	InputExtra         *string `json:"inputExtra,omitempty"`
+	InputHasCacheRead  *bool   `json:"inputHasCacheRead,omitempty"`
+	Model              string  `json:"model"`
+	Output             string  `json:"output"`
+	OutputHasReasoning *bool   `json:"outputHasReasoning,omitempty"`
+	Reasoning          *string `json:"reasoning,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayUsageFields) Validate() error {
+	return nil
 }
 
 // GatewayUsageSource: Per-key usage report (reconcile): GET path, and the dotted field holding the number.

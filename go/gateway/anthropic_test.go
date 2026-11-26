@@ -84,6 +84,8 @@ func TestAnthropicNative(t *testing.T) {
 	lines, text := f.spool()
 	expect(t, len(lines), 2, "call count")
 	expect(t, field(lines[0], "usage"), map[string]any{"unit": "tokens", "amount": 24}, "actual tokens without double counting")
+	expect(t, field(lines[0], "tokens"), map[string]any{"input": 10, "output": 7, "cacheRead": 4, "cacheWrite": 3}, "token split")
+	expect(t, lines[0]["model"], "invented-model", "answering model")
 	expect(t, lines[0]["executionId"], "exec-1", "attribution")
 	expect(t, lines[0]["keyFingerprint"], fp("invented-anthropic-primary"), "key identity")
 	if lines[1]["usage"] != nil || strings.Contains(text, "invented-anthropic-") {

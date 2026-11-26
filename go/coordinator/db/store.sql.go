@@ -20,6 +20,42 @@ func (q *Queries) AdvisoryXactLock(ctx context.Context, lock string) error {
 	return err
 }
 
+const connTokensWrite = `-- name: ConnTokensWrite :exec
+UPDATE execution_totals SET
+  tokens_input = $1::bigint, tokens_input_basis = 'measured',
+  tokens_output = $2::bigint, tokens_output_basis = 'measured',
+  tokens_cache_read = $3::bigint, tokens_cache_read_basis = CASE WHEN $3::bigint IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_write = $4::bigint, tokens_cache_write_basis = CASE WHEN $4::bigint IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_reasoning = $5::bigint, tokens_reasoning_basis = CASE WHEN $5::bigint IS NULL THEN 'unavailable' ELSE 'measured' END,
+  model = $6::text, computed_at = now()
+WHERE execution_id = $7::text
+`
+
+type ConnTokensWriteParams struct {
+	Input      int64
+	Output     int64
+	CacheRead  *int64
+	CacheWrite *int64
+	Reasoning  *int64
+	Model      string
+	ID         string
+}
+
+// A model tool call's token split and model (gateway usageFields), measured as an agent run's are: the price lookup
+// matches them by model and token kind. Runs after ConnectionCostWrite, which creates the row.
+func (q *Queries) ConnTokensWrite(ctx context.Context, arg ConnTokensWriteParams) error {
+	_, err := q.db.Exec(ctx, connTokensWrite,
+		arg.Input,
+		arg.Output,
+		arg.CacheRead,
+		arg.CacheWrite,
+		arg.Reasoning,
+		arg.Model,
+		arg.ID,
+	)
+	return err
+}
+
 const connectionCostWrite = `-- name: ConnectionCostWrite :exec
 INSERT INTO execution_totals(execution_id, project_id, directed_by, billing_basis, connection_cost, connection_cost_basis,
   wall_ms, wall_ms_basis, active_ms, active_ms_basis, computed_at)
