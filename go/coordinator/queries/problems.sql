@@ -103,3 +103,17 @@ WHERE state = 'open' AND phase = 'working' AND phase_at < now() - make_interval(
 
 -- name: ProblemStallExists :one
 SELECT EXISTS(SELECT 1 FROM problem WHERE state = 'open' AND cause ~ @pattern::text);
+
+-- name: ProblemDutyHealth :many
+-- Each unpaused duty bot's health for the watchdog: enabled triggers that wake on problems and failed their last pass, its
+-- oldest new problem, and its last run.
+SELECT b.id, coalesce(s.name, '')::text AS name,
+ (SELECT count(*) FROM trigger t WHERE t.bot_id = b.id AND t.enabled AND 'problem' = ANY(t.if_changed) AND coalesce(t.last_error, '') <> '')::int AS failing,
+ (SELECT min(p.opened_at) FROM problem p WHERE p.owner_bot_id = b.id AND p.state = 'open' AND p.phase = 'new')::timestamptz AS oldest_new,
+ (SELECT max(e.started_at) FROM execution e WHERE e.bot_id = b.id AND e.kind = 'agent_run')::timestamptz AS last_run,
+ (SELECT count(*) FROM problem p WHERE p.owner_bot_id = b.id AND p.state = 'open')::int AS waiting
+FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL AND NOT b.paused AND s.duty ? 'problems' ORDER BY b.id;
+
+-- name: ProblemQuestionOpen :one
+SELECT EXISTS(SELECT 1 FROM question WHERE id = $1 AND state = 'open');

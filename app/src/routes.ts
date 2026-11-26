@@ -19,6 +19,7 @@ export const ROUTES: readonly (readonly [earlier: string, target: string])[] = [
   ['/hosts', '/system/hosts'],
   ['/runners', '/system/runners'],
   ['/agent-gaps', '/system/agents'],
+  ['/problems', '/system/problems'],
   ['/access', '/system/access'],
   ['/keys', '/system/connections'],
   ['/spend', '/system/spend'],

@@ -27,6 +27,7 @@ import { Spend, spendRequest, usdOf } from './spend.tsx';
 import { Humans } from './humans.tsx';
 import { Access } from './access.tsx';
 import { AgentGaps } from './agent-gaps.tsx';
+import { Problems } from './problems.tsx';
 import { FINDING, SystemIdle, hostFailures } from './system-idle.tsx';
 import { modelsText, useCompatProfiles } from './accounts.tsx';
 import { ConnectionAdd, HostAdd } from './system-add.tsx';
@@ -34,7 +35,7 @@ import { HostUpdates } from './host-updates.tsx';
 import { HostDiagnosis } from './host-diagnosis.tsx';
 import { profileGaps, type CompatAccount } from '../compat.ts';
 
-export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people' | 'access' | 'agents';
+export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people' | 'access' | 'agents' | 'problems';
 
 const INFRA_PINS = 'infrastructure';
 const INFRA_TREE_GROUPS = 'infrastructure:tree';
@@ -46,6 +47,7 @@ const NAV_RUNNERS_ID = 'nav:runners';
 const NAV_ACCESS_ID = 'nav:access';
 const NAV_SPEND_ID = 'nav:spend';
 const NAV_AGENTS_ID = 'nav:agents';
+const NAV_PROBLEMS_ID = 'nav:problems';
 const DAY = 864e5;
 
 const ms = (s: string) => timeOf(s, 0);
@@ -206,6 +208,8 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
     const spendToday = today.data ? usdOf(today.data.totals.cost as CostFigureLike[]) : null;
 
     return [
+      // Problems (board drafts/anomaly-routing): every open problem with its owner bot; a root without children.
+      { id: NAV_PROBLEMS_ID, label: 'Problems', icon: 'circle-alert', root: true, href: '/problems', searchText: 'problems anomalies errors owner bot hal' },
       // Access (approved 2026-11-25): every subscription and key with its state and next step; a root without children.
       { id: NAV_ACCESS_ID, label: 'Access', icon: 'shield', root: true, href: '/access', searchText: 'access accounts keys subscriptions onboarding login' },
       { id: ROOT_HOSTS_ID, label: 'Hosts', icon: 'panels-top-left', defaultCollapsed: false, href: '/hosts', children: hostLeaves },
@@ -225,6 +229,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
     const sec = section();
     if (sec === 'runners') return NAV_RUNNERS_ID;
     if (sec === 'agents') return NAV_AGENTS_ID;
+    if (sec === 'problems') return NAV_PROBLEMS_ID;
     if (sec === 'spend') return NAV_SPEND_ID;
     if (sec === 'access') return NAV_ACCESS_ID;
     if (sec === 'keys') return props.id ? `key:${props.id}` : ROOT_KEYS_ID;
@@ -344,6 +349,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
 
   // Agents is a list and detail of its own (frames 1 and 2): its classes take the list column.
   return (
+    <Show when={section() !== 'problems'} fallback={<Problems id={props.id} onOpen={go} />}>
     <Show when={section() !== 'agents'} fallback={<AgentGaps id={props.id} onOpen={go} />}>
     <ListDetail
       list={listPane}
@@ -391,6 +397,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
         )
       }
     />
+    </Show>
     </Show>
   );
 }
