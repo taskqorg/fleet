@@ -116,7 +116,15 @@ An **anomaly** is any signal of a fault or a deviation: a telemetry rule finding
 *   **Grouping (Alertmanager-style inhibition)** stays: before sync, findings whose subject depends on a firing absence cause fold into it (`problem:host:<id>:silent` absorbs every finding whose rule row carries that `host_id`; `problem:store:<id>:offline` absorbs store errors; `problem:telemetry:clickhouse` absorbs every rule). Folded findings stay in `telemetry_findings` with `groupCause`.
 *   **Migration.** Every open or answered question that holds a cause becomes an open problem with the same cause, text, data, project and age; open ones are withdrawn. The cause column of `question` and its indexes are dropped once no writer uses them. Agent gap findings keep their table and link `problem_id` instead of `question_id`; their Investigate step goes (the owner bot investigates).
 
-**Duty.** A bot's settings carry `duty.problems`: `system` (true: owns every problem without a project and those of projects no other bot claims) and `projects` (ids it owns). HAL0 holds `system: true` and `projects: ["fleet"]` ([HAL0](../../fleet.md#hal0-operations-duty)). A bot trigger with `ifChanged: ["problem"]` wakes on a new problem it owns or a change of one (a raise of an open cause wakes nobody; the bot's own updates wake nobody); the `needs-you` preset includes `problem`. A wake lists the problems with their codes; the bot works one conversation per problem. A problem its owner never started (no problem conversation yet: adopted with a duty, or a lost wake) joins the owner's next problem wake, so no problem waits for a change to be seen. Each wake of a problem counts one quiet wake; `problem_update` resets the count.
+**Duty.** A bot's settings carry `duty.problems`: `system` (true: owns every problem without a project and those of projects no other bot claims) and `projects` (ids it owns). HAL0 holds `system: true` and `projects: ["fleet"]` ([HAL0](../../fleet.md#hal0-operations-duty)). A bot trigger with `ifChanged: ["problem"]` wakes on a new problem it owns or a change of one (a raise of an open cause wakes nobody; the bot's own updates wake nobody); the `needs-you` preset includes `problem`.
+
+*   **One batch, one conversation.** A pass's problem changes for one bot go as one message to the bot's problems conversation (subject `problems`): every problem in it with its code, phase and why it is in the wake (new, back, changed by someone else, not started). The bot works the batch there and may open a problem's own conversation (subject `problem:<id>`) for a long investigation; `problem_talk` (a person's words) always goes to the problem's own conversation. A burst of 48 problems is one turn, not 48 runs (2026-11-26: HAL0 started 104 runs an hour).
+*   **Idempotent wakes.** A wake starts nothing unless the batch has something the bot has not seen: a problem's line enters a wake only when it opened, reopened or changed since the bot's last wake about it (`problem.woken_at`), or when the bot never saw it. A wake that would repeat what the bot has (same problems, same phases) records a quiet pass and sends nothing; a batch the bot's conversation is still working on waits for that turn to end and joins the next one.
+*   **Quiet wakes.** Each wake of a problem counts one quiet wake; `problem_update` resets the count; three turn it stuck.
+
+**Run-rate breaker.** No bot has a concurrency cap. When a bot starts more than `breaker.factor` (10) times its usual runs in `breaker.window` (1 h) and at least `breaker.floor` (20) runs, the usual being the median of its runs per hour over the last 7 days, the coordinator pauses the bot (`bot_pause`, reason `burst`) and raises one problem `burst:<bot>` without an owner: its words name the bot, the rate against the usual and the subjects with the most runs. It is never a Needs you item per run, and it asks no question. Running turns finish. The pause lifts by the owner's word (a person's `bot_resume`, or telling a PM) or by itself after `breaker.coolMinutes` (30): the bot resumes on probation, and if it trips again within the window it pauses again with twice the cool time. The problem closes when the bot has run a full window under the threshold.
+
+**A bot's failed sessions.** A session of a bot whose latest run failed (no question to a person in it) is a problem of that bot, cause `run-failed:<bot>:<plain cause>`, repeats `×N`: Home's Failed group lists only people's own sessions, and an aggregated failure (`…check the host ×N`) shows only as the pulse line's blocker chip.
 
 | Cause | Source | Fires | Built |
 |---|---|---|---|
@@ -139,11 +147,13 @@ An **anomaly** is any signal of a fault or a deviation: a telemetry rule finding
 | `gap:<class>` | agent gaps | a class above the finding threshold | built |
 | `grants:<connection>` | grants | a connection lacks catalogue tools its users call | built |
 | `duty:<bot>:down` | watchdog | a duty bot stopped working (rule 6) | built |
+| `burst:<bot>` | run-rate breaker | a bot started about 10× its usual runs in an hour; the bot is paused | not built |
+| `run-failed:<bot>:<cause>` | sessions | a bot's session failed for this plain cause | not built |
 | `problem:<rule>:<subject>` | other rules | see telemetry | stage 1 and 2 |
 
-Not built: System › Problems reads at most 200 open problems.
+Not built: the batch conversation, `woken_at`, the run-rate breaker and bot failures as problems (today one conversation per problem and Home lists a bot's failed sessions); System › Problems reads at most 200 open problems.
 
-All numbers are settings with these defaults: `problems.cleanRuns` 2, `problems.reopenHours` 24, `problems.stuckWakes` 3, `problems.stuckHours` 48, `duty.downWakes` 3, `duty.newMinutes` 30, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false.
+All numbers are settings with these defaults: `breaker.factor` 10, `breaker.window` 1 h, `breaker.floor` 20, `breaker.coolMinutes` 30, `problems.cleanRuns` 2, `problems.reopenHours` 24, `problems.stuckWakes` 3, `problems.stuckHours` 48, `duty.downWakes` 3, `duty.newMinutes` 30, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false.
 
 ### Hosts
 

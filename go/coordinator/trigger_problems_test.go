@@ -2,11 +2,13 @@ package main
 
 import (
 	"strings"
+
+	"fleet/coordinator/db"
 	"testing"
 	"time"
 )
 
-// Requirement: one trigger pass wakes the owner bot on several problems at once, one conversation each, whatever
+// Requirement: one trigger pass wakes the owner bot on several problems at once, in one batch conversation, whatever
 // their order. Risk: HAL0's pass over its 48 unstarted problems failed every 15 s with "advisory lock order violation:
 // cannot acquire session:<b> after session:<a>" and the watchdog raised HAL0 down (prod, 2026-11-26).
 func TestTriggerWakesOwnerOnManyProblems(t *testing.T) {
@@ -36,15 +38,39 @@ func TestTriggerWakesOwnerOnManyProblems(t *testing.T) {
 	if err := triggerPass(e.ctx, e.app, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("trigger pass: %v", err)
 	}
-	var n int
-	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM session WHERE bot_id = $1 AND subject LIKE 'problem:%'", bot).Scan(&n); err != nil || n != 6 {
-		t.Fatalf("problem conversations %d, want 6 (%v)", n, err)
+	// One batch, one conversation: the six problems are one message in the bot's problems conversation.
+	var n, woken int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM session WHERE bot_id = $1 AND subject = 'problems'", bot).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("problems conversations %d, want 1 (%v)", n, err)
+	}
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+		ps, err := q.db().ProblemsList(q.ctx(), db.ProblemsListParams{State: ptr("open"), Lim: 100})
+		for _, p := range ps {
+			if p.WokenAt != nil {
+				woken++
+			}
+		}
+		return err
+	}); err != nil || woken != 6 {
+		t.Fatalf("woken problems %d, want 6 (%v)", woken, err)
+	}
+	var msgs int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM message m JOIN session s ON s.id = m.session_id WHERE s.bot_id = $1 AND s.subject = 'problems'", bot).Scan(&msgs); err != nil {
+		t.Fatal(err)
+	}
+	// Idempotent: a pass with nothing new for the bot sends nothing more.
+	if err := triggerPass(e.ctx, e.app, time.Now().Add(90*time.Second)); err != nil {
+		t.Fatalf("repeat pass: %v", err)
+	}
+	var again int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM message m JOIN session s ON s.id = m.session_id WHERE s.bot_id = $1 AND s.subject = 'problems'", bot).Scan(&again); err != nil || again != msgs {
+		t.Fatalf("a pass with no news sent %d messages, had %d (%v)", again, msgs, err)
 	}
 
 	// A focus watch the bot's agent starts in one of those conversations (pm-watch) sees only the tasks it works: a
 	// change of another task of the project wakes nobody there.
 	var sid string
-	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT id FROM session WHERE bot_id = $1 AND subject LIKE 'problem:%' LIMIT 1", bot).Scan(&sid); err != nil {
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT id FROM session WHERE bot_id = $1 AND subject = 'problems' LIMIT 1", bot).Scan(&sid); err != nil {
 		t.Fatal(err)
 	}
 	e.opInto(t, "trigger_save", map[string]any{"id": "33333333-4444-4555-8666-777777777777", "baseRevision": 0, "sessionId": sid, "presetId": "focus-changes"}, h, &trig)

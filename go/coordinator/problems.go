@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,6 +36,7 @@ type Problem struct {
 	Unowned           bool       // No duty owns it (the watchdog's: the duty bot itself is down).
 	Count             int64      // >0: the source's own tally of occurrences (agent gaps), not one per raise
 	SeenAt            *time.Time // with Count: the last occurrence
+	Owner             string     // the owner bot whatever the duty (a bot's own failed sessions)
 	Data              any        // a struct whose JSON fields join the problem's data: hostId, storeId, executionId, exemplars, value
 }
 
@@ -78,7 +80,9 @@ func problemRaiseID(q *Request, source string, p Problem) (string, error) {
 		return "", err
 	}
 	var owner *string
-	if !p.Unowned {
+	if p.Owner != "" {
+		owner = &p.Owner
+	} else if !p.Unowned {
 		if owner, err = problemOwner(q, p.ProjectID); err != nil {
 			return "", err
 		}
@@ -378,7 +382,10 @@ func problemOutNamed(q *Request, p db.Problem, names map[string]*string, convers
 	return out
 }
 
-// problemSubject: the owner bot's conversation subject for a problem.
+// problemsSubject: the owner bot's conversation for its batches of problems (one message per pass).
+const problemsSubject = "problems"
+
+// problemSubject: the owner bot's conversation subject for one problem (a person's words, a long investigation).
 func problemSubject(id string) string { return "problem:" + id }
 
 func problemsList(q *Request, r *contract.ProblemsListRequest) (contract.ProblemsListReply, error) {
@@ -575,6 +582,10 @@ func problemChangePart(q *Request, id, bot string) (threadPart, bool, error) {
 	if err != nil || p.OwnerBotID == nil || *p.OwnerBotID != bot || p.State != "open" {
 		return threadPart{}, false, err
 	}
+	// Idempotent: a problem the bot was woken about and that has not opened again or changed phase since is no news.
+	if p.WokenAt != nil && !p.PhaseAt.After(*p.WokenAt) && !p.OpenedAt.After(*p.WokenAt) {
+		return threadPart{}, false, nil
+	}
 	what := "new problem"
 	switch {
 	case p.Reopened > 0 && p.Phase == "new":
@@ -582,8 +593,12 @@ func problemChangePart(q *Request, id, bot string) (threadPart, bool, error) {
 	case p.Phase != "new":
 		what = "problem " + p.Phase
 	}
-	return threadPart{problemSubject(p.ID), fmt.Sprintf("%s %s ×%d (cause %s): %s. Work it here: problem_get, then problem_update or problem_escalate.",
-		what, problemCode(p.Seq), p.Count, p.Cause, cutRunes(p.Text, 400))}, true, nil
+	if p.WokenAt == nil && p.Phase == "new" && p.Reopened == 0 {
+		what = "problem not started yet"
+	}
+	// One batch, one conversation: every problem of a pass goes to the bot's problems conversation as one message.
+	return threadPart{problemsSubject, fmt.Sprintf("%s %s ×%d (cause %s, phase %s): %s",
+		what, problemCode(p.Seq), p.Count, p.Cause, p.Phase, cutRunes(p.Text, 300))}, true, nil
 }
 
 // problemAnswerAfter (runAnswerAfter): an answered escalation hands its problem back to the owner bot (phase working);
@@ -651,6 +666,12 @@ const (
 // bot runs again.
 func problemsWatch(q *Request) error {
 	if err := q.db().ProblemsStale(q.ctx(), problemStuckHours); err != nil {
+		return err
+	}
+	if err := botBreaker(q, time.Now()); err != nil {
+		return err
+	}
+	if err := botFailures(q); err != nil {
 		return err
 	}
 	bots, err := q.db().ProblemDutyHealth(q.ctx())
@@ -759,5 +780,166 @@ func problemTriggerParts(q *Request, bot string, seen, owned map[string]bool) ([
 			return nil, err
 		}
 	}
+	if len(parts) > 0 || len(woken) > 0 {
+		parts = append(parts, threadPart{problemsSubject, "Work these here: problem_get for the evidence, then problem_update (phase, note, work) or problem_escalate; open a problem's own conversation only for a long investigation."})
+	}
 	return parts, nil
+}
+
+const (
+	breakerFactor      = 10.0 // breaker.factor
+	breakerWindowMin   = 60   // breaker.window
+	breakerFloor       = 20   // breaker.floor
+	breakerCoolMinutes = 30   // breaker.coolMinutes
+	burstCause         = "burst:%s"
+)
+
+// burstData: the breaker's state on its problem.
+type burstData struct {
+	Bot       string  `json:"bot"`
+	Recent    int     `json:"recent"`
+	Median    float64 `json:"median"`
+	CoolMin   int     `json:"coolMinutes"`
+	PausedAt  string  `json:"pausedAt,omitempty"`
+	Probation string  `json:"probationUntil,omitempty"`
+}
+
+// botBreaker: the run-rate breaker (docs/designs/fleet-system-management.md, Run-rate breaker). A bot that started more
+// than breakerFactor times its usual runs in the window (and at least breakerFloor) is paused and one problem without
+// an owner names it; after the cool time the bot resumes on probation, and a trip within the window pauses it again
+// for twice as long. A person who resumes it starts the probation too. The problem closes after a window under the
+// threshold. No concurrency cap: only the rate trips it.
+func botBreaker(q *Request, now time.Time) error {
+	rates, err := q.db().BotRunRates(q.ctx(), breakerWindowMin)
+	if err != nil {
+		return err
+	}
+	for _, b := range rates {
+		cause := fmt.Sprintf(burstCause, b.ID)
+		open, err := q.db().ProblemOpenGet(q.ctx(), cause)
+		var held *db.Problem
+		var st burstData
+		if err == nil {
+			held = &open
+			_ = json.Unmarshal(open.Data, &st)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		usual := max(b.Median, 1)
+		recent := int(b.Recent)
+		if held != nil && st.Probation != "" {
+			// On probation only the runs since the resume count, not the burst it paused for.
+			until, _ := time.Parse(time.RFC3339, st.Probation)
+			since := until.Add(-breakerWindowMin * time.Minute)
+			n, err := q.db().BotRunsSince(q.ctx(), db.BotRunsSinceParams{Bot: b.ID, Since: tsOf(&since)})
+			if err != nil {
+				return err
+			}
+			recent = int(n)
+		}
+		tripped := recent >= breakerFloor && float64(recent) > breakerFactor*usual
+		ours := b.Paused && b.PausedBy == "fleet:burst"
+		switch {
+		case ours && held == nil:
+			// Its burst problem went (closed by a person): the breaker's pause goes with it.
+			if err := q.db().BotBreakerPause(q.ctx(), db.BotBreakerPauseParams{ID: b.ID, Paused: false}); err != nil {
+				return err
+			}
+			if err := audit(q, "bot:"+b.ID, "paused", true, false, auditExtra{Reason: "burst problem closed"}); err != nil {
+				return err
+			}
+		case tripped && !b.Paused:
+			cool := breakerCoolMinutes
+			if held != nil && st.Probation != "" {
+				cool = max(st.CoolMin, breakerCoolMinutes) * 2 // tripped again on probation
+			}
+			if err := q.db().BotBreakerPause(q.ctx(), db.BotBreakerPauseParams{ID: b.ID, Paused: true}); err != nil {
+				return err
+			}
+			if err := audit(q, "bot:"+b.ID, "paused", false, true, auditExtra{Reason: "burst"}); err != nil {
+				return err
+			}
+			st = burstData{Bot: b.ID, Recent: recent, Median: b.Median, CoolMin: cool, PausedAt: now.UTC().Format(time.RFC3339)}
+			text := fmt.Sprintf("%s started %d runs in the last hour, %.0f times its usual %.0f: Fleet paused it for %d minutes. Its running turns finish; resume it on its page or tell a PM.",
+				b.Name, recent, float64(recent)/usual, usual, cool)
+			if _, err := problemRaiseID(q, "breaker", Problem{Cause: cause, Text: text, RefreshText: true, Unowned: true, Data: st}); err != nil {
+				return err
+			}
+		case held != nil && ours && st.PausedAt != "":
+			at, _ := time.Parse(time.RFC3339, st.PausedAt)
+			if now.Before(at.Add(time.Duration(st.CoolMin) * time.Minute)) {
+				continue
+			}
+			if err := q.db().BotBreakerPause(q.ctx(), db.BotBreakerPauseParams{ID: b.ID, Paused: false}); err != nil {
+				return err
+			}
+			if err := audit(q, "bot:"+b.ID, "paused", true, false, auditExtra{Reason: "burst probation"}); err != nil {
+				return err
+			}
+			st.PausedAt, st.Probation = "", now.Add(breakerWindowMin*time.Minute).UTC().Format(time.RFC3339)
+			if err := q.db().ProblemTally(q.ctx(), db.ProblemTallyParams{ID: held.ID, Count: held.Count, SeenAt: tsOf(&now), Data: jsonBytes(st)}); err != nil {
+				return err
+			}
+		case held != nil && !b.Paused && st.Probation == "":
+			// A person resumed it: probation from now.
+			st.PausedAt, st.Probation = "", now.Add(breakerWindowMin*time.Minute).UTC().Format(time.RFC3339)
+			if err := q.db().ProblemTally(q.ctx(), db.ProblemTallyParams{ID: held.ID, Count: held.Count, SeenAt: tsOf(&now), Data: jsonBytes(st)}); err != nil {
+				return err
+			}
+		case held != nil && !b.Paused && st.Probation != "":
+			until, _ := time.Parse(time.RFC3339, st.Probation)
+			if now.After(until) && !tripped {
+				if err := problemsCloseIDs(q, []string{held.ID}, "cleared"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// botFailures: a bot's conversations whose latest run failed, by plain cause, are that bot's problems
+// (run-failed:<bot>:<cause>, ×N), not cards on a person's Home; a cause gone closes its problem.
+func botFailures(q *Request) error {
+	rows, err := q.db().BotFailedSessions(q.ctx())
+	if err != nil {
+		return err
+	}
+	type key struct{ bot, cause string }
+	agg := map[key]*Problem{}
+	n := map[key]int{}
+	order := []key{}
+	for _, r := range rows {
+		c := contract.PlainCause(r.Cause, "")
+		k := key{r.BotID, c.Cause}
+		if agg[k] == nil {
+			agg[k] = &Problem{Cause: "run-failed:" + r.BotID + ":" + c.Cause, Owner: r.BotID, RefreshText: true}
+			order = append(order, k)
+		}
+		n[k] += int(r.N)
+		agg[k].Text = fmt.Sprintf("%s's conversations failed: %s (%d).", r.Name, strings.TrimSuffix(c.Text, "."), n[k])
+	}
+	current := make([]Problem, 0, len(order))
+	for _, k := range order {
+		current = append(current, *agg[k])
+	}
+	return problemsSet(q, "bot-failures", "^run-failed:", current)
+}
+
+var problemCodeRe = regexp.MustCompile(`\bP-(\d+)\b`)
+
+// problemsMarkWoken: the problems a sent batch names (by code) are woken for their owner bot.
+func problemsMarkWoken(q *Request, bot string, parts []string) error {
+	var seqs []int64
+	for _, p := range parts {
+		for _, m := range problemCodeRe.FindAllStringSubmatch(p, -1) {
+			if n, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+				seqs = append(seqs, n)
+			}
+		}
+	}
+	if len(seqs) == 0 {
+		return nil
+	}
+	return q.db().ProblemsWokenBySeq(q.ctx(), db.ProblemsWokenBySeqParams{Seqs: seqs, Bot: bot})
 }

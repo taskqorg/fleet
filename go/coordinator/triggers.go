@@ -889,6 +889,10 @@ func triggerSendOne(q *Request, t db.Trigger, target triggerTarget, slot string,
 	}
 	_, _, sent, err := admitBotWake(q, b, botWakeReq{Cause: cause, DedupKey: rid, Text: head, SentBy: "Fleet", Source: "trigger",
 		CheckPause: !manual, Trigger: &t, Thread: subject})
+	if err == nil && sent && subject == problemsSubject {
+		// The problems this batch names are seen by the bot from now: marked in the transaction that sends it.
+		err = problemsMarkWoken(q, b.Id, parts)
+	}
 	return sent, err
 }
 

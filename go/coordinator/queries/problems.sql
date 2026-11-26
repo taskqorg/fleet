@@ -129,8 +129,47 @@ UPDATE problem SET count = @count::int, seen_at = @seen_at::timestamptz, misses 
 WHERE id = @id;
 
 -- name: ProblemsUnstarted :many
--- Open problems a bot owns that it never started: no conversation of the bot for them yet (a problem adopted with a
--- duty, or one whose wake was lost). The owner's problem trigger takes them up.
-SELECT p.id FROM problem p WHERE p.state = 'open' AND p.owner_bot_id = @bot::text AND p.phase = 'new'
- AND NOT EXISTS (SELECT 1 FROM session s WHERE s.bot_id = p.owner_bot_id AND s.subject = 'problem:' || p.id)
-ORDER BY p.seq;
+-- Open problems a bot owns that no wake carried yet (a problem adopted with a duty, or one whose wake was lost).
+SELECT p.id FROM problem p WHERE p.state = 'open' AND p.owner_bot_id = @bot::text AND p.woken_at IS NULL ORDER BY p.seq;
+
+-- name: ProblemsWoken :exec
+UPDATE problem SET woken_at = now() WHERE id = ANY(@ids::text[]);
+
+-- name: BotRunRates :many
+-- Each live bot's runs in the last window against its usual: the median of its runs per hour over 7 days (hours with
+-- runs, before the window), for the run-rate breaker (problems.go botBreaker).
+WITH runs AS (
+ SELECT e.bot_id, coalesce(to_timestamp((e.data->>'createdAt')::float8 / 1000), e.started_at, e.updated_at) AS at
+ FROM execution e WHERE e.bot_id IS NOT NULL AND e.kind = 'agent_run'
+  AND coalesce(to_timestamp((e.data->>'createdAt')::float8 / 1000), e.started_at, e.updated_at) > now() - interval '7 days'
+), hours AS (SELECT bot_id, date_trunc('hour', at) AS h, count(*) AS n FROM runs WHERE at <= now() - make_interval(mins => @window_minutes::int) GROUP BY 1, 2)
+SELECT b.id, s.name, b.paused, coalesce(b.paused_by, '')::text AS paused_by, b.paused_at,
+ (SELECT count(*) FROM runs r WHERE r.bot_id = b.id AND r.at > now() - make_interval(mins => @window_minutes::int))::int AS recent,
+ coalesce((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY n) FROM hours WHERE hours.bot_id = b.id), 0)::float8 AS median
+FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL ORDER BY b.id;
+
+-- name: BotBreakerPause :exec
+UPDATE bot SET paused = @paused, paused_at = CASE WHEN @paused THEN now() ELSE paused_at END,
+ paused_by = CASE WHEN @paused THEN 'fleet:burst' ELSE paused_by END WHERE id = @id;
+
+-- name: BotFailedSessions :many
+-- Open conversations of live bots whose latest run failed in the last day, by bot and stored cause: each is that bot's
+-- problem (run-failed:<bot>:<cause>), not a card on a person's Home.
+SELECT s.bot_id::text AS bot_id, bs.name, coalesce(nullif(e.problem, ''), 'unknown')::text AS cause, count(*)::int AS n
+FROM session s
+JOIN bot b ON b.id = s.bot_id AND b.tombstoned_at IS NULL
+JOIN bot_revision bs ON bs.bot_id = b.id AND bs.revision = b.revision
+JOIN LATERAL (
+ SELECT x.state, x.problem, x.ended_at FROM execution x WHERE x.session_id = s.id AND x.kind = 'agent_run' AND x.tombstoned_at IS NULL
+ ORDER BY x.seq DESC LIMIT 1
+) e ON true
+WHERE s.bot_id IS NOT NULL AND s.archived_at IS NULL AND s.tombstoned_at IS NULL AND e.state = 'failed' AND e.ended_at > now() - interval '1 day'
+GROUP BY 1, 2, 3 ORDER BY 1, 3;
+
+-- name: BotRunsSince :one
+SELECT count(*)::int FROM execution e WHERE e.bot_id = @bot::text AND e.kind = 'agent_run'
+ AND coalesce(to_timestamp((e.data->>'createdAt')::float8 / 1000), e.started_at, e.updated_at) > @since::timestamptz;
+
+-- name: ProblemsWokenBySeq :exec
+UPDATE problem SET woken_at = now() WHERE seq = ANY(@seqs::bigint[]) AND owner_bot_id = @bot::text;
