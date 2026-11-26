@@ -70,6 +70,11 @@ func experimentTransition(q *Request, id string, ev experimentEvent) (bool, erro
 			return false, err
 		}
 	}
+	if ev.To == "done" || ev.To == "stopped" { // a gate decides itself at close (lab_decider.go)
+		if err := labGateDecide(q, id); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
 }
 
@@ -86,6 +91,11 @@ func experimentsStop(q *Request, ids []string, reason string) error {
 	open, err := q.db().ExperimentOpenBudgetQuestions(q.ctx(), stopped)
 	if err != nil {
 		return err
+	}
+	for _, id := range stopped {
+		if err := labGateDecide(q, id); err != nil {
+			return err
+		}
 	}
 	return questionsWithdraw(q, open)
 }

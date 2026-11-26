@@ -201,3 +201,55 @@ func TestLabUseCaseProjects(t *testing.T) {
 		t.Errorf("a tie goes to the newest experiment's project: %v", tie)
 	}
 }
+
+// Requirement: a Lab decision reaches whoever must make it (fleet-lab.md, Experiment record): Waiting for you holds
+// only a finished experiment the person created with a choice between variants; an agent's experiment shows with that
+// agent; a gate decides itself at close and a failure is a problem, never a question. Risk: agents' experiments land
+// on the owner (2026-11-27: 60 such decisions), and a pin qualification asks "which variant" of a pass/fail check.
+func TestLabDecider(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	two := `[{"label":"a"},{"label":"b"}]`
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO experiment (id, project_id, kind, pipeline_id, variants, requested_by, gate, evaluators) VALUES
+	 ('ld-mine', 'fleet', 'ab', 'p', $1, $2, false, '[]'), ('ld-one', 'fleet', 'single', 'p', '[{"label":"a"}]', $2, false, '[]'),
+	 ('ld-agent', 'fleet', 'ab', 'p', $1, 'site-agents', false, '[]'),
+	 ('ld-gate', 'fleet', 'single', 'p', '[{"label":"a"}]', $2, true, '[{"kind":"script","ref":"example.checks","form":"pass_fail"}]')`, two, testOwnerEmail); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `UPDATE experiment SET state = 'running' WHERE id LIKE 'ld-%'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `UPDATE experiment SET state = 'done' WHERE id IN ('ld-mine', 'ld-one', 'ld-agent')`); err != nil {
+		t.Fatal(err)
+	}
+	// The gate stops with no trial: it fails by itself and raises its problem.
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		_, err := experimentTransition(q, "ld-gate", experimentEvent{To: "stopped", From: []string{"running"}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var got contract.LabViewReply
+	e.opInto(t, "lab_view", map[string]any{}, e.ownerHeaders(), &got)
+	bots := map[string]contract.LabWithBot{}
+	for _, b := range got.WithBots {
+		bots[b.ExperimentId] = b
+	}
+	if strings.Join(got.Waiting, ",") != "ld-mine" {
+		t.Fatalf("waiting for the owner: %v, want ld-mine only", got.Waiting)
+	}
+	if b := bots["ld-agent"]; b.Owner != "site-agents" || b.Failed {
+		t.Fatalf("agent's experiment: %+v", b)
+	}
+	if b, ok := bots["ld-gate"]; !ok || !b.Failed {
+		t.Fatalf("failed gate: %+v", got.WithBots)
+	}
+	var decision, by string
+	var problems int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT decision, decided_by, (SELECT count(*) FROM problem WHERE cause = 'lab-gate:ld-gate' AND closed_at IS NULL)
+	 FROM experiment WHERE id = 'ld-gate'`).Scan(&decision, &by, &problems); err != nil {
+		t.Fatal(err)
+	}
+	if decision != "failed" || by != "lab:gate" || problems != 1 {
+		t.Fatalf("gate: decision %q by %q, %d open problems", decision, by, problems)
+	}
+}

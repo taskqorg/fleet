@@ -108,9 +108,11 @@ SELECT * FROM experiment WHERE id=sqlc.arg(id) FOR SHARE;
 SELECT * FROM experiment ORDER BY seq DESC LIMIT sqlc.narg(lim)::bigint;
 
 -- name: LabExperimentInsert :exec
-INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by)
+INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by,
+  gate,title,requested_by_execution)
 VALUES(sqlc.arg(id),sqlc.arg(project_id),sqlc.arg(kind),sqlc.arg(pipeline_id),sqlc.arg(examples)::jsonb,sqlc.arg(variants)::jsonb,sqlc.arg(repeats),sqlc.arg(evaluators)::jsonb,
-  sqlc.narg(primary_evaluator),sqlc.arg(budgets)::jsonb,sqlc.narg(goal),sqlc.narg(hypothesis),sqlc.narg(decision_rule),sqlc.narg(lab_group),sqlc.arg(strategy)::jsonb,sqlc.arg(requested_by));
+  sqlc.narg(primary_evaluator),sqlc.arg(budgets)::jsonb,sqlc.narg(goal),sqlc.narg(hypothesis),sqlc.narg(decision_rule),sqlc.narg(lab_group),sqlc.arg(strategy)::jsonb,sqlc.arg(requested_by),
+  sqlc.arg(gate),sqlc.narg(title),sqlc.narg(requested_by_execution));
 
 -- name: LabExperimentRecordSet :exec
 -- One record field of an experiment (an amendment; field is the column name).

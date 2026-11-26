@@ -117,7 +117,8 @@ func expView(e *labExperiment) (contract.LabExperimentRecord, error) {
 	r := contract.LabExperimentRecord{Id: e.ID, ProjectId: e.ProjectID, Kind: e.Kind, PipelineId: e.PipelineID, Repeats: float64(e.Repeats), PrimaryEvaluator: e.PrimaryEvaluator,
 		Strategy: e.Strategy, State: e.State, StopReason: e.StopReason, CreatedAt: *labTimeText(&e.CreatedAt), Goal: e.Goal, Hypothesis: e.Hypothesis, DecisionRule: e.DecisionRule,
 		LabGroup: e.LabGroup, Decision: e.Decision, DecisionReason: e.DecisionReason, DecidedBy: e.DecidedBy, DecidedAt: labTimeText(e.DecidedAt), LaunchedAt: labTimeText(e.LaunchedAt),
-		RequestedBy: e.RequestedBy, RequesterRemovedAt: labTimeText(e.RequesterRemovedAt), Evaluators: []json.RawMessage{}}
+		RequestedBy: e.RequestedBy, RequesterRemovedAt: labTimeText(e.RequesterRemovedAt), Evaluators: []json.RawMessage{}, Title: e.Title, Gate: e.Gate,
+		Decider: e.decider()}
 	if r.Strategy == nil {
 		r.Strategy = json.RawMessage("null")
 	}
@@ -452,6 +453,9 @@ func expCreate(q *Request, r *contract.LabExperimentCreateRequest, exact bool) (
 		names[ev.name()] = true
 		evaluators = append(evaluators, ev)
 	}
+	if r.Gate != nil && *r.Gate && !slices.ContainsFunc(evaluators, func(ev labEvaluator) bool { return ev.Form == "pass_fail" }) {
+		return none, fail(400, "A gate needs a pass_fail evaluator")
+	}
 	primary := labText(r.PrimaryEvaluator)
 	if rawValue(r.PrimaryEvaluator) != nil && !names[primary] {
 		return none, fail(400, "primaryEvaluator names none of the evaluators")
@@ -501,7 +505,7 @@ func expCreate(q *Request, r *contract.LabExperimentCreateRequest, exact bool) (
 	if err := q.db().LabExperimentInsert(q.ctx(), db.LabExperimentInsertParams{ID: id, ProjectID: projectID, Kind: kind, PipelineID: pipelineID, Examples: jsonBytes(examples),
 		Variants: jsonBytes(variants), Repeats: int32(repeats), Evaluators: jsonBytes(evaluators), PrimaryEvaluator: text("primaryEvaluator"), Budgets: jsonBytes(budgets),
 		Goal: text("goal"), Hypothesis: text("hypothesis"), DecisionRule: text("decisionRule"), LabGroup: text("labGroup"), Strategy: jsonBytes(strategy),
-		RequestedBy: &q.person.Email}); err != nil {
+		RequestedBy: &q.person.Email, Gate: r.Gate != nil && *r.Gate, Title: labTitleArg(r.Title), RequestedByExecution: requestAgentRun(q)}); err != nil {
 		return none, err
 	}
 	return expGet(q, id)

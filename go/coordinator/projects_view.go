@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -50,8 +51,9 @@ func projectsView(q *Request, r *contract.ProjectsViewRequest) (contract.Project
 		focus.HasExclude, focus.Exclude = true, r.ExcludeProjectIds
 	}
 
-	// Open questions: per project for the catalogue, and the focus's first ones for the summary.
-	qs, err := questionsList(q, "", "", "open", "", nil, nil, nil)
+	// Open questions to people (Needs you's rule, home_view): a question addressed to a bot is that bot's; per project
+	// for the catalogue, and the focus's first ones for the summary.
+	qs, err := questionRows(q, db.TaskQuestionsParams{State: ptr("open"), PeopleOnly: true}, nil, nil)
 	if err != nil {
 		return out, err
 	}

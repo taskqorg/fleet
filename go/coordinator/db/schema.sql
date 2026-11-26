@@ -752,7 +752,10 @@ CREATE TABLE experiment (
   "launched_at" timestamp with time zone,
   "requested_by" text,
   "requester_removed_at" timestamp with time zone,
-  "tombstoned_at" timestamp with time zone
+  "tombstoned_at" timestamp with time zone,
+  "gate" boolean NOT NULL,
+  "title" text,
+  "requested_by_execution" text
 );
 CREATE TABLE experiment_note (
   "id" text NOT NULL,

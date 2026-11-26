@@ -892,8 +892,33 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		return deref(a.ConfigRef) < deref(b.ConfigRef)
 	})
 
+	if err := labMarkRetired(q, out.Entries); err != nil {
+		return out, err
+	}
 	labLeaderboardCachePut(cacheKey, out)
 	return out, nil
+}
+
+// labMarkRetired: an entry whose agent profile or pipeline is gone from the library (a decided experiment retires its
+// variants, lab_variant_retire.go) is retired: History keeps it, the comparison does not rank it. A decision is an
+// experiment change, so the cached reply is rebuilt with it.
+func labMarkRetired(q *Request, entries []contract.LabLeaderboardEntry) error {
+	live := map[string]map[string]bool{}
+	for _, kind := range []string{"agent", "pipeline"} {
+		hs, err := headTexts(q, kind)
+		if err != nil {
+			return err
+		}
+		live[kind] = map[string]bool{}
+		for _, h := range hs {
+			live[kind][h.id] = true
+		}
+	}
+	for i := range entries {
+		e := &entries[i]
+		e.Retired = !live["pipeline"][e.PipelineId] || e.Profile != nil && *e.Profile != "" && !live["agent"][*e.Profile]
+	}
+	return nil
 }
 
 // labLeaderboardVersion: Lab data's counts and last changes as the caller sees them (LabDataVersion: trials, scores,

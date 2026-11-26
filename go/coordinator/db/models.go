@@ -1159,33 +1159,36 @@ type ExecutionTotal struct {
 }
 
 type Experiment struct {
-	ID                 string
-	ProjectID          string
-	Kind               string
-	PipelineID         string
-	Examples           []byte
-	Variants           []byte
-	Repeats            int32
-	Evaluators         []byte
-	PrimaryEvaluator   *string
-	Strategy           []byte
-	Budgets            []byte
-	State              string
-	StopReason         *string
-	CreatedAt          time.Time
-	Seq                int64
-	Goal               *string
-	Hypothesis         *string
-	DecisionRule       *string
-	LabGroup           *string
-	Decision           *string
-	DecisionReason     *string
-	DecidedBy          *string
-	DecidedAt          *time.Time
-	LaunchedAt         *time.Time
-	RequestedBy        *string
-	RequesterRemovedAt *time.Time
-	TombstonedAt       *time.Time
+	ID                   string
+	ProjectID            string
+	Kind                 string
+	PipelineID           string
+	Examples             []byte
+	Variants             []byte
+	Repeats              int32
+	Evaluators           []byte
+	PrimaryEvaluator     *string
+	Strategy             []byte
+	Budgets              []byte
+	State                string
+	StopReason           *string
+	CreatedAt            time.Time
+	Seq                  int64
+	Goal                 *string
+	Hypothesis           *string
+	DecisionRule         *string
+	LabGroup             *string
+	Decision             *string
+	DecisionReason       *string
+	DecidedBy            *string
+	DecidedAt            *time.Time
+	LaunchedAt           *time.Time
+	RequestedBy          *string
+	RequesterRemovedAt   *time.Time
+	TombstonedAt         *time.Time
+	Gate                 bool
+	Title                *string
+	RequestedByExecution *string
 }
 
 type ExperimentNote struct {

@@ -617,6 +617,7 @@ type LabExperimentCreateRequest struct {
 	DecisionRule     json.RawMessage  `json:"decisionRule,omitempty"`
 	Evaluators       json.RawMessage  `json:"evaluators,omitempty"`
 	Examples         json.RawMessage  `json:"examples,omitempty"`
+	Gate             *bool            `json:"gate,omitempty"`
 	Goal             *string          `json:"goal,omitempty"`
 	Hypothesis       *string          `json:"hypothesis,omitempty"`
 	Kind             *string          `json:"kind,omitempty"`
@@ -626,6 +627,7 @@ type LabExperimentCreateRequest struct {
 	ProjectId        *string          `json:"projectId,omitempty"`
 	Repeats          json.RawMessage  `json:"repeats,omitempty"`
 	Strategy         *LabLoopStrategy `json:"strategy,omitempty"`
+	Title            *string          `json:"title,omitempty"`
 	Variants         json.RawMessage  `json:"variants,omitempty"`
 }
 
@@ -668,11 +670,13 @@ type LabExperimentGetReply struct {
 	CreatedAt          string            `json:"createdAt"`
 	DecidedAt          *string           `json:"decidedAt"`
 	DecidedBy          *string           `json:"decidedBy"`
+	Decider            string            `json:"decider"`
 	Decision           *string           `json:"decision"`
 	DecisionReason     *string           `json:"decisionReason"`
 	DecisionRule       *string           `json:"decisionRule"`
 	Evaluators         []json.RawMessage `json:"evaluators"`
 	Examples           []LabExample      `json:"examples"`
+	Gate               bool              `json:"gate"`
 	Goal               *string           `json:"goal"`
 	Hypothesis         *string           `json:"hypothesis"`
 	Id                 string            `json:"id"`
@@ -695,6 +699,7 @@ type LabExperimentGetReply struct {
 	StopReason         *string           `json:"stopReason"`
 	Strategies         []LabStrategyRun  `json:"strategies"`
 	Strategy           json.RawMessage   `json:"strategy"`
+	Title              *string           `json:"title"`
 	Trials             []LabTrialRecord  `json:"trials"`
 	Typed              []LabTypedBlock   `json:"typed"`
 	Variants           []LabVariant      `json:"variants"`
@@ -930,11 +935,13 @@ type LabExperimentRecord struct {
 	CreatedAt          string            `json:"createdAt"`
 	DecidedAt          *string           `json:"decidedAt"`
 	DecidedBy          *string           `json:"decidedBy"`
+	Decider            string            `json:"decider"`
 	Decision           *string           `json:"decision"`
 	DecisionReason     *string           `json:"decisionReason"`
 	DecisionRule       *string           `json:"decisionRule"`
 	Evaluators         []json.RawMessage `json:"evaluators"`
 	Examples           []LabExample      `json:"examples"`
+	Gate               bool              `json:"gate"`
 	Goal               *string           `json:"goal"`
 	Hypothesis         *string           `json:"hypothesis"`
 	Id                 string            `json:"id"`
@@ -950,6 +957,7 @@ type LabExperimentRecord struct {
 	State              string            `json:"state"`
 	StopReason         *string           `json:"stopReason"`
 	Strategy           json.RawMessage   `json:"strategy"`
+	Title              *string           `json:"title"`
 	Variants           []LabVariant      `json:"variants"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
@@ -1114,6 +1122,7 @@ type LabLeaderboardEntry struct {
 	Model              *string  `json:"model"`
 	PipelineId         string   `json:"pipelineId"`
 	Profile            *string  `json:"profile"`
+	Retired            bool     `json:"retired"`
 	ScoreForm          string   `json:"scoreForm"`
 	ScoreMax           *float64 `json:"scoreMax"`
 	ScoreMean          *float64 `json:"scoreMean"`
@@ -2320,6 +2329,8 @@ type LabViewReply struct {
 	Ratings         []LabRating           `json:"ratings"`
 	UseCaseProjects map[string]string     `json:"useCaseProjects"`
 	UseCases        []LabUseCaseEntry     `json:"useCases"`
+	Waiting         []string              `json:"waiting"`
+	WithBots        []LabWithBot          `json:"withBots"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2365,6 +2376,17 @@ func (v *LabViewReply) Validate() error {
 			return err
 		}
 	}
+	if v.Waiting == nil {
+		return Missing("waiting")
+	}
+	if v.WithBots == nil {
+		return Missing("withBots")
+	}
+	for i := range v.WithBots {
+		if err := Check(&v.WithBots[i], "withBots"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -2375,6 +2397,17 @@ type LabViewRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabViewRequest) Validate() error {
+	return nil
+}
+
+type LabWithBot struct {
+	ExperimentId string `json:"experimentId"`
+	Failed       bool   `json:"failed"`
+	Owner        string `json:"owner"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabWithBot) Validate() error {
 	return nil
 }
 
@@ -2426,7 +2459,7 @@ func init() {
 		"lab_examples_add":      {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "Add Lab examples, optionally of a project and approved", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"approved\":{\"type\":\"boolean\"},\"examples\":{},\"projectId\":{\"type\":\"string\"}},\"required\":[\"examples\"],\"type\":\"object\"}")},
 		"lab_examples_list":     {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab examples, optionally by state", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"state\":{\"enum\":[\"approved\",\"proposed\"],\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_experiment_action": {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action launch, stop or resume.", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"action\":{\"enum\":[\"launch\",\"stop\",\"resume\"],\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"action\"],\"type\":\"object\"}")},
-		"lab_experiment_create": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "See fleet-lab.md, Experiment record.", InputSchema: json.RawMessage("{\"$comment\":\"See fleet-lab.md, Experiment record.\",\"additionalProperties\":false,\"properties\":{\"budgets\":{},\"decisionRule\":{},\"evaluators\":{},\"examples\":{},\"goal\":{\"type\":\"string\"},\"hypothesis\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"labGroup\":{},\"pipelineId\":{\"type\":\"string\"},\"primaryEvaluator\":{},\"projectId\":{\"type\":\"string\"},\"repeats\":{},\"strategy\":{\"$comment\":\"Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.\",\"additionalProperties\":false,\"properties\":{\"allocator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"full\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"generator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"list\",\"grid\",\"propose\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\",\"params\"],\"type\":\"object\"},\"max_iterations\":{\"minimum\":1,\"type\":\"integer\"},\"no_gain\":{\"additionalProperties\":false,\"properties\":{\"k\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"k\"],\"type\":\"object\"}},\"required\":[\"generator\",\"allocator\"],\"type\":\"object\"},\"variants\":{}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"lab_experiment_create": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "See fleet-lab.md, Experiment record.", InputSchema: json.RawMessage("{\"$comment\":\"See fleet-lab.md, Experiment record.\",\"additionalProperties\":false,\"properties\":{\"budgets\":{},\"decisionRule\":{},\"evaluators\":{},\"examples\":{},\"gate\":{\"$comment\":\"A pass/fail gate (qualification, smoke): it decides itself at close, passed or failed, and asks nobody.\",\"type\":\"boolean\"},\"goal\":{\"type\":\"string\"},\"hypothesis\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"labGroup\":{},\"pipelineId\":{\"type\":\"string\"},\"primaryEvaluator\":{},\"projectId\":{\"type\":\"string\"},\"repeats\":{},\"strategy\":{\"$comment\":\"Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.\",\"additionalProperties\":false,\"properties\":{\"allocator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"full\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"generator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"list\",\"grid\",\"propose\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\",\"params\"],\"type\":\"object\"},\"max_iterations\":{\"minimum\":1,\"type\":\"integer\"},\"no_gain\":{\"additionalProperties\":false,\"properties\":{\"k\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"k\"],\"type\":\"object\"}},\"required\":[\"generator\",\"allocator\"],\"type\":\"object\"},\"title\":{\"$comment\":\"The record's human name, shown instead of labGroup or goal.\",\"type\":\"string\"},\"variants\":{}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiment_decide": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Decide a Lab experiment (experimentId, decision, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"decision\":{\"$comment\":\"adopt \\u003cvariant\\u003e | keep baseline | inconclusive (pending is the coordinator's, never a person's)\",\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"reason\":{\"$comment\":\"Required to override a decision already made; the override is an amendment.\",\"type\":\"string\"}},\"required\":[\"experimentId\",\"decision\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
 		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},

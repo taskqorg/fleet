@@ -185,7 +185,7 @@ type QuestionRow = Ops['questions_list']['reply']['questions'][number];
 /** The sessions waiting for an answer, as question cards answered in place (OR-53): the idle work area leads with them,
  *  and on a narrow screen with nothing open they lead the list (pages/conversations.md, Phone). */
 function WaitingCards(props: { page: ListPage<SessionRow>; archived: boolean }) {
-  const questions = useOp('questions_list', () => (prefsRead.value && !props.archived ? { state: 'open', ...scopeIds() } : null));
+  const questions = useOp('questions_list', () => (prefsRead.value && !props.archived ? { state: 'open', forPeople: true, ...scopeIds() } : null));
   const waiting = createMemo(() => (questions.data?.questions ?? []).filter((q): q is QuestionRow & { sessionId: string } => !!q.sessionId));
   const names = createMemo(() => new Map(props.page.displayed.map(r => [r.id, titleOf(r)])));
   const answers = useAnswers();
@@ -215,7 +215,7 @@ function WaitingCards(props: { page: ListPage<SessionRow>; archived: boolean }) 
 function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolean; archived: boolean }) {
   const [, go] = useLocation();
   // The focus and ignored projects (OR-34) narrow the questions as they narrow the list.
-  const questions = useOp('questions_list', () => (prefsRead.value && !props.archived ? { state: 'open', ...scopeIds() } : null));
+  const questions = useOp('questions_list', () => (prefsRead.value && !props.archived ? { state: 'open', forPeople: true, ...scopeIds() } : null));
   const waiting = createMemo(() => (questions.data?.questions ?? []).filter((q): q is QuestionRow & { sessionId: string } => !!q.sessionId));
   const finished = useOp('sessions_list', () => {
     if (!prefsRead.value || props.archived) return null;

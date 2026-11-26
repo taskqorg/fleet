@@ -98,6 +98,9 @@ type labExperiment struct {
 	DecidedBy          *string         `json:"decided_by"`
 	DecidedAt          *time.Time      `json:"decided_at"`
 	LaunchedAt         *time.Time      `json:"launched_at"`
+	Gate               bool            `json:"gate"`
+	Title              *string         `json:"title"`
+	RequestedByExec    *string         `json:"requested_by_execution"`
 	RequestedBy        *string         `json:"requested_by"`
 	RequesterRemovedAt *time.Time      `json:"requester_removed_at"`
 }
@@ -107,7 +110,7 @@ func expOf(e db.Experiment) (*labExperiment, error) {
 	x := &labExperiment{ID: e.ID, ProjectID: e.ProjectID, Kind: e.Kind, PipelineID: e.PipelineID, Repeats: int64(e.Repeats), PrimaryEvaluator: e.PrimaryEvaluator,
 		Strategy: e.Strategy, State: e.State, StopReason: e.StopReason, CreatedAt: e.CreatedAt, Goal: e.Goal, Hypothesis: e.Hypothesis, DecisionRule: e.DecisionRule,
 		LabGroup: e.LabGroup, Decision: e.Decision, DecisionReason: e.DecisionReason, DecidedBy: e.DecidedBy, DecidedAt: e.DecidedAt, LaunchedAt: e.LaunchedAt,
-		RequestedBy: e.RequestedBy, RequesterRemovedAt: e.RequesterRemovedAt}
+		RequestedBy: e.RequestedBy, RequesterRemovedAt: e.RequesterRemovedAt, Gate: e.Gate, Title: e.Title, RequestedByExec: e.RequestedByExecution}
 	for _, c := range []struct {
 		b []byte
 		v any
