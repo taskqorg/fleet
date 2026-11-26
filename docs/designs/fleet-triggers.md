@@ -51,6 +51,8 @@ One single-flight pass runs every `FLEET_TRIGGER_TICK_MS` (default 15000; a sett
 
 `every` schedules `nextAt = now + everyMs` and is due from half a pass before it, so a trigger every pass checks on each pass. `daily` fires once per local date at or after its time, as bot automations do today (a time that a clock change removes is skipped that day). `manual` fires only through `trigger_run`.
 
+An execution change wakes on entry into the current actionable state (`failed` or `unknown`). The change log records that transition when it happens. Execution details and totals updates still refresh views. Each target consumes the transition through its own cursor. For older rows without recorded transitions, a retained trigger message reporting the current signal to the same target counts as delivery.
+
 The source of a message is `source: trigger` plus `payload.triggerId`, not a request-id prefix. Queries that ask "is a trigger wake still queued" read `payload->>'triggerId'`.
 
 ## Presets

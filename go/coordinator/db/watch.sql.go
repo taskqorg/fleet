@@ -34,20 +34,57 @@ func (q *Queries) ChildSessionIDs(ctx context.Context, createdBySessionID *strin
 }
 
 const executionWatchState = `-- name: ExecutionWatchState :one
-SELECT (CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END)::text AS s FROM execution WHERE execution.id=$1 AND (state='failed' OR observation='unconfirmed')
- AND kind <> 'tool_run' AND coalesce(problem, '') NOT IN ('unknown:abandoned', 'cancelled')
- AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)
- AND NOT (kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL
-   AND r.id = coalesce(execution.parent_execution_id, split_part(execution.id, ':step:', 1))))
+SELECT signal.s::text AS s FROM execution e
+CROSS JOIN LATERAL (SELECT fleet_execution_watch_signal(e.state, e.observation, e.problem) AS s) signal
+WHERE e.id = $1 AND e.kind <> 'tool_run' AND signal.s <> ''
+ AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = e.id)
+ AND NOT (e.kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL
+   AND r.id = coalesce(e.parent_execution_id, split_part(e.id, ':step:', 1))))
+ AND (signal.s = $2::text OR ($2::text IS NULL AND NOT EXISTS (
+   SELECT 1 FROM change c WHERE c.id = e.id AND c.execution_watch_signal <> '' AND c.execution_watch_signal = signal.s
+ )))
 `
 
+type ExecutionWatchStateParams struct {
+	ID          string
+	WatchSignal *string
+}
+
 // A failed or unconfirmed run, as the Needs you list counts it: not dismissed, not cancelled or abandoned, and not a
-// pipeline step whose run failed already (the run is the one entry).
-func (q *Queries) ExecutionWatchState(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, executionWatchState, id)
+// pipeline step whose run failed already (the run is the one entry). If the current signal has a recorded transition,
+// let that change carry it instead of attributing it to an older unmarked row.
+func (q *Queries) ExecutionWatchState(ctx context.Context, arg ExecutionWatchStateParams) (string, error) {
+	row := q.db.QueryRow(ctx, executionWatchState, arg.ID, arg.WatchSignal)
 	var s string
 	err := row.Scan(&s)
 	return s, err
+}
+
+const legacyExecutionWakeDelivered = `-- name: LegacyExecutionWakeDelivered :one
+SELECT EXISTS (
+ SELECT 1 FROM trigger t
+ JOIN session s ON s.id = t.session_id OR s.bot_id = t.bot_id
+ JOIN message m ON m.session_id = s.id AND m.payload->>'triggerId' = t.id
+ WHERE (t.session_id = $1::text OR t.bot_id = $2::text)
+   AND m.source = 'trigger'
+   AND $3::text = ANY(string_to_array(
+     substring(split_part(m.text, E'\n', -1) from '^Fleet: [0-9]+ changes in (?:your focus|project [^:]+): (.*)$'), '; '))
+)
+`
+
+type LegacyExecutionWakeDeliveredParams struct {
+	SessionID  *string
+	BotID      *string
+	SignalLine string
+}
+
+// Old change rows carry no transition identity. Recognize the generated change line only in a trigger message
+// delivered to this target, including messages from another trigger sharing this target.
+func (q *Queries) LegacyExecutionWakeDelivered(ctx context.Context, arg LegacyExecutionWakeDeliveredParams) (bool, error) {
+	row := q.db.QueryRow(ctx, legacyExecutionWakeDelivered, arg.SessionID, arg.BotID, arg.SignalLine)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const openQuestionTask = `-- name: OpenQuestionTask :one

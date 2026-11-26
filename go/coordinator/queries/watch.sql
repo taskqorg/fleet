@@ -21,12 +21,30 @@ SELECT coalesce(task_id, '')::text AS task_id FROM question WHERE id=$1 AND stat
 
 -- name: ExecutionWatchState :one
 -- A failed or unconfirmed run, as the Needs you list counts it: not dismissed, not cancelled or abandoned, and not a
--- pipeline step whose run failed already (the run is the one entry).
-SELECT (CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END)::text AS s FROM execution WHERE execution.id=$1 AND (state='failed' OR observation='unconfirmed')
- AND kind <> 'tool_run' AND coalesce(problem, '') NOT IN ('unknown:abandoned', 'cancelled')
- AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)
- AND NOT (kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL
-   AND r.id = coalesce(execution.parent_execution_id, split_part(execution.id, ':step:', 1))));
+-- pipeline step whose run failed already (the run is the one entry). If the current signal has a recorded transition,
+-- let that change carry it instead of attributing it to an older unmarked row.
+SELECT signal.s::text AS s FROM execution e
+CROSS JOIN LATERAL (SELECT fleet_execution_watch_signal(e.state, e.observation, e.problem) AS s) signal
+WHERE e.id = @id AND e.kind <> 'tool_run' AND signal.s <> ''
+ AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = e.id)
+ AND NOT (e.kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL
+   AND r.id = coalesce(e.parent_execution_id, split_part(e.id, ':step:', 1))))
+ AND (signal.s = sqlc.narg(watch_signal)::text OR (sqlc.narg(watch_signal)::text IS NULL AND NOT EXISTS (
+   SELECT 1 FROM change c WHERE c.id = e.id AND c.execution_watch_signal <> '' AND c.execution_watch_signal = signal.s
+ )));
+
+-- name: LegacyExecutionWakeDelivered :one
+-- Old change rows carry no transition identity. Recognize the generated change line only in a trigger message
+-- delivered to this target, including messages from another trigger sharing this target.
+SELECT EXISTS (
+ SELECT 1 FROM trigger t
+ JOIN session s ON s.id = t.session_id OR s.bot_id = t.bot_id
+ JOIN message m ON m.session_id = s.id AND m.payload->>'triggerId' = t.id
+ WHERE (t.session_id = sqlc.narg(session_id)::text OR t.bot_id = sqlc.narg(bot_id)::text)
+   AND m.source = 'trigger'
+   AND @signal_line::text = ANY(string_to_array(
+     substring(split_part(m.text, E'\n', -1) from '^Fleet: [0-9]+ changes in (?:your focus|project [^:]+): (.*)$'), '; '))
+);
 
 -- name: WatchSession :one
 -- The session fields a watch reads: its project, task, director and payload (deliveryId, focus).

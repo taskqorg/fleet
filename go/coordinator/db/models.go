@@ -779,19 +779,20 @@ type Budget struct {
 }
 
 type Change struct {
-	Seq           int64
-	Xid           pgtype.Uint64
-	Kind          string
-	ID            string
-	TaskID        *string
-	SessionID     *string
-	HostID        *string
-	ProjectID     *string
-	Op            string
-	At            time.Time
-	Actor         *string
-	Holder        *string
-	SettingTarget *string
+	Seq                  int64
+	Xid                  pgtype.Uint64
+	Kind                 string
+	ID                   string
+	TaskID               *string
+	SessionID            *string
+	HostID               *string
+	ProjectID            *string
+	Op                   string
+	At                   time.Time
+	Actor                *string
+	Holder               *string
+	SettingTarget        *string
+	ExecutionWatchSignal *string
 }
 
 type ClosedDeltaIdentity struct {

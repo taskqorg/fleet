@@ -385,7 +385,8 @@ CREATE TABLE change (
   "at" timestamp with time zone NOT NULL,
   "actor" text,
   "holder" text,
-  "setting_target" text
+  "setting_target" text,
+  "execution_watch_signal" text
 );
 CREATE TABLE closed_delta_identity (
   "id" text NOT NULL,
@@ -1693,6 +1694,7 @@ CREATE FUNCTION fleet_conversation_state(sid text) RETURNS TABLE(state text) LAN
 CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_exec_conn_meta(conn_name text, aid text) RETURNS TABLE(provider text, is_api_conn boolean) LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_execution_watch_signal(state execution_state, observation observation, problem text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_issue_code(p_type text, p_project text, p_entity text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_own_projectless_execution(eid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
