@@ -1106,12 +1106,12 @@ canvas:
     7a887fd892ddb9d7 t("· Held, never lost: unsaved input in a composer, field or form, an open dialog, or a save in flight holds the count; the strip says which. Update now still works on purpose.",Inter:$font.family,12:$font.size.sm,r:$font.weight.regular,align(l),lh(auto,1.25)) p(0,55) s(fill,hug:15) ext(1180,) f[(cfbc51220386b640,tok(fleet.fg-muted,#9A9A9F))] "Text 480"
     7732c0b8b5bf5d62 t("· At 0 the tab reloads onto the new app, on the same route and scroll position. Reloading stays until the page unloads; a failure says why with Retry, and the next check starts the count again.",Inter:$font.family,12:$font.size.sm,r:$font.weight.regular,align(l),lh(auto,1.25)) p(0,74) s(fill,hug:15) ext(1180,) f[(a5edb7fb39cbd0c6,tok(fleet.fg-muted,#9A9A9F))] "Text 481"
     ee015258173203c0 t("· Unchanged: offered when the site serves a different app than the tab; the avatar never changes; only a confirmed problem tones the version.",Inter:$font.family,12:$font.size.sm,r:$font.weight.regular,align(l),lh(auto,1.25)) p(0,93) s(fill,hug:15) ext(1180,) f[(a7eef812532376c6,tok(fleet.fg-muted,#9A9A9F))] "Text 482"
-7698eedb8527ce03 al(v,g(24),pad(32)) p(3800,0) s(1800,hug:2148.8) f[(cfe85946ef5772ac,#0B0B0C)] "Shell · rail Pinned zone (approved)"
+7698eedb8527ce03 al(v,g(24),pad(32)) p(3800,0) s(1800,hug:2186.85) f[(cfe85946ef5772ac,#0B0B0C)] "Shell · rail Pinned zone (approved)"
   6d2f13f58d286ce7 t("Rail · Pinned zone replaces the bots zone (approved 26 Nov, as drawn)",Inter,22,sb,align(l),lh(auto,1.23)) p(32,32) s(fill,hug:27) ext(1736,) f[(73e45e1a46d8ddb3,#ECECEC)] "Text 483"
-  bc8bfd8016816958 t("One pin per object, everywhere. Pin a conversation (any: bot line, PM, Telegram, a worker) or a bot from the object: the pin button in its head, Pin in a row menu or the pin on row hover. The same pin puts it on top of its list (Pinned group, as today) and into the Pinned zone of the navigation. The zone replaces the bots zone: no automatic active or recent bots, only what the person pinned, in pin order. Row: mark (bot avatar with its state, or the conversation's mark with a state dot), title, then asks / unread count / age. Click opens it; right-click: Unpin, Open, Move up, Move down. The user menu shows or hides the zone (the existing switch). Pins live in person settings on the server (keyed by session id and bot id), so they follow across devices; agents read and set them with person_settings_get / person_settings_set rowPin. Existing Library bot pins carry over as they are. Later: tasks and projects use the same pin.",Inter,16,r,align(l),lh(auto,1.19)) p(32,83) s(1500,hug:57) f[(aa7c42b9be1c3071,tok(color.text.primary,#161617))] "Text 484"
+  bc8bfd8016816958 t("One pin per object, everywhere. Pin a conversation (any: bot line, PM, Telegram, a worker) or a bot from the object: the pin button in its head, or Pin in the row menu (right-click, long-press, or the keyboard menu key). No pin on row hover: rows carry no hover buttons (OR-37, owner 26 Nov, no exceptions). The same pin puts it on top of its list (Pinned group, as today) and into the Pinned zone of the navigation. The zone replaces the bots zone: no automatic active or recent bots, only what the person pinned, in pin order. Row: mark (bot avatar with its state, or the conversation's mark with a state dot), title, then asks / unread count / age. Click opens it; right-click: Unpin, Open. The user menu shows or hides the zone (the existing switch). Pins live in person settings on the server (keyed by session id and bot id), so they follow across devices; agents read and set them with person_settings_get / person_settings_set rowPin. Existing Library bot pins carry over as they are. Later: tasks and projects use the same pin.",Inter,16,r,align(l),lh(auto,1.19)) p(32,83) s(1500,hug:80.75) f[(aa7c42b9be1c3071,tok(color.text.primary,#161617))] "Text 484"
     spans[(0,936,s(12),#9A9A9F)]
-  4417fa92f8098c95 t("RAIL 1440 · EXPANDED, COLLAPSED, MENUS, EMPTY",Inter,11,sb,align(l),lh(auto,1.18),ls(0.5px)) p(32,164) s(fill,hug:13) ext(1736,) f[(4e75af493490ce7d,#9A9A9F)] "Text 485"
-  5a8ac17b7854528e al(h,g(32)) p(32,201) s(fill,hug:707.9) ext(1736,) f[] "Frame 269"
+  4417fa92f8098c95 t("RAIL 1440 · EXPANDED, COLLAPSED, MENUS, EMPTY",Inter,11,sb,align(l),lh(auto,1.18),ls(0.5px)) p(32,187.75) s(fill,hug:13) ext(1736,) f[(4e75af493490ce7d,#9A9A9F)] "Text 485"
+  5a8ac17b7854528e al(h,g(32)) p(32,224.75) s(fill,hug:707.9) ext(1736,) f[] "Frame 269"
     82d72c82685c59ae al(v,g(8)) p(0,0) s(240,hug:707.9) f[] "Frame 270"
       72c385808c26a7a7 al(v,g(2)) p(0,0) s(240,hug:59.9) f[] "Frame 271"
         4304ae6753a9231a t("Expanded",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(240,) f[(27befdc5d59b31f8,#ECECEC)] "Text 486"
@@ -1608,8 +1608,8 @@ canvas:
               vr(r1) f[(1fbe0e17b0aaeee9,#ECECEC)]
               vr(r2) f[(1fbe0e17b0aaeee9,#ECECEC)]
             4d89812d221d08cd t("Log out",Inter,13,r,align(l),lh(auto,1.23)) p(30,6) s(hug:46.51,hug:16) f[(0b555f84c6b1d935,#ECECEC)] "Text 604"
-  6bb75bbec8e227a7 t("PIN FROM THE OBJECT",Inter,11,sb,align(l),lh(auto,1.18),ls(0.5px)) p(32,932.9) s(fill,hug:13) ext(1736,) f[(ef9d30f2838ea892,#9A9A9F)] "Text 605"
-  9732494406a5bb0b al(h,g(32)) p(32,969.9) s(fill,hug:369.3) ext(1736,) f[] "Frame 497"
+  6bb75bbec8e227a7 t("PIN FROM THE OBJECT",Inter,11,sb,align(l),lh(auto,1.18),ls(0.5px)) p(32,956.65) s(fill,hug:13) ext(1736,) f[(ef9d30f2838ea892,#9A9A9F)] "Text 605"
+  9732494406a5bb0b al(h,g(32)) p(32,993.65) s(fill,hug:383.6) ext(1736,) f[] "Frame 497"
     a1957a6677597c3f al(v,g(8)) p(0,0) s(480,hug:299.3) f[] "Frame 498"
       4b2b1227062839e4 al(v,g(2)) p(0,0) s(480,hug:31.3) f[] "Frame 499"
         9b42f69a58f9206b t("Conversation head · not pinned",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(480,) f[(d11065219239164a,#ECECEC)] "Text 606"
@@ -1700,11 +1700,11 @@ canvas:
           2852492c2d30b106 al(v,pad(8)) p(12,12) s(hug:230.47,hug:32) max(300,) f[(9b1f17c882dc2619,#232326)] rd(3) "Frame 533"
             a1fb40e0e22c5f30 t("Rail: replace bots zone with Pinned",Inter,13,r,align(l),lh(auto,1.23)) p(8,8) s(fill,hug:16) ext(214.47,) f[(b817e6d89a96873b,#ECECEC)] "Text 622"
           f5ee33b2df87ad6d t("Drafting the board frames now.",Inter,13,r,align(l),lh(auto,1.23)) p(12,52) s(fill,hug:16) ext(456,) f[(c212c2618b49d680,#ECECEC)] "Text 623"
-    3a7df31fa2d71888 al(v,g(8)) p(1024,0) s(520,hug:369.3) f[] "Frame 534"
-      9ccea41a44d239dd al(v,g(2)) p(0,0) s(520,hug:31.3) f[] "Frame 535"
+    3a7df31fa2d71888 al(v,g(8)) p(1024,0) s(520,hug:383.6) f[] "Frame 534"
+      9ccea41a44d239dd al(v,g(2)) p(0,0) s(520,hug:45.6) f[] "Frame 535"
         91a3f76a4c071dd5 t("List row",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(520,) f[(a222a053a7667b1c,#ECECEC)] "Text 624"
-        6db45b809c535c05 t("Hover shows the pin; Pin in the row menu. Pinned rows sit in the Pinned group, as today.",Inter,11,r,align(l),lh(1.3)) p(0,17) s(fill,hug:14.3) ext(520,) f[(ac5708f05e2ab4b7,#9A9A9F)] "Text 625"
-      3953d6dd3b7d67fa al(v) p(0,39.3) s(520,330) f[(9d823c2d9e4f9927,#0B0B0C)] st[(6532d186d383db2e,#2A2A2D,w(1))] "Frame 536"
+        6db45b809c535c05 t("No hover buttons in the row (OR-37, owner 26 Nov). Pin in the row menu or the object's head. Pinned rows sit in the Pinned group, as today.",Inter,11,r,align(l),lh(1.3)) p(0,17) s(fill,hug:28.6) ext(520,) f[(ac5708f05e2ab4b7,#9A9A9F)] "Text 625"
+      3953d6dd3b7d67fa al(v) p(0,53.6) s(520,330) f[(9d823c2d9e4f9927,#0B0B0C)] st[(6532d186d383db2e,#2A2A2D,w(1))] "Frame 536"
         770d3ceac92f8b9e al(v) p(0,0) s(hug:103.21,hug:29) f[] "Frame 537"
           0e47ca7e6f5f0993 al(h,y(c),g(6),pad(0,12)) p(0,0) s(fill,28) ext(103.21,) f[] "Frame 538"
             35d137fa44d144c8 v(icon:caret-down,nodes[(0,11.84,0.9299999999999997,di),(1,6.390000000000001,6.390000000000001,di),(2,6,6.550000000000001,mi),(3,5.609999999999999,6.390000000000001,di),(4,0.16000000000000014,0.9299999999999997,di),(5,0.16000000000000014,0.16000000000000014,mi),(6,0.9299999999999997,0.16000000000000014,di),(7,6,5.23,st),(8,11.07,0.16000000000000014,di),(9,11.84,0.16000000000000014,mi)],edges[(0,0,1,0,0,0,0),(1,1,2,-0.1,0.1,0.14,0),(2,2,3,-0.14,0,0.1,0.1),(3,3,4,0,0,0,0),(4,4,5,-0.21,-0.21,-0.21,0.21),(5,5,6,0.21,-0.21,-0.21,-0.21),(6,6,7,0,0,0,0),(7,7,8,0,0,0,0),(8,8,9,0.21,-0.21,-0.21,-0.21),(9,0,9,0.21,-0.21,0.21,0.21)],regions[(0+1+2+3+4+5+6+7+8+9-)]) p(12,10.73) s(12,6.55) "Path"
@@ -1817,7 +1817,7 @@ canvas:
               vr(r1) f[(7f3d0d3f04a76f26,#ECECEC)]
               vr(r4) f[(7f3d0d3f04a76f26,#ECECEC)]
             f9fe53897bd510fd t("Archive",Inter,13,r,align(l),lh(auto,1.23)) p(30,6) s(hug:46.55,hug:16) f[(eca4ef9321dd8cde,#ECECEC)] "Text 650"
-  28d0af67c64110ab al(h,g(32)) p(32,1363.2) s(fill,hug:753.6) ext(1736,) f[] "Frame 568"
+  28d0af67c64110ab al(h,g(32)) p(32,1401.25) s(fill,hug:753.6) ext(1736,) f[] "Frame 568"
     33e6b8ed85f9417d al(v,g(8)) p(0,0) s(480,hug:159.3) f[] "Frame 569"
       5b897adc796f74bc al(v,g(2)) p(0,0) s(480,hug:31.3) f[] "Frame 570"
         d4c5e6f68d7e3da7 t("Bot page head",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(480,) f[(13dd2656c9fcb3bf,#ECECEC)] "Text 651"
@@ -1927,16 +1927,16 @@ canvas:
                 vr(r2) f[(354d25ae8f22b4b7,#ECECEC)]
                 vr(r3) f[(354d25ae8f22b4b7,#ECECEC)]
               332625fbaae4fd36 t("More",Inter,11,r,align(l),lh(auto,1.18)) p(25.55,4.4) s(hug:26.91,hug:13) f[(056310be9cef5b42,#ECECEC)] "Text 674"
-30def17d2a27fa1c al(v,g(24),pad(32)) p(3800,2300) s(1800,hug:918.65) f[(a2c80e76d56dde5d,#0B0B0C)] "Shell · rail Pinned zone · drag to reorder (approved 26 Nov)"
+30def17d2a27fa1c al(v,g(24),pad(32)) p(3800,2300) s(1800,hug:923.4) f[(a2c80e76d56dde5d,#0B0B0C)] "Shell · rail Pinned zone · drag to reorder (approved 26 Nov)"
   2dc3cb522b5149d3 t("Pinned · drag to reorder (approved 26 Nov, no Move up / Move down)",Inter,22,sb,align(l),lh(auto,1.23)) p(32,32) s(fill,hug:27) ext(1736,) f[(ff9db5330e7daee5,#ECECEC)] "Text 675"
-  021bbff874ca30ac t("Amendment (owner, 26 Nov): no Move up / Move down. Order by drag and drop, in the rail's Pinned zone and in the Pinned group at the top of every list; one reorder primitive in packages/ui. Mouse: a grip shows on row hover; drag lifts a ghost of the row, the source stays dimmed in place, a drop line shows where it lands. Keyboard: Space grabs the focused pinned row, arrows move it, Space or Enter drops, Escape cancels; each step is announced (aria-live). Touch: long-press lifts the item, drag, release drops. The order is saved in person settings (rowPins).",Inter,16,r,align(l),lh(auto,1.19)) p(32,83) s(1500,hug:42.75) f[(1833b43bde13901e,tok(color.text.primary,#161617))] "Text 676"
+  021bbff874ca30ac t("Amendment (owner, 26 Nov): no Move up / Move down. Order by drag and drop, in the rail's Pinned zone and in the Pinned group at the top of every list; one reorder primitive in packages/ui. Mouse: press and drag the row itself, no grip on hover (OR-37, no exceptions); drag lifts a ghost of the row, the source stays dimmed in place, a drop line shows where it lands. Keyboard: Space grabs the focused pinned row, arrows move it, Space or Enter drops, Escape cancels; each step is announced (aria-live). Touch: long-press lifts the item, drag, release drops. The order is saved in person settings (rowPins).",Inter,16,r,align(l),lh(auto,1.19)) p(32,83) s(1500,hug:47.5) f[(1833b43bde13901e,tok(color.text.primary,#161617))] "Text 676"
     spans[(0,561,s(12),#9A9A9F)]
-  492f31fa9849f250 al(h,g(32)) p(32,149.75) s(fill,hug:473.6) ext(1736,) f[] "Frame 618"
-    7e637f283432c3f6 al(v,g(8)) p(0,0) s(240,hug:459.3) f[] "Frame 619"
-      7e5c9461d6e272ac al(v,g(2)) p(0,0) s(240,hug:31.3) f[] "Frame 620"
-        46ae611cafdb008e t("Hover",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(240,) f[(eb5a7cd084ba404a,#ECECEC)] "Text 677"
-        ea104b91c8a8a64f t("Grip appears on the hovered pinned row.",Inter,11,r,align(l),lh(1.3)) p(0,17) s(fill,hug:14.3) ext(240,) f[(744f2309ef8aec6b,#9A9A9F)] "Text 678"
-      3d2fa2e74c511bb7 al(v,y(e),pad(8)) p(0,39.3) s(220,420) f[(56f4d58eeae58b19,#050505)] st[(91102315f790ddfd,#2A2A2D,w(1))] "Frame 621"
+  492f31fa9849f250 al(h,g(32)) p(32,154.5) s(fill,hug:473.6) ext(1736,) f[] "Frame 618"
+    7e637f283432c3f6 al(v,g(8)) p(0,0) s(240,hug:473.6) f[] "Frame 619"
+      7e5c9461d6e272ac al(v,g(2)) p(0,0) s(240,hug:45.6) f[] "Frame 620"
+        46ae611cafdb008e t("Press and drag",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(240,) f[(eb5a7cd084ba404a,#ECECEC)] "Text 677"
+        ea104b91c8a8a64f t("The row itself is the handle; no grip appears on hover (OR-37).",Inter,11,r,align(l),lh(1.3)) p(0,17) s(fill,hug:28.6) ext(240,) f[(744f2309ef8aec6b,#9A9A9F)] "Text 678"
+      3d2fa2e74c511bb7 al(v,y(e),pad(8)) p(0,53.6) s(220,420) f[(56f4d58eeae58b19,#050505)] st[(91102315f790ddfd,#2A2A2D,w(1))] "Frame 621"
         00e90b096c412c73 al(v) p(8,186) s(fill,hug:193) ext(204,) f[] "Frame 622"
           e5eb8f4590ab5fd4 r p(0,0) s(fill,1) ext(204,) f[(38117f7932c4b8e5,#1E1E20)] "Rectangle 23"
           4c494b6e2936f9ba al(v,pad(4,0,0,0)) p(0,1) s(fill,hug:192) ext(204,) f[] "Frame 623"
@@ -1960,7 +1960,7 @@ canvas:
               4f31250241d14b77 fr p(162,16) s(fill,hug:0) ext(14.79,) f[] "Frame 629"
               51cc8eea0583961e t("2m",JetBrains Mono,11,r,align(l),lh(auto,1.36)) p(182.79,8.5) s(hug:13.21,hug:15) f[(fd9bd72ae69dd801,#7FB0FF)] "Text 682"
             a2b0c7d2434d7c28 al(h,y(c),g(6),pad(0,8,0,2)) p(0,64) s(fill,32) ext(204,) f[(c2bdb235e020e8b5,#1A1A1C)] rd(2) "Frame 630"
-              d2e34690443085a3 al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] "Frame 631"
+              d2e34690443085a3 al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] o(0) "Frame 631"
                 3c162d407732fd20 v(icon:dots-six-vertical,nodes[(0,1.8000000000000003,0.9,mi),(1,0.8999999999999999,1.8,mi),(2,0,0.9,mi),(3,0.8999999999999999,0,mi),(4,6.299999999999999,1.8,mi),(5,7.199999999999999,0.9,mi),(6,6.299999999999999,0,mi),(7,5.4,0.9,mi),(8,0.8999999999999999,5.1,mi),(9,0,6,mi),(10,0.8999999999999999,6.9,mi),(11,1.8000000000000003,6,mi),(12,6.299999999999999,5.1,mi),(13,5.4,6,mi),(14,6.299999999999999,6.9,mi),(15,7.199999999999999,6,mi),(16,0.8999999999999999,10.2,mi),(17,0,11.1,mi),(18,0.8999999999999999,12,mi),(19,1.8000000000000003,11.1,mi),(20,6.299999999999999,10.2,mi),(21,5.4,11.1,mi),(22,6.299999999999999,12,mi),(23,7.199999999999999,11.1,mi)],edges[(0,0,1,0,0.5,0.5,0),(1,1,2,-0.5,0,0,0.5),(2,2,3,0,-0.5,-0.5,0),(3,0,3,0,-0.5,0.5,0),(4,4,5,0.5,0,0,0.5),(5,5,6,0,-0.5,0.5,0),(6,6,7,-0.5,0,0,-0.5),(7,4,7,-0.5,0,0,0.5),(8,8,9,-0.5,0,0,-0.5),(9,9,10,0,0.5,-0.5,0),(10,10,11,0.5,0,0,0.5),(11,8,11,0.5,0,0,-0.5),(12,12,13,-0.5,0,0,-0.5),(13,13,14,0,0.5,-0.5,0),(14,14,15,0.5,0,0,0.5),(15,12,15,0.5,0,0,-0.5),(16,16,17,-0.5,0,0,-0.5),(17,17,18,0,0.5,-0.5,0),(18,18,19,0.5,0,0,0.5),(19,16,19,0.5,0,0,-0.5),(20,20,21,-0.5,0,0,-0.5),(21,21,22,0,0.5,-0.5,0),(22,22,23,0.5,0,0,0.5),(23,20,23,0.5,0,0,-0.5)],regions[(0+1+2+3-),(4-7+6-5-),(8-11+10-9-),(12-15+14-13-),(16-19+18-17-),(20-23+22-21-)]) p(2.4,0) s(7.2,12) "Path"
                   vr(r1) f[(86e7905e1ec648d9,#77777C)]
                   vr(r2) f[(86e7905e1ec648d9,#77777C)]
@@ -2140,7 +2140,7 @@ canvas:
             0caa0298f9921256 t("1.261126.4",JetBrains Mono,11,r,align(l),lh(auto,1.36)) p(75.85,8.5) s(hug:66,hug:15) f[(2d9708e1228b5937,#9A9A9F)] "Text 712"
         1c259d71fa94b54f al(v) rot(358.5) p(30.4145,267.9967) s(200.01,hug:32) obb(30.03,270.62,229.9715,265.3843,230.8091,297.3734,30.8677,302.609) f[(d1ed66c1648a18e8,#202022)] st[(eb437ff337aca7e7,#2A2A2D,w(1))] rd(3) shadow(o(0.5),y(8),blur(24),id(3d9dee94f30684eb)) abs "Frame 699"
           c80113d932abf9a7 al(h,y(c),g(6),pad(0,8,0,2)) p(0,0) s(fill,32) ext(200.01,) f[] rd(2) "Frame 700"
-            388653796cc93539 al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] "Frame 701"
+            388653796cc93539 al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] o(0) "Frame 701"
               c3967c91c7ad67d5 v(icon:dots-six-vertical,nodes[(0,1.8000000000000003,0.9,mi),(1,0.8999999999999999,1.8,mi),(2,0,0.9,mi),(3,0.8999999999999999,0,mi),(4,6.299999999999999,1.8,mi),(5,7.199999999999999,0.9,mi),(6,6.299999999999999,0,mi),(7,5.4,0.9,mi),(8,0.8999999999999999,5.1,mi),(9,0,6,mi),(10,0.8999999999999999,6.9,mi),(11,1.8000000000000003,6,mi),(12,6.299999999999999,5.1,mi),(13,5.4,6,mi),(14,6.299999999999999,6.9,mi),(15,7.199999999999999,6,mi),(16,0.8999999999999999,10.2,mi),(17,0,11.1,mi),(18,0.8999999999999999,12,mi),(19,1.8000000000000003,11.1,mi),(20,6.299999999999999,10.2,mi),(21,5.4,11.1,mi),(22,6.299999999999999,12,mi),(23,7.199999999999999,11.1,mi)],edges[(0,0,1,0,0.5,0.5,0),(1,1,2,-0.5,0,0,0.5),(2,2,3,0,-0.5,-0.5,0),(3,0,3,0,-0.5,0.5,0),(4,4,5,0.5,0,0,0.5),(5,5,6,0,-0.5,0.5,0),(6,6,7,-0.5,0,0,-0.5),(7,4,7,-0.5,0,0,0.5),(8,8,9,-0.5,0,0,-0.5),(9,9,10,0,0.5,-0.5,0),(10,10,11,0.5,0,0,0.5),(11,8,11,0.5,0,0,-0.5),(12,12,13,-0.5,0,0,-0.5),(13,13,14,0,0.5,-0.5,0),(14,14,15,0.5,0,0,0.5),(15,12,15,0.5,0,0,-0.5),(16,16,17,-0.5,0,0,-0.5),(17,17,18,0,0.5,-0.5,0),(18,18,19,0.5,0,0,0.5),(19,16,19,0.5,0,0,-0.5),(20,20,21,-0.5,0,0,-0.5),(21,21,22,0,0.5,-0.5,0),(22,22,23,0.5,0,0,0.5),(23,20,23,0.5,0,0,-0.5)],regions[(0+1+2+3-),(4-7+6-5-),(8-11+10-9-),(12-15+14-13-),(16-19+18-17-),(20-23+22-21-)]) p(2.4,0) s(7.2,12) "Path"
                 vr(r1) f[(191e1cd60f8bd350,#77777C)]
                 vr(r2) f[(191e1cd60f8bd350,#77777C)]
@@ -2201,7 +2201,7 @@ canvas:
               73ca94631b6eb16c al(h,x(c),y(c),pad(0,4)) p(178.41,8) s(hug:16,16) min(16,) f[(c0ab3c9431368268,#ECECEC)] rd(999) "Frame 722"
                 12c4a4ecc97be9e1 t("3",JetBrains Mono,10,sb,align(l),lh(auto,1.3)) p(5,1.5) s(hug:6,hug:13) f[(6a7ff9896b07e755,#0B0B0C)] "Text 722"
             93b973a5fc4a82d2 al(h,y(c),g(6),pad(0,8,0,2)) p(0,96) s(fill,32) ext(202.41,) f[(b25ae5439ffa3032,#232326)] rd(2) "Frame 723"
-              526c08df3890dc2d al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] "Frame 724"
+              526c08df3890dc2d al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] o(0) "Frame 724"
                 c51c18cf47eb2fae v(icon:dots-six-vertical,nodes[(0,1.8000000000000003,0.9,mi),(1,0.8999999999999999,1.8,mi),(2,0,0.9,mi),(3,0.8999999999999999,0,mi),(4,6.299999999999999,1.8,mi),(5,7.199999999999999,0.9,mi),(6,6.299999999999999,0,mi),(7,5.4,0.9,mi),(8,0.8999999999999999,5.1,mi),(9,0,6,mi),(10,0.8999999999999999,6.9,mi),(11,1.8000000000000003,6,mi),(12,6.299999999999999,5.1,mi),(13,5.4,6,mi),(14,6.299999999999999,6.9,mi),(15,7.199999999999999,6,mi),(16,0.8999999999999999,10.2,mi),(17,0,11.1,mi),(18,0.8999999999999999,12,mi),(19,1.8000000000000003,11.1,mi),(20,6.299999999999999,10.2,mi),(21,5.4,11.1,mi),(22,6.299999999999999,12,mi),(23,7.199999999999999,11.1,mi)],edges[(0,0,1,0,0.5,0.5,0),(1,1,2,-0.5,0,0,0.5),(2,2,3,0,-0.5,-0.5,0),(3,0,3,0,-0.5,0.5,0),(4,4,5,0.5,0,0,0.5),(5,5,6,0,-0.5,0.5,0),(6,6,7,-0.5,0,0,-0.5),(7,4,7,-0.5,0,0,0.5),(8,8,9,-0.5,0,0,-0.5),(9,9,10,0,0.5,-0.5,0),(10,10,11,0.5,0,0,0.5),(11,8,11,0.5,0,0,-0.5),(12,12,13,-0.5,0,0,-0.5),(13,13,14,0,0.5,-0.5,0),(14,14,15,0.5,0,0,0.5),(15,12,15,0.5,0,0,-0.5),(16,16,17,-0.5,0,0,-0.5),(17,17,18,0,0.5,-0.5,0),(18,18,19,0.5,0,0,0.5),(19,16,19,0.5,0,0,-0.5),(20,20,21,-0.5,0,0,-0.5),(21,21,22,0,0.5,-0.5,0),(22,22,23,0.5,0,0,0.5),(23,20,23,0.5,0,0,-0.5)],regions[(0+1+2+3-),(4-7+6-5-),(8-11+10-9-),(12-15+14-13-),(16-19+18-17-),(20-23+22-21-)]) p(2.4,0) s(7.2,12) "Path"
                   vr(r1) f[(d4010c48be9e9235,#77777C)]
                   vr(r2) f[(d4010c48be9e9235,#77777C)]
@@ -2287,7 +2287,7 @@ canvas:
               efbe59e9ab446287 fr p(162,16) s(fill,hug:0) ext(13.2,) f[] "Frame 755"
               9f9c8e6c52a4233d t("2m",JetBrains Mono,11,r,align(l),lh(auto,1.36)) p(181.2,8.5) s(hug:13.21,hug:15) f[(7e3ff6bfc7512dc5,#7FB0FF)] "Text 739"
             21e3f6061b76d58e al(h,y(c),g(6),pad(0,8,0,2)) p(0,64) s(fill,32) ext(202.41,) f[(eb9e804e4aae473e,#1A1A1C)] rd(2) "Frame 756"
-              7f036fa0499293ba al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] "Frame 757"
+              7f036fa0499293ba al(h,x(c),y(c)) p(2,10) s(12,hug:12) f[] o(0) "Frame 757"
                 abf5120f0815b795 v(icon:dots-six-vertical,nodes[(0,1.8000000000000003,0.9,mi),(1,0.8999999999999999,1.8,mi),(2,0,0.9,mi),(3,0.8999999999999999,0,mi),(4,6.299999999999999,1.8,mi),(5,7.199999999999999,0.9,mi),(6,6.299999999999999,0,mi),(7,5.4,0.9,mi),(8,0.8999999999999999,5.1,mi),(9,0,6,mi),(10,0.8999999999999999,6.9,mi),(11,1.8000000000000003,6,mi),(12,6.299999999999999,5.1,mi),(13,5.4,6,mi),(14,6.299999999999999,6.9,mi),(15,7.199999999999999,6,mi),(16,0.8999999999999999,10.2,mi),(17,0,11.1,mi),(18,0.8999999999999999,12,mi),(19,1.8000000000000003,11.1,mi),(20,6.299999999999999,10.2,mi),(21,5.4,11.1,mi),(22,6.299999999999999,12,mi),(23,7.199999999999999,11.1,mi)],edges[(0,0,1,0,0.5,0.5,0),(1,1,2,-0.5,0,0,0.5),(2,2,3,0,-0.5,-0.5,0),(3,0,3,0,-0.5,0.5,0),(4,4,5,0.5,0,0,0.5),(5,5,6,0,-0.5,0.5,0),(6,6,7,-0.5,0,0,-0.5),(7,4,7,-0.5,0,0,0.5),(8,8,9,-0.5,0,0,-0.5),(9,9,10,0,0.5,-0.5,0),(10,10,11,0.5,0,0,0.5),(11,8,11,0.5,0,0,-0.5),(12,12,13,-0.5,0,0,-0.5),(13,13,14,0,0.5,-0.5,0),(14,14,15,0.5,0,0,0.5),(15,12,15,0.5,0,0,-0.5),(16,16,17,-0.5,0,0,-0.5),(17,17,18,0,0.5,-0.5,0),(18,18,19,0.5,0,0,0.5),(19,16,19,0.5,0,0,-0.5),(20,20,21,-0.5,0,0,-0.5),(21,21,22,0,0.5,-0.5,0),(22,22,23,0.5,0,0,0.5),(23,20,23,0.5,0,0,-0.5)],regions[(0+1+2+3-),(4-7+6-5-),(8-11+10-9-),(12-15+14-13-),(16-19+18-17-),(20-23+22-21-)]) p(2.4,0) s(7.2,12) "Path"
                   vr(r1) f[(19827762001e494d,#77777C)]
                   vr(r2) f[(19827762001e494d,#77777C)]
@@ -2371,7 +2371,7 @@ canvas:
               vr(r1) f[(f22b4e1e8d7a10c1,#ECECEC)]
               vr(r2) f[(f22b4e1e8d7a10c1,#ECECEC)]
             3fb15f28d6e4715f t("Open",Inter,13,r,align(l),lh(auto,1.23)) p(30,6) s(hug:33.17,hug:16) f[(2284007d74709ad8,#ECECEC)] "Text 753"
-  18bd65419095fa45 al(h,g(32)) p(32,647.35) s(fill,hug:239.3) ext(1736,) f[] "Frame 786"
+  18bd65419095fa45 al(h,g(32)) p(32,652.1) s(fill,hug:239.3) ext(1736,) f[] "Frame 786"
     9c2fea728b2681ea al(v,g(8)) p(0,0) s(520,hug:239.3) f[] "Frame 787"
       8c8839535ee2fbfb al(v,g(2)) p(0,0) s(520,hug:31.3) f[] "Frame 788"
         3eced5884330f296 t("List Pinned group (Conversations and others)",Inter,12,sb,align(l),lh(auto,1.25)) p(0,0) s(fill,hug:15) ext(520,) f[(66076f1aa091b4fc,#ECECEC)] "Text 754"
@@ -2468,7 +2468,7 @@ canvas:
         01a3040821247f18 al(v) rot(359) p(40.2844,95.9978) s(440.01,hug:33) obb(40.03,99.84,479.973,92.1608,480.5489,125.1557,40.6059,132.835) f[(04ceb8f172f4ddb7,#202022)] st[(345053910ba865e9,#2A2A2D,w(1))] rd(3) shadow(o(0.5),y(8),blur(24),id(af8746908b2b17ad)) abs "Frame 812"
           ae1fdeac66b31f21 al(v) p(0,0) s(fill,hug:33) ext(440.01,) f[] "Frame 813"
             a798687ccfc62480 al(h,y(c),g(8),pad(0,12,0,4)) p(0,0) s(fill,32) ext(440.01,) f[] "Frame 814"
-              666b420360c1ab68 al(h,x(c),y(c)) p(4,10) s(12,hug:12) f[] "Frame 815"
+              666b420360c1ab68 al(h,x(c),y(c)) p(4,10) s(12,hug:12) f[] o(0) "Frame 815"
                 04548abe8fc94b91 v(icon:dots-six-vertical,nodes[(0,1.8000000000000003,0.9,mi),(1,0.8999999999999999,1.8,mi),(2,0,0.9,mi),(3,0.8999999999999999,0,mi),(4,6.299999999999999,1.8,mi),(5,7.199999999999999,0.9,mi),(6,6.299999999999999,0,mi),(7,5.4,0.9,mi),(8,0.8999999999999999,5.1,mi),(9,0,6,mi),(10,0.8999999999999999,6.9,mi),(11,1.8000000000000003,6,mi),(12,6.299999999999999,5.1,mi),(13,5.4,6,mi),(14,6.299999999999999,6.9,mi),(15,7.199999999999999,6,mi),(16,0.8999999999999999,10.2,mi),(17,0,11.1,mi),(18,0.8999999999999999,12,mi),(19,1.8000000000000003,11.1,mi),(20,6.299999999999999,10.2,mi),(21,5.4,11.1,mi),(22,6.299999999999999,12,mi),(23,7.199999999999999,11.1,mi)],edges[(0,0,1,0,0.5,0.5,0),(1,1,2,-0.5,0,0,0.5),(2,2,3,0,-0.5,-0.5,0),(3,0,3,0,-0.5,0.5,0),(4,4,5,0.5,0,0,0.5),(5,5,6,0,-0.5,0.5,0),(6,6,7,-0.5,0,0,-0.5),(7,4,7,-0.5,0,0,0.5),(8,8,9,-0.5,0,0,-0.5),(9,9,10,0,0.5,-0.5,0),(10,10,11,0.5,0,0,0.5),(11,8,11,0.5,0,0,-0.5),(12,12,13,-0.5,0,0,-0.5),(13,13,14,0,0.5,-0.5,0),(14,14,15,0.5,0,0,0.5),(15,12,15,0.5,0,0,-0.5),(16,16,17,-0.5,0,0,-0.5),(17,17,18,0,0.5,-0.5,0),(18,18,19,0.5,0,0,0.5),(19,16,19,0.5,0,0,-0.5),(20,20,21,-0.5,0,0,-0.5),(21,21,22,0,0.5,-0.5,0),(22,22,23,0.5,0,0,0.5),(23,20,23,0.5,0,0,-0.5)],regions[(0+1+2+3-),(4-7+6-5-),(8-11+10-9-),(12-15+14-13-),(16-19+18-17-),(20-23+22-21-)]) p(2.4,0) s(7.2,12) "Path"
                   vr(r1) f[(c10a29d4335eb94e,#77777C)]
                   vr(r2) f[(c10a29d4335eb94e,#77777C)]
