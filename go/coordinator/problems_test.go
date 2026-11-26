@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -139,5 +141,22 @@ func TestProblemLifecycle(t *testing.T) {
 	}
 	if err := tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state = 'open'").Scan(&questions); err != nil || questions != 0 {
 		t.Fatalf("watchdog question still open: %d (%v)", questions, err)
+	}
+
+	// A source with its own tally (agent gaps): the count is the source's, not one per raise; seenAt is its last one.
+	last := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	for range 3 {
+		if _, err := problemRaiseID(q, "agent-gaps", Problem{Cause: "gap:sandbox-write", Text: "Sandbox blocks writes", Count: 626, SeenAt: &last}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := get("gap:sandbox-write")
+	if g.Count != 626 || !g.SeenAt.Equal(last) {
+		t.Fatalf("tally: count %d seen %v, want 626 at %v", g.Count, g.SeenAt, last)
+	}
+	// The owner never started it: it is unstarted until the owner has its problem conversation.
+	ids, err := q.db().ProblemsUnstarted(ctx, "hal")
+	if err != nil || !slices.Contains(ids, g.ID) {
+		t.Fatalf("unstarted %v (%v), want %s", ids, err, g.ID)
 	}
 }

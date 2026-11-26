@@ -368,6 +368,32 @@ func (q *Queries) ProblemStallExists(ctx context.Context, pattern string) (bool,
 	return exists, err
 }
 
+const problemTally = `-- name: ProblemTally :exec
+UPDATE problem SET count = $1::int, seen_at = $2::timestamptz, misses = 0,
+ text = coalesce($3, text), data = coalesce($4::jsonb, data)
+WHERE id = $5
+`
+
+type ProblemTallyParams struct {
+	Count  int32
+	SeenAt pgtype.Timestamptz
+	Text   *string
+	Data   []byte
+	ID     string
+}
+
+// A source that counts its own occurrences (agent gaps): count and last seen are the source's, not one per pass.
+func (q *Queries) ProblemTally(ctx context.Context, arg ProblemTallyParams) error {
+	_, err := q.db.Exec(ctx, problemTally,
+		arg.Count,
+		arg.SeenAt,
+		arg.Text,
+		arg.Data,
+		arg.ID,
+	)
+	return err
+}
+
 const problemUpdate = `-- name: ProblemUpdate :exec
 UPDATE problem SET phase = coalesce($1::text, phase),
  phase_at = CASE WHEN $1::text IS NOT NULL AND $1::text <> phase THEN now() ELSE phase_at END,
@@ -643,6 +669,34 @@ func (q *Queries) ProblemsSummary(ctx context.Context) ([]ProblemsSummaryRow, er
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const problemsUnstarted = `-- name: ProblemsUnstarted :many
+SELECT p.id FROM problem p WHERE p.state = 'open' AND p.owner_bot_id = $1::text AND p.phase = 'new'
+ AND NOT EXISTS (SELECT 1 FROM session s WHERE s.bot_id = p.owner_bot_id AND s.subject = 'problem:' || p.id)
+ORDER BY p.seq
+`
+
+// Open problems a bot owns that it never started: no conversation of the bot for them yet (a problem adopted with a
+// duty, or one whose wake was lost). The owner's problem trigger takes them up.
+func (q *Queries) ProblemsUnstarted(ctx context.Context, bot string) ([]string, error) {
+	rows, err := q.db.Query(ctx, problemsUnstarted, bot)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

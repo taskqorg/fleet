@@ -127,6 +127,18 @@ function firstSentence(text: string): string {
   return short.length > 90 ? `${short.slice(0, 87)}…` : short;
 }
 
+/** A problem's links from its data (delivery: links, Bugsink: url), named by what they open. */
+function linksOf(p: ProblemRow): { label: string; href: string }[] {
+  const d = (p.data ?? {}) as { links?: unknown; url?: unknown };
+  const hrefs = [...(Array.isArray(d.links) ? d.links : []), ...(typeof d.url === 'string' ? [d.url] : [])].filter((x): x is string => typeof x === 'string' && /^https:\/\//.test(x));
+  return hrefs.map(href => {
+    const pr = /\/pull\/(\d+)/.exec(href)?.[1];
+    const label = pr ? `Pull request #${pr}` : href.includes('/compare/') ? 'What changed (compare)' : href.includes('/actions/runs/') ? 'CI run'
+      : href.includes('bugsink') ? 'Bugsink issue' : new URL(href).hostname;
+    return { label, href };
+  });
+}
+
 /** What the problem is about, from its cause: its family and subject in plain words. */
 function subjectOf(p: ProblemRow): string {
   const body = p.text.replace(/^Agents lack something:\s*/, '');
@@ -151,6 +163,11 @@ function ProblemDetail(props: { p: ProblemRow; onClose?: () => void; reload: () 
       <DetailHead crumb={`system · problems · ${p().code}`} title={p().count > 1 ? `${firstSentence(p().text)} ×${p().count}` : firstSentence(p().text)} onClose={props.onClose} />
       <KvRow icon="bot" label={p().ownerName ?? 'No bot owns it'} meta={<span class="muted">{p().note}</span>}
         value={<span>{p().state === 'closed' ? `Closed · ${p().closeReason ?? 'cleared'}` : phaseOf(p()).text}</span>} />
+      <Show when={linksOf(p()).length}>
+        <DetailSection title="Links">
+          <For each={linksOf(p())}>{l => <KvRow icon="link" label={l.label} value={<a href={l.href} target="_blank" rel="noreferrer">Open</a>} />}</For>
+        </DetailSection>
+      </Show>
       <Show when={err()}><ErrorBanner text={err()} /></Show>
       <Show when={conv()} fallback={
         <DetailSection title="Conversation">

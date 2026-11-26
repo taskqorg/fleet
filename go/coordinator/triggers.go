@@ -916,6 +916,13 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 			break
 		}
 	}
+	if target.bot != nil && !target.bot.Paused && slices.Contains(t.IfChanged, "problem") { // a paused bot is woken by nothing
+		more, err := problemTriggerParts(q, target.bot.Id, seen)
+		if err != nil {
+			return nil, t.ChangeCursor, t.LimitsSignaled, err
+		}
+		parts = append(parts, more...)
+	}
 	keys := t.LimitsSignaled
 	if slices.Contains(t.IfChanged, "limits") {
 		signals, sent, err := limitSignals(q, dir, t.LimitsSignaled)
