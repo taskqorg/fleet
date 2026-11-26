@@ -21,6 +21,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 func init() {
@@ -115,7 +116,6 @@ func startDispatchLoop(ctx context.Context, a *App) {
 func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	var sessionIDs []string
 	var needsSweep bool
-	var pipelinePending bool
 	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		var err error
 		if sessionIDs, err = q.db().DispPendingSessions(q.ctx()); err != nil {
@@ -135,51 +135,58 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	}
 	var tasksStartable bool
 	if err := a.store.Read(ctx, nil, func(q *Request) error {
-		var err error
-		if pipelinePending, err = q.db().DispPipelinePending(q.ctx()); err != nil {
-			return err
-		}
 		ts, err := q.db().DispStartableTasks(q.ctx())
 		tasksStartable = len(ts) > 0
 		return err
 	}); err != nil {
 		return err
 	}
-	locks := make([]string, 0, 2+len(sessionIDs))
-	// A pipeline start and a task's worker session (taskAutoStart) create sessions: GLOBAL serializes them with
-	// task_create, session_start and project_archive.
-	if pipelinePending || tasksStartable {
-		locks = append(locks, GLOBAL)
-	}
+	// Three steps, each in transactions of its own, so no step holds DISPATCH (and GLOBAL) while the next one works:
+	// reconcile, problems and promotion of queued messages under DISPATCH and the pending sessions' locks; the task
+	// autostart under GLOBAL (it creates sessions, serialized with task_create, session_start and project_archive); then
+	// the placement of each queued execution (dispatchRun, GLOBAL for a pipeline step). A step sees what the earlier ones committed.
+	locks := make([]string, 0, 1+len(sessionIDs))
 	locks = append(locks, DISPATCH)
 	for _, sid := range sessionIDs {
 		locks = append(locks, "session:"+sid)
 	}
-	return a.store.Write(ctx, nil, locks, func(q *Request) error {
-		if err := a.delegationReconcile(q); err != nil {
-			return err
-		}
-		ids, err := hostIDs(q)
-		if err != nil {
-			return err
-		}
-		envs, err := a.projectEnvironmentsCached(q)
-		if err != nil {
-			return err
-		}
-		if err := detectProblems(q, ids, envs); err != nil {
-			return err
-		}
-		if err := agentPromote(q); err != nil {
-			return err
-		}
-		if tasksStartable {
-			if err := taskAutoStart(q); err != nil {
+	if err := dispatchStep(ctx, "dispatch.prepare", func(ctx context.Context) error {
+		return a.store.Write(ctx, nil, locks, func(q *Request) error {
+			if err := a.delegationReconcile(q); err != nil {
 				return err
 			}
+			ids, err := hostIDs(q)
+			if err != nil {
+				return err
+			}
+			envs, err := a.projectEnvironmentsCached(q)
+			if err != nil {
+				return err
+			}
+			if err := detectProblems(q, ids, envs); err != nil {
+				return err
+			}
+			return agentPromote(q)
+		})
+	}); err != nil {
+		return err
+	}
+	if tasksStartable {
+		if err := dispatchStep(ctx, "dispatch.autostart", func(ctx context.Context) error {
+			return a.store.Write(ctx, nil, []string{GLOBAL, DISPATCH}, taskAutoStart)
+		}); err != nil {
+			return err
 		}
-		return a.dispatchRun(q, "")
-	})
+	}
+	return dispatchStep(ctx, "dispatch.place", func(ctx context.Context) error { return a.dispatchRun(ctx, "") })
+}
+
+// dispatchStep runs one step of a dispatch pass under a span of its own, a child of the pass's span.
+func dispatchStep(ctx context.Context, name string, fn func(context.Context) error) error {
+	ctx, span := obs.Start(ctx, name, obs.KindInternal)
+	err := fn(ctx)
+	span.End(err)
+	return err
 }
 
 const onlineMs = 30000
@@ -1009,29 +1016,91 @@ func recordDecision(q *Request, e *dispatchExecution, polling string, cs []*cand
 
 var causeHost = regexp.MustCompile(`^host:([^:]+)`)
 
-// dispatchRun: one dispatch pass; when polling == "", evaluates and assigns every host.
-func (a *App) dispatchRun(q *Request, polling string) error {
-	ids, err := q.db().DispQueuedIDs(q.ctx())
-	if err != nil {
+// dispatchStall: one stall cause a pass raises, with what its problem text names.
+type dispatchStall struct{ reason, director, ask, projectID string }
+
+// dispatchStalls: the stall causes of one pass in the order it raised them.
+type dispatchStalls struct {
+	causes map[string]dispatchStall
+	order  []string
+}
+
+func (st *dispatchStalls) add(cause string, s dispatchStall) {
+	if _, ok := st.causes[cause]; !ok {
+		st.causes[cause] = s
+		st.order = append(st.order, cause)
+	}
+}
+
+// dispatchRun places the queued executions, each in a transaction of its own holding DISPATCH, its session's lock and,
+// for a pipeline step, GLOBAL: DISPATCH serializes placement (slot counts), and a transaction per execution keeps it
+// held for one placement, never for the whole queue, so the writes waiting on GLOBAL and DISPATCH (terminal receipts,
+// agent tools, the other passes) interleave with a long queue (incident 2026-11-26: one pass held them about 30 s per
+// run of 37 queued sessions). The hosts' context is read once per pass; a run ending meanwhile only frees a slot this
+// pass does not count yet. polling == "" evaluates and assigns every host.
+func (a *App) dispatchRun(ctx context.Context, polling string) error {
+	var ids []string
+	var k *dispatchContext
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		var err error
+		if ids, err = q.db().DispQueuedIDs(q.ctx()); err != nil || len(ids) == 0 {
+			return err
+		}
+		k, err = loadDispatchContext(q)
+		return err
+	}); err != nil {
 		return err
 	}
-	type stall struct{ reason, director, ask, projectID string }
-	causes := map[string]stall{}
-	causeOrder := []string{}
-	var k *dispatchContext
-	if len(ids) > 0 {
-		var err error
-		if k, err = loadDispatchContext(q); err != nil {
+	st := &dispatchStalls{causes: map[string]dispatchStall{}}
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var locks []string
+		skip := false
+		if err := a.store.Read(ctx, nil, func(q *Request) error {
+			e, err := executionGetAs[dispatchExecution](q, id)
+			if err != nil {
+				return err
+			}
+			if !claimable(&e) {
+				skip = true
+				return nil
+			}
+			if e.PipelineRunID != nil {
+				locks = append(locks, GLOBAL)
+			}
+			locks = append(locks, DISPATCH)
+			if e.SessionID != "" {
+				locks = append(locks, "session:"+e.SessionID)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if skip {
+			continue
+		}
+		ectx, span := obs.Start(ctx, "dispatch.execution", obs.KindInternal)
+		span.Set("fleet.execution.id", id)
+		err := a.store.Write(ectx, nil, locks, func(q *Request) error { return a.dispatchOne(q, id, k, polling, st) })
+		span.End(err)
+		if err != nil {
 			return err
 		}
 	}
-	for _, id := range ids {
+	return a.store.Write(ctx, nil, []string{DISPATCH}, func(q *Request) error { return dispatchStallsSet(q, st) })
+}
+
+// dispatchOne places one queued execution, or records why it waits, in q's transaction (dispatchRun).
+func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling string, st *dispatchStalls) error {
+	{
 		e, err := executionGetAs[dispatchExecution](q, id)
 		if err != nil {
 			return err
 		}
 		if !claimable(&e) {
-			continue
+			return nil
 		}
 		if sid := e.SessionID; sid != "" && !txHasLock(q.tx, "session:"+sid) {
 			if canAcquireTxLock(q.tx, "session:"+sid) {
@@ -1045,13 +1114,13 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 					return err
 				}
 				if !claimable(&e) {
-					continue
+					return nil
 				}
 			} else {
 				afterCommit(q, func() {
 					a.wakeDispatch()
 				})
-				continue
+				return nil
 			}
 		}
 		if e.BotContext != nil {
@@ -1077,7 +1146,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 						return err
 					}
 				}
-				continue
+				return nil
 			}
 		}
 		cs, err := a.rankCandidates(q, &e, k)
@@ -1096,10 +1165,10 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				afterCommit(q, func() {
 					a.wakeDispatch()
 				})
-				continue
+				return nil
 			}
 			if polling != "" && best.Host != polling {
-				continue
+				return nil
 			}
 			// Lock the row and read it again before the claim: a stop (or any writer) committed since the read above
 			// wins, and none commits between here and this claim. Only before a write, never per candidate: a row lock
@@ -1109,7 +1178,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				return err
 			}
 			if claimed == nil {
-				continue
+				return nil
 			}
 			claimed.WaitReason, claimed.WaitDetail = nil, nil
 			delete(claimed.rest, "waitReason")
@@ -1140,7 +1209,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
 					return err
 				}
-				continue
+				return nil
 			}
 			if err := exec(q, "RELEASE SAVEPOINT start_command"); err != nil {
 				return err
@@ -1152,7 +1221,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
 				return err
 			}
-			continue
+			return nil
 		}
 		reason, cause := "no host can run this work", "execution:"+id+":no-candidate"
 		var first *candidate
@@ -1174,7 +1243,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				return err
 			}
 			if claimed == nil {
-				continue
+				return nil
 			}
 			msg := "no host and subscription the settings allow can run this step: " + reason
 			claimed.WaitReason, claimed.WaitDetail = nil, nil
@@ -1191,7 +1260,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := recordDecision(q, claimed, polling, cs, nil); err != nil {
 				return err
 			}
-			continue
+			return nil
 		}
 		if first != nil && first.Stop {
 			// As before a claim: a stop committed since the unlocked read wins.
@@ -1200,7 +1269,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				return err
 			}
 			if claimed == nil {
-				continue
+				return nil
 			}
 			kind := waitKindOf(cause)
 			claimed.State, claimed.StopDetail = "cancelled", reason
@@ -1213,7 +1282,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := recordDecision(q, claimed, polling, cs, nil); err != nil {
 				return err
 			}
-			continue
+			return nil
 		}
 		cur := &e
 		if deref(cur.WaitDetail) != reason || e.holdStart != 0 {
@@ -1222,7 +1291,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				return err
 			}
 			if claimed == nil {
-				continue
+				return nil
 			}
 			cur = claimed
 		}
@@ -1265,16 +1334,18 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			holder = deref(first.Subscription.Holder)
 		}
 		if !isBackpressureCause(cause) {
-			if _, ok := causes[cause]; !ok {
-				causes[cause] = stall{reason, deref(cur.DirectedBy), holder, deref(cur.projectID())}
-				causeOrder = append(causeOrder, cause)
-			}
+			st.add(cause, dispatchStall{reason, deref(cur.DirectedBy), holder, deref(cur.projectID())})
 		}
 	}
-	// Only the stall causes this pass raises: a key, budget-ask or other area's question keeps its cause.
-	stalls := make([]Problem, 0, len(causeOrder))
-	for _, cause := range causeOrder {
-		c := causes[cause]
+	return nil
+}
+
+// dispatchStallsSet sets the stall problems of one pass. Only the stall causes this pass raises: a key, budget-ask or
+// other area's question keeps its cause.
+func dispatchStallsSet(q *Request, st *dispatchStalls) error {
+	stalls := make([]Problem, 0, len(st.order))
+	for _, cause := range st.order {
+		c := st.causes[cause]
 		tail := " Change the setting to let it start."
 		if c.ask != "" && c.ask != c.director {
 			tail = fmt.Sprintf(" Ask %v, or change the setting.", c.ask)
