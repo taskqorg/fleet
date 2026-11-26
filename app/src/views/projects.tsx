@@ -9,6 +9,7 @@ import {
   Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, InheritedRows, KvRow, Preview, ListDetail, ListFrame,
   RowFacts, Fact, ShellActions, Skeleton, StateBadge, StateDot, TabBar, VirtualList,
   catalogueRow, matchSearch, statesOf, type IconName,
+  EntityCode,
 } from '../../../packages/ui/src/index.ts';
 import { useOp, useView } from '../store.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
@@ -172,7 +173,7 @@ function Catalogue(props: {
                     <span class="lead"><ReadinessBadge p={p.raw} /></span>
                     <span class="tt">
                       <a class="title row-link" href={'/projects/' + encodeURIComponent(projectSegment(p.id))} onClick={e => { e.preventDefault(); props.onOpen(p.id); }}>{p.name}</a>
-                      <span class="id">{p.code || p.id}</span>
+                      <EntityCode code={p.code || p.id} id={p.id} kind="project" form="code" />
                     </span>
                     <span class="rz">
                       <RowFacts>

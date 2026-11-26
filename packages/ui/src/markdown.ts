@@ -9,6 +9,9 @@ export type MdBlock<T = string> =
   | { t: 'list'; ordered: boolean; start: number; items: MdBlock<T>[][] }
   | { t: 'table'; head: T[]; align: ('left' | 'center' | 'right' | null)[]; rows: T[][] };
 
+/** A pull request named in text: its GitHub URL, or owner/repo#number (entity-card.md: agent messages). */
+export const PR_REF = /\bhttps:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-9][0-9]*)(?![\w/])|(?<![\w/.-])([\w.-]+)\/([\w.-]+)#([1-9][0-9]*)\b/g;
+
 type Fragment = { text: string; at: number };
 export type MdText = { text: string; fragments: Fragment[] };
 const join = (fragments: Fragment[]): MdText => ({ text: fragments.map(f => f.text).join(''), fragments });

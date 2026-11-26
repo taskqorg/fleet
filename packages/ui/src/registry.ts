@@ -64,9 +64,9 @@ export const entityKinds = {
   release: { label: 'Release', icon: 'archive', family: 'delivery' },
 } as const satisfies Record<string, { label: string; icon: IconName; family: Family | null }>;
 export type EntityKind = keyof typeof entityKinds;
-export const codeKind: Record<string, EntityKind> = { T: 'task', Q: 'question', C: 'conversation' };
+export const codeKind: Record<string, EntityKind> = { T: 'task', Q: 'question', C: 'conversation', R: 'result' };
 /** D17 codes of entities (tasks, questions, conversations) in free text; spec rules (S-) are not entities. */
-export const ENTITY_CODE = /\b[TQC]-[A-Z][A-Z0-9]{1,4}-[1-9][0-9]*\b/g;
+export const ENTITY_CODE = /\b[TQCR]-[A-Z][A-Z0-9]{1,4}-[1-9][0-9]*\b/g;
 
 /** What performs a pipeline step (fleet.md: executors are agents, tools, programs or pipelines). */
 export const stepKinds = {

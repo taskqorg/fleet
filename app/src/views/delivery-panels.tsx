@@ -223,7 +223,7 @@ export function PrDetail(props: { id: string; item?: Item; capability?: Publishi
     }
   };
   return <article class="detail" data-ui="detail" tabindex={-1} aria-label={title()}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} /><EntityCode code={`${parts().repoSlug}#${parts().number}`} id={props.id} kind="pull_request" /><span class="grow" />
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} /><EntityCode code={`${parts().repoSlug}#${parts().number}`} id={props.id} kind="pull_request" form="code" /><span class="grow" />
       <Show when={url()}>{u => <Button label={props.item?.provider === 'gitlab' || props.item?.kind === 'merge_request' ? 'Open on GitLab' : 'Open on GitHub'} icon="external-link" iconOnly onClick={() => window.open(u(), '_blank', 'noopener')} />}</Show></header>
     <h2 class="detail-title">{title()}</h2>
     <div class="state-line">

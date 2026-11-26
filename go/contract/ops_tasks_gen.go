@@ -8,20 +8,21 @@ var _ json.RawMessage
 
 // EntityCardReply: A card summary of one entity for an entity reference: the same read for people (the card) and agents (MCP tool).
 type EntityCardReply struct {
-	At        *string      `json:"at,omitempty"`
-	AtLabel   *string      `json:"atLabel,omitempty"`
-	Code      *string      `json:"code,omitempty"`
-	Facts     []EntityFact `json:"facts"`
-	Harness   *string      `json:"harness,omitempty"`
-	Hash      *string      `json:"hash,omitempty"`
-	Id        string       `json:"id"`
-	Kind      EntityKind   `json:"kind"`
-	Path      *string      `json:"path,omitempty"`
-	ProjectId *string      `json:"projectId,omitempty"`
-	State     *string      `json:"state,omitempty"`
-	Title     string       `json:"title"`
-	Url       *string      `json:"url,omitempty"`
-	Uuid      *string      `json:"uuid,omitempty"`
+	At        *string        `json:"at,omitempty"`
+	AtLabel   *string        `json:"atLabel,omitempty"`
+	Code      *string        `json:"code,omitempty"`
+	Facts     []EntityFact   `json:"facts"`
+	Harness   *string        `json:"harness,omitempty"`
+	Hash      *string        `json:"hash,omitempty"`
+	Id        string         `json:"id"`
+	Kind      EntityKind     `json:"kind"`
+	Path      *string        `json:"path,omitempty"`
+	Preview   *EntityPreview `json:"preview,omitempty"`
+	ProjectId *string        `json:"projectId,omitempty"`
+	State     *string        `json:"state,omitempty"`
+	Title     string         `json:"title"`
+	Url       *string        `json:"url,omitempty"`
+	Uuid      *string        `json:"uuid,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -36,6 +37,11 @@ func (v *EntityCardReply) Validate() error {
 	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
+	}
+	if v.Preview != nil {
+		if err := Check(v.Preview, "preview"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -139,6 +145,93 @@ func (v EntityKind) Valid() bool {
 		}
 	}
 	return false
+}
+
+type EntityPreview struct {
+	ResultId string            `json:"resultId"`
+	View     EntityPreviewView `json:"view"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityPreview) Validate() error {
+	if err := Check(&v.View, "view"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// EntityPreviewView: What the original is: the preview is always a picture.
+type EntityPreviewView string
+
+const (
+	EntityPreviewViewImage EntityPreviewView = "image"
+	EntityPreviewViewPdf   EntityPreviewView = "pdf"
+	EntityPreviewViewVideo EntityPreviewView = "video"
+)
+
+// EntityPreviewViewValues lists every EntityPreviewView in schema order.
+var EntityPreviewViewValues = []EntityPreviewView{EntityPreviewViewImage, EntityPreviewViewPdf, EntityPreviewViewVideo}
+
+// Valid: v is one of the schema's values.
+func (v EntityPreviewView) Valid() bool {
+	for _, x := range EntityPreviewViewValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type EntityRefState struct {
+	Code  *string    `json:"code,omitempty"`
+	Id    string     `json:"id"`
+	Kind  EntityKind `json:"kind"`
+	Ref   int64      `json:"ref"`
+	State *string    `json:"state,omitempty"`
+	Title string     `json:"title"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityRefState) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type EntityRefsReply struct {
+	Items []EntityRefState `json:"items"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityRefsReply) Validate() error {
+	if v.Items == nil {
+		return Missing("items")
+	}
+	for i := range v.Items {
+		if err := Check(&v.Items[i], "items"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EntityRefsRequest: At most 200 references: each a code, or a kind with its id.
+type EntityRefsRequest struct {
+	Refs []EntityCardRequest `json:"refs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityRefsRequest) Validate() error {
+	if v.Refs == nil {
+		return Missing("refs")
+	}
+	for i := range v.Refs {
+		if err := Check(&v.Refs[i], "refs"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EntityResolveManyReply: Every known code in the text, in order of first appearance; unknown and forbidden codes are left out.
@@ -2725,6 +2818,7 @@ func (v *TaskUpdateRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"entity_card":             {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "A short card of one entity: code (T-FLT-42, Q-…, C-…, old codes too) or kind (task, question, conversation, execution, result, experiment, project, host, agent, pipeline, pull_request as owner/repo#n, release as its tag) with id. Returns its state, title, project, harness, last time, 1-4 facts, the app path and an outside url; unknown and forbidden are both 404", Changes: []string{"task", "question", "session", "artifact", "experiment", "host", "definition", "delivery", "command"}, InputSchema: json.RawMessage("{\"$comment\":\"A code, or a kind with its id. Unknown and forbidden both answer 404.\",\"additionalProperties\":false,\"properties\":{\"code\":{\"$comment\":\"A D17 code (T-, Q-, C-; old codes too), case-insensitive.\",\"type\":\"string\"},\"id\":{\"$comment\":\"The entity id: a UUID, a host, project, agent or pipeline id, owner/repo#number for a pull request, a release tag (v1.2.3, ui-1.2.2-v1.2.3).\",\"type\":\"string\"},\"kind\":{\"$comment\":\"What an entity reference names (docs/design-system/controls/entity-card.md).\",\"enum\":[\"task\",\"question\",\"conversation\",\"execution\",\"result\",\"experiment\",\"project\",\"host\",\"agent\",\"pipeline\",\"pull_request\",\"release\"],\"type\":\"string\"}},\"type\":\"object\"}")},
+		"entity_refs":             {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The live state of many entity references at once (the app's references; docs/design-system/controls/entity-card.md): up to 200 codes or kinds with ids, each answered with its kind, id, code, state and title under the same grants as entity_card; unknown and forbidden ones are left out", InputSchema: json.RawMessage("{\"$comment\":\"At most 200 references: each a code, or a kind with its id.\",\"additionalProperties\":false,\"properties\":{\"refs\":{\"items\":{\"$comment\":\"A code, or a kind with its id. Unknown and forbidden both answer 404.\",\"additionalProperties\":false,\"properties\":{\"code\":{\"$comment\":\"A D17 code (T-, Q-, C-; old codes too), case-insensitive.\",\"type\":\"string\"},\"id\":{\"$comment\":\"The entity id: a UUID, a host, project, agent or pipeline id, owner/repo#number for a pull request, a release tag (v1.2.3, ui-1.2.2-v1.2.3).\",\"type\":\"string\"},\"kind\":{\"$comment\":\"What an entity reference names (docs/design-system/controls/entity-card.md).\",\"enum\":[\"task\",\"question\",\"conversation\",\"execution\",\"result\",\"experiment\",\"project\",\"host\",\"agent\",\"pipeline\",\"pull_request\",\"release\"],\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"refs\"],\"type\":\"object\"}")},
 		"entity_resolve":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Case-insensitive; unknown and forbidden codes both answer 404.", InputSchema: json.RawMessage("{\"$comment\":\"Case-insensitive; unknown and forbidden codes both answer 404.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}")},
 		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Resolve every entity code in a text to its kind and id", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
 		"problem_escalate":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look.", InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"kind\":{\"enum\":[\"only-you\",\"product\",\"authority\"],\"type\":\"string\"},\"options\":{\"$comment\":\"at most 4\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"text\":{\"$comment\":\"the diagnosis in one line, what was tried, what only the owner can give and the recommendation\",\"type\":\"string\"}},\"required\":[\"id\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},

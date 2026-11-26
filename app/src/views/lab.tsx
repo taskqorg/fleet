@@ -573,7 +573,7 @@ function Waiting(props: {
             value={
               <span class="deps">
                 <For each={[...new Set(props.openRatings.map(r => r.experimentId).filter((x): x is string => !!x))].slice(0, 5)}>{eid => (
-                  <a class="row-link" href={`/lab/${encodeURIComponent(eid)}`} onClick={ev => { ev.preventDefault(); props.onOpen(eid); }}><EntityCode id={eid} kind="experiment" /></a>
+                  <EntityCode id={eid} kind="experiment" />
                 )}</For>
               </span>
             }

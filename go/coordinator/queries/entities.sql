@@ -51,8 +51,11 @@ SELECT e.id, e.kind::text AS kind, e.state::text AS state, e.project_id, e.task_
  FROM execution e LEFT JOIN task t ON t.id=e.task_id LEFT JOIN session s ON s.id=e.session_id WHERE e.id=$1;
 
 -- name: EntCardResult :one
--- A result by its id or the id of the legacy record it replaced.
-SELECT a.id, a.code, a.name, a.state, a.project_id, a.media_type, a.size, a.content_hash, a.created_at, t.code AS task_code
+-- A result by its id or the id of the legacy record it replaced; preview_id is its newest stored preview (its thumbnail,
+-- else a video's poster), the picture its card shows, as ThreadStoredArtifacts picks it.
+SELECT a.id, a.code, a.name, a.state, a.project_id, a.media_type, a.size, a.content_hash, a.created_at, t.code AS task_code,
+ coalesce((SELECT p.id FROM artifact p WHERE p.execution_id=a.execution_id AND p.derived_from_artifact_id=a.id AND p.state='stored' AND p.role IN ('thumbnail','poster')
+  ORDER BY p.role='thumbnail' DESC, p.seq DESC LIMIT 1),'')::text AS preview_id
  FROM artifact a LEFT JOIN task t ON t.id=coalesce(a.task_id,(SELECT e.task_id FROM execution e WHERE e.id=a.execution_id)) WHERE a.id= @id OR a.legacy_id= @id
  LIMIT 1;
 

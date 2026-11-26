@@ -510,7 +510,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             />
           </Show>
           <Show when={failure()}>{f => <ErrorBanner text={f()} />}</Show>
-          <h2 class="detail-title">{t()!.title}<EntityCode code={t()!.code} id={t()!.id} kind="task" /></h2>
+          <h2 class="detail-title">{t()!.title}<EntityCode code={t()!.code} id={t()!.id} kind="task" form="code" /></h2>
           <div class="state-line">
             <StateBadge family="task" state={t()!.pauseReason === 'held' ? 'held' : t()!.state} unconfirmed={unconfirmed()} reason={t()!.waitReason ?? undefined} />
             <Show when={t()!.pauseReason === 'held' && t()!.heldByName}>{who => <span class="muted">by {who()}</span>}</Show>
@@ -532,11 +532,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
           <Show when={result()} keyed>
             {res => (
               <p class="state-line">
-                <Icon name={viewOf(res.mediaType ?? '') === 'download' ? 'archive' : 'file-text'} label={res.mediaType ?? 'Result'} />
-                <a class="row-link" href={`/results/${encodeURIComponent(res.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(res.id)}`); }}>
-                  {fileLabel(res.path ?? res.name ?? '') || 'Result'}
-                </a>
-                <EntityCode id={res.artifactId ?? res.id} kind="result" />
+                <EntityCode id={res.artifactId ?? res.id} kind="result" form="full" title={fileLabel(res.path ?? res.name ?? '') || 'Result'} />
               </p>
             )}
           </Show>
