@@ -62,7 +62,7 @@ func (u *updater) stageCandidate(kindName, name, dir string, raw []byte) (string
 	entries, _ := fs.ReadDir(root.FS(), parent)
 	for _, e := range entries {
 		if path := filepath.Join(parent, e.Name()); path != a.Dir(name) {
-			if err := root.RemoveAll(path); err != nil {
+			if err := removeCache(root, path); err != nil {
 				log.Printf("prune candidate %s: %v", path, err)
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fleet/harnessrelease"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +72,7 @@ func newFixture(t *testing.T) *fixture {
 	f.u.bugsinkDir = ""
 	f.u.base, f.u.target, f.u.window, f.u.tick = srv.URL, "linux-amd64", 50*time.Millisecond, 5*time.Millisecond
 	f.root = t.TempDir()
+	writableOnCleanup(t, f.root)
 	r, err := openReleases(f.root)
 	if err != nil {
 		t.Fatal(err)
@@ -399,13 +401,17 @@ func TestManagedCLIRuns(t *testing.T) {
 	}
 }
 
-// TestManagedToolInstalls: host tools install from their own pin file into tools/<name>/<digest>, links included, and
-// a tool that names another version refuses the release.
+// TestManagedToolInstalls: host tools install from their own pin file into tools/<name>/<digest>, links included, with
+// read-only directories. A tool that names another version is skipped, and the release still installs. Risk: one bad
+// tool pin holds a host back on an old release.
 func TestManagedToolInstalls(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root does not run vendor tools")
 	}
-	for _, c := range []struct{ version, state string }{{"26.1.0", "ok"}, {"26.1.1", "refused"}} {
+	for _, c := range []struct {
+		version   string
+		installed bool
+	}{{"26.1.0", true}, {"26.1.1", false}} {
 		f := newFixture(t)
 		var buf bytes.Buffer
 		gz := gzip.NewWriter(&buf)
@@ -443,13 +449,33 @@ func TestManagedToolInstalls(t *testing.T) {
 		tools := `{"enabled":true,"targets":{"linux-amd64":{` + strings.Join(pins, ",") + `}}}`
 		f.release("1.261111.0", 0, []byte(`{"enabled":false}`), []byte(tools))
 		r := f.run("1.261111.0")
-		if r == nil || string(r.State) != c.state {
+		if r == nil || string(r.State) != "ok" {
 			t.Fatalf("%s: %+v", c.version, r)
 		}
-		if c.state == "ok" {
-			dir := filepath.Join(f.root, "tools", "node", hex.EncodeToString(sum[:]))
+		dir := filepath.Join(f.root, "tools", "node", hex.EncodeToString(sum[:]))
+		if _, err := os.Stat(dir); c.installed != (err == nil) {
+			t.Fatalf("%s: tool cache %v", c.version, err)
+		}
+		if c.installed {
 			if target, err := os.Readlink(filepath.Join(dir, "t/bin/alias")); err != nil || target != "tool" {
 				t.Fatalf("link %q %v", target, err)
+			}
+			if os.Geteuid() != 0 && os.WriteFile(filepath.Join(dir, "t/bin/written.pyc"), nil, 0o644) == nil {
+				t.Fatal("a tool can write into its cache")
+			}
+			// A cache a component changed anyway (written before directories were read-only) is replaced, not refused,
+			// though the running release keeps it.
+			os.Chmod(filepath.Join(dir, "t/bin"), 0o755)
+			os.WriteFile(filepath.Join(dir, "t/bin/written.pyc"), nil, 0o644)
+			f.release("1.261111.1", 0, []byte(`{"enabled":false}`), []byte(tools))
+			if r := f.run("1.261111.1"); r == nil || string(r.State) != "ok" {
+				t.Fatalf("damaged cache: %+v", r)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "t/bin/written.pyc")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("damaged cache kept: %v", err)
+			}
+			if aside, _ := filepath.Glob(dir + ".damaged-*"); len(aside) != 0 {
+				t.Fatalf("moved copy not pruned: %v", aside)
 			}
 		}
 	}
@@ -464,4 +490,17 @@ func vendorOrigins(t *testing.T, url string) {
 		}
 		t.Cleanup(func() { maps.Copy(k.Origins, saved) })
 	}
+}
+
+// writableOnCleanup gives the owner write permission on every directory under dir before the test's TempDir cleanup, as
+// cached payloads have read-only directories.
+func writableOnCleanup(t *testing.T, dir string) {
+	t.Cleanup(func() {
+		filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				os.Chmod(path, 0o755)
+			}
+			return nil
+		})
+	})
 }
