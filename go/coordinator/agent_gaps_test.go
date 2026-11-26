@@ -293,3 +293,11 @@ func TestAgentGapLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Requirement: Investigate's conversation names its finding's question as its subject, a form sessionStart accepts.
+// Risk: "Agent gap <class>" was refused on prod (2026-11-26) and no PM conversation started.
+func TestAgentGapInvestigationSubject(t *testing.T) {
+	if !subjectKey.MatchString("question:5c401dfa-afab-4407-8d56-b0e87e5b95c9") {
+		t.Fatal("question:<id> is not a subject")
+	}
+}
