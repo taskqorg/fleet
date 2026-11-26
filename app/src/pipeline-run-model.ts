@@ -33,3 +33,11 @@ export function recordColumns(rows: Rec[]): string[] {
   for (const r of rows) for (const [k, v] of Object.entries(r)) if (!keys.includes(k) && (v == null || typeof v !== 'object')) keys.push(k);
   return keys.filter(k => rows.some(r => r[k] != null && r[k] !== ''));
 }
+
+/** A step's error as a person reads it: its message (a `{code, message}` object shows the message, not its JSON). */
+export function stepErrorText(e: unknown): string | undefined {
+  if (e == null || e === '') return undefined;
+  if (typeof e === 'string') return e;
+  const o = e as { message?: unknown; code?: unknown };
+  return typeof o.message === 'string' && o.message ? o.message : typeof o.code === 'string' && o.code ? o.code : JSON.stringify(e);
+}

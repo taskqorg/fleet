@@ -23,6 +23,7 @@ import { listGroups, prefsRead, scopeIds, setListGroups, usePins, useViews } fro
 import { LabCreate } from './lab-create.tsx';
 import { LabComparison } from './lab-matrix.tsx';
 import { EntryFacts, Go, pipelinePath } from './project-overview.tsx';
+import { stepErrorText } from '../pipeline-run-model.ts';
 import { selectDefaultSwarmTrial } from './lab-swarm.ts';
 import {
   ARCHIVED_COLLECTION_ID, USE_CASE_COLLECTION_PREFIX, USE_CASE_PROJECT_PREFIX, buildUseCaseTree, collectionIconOf, collectionTitleOf,
@@ -1281,7 +1282,7 @@ function TrialPlan(props: { id: string; projectId: string; trialProblem?: string
       return { id: entry.id, kind: definition?.kind === 'api' ? 'tool' : definition?.kind === 'agent' ? 'agent' : 'program', executor: definition?.kind ?? '', reads: '', writes: '', activation: entry.activation, activationReason: entry.problem?.message ?? entry.decision?.reason,
         result: entry.id === run?.canonicalResult?.stepId,
         run: execution ? { state: execution.state, reason: execution.waitDetail ?? execution.observation, note: execution.waitDetail ?? (entry.executionRef?.mode === 'reused' ? 'reused · original resources' : execution.observation === 'unconfirmed' ? 'unconfirmed' : undefined),
-          time: msMeasured(execution.durationMs), cost: { value: null, basis: 'unavailable' as const }, error: execution.error ? JSON.stringify(execution.error) : undefined } : undefined };
+          time: msMeasured(execution.durationMs), cost: { value: null, basis: 'unavailable' as const }, error: stepErrorText(execution.error) } : undefined };
     });
   });
   const reusedEntries = createMemo(() => (runOp.data?.plan.entries ?? []).filter(entry => entry.executionRef?.mode === 'reused'));
