@@ -19,14 +19,14 @@
 
 ## Layout
 
-Three columns ([OR-24](../patterns/app-shell.md#rules-kept-here)). Shell header: title, New (`plus`, a short menu: agent, pipeline, bot), focus chip, search.
+Three columns ([OR-24](../owner-rules.md)). Shell header: title, New (`plus`, a short menu: agent, pipeline, bot), focus chip, search.
 
-* **Control column** (`CatalogueTree`, [OR-48](../patterns/navigation-and-columns.md#rules-kept-here)): one tree with the roots **Methods, Pipelines, Agents, Bots, Skills, Changes**, no mode switch ([OR-46](../patterns/navigation-and-columns.md#rules-kept-here)). Above it the list header with search (filter words `category:`, `harness:`, `skill:`, `state:`, [OR-36](../owner-rules.md)) and saved views. A leaf: state icon (recommended, experimental, deprecated, waits for the repository), name and id, and on the right 30-day runs. Lab variants fold under their base agent. Changes shows its drift count as a counter on the root ([OR-29](../controls/state-counters.md#rules-kept-here)).
+* **Control column** (`CatalogueTree`, [OR-48](../owner-rules.md)): one tree with the roots **Methods, Pipelines, Agents, Bots, Skills, Changes**, no mode switch ([OR-46](../owner-rules.md)). Above it the list header with search (filter words `category:`, `harness:`, `skill:`, `state:`, [OR-36](../owner-rules.md)) and saved views. A leaf: state icon (recommended, experimental, deprecated, waits for the repository), name and id, and on the right 30-day runs. Lab variants fold under their base agent. Changes shows its drift count as a counter on the root ([OR-29](../owner-rules.md)).
 * **Work area, idle:** what waits first: definitions waiting for a repository version, with Take all as one [problem row](../controls/problem-row.md); recommendations that changed this week (J3: one row per project whose recommended method was selected in the last 7 days, "<method> promoted from <experiment>" opening the experiment, else "<method> set for <project>" opening the project); then totals by root (agents active in 30 days, pipelines that ran, bots awake). Never a second copy of the tree.
 * **Work area, a definition open** ([definition editor](../patterns/definition-editor.md)):
   1. Head: kind icon, name, id, state, revision, and the actions as icons (Compare in Lab, Recommend, Take repository version).
-  2. Only the fields that differ from the base default, then "Inherited defaults (N)" folded ([OR-45](../patterns/definition-editor.md#rules-kept-here), UR-65); no `override` words or badges.
-  3. A tab bar for the facets of that one definition ([OR-46](../patterns/navigation-and-columns.md#rules-kept-here)): Configuration · Effective · Diff · Usage · History; a pipeline adds Runs, a bot adds Automations and Runs.
+  2. Only the fields that differ from the base default, then "Inherited defaults (N)" folded ([OR-45](../owner-rules.md), UR-65); no `override` words or badges.
+  3. A tab bar for the facets of that one definition ([OR-46](../owner-rules.md)): Configuration · Effective · Diff · Usage · History; a pipeline adds Runs, a bot adds Automations and Runs.
 * **Bots.** An active bot is a session on [Home](home.md); its definition lives here. "Talk to it" in the bot's head opens its session ([OR-51](../owner-rules.md)). A bot leaf shows its [avatar](../controls/avatar.md) (`sm`, its activity light) in place of the state dot; the bot head shows it at `lg` and Overview opens with it at `xl` beside the state and purpose; Settings & Memory starts with the avatar picker (Letter, Upload file, Make with pipeline: three `avatar-make` results, pick one). Board: [library.bl](../board/screens/library.bl), section 4.
 
 ## States
@@ -49,7 +49,7 @@ Three columns ([OR-24](../patterns/app-shell.md#rules-kept-here)). Shell header:
 
 ## Data
 
-The tree and the idle page read one view, `library_view` ([data layer](../../designs/fleet-data-layer.md)): the agents, pipelines and methods with their 30-day runs (no resource rollup; an opened definition reads `definition_usage`), the skills, the focus's bots, the drift of Changes (`system_changes`) and this week's recommendations. It rereads on definition, recommendation, bot and question changes, at most once in 2 s; host observations do not reread it. An opened item reads as its root's spec says: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_get`, `definition_take_repository`, `definition_export`. The tree stays mounted while a definition loads ([OR-47](../patterns/navigation-and-columns.md#rules-kept-here)).
+The tree and the idle page read one view, `library_view` ([data layer](../../designs/fleet-data-layer.md)): the agents, pipelines and methods with their 30-day runs (no resource rollup; an opened definition reads `definition_usage`), the skills, the focus's bots, the drift of Changes (`system_changes`) and this week's recommendations. It rereads on definition, recommendation, bot and question changes, at most once in 2 s; host observations do not reread it. An opened item reads as its root's spec says: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_get`, `definition_take_repository`, `definition_export`. The tree stays mounted while a definition loads ([OR-47](../owner-rules.md)).
 
 ## Review of the current build
 

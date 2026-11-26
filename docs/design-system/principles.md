@@ -108,6 +108,8 @@ Review at 390 CSS px with a mouse and with touch, at 320 px on touch, and in a n
 |---|---|---|
 | **UR-51.** | Home and Live answer "what happens now" within 5 s of opening: who works, how much is in flight, what is stuck and what waits for the person, with no click and no scroll at 1440 × 900. | Browser: open the page cold; within 5 s the pulse line (Home) or status bar (Live) and the first group are visible above the fold; Review: a new reader states the answer from one screenshot. |
 | **UR-52.** | Every screen leads with the answer to its question ([what each screen answers](formats.md#what-each-screen-answers)); totals and attention come before lists and settings. | Review against the page spec's purpose line. |
+| **UR-53.** | Trouble is the loudest thing on a screen: red only for failures, dead hosts and blocked work ([OR-56](owner-rules.md)), and repeats collapse to one item with `×N` ([OR-58](owner-rules.md)). | Browser: count danger-tone elements per cause; expect one per cause. |
+| **UR-54.** | A glance screen shows no ids, model badges, tokens or cost unless cost is the screen's question ([OR-54](owner-rules.md)). | Browser: on Home, no visible text matches a model name, a token count or a currency amount. |
 | **UR-55.** | A glance figure updates in place within one feed update and never needs a reload. | Browser: change a session's state through the API, expect the count to change without navigation. |
 
 ## 13. Conversation as the main mode
@@ -121,6 +123,7 @@ Review at 390 CSS px with a mouse and with touch, at 320 px on touch, and in a n
 
 | Id | Rule | Check |
 |---|---|---|
+| **UR-62.** | Technical detail (ids, metrics, tool calls, cost, qualifiers) folds by default and opens with one click in place ([OR-19](owner-rules.md)). | Browser: count clicks from the main view to a run's tokens; expect one. |
 | **UR-63.** | From any problem, total or state, the cause is at most one click away: the failing run, its error and the action to fix it. | Browser: from a red item on Home or Live, one click shows the error text. |
 | **UR-64.** | Opened detail keeps the context it came from: the list, card or transcript stays in view or returns on Back. | Browser: open detail, go Back, expect the same scroll position and selection. |
 
@@ -128,6 +131,7 @@ Review at 390 CSS px with a mouse and with touch, at 320 px on touch, and in a n
 
 | Id | Rule | Check |
 |---|---|---|
+| **UR-66.** | Every screen belongs to exactly one rail section, which stays highlighted while the screen is open ([OR-57](owner-rules.md)); the [product map](product-map.md) names it. | Browser: for every route in the product map, exactly one rail item has `aria-current`. |
 | **UR-67.** | Browser Back always returns to the previous screen with its state; the app never adds a history entry for a passing redirect or a background update. | Browser: navigate A, B, C; Back twice returns to A with its scroll and selection. |
 | **UR-68.** | A deep link restores the full view: the section, the opened item, filters, the tab and the scroll target. | Browser: copy the URL of an opened item with a filter, open it in a fresh context, compare. |
 | **UR-69.** | A URL is section, kind and human code, never a UUID ([OR-38](owner-rules.md), [OR-57](owner-rules.md)); old URLs keep working through a redirect. | Browser: every `href` on a screen matches no UUID pattern; old routes in the product map redirect. |
@@ -157,6 +161,7 @@ Review at 390 CSS px with a mouse and with touch, at 320 px on touch, and in a n
 | Id | Rule | Check |
 |---|---|---|
 | **UR-82.** | One concept has one name and one icon on every screen: the registry and the state vocabulary ([OR-3](owner-rules.md), [OR-55](controls/state-badge.md#rules-kept-here)). | Review against `packages/ui/src/registry.ts`; Browser: a state word outside the vocabulary fails. |
+| **UR-83.** | One job has one control on every screen ([OR-49](owner-rules.md), [OR-13](owner-rules.md)): a session card is one block, a question one block, an entity reference one `EntityCode`. | `pnpm run check:design`; Review: the screen uses the block named for the job. |
 | **UR-84.** | One action has the same label, icon and place in every list and detail where it appears (row menu, detail header). | Review across the screens in the product map. |
 
 ## 19. Phone
@@ -188,15 +193,10 @@ These rules left the sections above on 2026-11-26 (owner, one pass). Their ids s
 | UR-42 | check | `check-design.mjs` contrast: token pairs in `tokens.json` below 4.5:1 |
 | UR-49, UR-71, UR-86, UR-89 | component | [patterns/app-shell.md](patterns/app-shell.md#rules-kept-here) |
 | UR-50 | component | [patterns/no-horizontal-scroll.md](patterns/no-horizontal-scroll.md#rules-kept-here) |
-| UR-53 | merged | into [OR-56](owner-rules.md#rules) |
-| UR-54 | merged | into [OR-54](owner-rules.md#rules) |
 | UR-56 | merged | into [OR-51](owner-rules.md#rules) |
 | UR-57 | component | [controls/tool-line.md](controls/tool-line.md#rules-kept-here) |
 | UR-59, UR-90 | component | [controls/composer.md](controls/composer.md#rules-kept-here) |
-| UR-62 | merged | into [OR-19](owner-rules.md#rules) |
 | UR-65 | component | [patterns/definition-editor.md](patterns/definition-editor.md#rules-kept-here) |
-| UR-66 | merged | into [OR-57](owner-rules.md#rules) |
 | UR-76 | merged | into [OR-61](owner-rules.md#rules) |
-| UR-83 | merged | into [OR-49](owner-rules.md#rules) |
 | UR-85 | merged | into [OR-28](owner-rules.md#rules) |
 | UR-91 | component | [controls/context-panel.md](controls/context-panel.md#rules-kept-here) |

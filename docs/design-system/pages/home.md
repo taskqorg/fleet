@@ -8,7 +8,7 @@
 
 ## Layout
 
-A full-width page right of the navigation ([OR-24](../patterns/app-shell.md#rules-kept-here)). The shell header holds only the section title, the focus chip and the search icon ([OR-43](../patterns/app-shell.md#rules-kept-here)). From top to bottom:
+A full-width page right of the navigation ([OR-24](../owner-rules.md)). The shell header holds only the section title, the focus chip and the search icon ([OR-43](../owner-rules.md)). From top to bottom:
 
 1. **Greeting and pulse line.**
    * A greeting with the person's name.
@@ -35,7 +35,7 @@ One card per session; the board shows its anatomy ([design board](#design-board)
 * **State:** the word and dot from the [state vocabulary](../owner-rules.md) (OR-55).
 * **Now:** one line saying what the session does now.
 * **Progress:** a thin bar, only when the session has a plan with steps.
-* **Meta line:** step, host, and the next timer when one is set; at its right end the [work facts](../controls/work-facts.md) with the time last ([OR-64](../controls/work-facts.md#rules-kept-here)): how long the card waits for you, else its run's time in work, else a failing start's `×N` and latest start, else the last activity. No agent mark: the avatar and the name say who. Long times stand out against the cards of the same group (`peerFence`).
+* **Meta line:** step, host, and the next timer when one is set; at its right end the [work facts](../controls/work-facts.md) with the time last ([OR-64](../owner-rules.md)): how long the card waits for you, else its run's time in work, else a failing start's `×N` and latest start, else the last activity. No agent mark: the avatar and the name say who. Long times stand out against the cards of the same group (`peerFence`).
 * **Question:** at most one, the oldest open one, with its choices as buttons and a free-text answer (OR-53). Answering edits the card in place; the next question, if any, takes its place.
 
 Behaviour:

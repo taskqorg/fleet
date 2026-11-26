@@ -6,7 +6,7 @@
 
 **Purpose.** Find results by project, task, type and time, and open them in the right viewer.
 
-**Layout.** [List and detail](../patterns/list-detail.md): a [virtual list](../controls/data-list.md) of results on the left: copy [state icon](../controls/state-badge.md) first (OR-22), then the result's summary when its `output.json` carries one (`summary`, such as `KATARZYNA NOWAK · 5 files · 1 unreadable`), else its name, with task ID, project, size, the [work facts](../controls/work-facts.md) (the attempts of the result's task from two, `taskAttempts`, against the page's median; the agent of the run that made it, `harness`) and the Created age last ([OR-64](../controls/work-facts.md#rules-kept-here)). The type is read from the file name, so there is no Type column (OR-17) and the [result viewer shell](../controls/result-viewer.md) on the right.
+**Layout.** [List and detail](../patterns/list-detail.md): a [virtual list](../controls/data-list.md) of results on the left: copy [state icon](../controls/state-badge.md) first (OR-22), then the result's summary when its `output.json` carries one (`summary`, such as `KATARZYNA NOWAK · 5 files · 1 unreadable`), else its name, with task ID, project, size, the [work facts](../controls/work-facts.md) (the attempts of the result's task from two, `taskAttempts`, against the page's median; the agent of the run that made it, `harness`) and the Created age last ([OR-64](../owner-rules.md)). The type is read from the file name, so there is no Type column (OR-17) and the [result viewer shell](../controls/result-viewer.md) on the right.
 
 | Inventory item | Shown by |
 |---|---|
