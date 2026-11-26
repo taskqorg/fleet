@@ -113,6 +113,10 @@
   .seg .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .seg:hover { background: var(--hover); }
   .seg.on { background: var(--selected); color: var(--accent); }
+  .seg[aria-pressed="true"] { background: var(--selected); color: var(--accent); }
+  .facets { padding-block: var(--space-1); font-size: var(--font-size-sm); }
+  .facets .num { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+  .project-set { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
   /* A long choice wraps to the next line instead of squeezing its labels into each other (phone 390). */
   .seg-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); max-inline-size: 100%; }
   .seg-group > .seg { flex: none; white-space: nowrap; }
@@ -183,6 +187,8 @@
   }
   .row-facts .row-now { font-family: var(--font-sans); max-inline-size: 25cqi; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @container (inline-size < 480px) { .row-facts .row-now { display: none; } }
+  /* A conversation's subject kind (host, task, pr): a quiet mark; the head names the subject in full. */
+  .row-facts .row-subject { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--fg-faint); }
   .row-spend { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--space-1); inline-size: 16ch; white-space: nowrap; color: inherit; text-decoration: none; }
   .row-spend:hover, .row-spend:focus-visible { color: var(--accent); text-decoration: underline; }
   .row-spend > .spend-primary { display: inline-flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

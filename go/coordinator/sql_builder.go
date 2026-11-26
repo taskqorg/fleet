@@ -1203,7 +1203,7 @@ const sqlSessionNow = `(SELECT (SELECT t.b->>'markdown' FROM jsonb_array_element
 const agentTextPath = `$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @.markdown != "" && (@.role == "agent" || !exists(@.role)))`
 
 // sqlSessionListCols: the columns of sessionListDBRow (sessions.go) over x.
-var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.bot_id,x.origin,(x.pipeline_run_id IS NULL) AS listed,x.created_ms,x.archived_ms," +
+var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.bot_id,x.origin,x.subject,(x.pipeline_run_id IS NULL) AS listed,x.created_ms,x.archived_ms," +
 	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions," + sqlSessionNow + "," + sqlSessionWork
 
 // sqlSessionWork: a row's work facts (controls/work-facts.md), for the page's rows only like sqlSessionNow: since when
@@ -1404,6 +1404,37 @@ func sqlSessionDone(f rowFilter, today, since time.Time) (string, []any, error) 
 	c = append(c, fmt.Sprintf("x.activity_at >= least($%d::timestamptz,$%d::timestamptz)", n, m))
 	return fmt.Sprintf("%s SELECT count(*) FILTER (WHERE x.activity_at >= $%d::timestamptz) AS today, count(*) FILTER (WHERE x.activity_at >= $%d::timestamptz) AS since FROM x WHERE %s",
 		sqlSessionDoneBase, n, m, strings.Join(c, " AND ")), p, nil
+}
+
+// sqlSessionModel: one conversation's subject and origin (session_view's head), over the same origin rule as the list.
+func sqlSessionModel(id string) (string, []any) {
+	return "SELECT d.subject, " + sessionOrigin + " AS origin FROM session d WHERE d.id = $1", []any{id}
+}
+
+// sqlSessionOrigins: the filtered conversations by origin, the origin filter left out (the Started by chips), and the
+// hidden ones of the same filter, the origin and listed filters left out (the Steps toggle): rows (origin, n), the hidden count as
+// origin ''. One statement over the count base.
+func sqlSessionOrigins(f rowFilter) (string, []any, error) {
+	g := f
+	g.Origins = nil
+	p := []any{}
+	c, err := sessionWhere(g, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	h := g
+	h.Listed = new(bool)
+	hc, err := sessionWhere(h, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	base := sqlSessionBase
+	if f.Search == nil {
+		base = sqlSessionCountBase
+	}
+	// One pass over every conversation the base gives: the shown ones by origin, then the hidden count.
+	return base + " SELECT x.origin AS origin, count(*) AS n FROM x" + where(c) + " GROUP BY x.origin" +
+		" UNION ALL SELECT '' AS origin, count(*) AS n FROM x" + where(hc), p, nil
 }
 
 // sqlSessionCount: the counter of the nav: the filtered sessions in the focus (focus: the condition on x.project_id)

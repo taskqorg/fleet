@@ -1,7 +1,7 @@
 // Primitive controls, badges, numbers, age clocks, harness marks, status states, copy, and search input.
 import { createEffect, createMemo, createSignal, For, onSettled, Repeat, Show, untrack, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { Button as SdkButton, Input, Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid';
+import { Button as SdkButton, Input, Menu, MenuCheckboxItem, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from '../registry.ts';
 import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, exact } from '../format.ts';
 import { isSubmitEnter } from '../keys.ts';
@@ -524,6 +524,39 @@ export function ActionMenu(p: {
                 <Icon name={a.icon} />
                 {a.label}
               </MenuItem>
+            )}
+          </For>
+        </MenuContent>
+      </Menu>
+    </span>
+  );
+}
+
+/**
+ * A conversation's project set (owner "ok" F1, 2026-11-26): the set as chips, and a + menu of the person's projects to
+ * check in or out. The first project in the set is the default for new tasks. Each change is one onChange call with the
+ * whole set; the menu stays open while projects are checked.
+ */
+export function ProjectSetMenu(p: {
+  label: string; projects: { id: string; name: string }[]; value: string[]; onChange: (ids: string[]) => void; disabledReason?: string;
+}) {
+  let wrap: HTMLSpanElement | undefined;
+  const name = (id: string) => p.projects.find(x => x.id === id)?.name ?? id;
+  const toggle = (id: string, on: boolean) => p.onChange(on ? [...p.value.filter(x => x !== id), id] : p.value.filter(x => x !== id));
+  return (
+    <span ref={el => { wrap = el; }} class="project-set" data-ui="project-set" role="group" aria-label={p.label}>
+      <For each={p.value}>{id => <span class="chip">{name(id)}</span>}</For>
+      <Menu container={wrap?.closest<HTMLElement>('.th-dark, .th-light') ?? undefined}>
+        <MenuTrigger class="btn quiet icon-only" disabled={!!p.disabledReason} focusableWhenDisabled={true} aria-label={p.label} data-tip={p.disabledReason ?? p.label}>
+          <Icon name="plus" />
+        </MenuTrigger>
+        <MenuContent class="menu" side="bottom" align="start">
+          <For each={p.projects}>
+            {pr => (
+              <MenuCheckboxItem value={pr.id} checked={p.value.includes(pr.id)} onCheckedChange={on => toggle(pr.id, on)}>
+                <Icon name={p.value.includes(pr.id) ? 'check' : 'square'} />
+                {pr.name}<Show when={p.value[0] === pr.id}><span class="muted">default</span></Show>
+              </MenuCheckboxItem>
             )}
           </For>
         </MenuContent>

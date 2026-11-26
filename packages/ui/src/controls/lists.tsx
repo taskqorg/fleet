@@ -120,6 +120,34 @@ export function StateCounters<F extends Family>(p: {
   );
 }
 
+/* ---------- Facet chips: a quick filter by a field other than state, each value with its count ---------- */
+
+/**
+ * One toggle chip per value with its count (Conversations: Started by, owner "ok" F1, 2026-11-26). A pressed chip filters
+ * to its value; several pressed are any of them; All clears the facet. A value with no rows is left out unless pressed.
+ */
+export function FacetChips(p: {
+  label: string; items: { key: string; label: string; count: number }[]; active: string[];
+  onToggle: (key: string) => void; onAll: () => void;
+}) {
+  const shown = createMemo(() => p.items.filter(i => i.count > 0 || p.active.includes(i.key)));
+  return (
+    <Show when={shown().length > 1 || p.active.length > 0}>
+      <div class="seg-group facets" data-ui="facet-chips" role="group" aria-label={p.label}>
+        <span class="muted">{p.label}</span>
+        <button type="button" class="seg" aria-pressed={p.active.length === 0 ? 'true' : 'false'} onClick={() => p.onAll()}>All</button>
+        <For each={shown()}>
+          {i => (
+            <button type="button" class="seg" aria-pressed={p.active.includes(i.key) ? 'true' : 'false'} onClick={() => p.onToggle(i.key)}>
+              {i.label}<span class="num">{i.count.toLocaleString('en')}</span>
+            </button>
+          )}
+        </For>
+      </div>
+    </Show>
+  );
+}
+
 /* ---------- Group header row for grouped lists ---------- */
 
 export function GroupHeader(p: { icon: IconName; label: string; count: number; open: boolean; onToggle: () => void; tone?: Tone }) {

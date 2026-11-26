@@ -993,20 +993,24 @@ func (v *SessionHandoffsRequest) Validate() error {
 }
 
 type SessionHead struct {
-	ActiveExecutionId *string      `json:"activeExecutionId"`
-	Agent             SessionAgent `json:"agent"`
-	ArchivedAt        *int64       `json:"archivedAt"`
-	BotId             *string      `json:"botId"`
-	Code              *string      `json:"code"`
-	Cost              []CostFigure `json:"cost"`
-	CreatedAt         *int64       `json:"createdAt"`
-	Error             *string      `json:"error,omitempty"`
-	Id                string       `json:"id"`
-	ProjectCode       *string      `json:"projectCode"`
-	ProjectId         *string      `json:"projectId"`
-	Role              *string      `json:"role,omitempty"`
-	State             string       `json:"state"`
-	Title             string       `json:"title"`
+	ActiveExecutionId *string        `json:"activeExecutionId"`
+	Agent             SessionAgent   `json:"agent"`
+	ArchivedAt        *int64         `json:"archivedAt"`
+	BotId             *string        `json:"botId"`
+	Code              *string        `json:"code"`
+	Cost              []CostFigure   `json:"cost"`
+	CreatedAt         *int64         `json:"createdAt"`
+	Error             *string        `json:"error,omitempty"`
+	Id                string         `json:"id"`
+	Origin            *SessionOrigin `json:"origin,omitempty"`
+	ProjectCode       *string        `json:"projectCode"`
+	ProjectId         *string        `json:"projectId"`
+	ProjectIds        []string       `json:"projectIds,omitempty"`
+	Role              *string        `json:"role,omitempty"`
+	State             string         `json:"state"`
+	Subject           *string        `json:"subject,omitempty"`
+	SubjectTitle      *string        `json:"subjectTitle,omitempty"`
+	Title             string         `json:"title"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1019,6 +1023,11 @@ func (v *SessionHead) Validate() error {
 	}
 	for i := range v.Cost {
 		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	if v.Origin != nil {
+		if err := Check(v.Origin, "origin"); err != nil {
 			return err
 		}
 	}
@@ -1634,11 +1643,13 @@ func (v *SessionViewRequest) Validate() error {
 
 // SessionsListReply: nextAfter: null on the last page, else the sort key to pass as after. Row sortKey: [group key, sort key, id]; rows carry activityAt (last change of the session, its messages and events, or the start or end of its executions) and executions (their count). groups: key, label and count of each group of the filtered list (none for group none).
 type SessionsListReply struct {
-	Counts    map[string]int64 `json:"counts"`
-	Groups    []ListGroup      `json:"groups"`
-	NextAfter json.RawMessage  `json:"nextAfter"`
-	Sessions  []SessionRow     `json:"sessions"`
-	Total     int64            `json:"total"`
+	Counts      map[string]int64 `json:"counts"`
+	Groups      []ListGroup      `json:"groups"`
+	HiddenCount *int64           `json:"hiddenCount,omitempty"`
+	NextAfter   json.RawMessage  `json:"nextAfter"`
+	Origins     map[string]int64 `json:"origins,omitempty"`
+	Sessions    []SessionRow     `json:"sessions"`
+	Total       int64            `json:"total"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

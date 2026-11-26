@@ -6,7 +6,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSet
 import { currentUrl, useLocation } from '../router.ts';
 import {
   Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer, TimerChip, CommandPreview,
-  Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
+  Button, ActionMenu, SearchField, ProjectSetMenu, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
   EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, life as lifeIn, statesOf, timeOf, plural, clock,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
   type Timer, type Member, type PlanStep, type Automation, type RelatedTask,
@@ -63,6 +63,15 @@ export function SessionView(props: { id: string; frame: SessionFrame; onClose?: 
   );
 }
 
+/** How a conversation began (session_view head origin), in words. */
+const ORIGIN_WORDS: Record<string, string> = { person: 'a person', telegram: 'Telegram', trigger: 'a trigger', task: 'a task', bot: 'a bot', fork: 'a fork', pipeline: 'a pipeline', lab: 'Lab' };
+/** The subject as a link to its page where it has one (a task, a host), else its title. */
+function subjectLink(subject: string, title: string) {
+  const [kind, id] = [subject.slice(0, subject.indexOf(':')), subject.slice(subject.indexOf(':') + 1)];
+  const href = kind === 'task' ? `/tasks/${encodeURIComponent(id)}` : kind === 'host' ? `/hosts/${encodeURIComponent(id)}` : null;
+  return href ? <a class="chip" href={href}>{title}</a> : <span class="chip">{title}</span>;
+}
+
 function Session(props: { id: string; frame: SessionFrame; onClose?: () => void; onTitle?: (title: string) => void }) {
   const [, go] = useLocation();
   const alive = useAlive();
@@ -77,7 +86,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const s = () => sDoc.data?.head;
   const view = () => sDoc.data;
   // The project's name for the head chip: project_list is one read every page shares.
-  const projects = useOp('project_list', () => (s()?.projectId ? {} : null));
+  const projects = useOp('project_list', () => (s() ? {} : null));
   const project = createMemo(() => projects.data?.projects.find(p => rec(p).id === s()?.projectId));
 
   // Thread: a session that got a task shows the task's thread; Thread quiet folds its blocks (tool-fold.ts).
@@ -420,6 +429,19 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
               />
               <Show when={props.onClose}><Button label="Close" icon="x" iconOnly kind="quiet" onClick={() => props.onClose?.()} /></Show>
             </header>
+            {/* How it began, what it is about, its projects (owner "ok" F1, 2026-11-26; fleet-conversations.md#entities). */}
+            <Show when={s()?.origin}>
+              <div class="sv-meta" data-ui="session-meta">
+                <span class="muted">Started by</span><span>{ORIGIN_WORDS[s()!.origin!] ?? s()!.origin}</span>
+                <Show when={s()?.subject}>
+                  {sub => <><span class="muted">·</span><span class="muted">About</span>{subjectLink(sub(), s()?.subjectTitle ?? sub())}</>}
+                </Show>
+                <span class="muted">·</span><span class="muted">Projects</span>
+                <ProjectSetMenu label="Conversation projects" value={s()?.projectIds ?? []} disabledReason={off() ? 'offline' : undefined}
+                  projects={(projects.data?.projects ?? []).map(p => ({ id: str(rec(p).id) ?? '', name: str(rec(p).name) ?? str(rec(p).id) ?? '' })).filter(p => p.id)}
+                  onChange={ids => { void run(async () => { await op('session_update', { sessionId: props.id, projectIds: ids }); sDoc.reload(); }); }} />
+              </div>
+            </Show>
 
             <Show when={panel() === 'details'}>
               <section class="sv-panel" aria-label="Details">
