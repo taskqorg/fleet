@@ -131,6 +131,13 @@ export const states = {
     'not-enrolled': { label: 'Not enrolled', tone: 'attention', icon: 'circle-dashed' },
     failing: { label: 'Failing', tone: 'danger', icon: 'octagon-x' },
   },
+  /** A person's own harness on a machine (local_agents, docs/designs/fleet-connections.md#13-local-agents). */
+  localAgent: {
+    connected: { label: 'Connected', tone: 'success', icon: 'circle-check' },
+    refresh: { label: 'Needs a refresh', tone: 'attention', icon: 'rotate-cw' },
+    unused: { label: 'Unused', tone: 'neutral', icon: 'circle-dashed' },
+    disconnected: { label: 'Disconnected', tone: 'neutral', icon: 'circle-slash' },
+  },
   /** A project resource grant (access_grants grants): asked, provisioned and probed, or ended. */
   accessGrant: {
     asked: { label: 'Asked', tone: 'attention', icon: 'message-circle-question' },

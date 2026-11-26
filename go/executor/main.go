@@ -150,6 +150,7 @@ var subcommands = map[string]func(args []string) error{
 	"reproject":    func([]string) error { return reproject() },
 	"selftest":     selftest,
 	"connection":   connectionCLI, // connection call <connection> <tool> [spec file]
+	"local-agent":  localAgentCLI, // local-agent <claude|codex|antigravity> <token name> [< token]
 }
 
 func main() {

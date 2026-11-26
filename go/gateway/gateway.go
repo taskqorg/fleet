@@ -148,10 +148,10 @@ type gateway struct {
 	used        map[string]int64
 	currentLock sync.Mutex
 	current     map[string]int
-	spool        *spool
-	draining     atomic.Bool
-	started      time.Time
-	calls        atomic.Uint64
+	spool       *spool
+	draining    atomic.Bool
+	started     time.Time
+	calls       atomic.Uint64
 	// File calls in flight (/healthz transfers), and the cancel of each upload still staging, by call id: a stop
 	// refuses those with draining, since nothing reached the provider yet.
 	transfers       atomic.Int64
@@ -362,6 +362,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, g.usageReport(r.Context()))
+		return
+	}
+	if r.Method == "POST" && r.URL.Path == tokenSpecsPath {
+		g.serveTokenSpecs(w, r)
 		return
 	}
 	route, _ := strings.CutPrefix(r.URL.Path, "/v1/call/")

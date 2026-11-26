@@ -18,6 +18,9 @@ var designExecutorOwned = map[string]map[string]string{
 	"cleanup.go": {
 		"E-PROC": "listing and removing SysV shared memory of killed run processes via /usr/bin/ipcs and ipcrm",
 	},
+	"local_agent.go": {
+		"E-PROC": "running the person's own harness CLI (claude mcp, codex mcp) to register Fleet's servers in its settings",
+	},
 	"coding_tools.go": {
 		"E-PROC": "probing installed coding tool binaries (--version)",
 	},
