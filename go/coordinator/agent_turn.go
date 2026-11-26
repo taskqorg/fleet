@@ -447,11 +447,16 @@ func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, trigger
 func agentPromote(q *Request) error { return agentPromoteOnly(q) }
 
 // agentPromoteOnly is agentPromote for the named sessions (none named: every session). A queued message of another
-// session waits for the dispatch pass (a caller outside it wakes the pass after commit), which promotes each session in a transaction of its own: a transaction that
-// holds GLOBAL or DISPATCH (a terminal receipt, the lost pass) promotes only the sessions its work ended in, never
-// every session (incident 2026-11-26: each terminal receipt locked and promoted ~37 sessions under GLOBAL+DISPATCH).
+// session waits for the dispatch pass (a caller outside it wakes the pass after commit), which promotes each session
+// in a transaction of its own. A transaction that holds GLOBAL or DISPATCH (a terminal receipt, the lost pass)
+// promotes only the sessions its work ended in, never every session (incident 2026-11-26: each terminal receipt
+// locked and promoted ~37 sessions under GLOBAL+DISPATCH).
 func agentPromoteOnly(q *Request, sessions ...string) error {
-	queued, err := queuedMessages(q, db.QueuedMessagesParams{State: ptr("queued")})
+	p := db.QueuedMessagesParams{State: ptr("queued")}
+	if len(sessions) == 1 {
+		p.SessionID = &sessions[0]
+	}
+	queued, err := queuedMessages(q, p)
 	if err != nil || len(queued) == 0 {
 		return err
 	}
