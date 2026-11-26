@@ -17,9 +17,12 @@ finish   --from STEP [--merge FROM] reads step STEP's answer (an agent's output.
          output.json. --merge FROM keeps FROM's documents that STEP did not return (the two-step pipeline).
 
 Result shape: {documents: [{file, type, alias, legal_name, dob, site, signature, readable}],
-               model: {legal_name, aliases, name_variants, duplicates, unreadable}}.
+               model: {legal_name, aliases, name_variants, people, duplicates, unreadable}}; finish groups the
+               documents by name and date of birth (people) and sets name_variants when there are two or more groups,
+               whatever the answer says; the summary tells different people (different dates of birth) from name
+               variants of one person.
 """
-import argparse, base64, json, os, pathlib, re, subprocess, sys, tempfile
+import argparse, base64, json, os, pathlib, re, subprocess, sys, tempfile, unicodedata
 
 TYPES = ('id_card', 'passport', 'selfie_with_id', 'model_release', '2257_form', 'other')
 IDS = ('id_card', 'passport', 'selfie_with_id')
@@ -144,6 +147,58 @@ def norm_date(v):
     return v or None
 
 
+def name_tokens(name):
+    """A legal name as comparable words: accents and letter case dropped, punctuation and hyphens split."""
+    plain = ''.join(c for c in unicodedata.normalize('NFKD', name) if not unicodedata.combining(c)).casefold()
+    return [w for w in re.split(r'[^\w]+|_', plain) if w]
+
+
+def same_person_name(a, b):
+    """True when two spellings of a legal name differ only by noise: letter case, accents, word order, a missing extra
+    given name, or a name written as its initial. Every word of the shorter name has its own word in the longer one
+    (equal, or an initial of it), at least one word matches in full, and a one-word name matches only a one-word name
+    (a given name alone is not the same legal name)."""
+    x, y = name_tokens(a), name_tokens(b)
+    if not x or not y:
+        return True
+    short, long = sorted((x, y), key=len)
+    if len(short) == 1 and len(long) > 1:
+        return False
+    left, full = list(long), 0
+    for w in sorted(short, key=len, reverse=True):  # full words first, so an initial cannot take a word a full word needs
+        hit = next((v for v in left if v == w), None)
+        if hit is None:
+            hit = next((v for v in left if (len(w) == 1 and v.startswith(w)) or (len(v) == 1 and w.startswith(v))), None)
+        else:
+            full += 1
+        if hit is None:
+            return False
+        left.remove(hit)
+    return full >= 1
+
+
+def people(documents):
+    """The people the documents name: documents join one person when their legal names are the same name up to noise
+    (same_person_name) and their dates of birth do not differ. A scene's documents can belong to several models, so
+    two people are reported as two people, not as a spelling problem. Answers [[file, ...], ...], first file order."""
+    named = [d for d in documents if d.get('legal_name')]
+    groups = []
+    for d in named:
+        hit = [g for g in groups if all(same_person_name(d['legal_name'], o['legal_name']) and not (d.get('dob') and o.get('dob') and d['dob'] != o['dob']) for o in g)]
+        if hit:
+            hit[0].append(d)
+        else:
+            groups.append([d])
+    return [[d['file'] for d in g] for g in groups]
+
+
+def distinct_people(documents, groups):
+    """How many different people the groups are: groups with different dates of birth are different people; a group
+    without a date, or with the date of another group, is the same person spelled another way (a name variant)."""
+    dob = {d['file']: d.get('dob') for d in documents}
+    return len({x for g in groups for x in {dob.get(f) for f in g} if x})
+
+
 def normalize(raw, names):
     docs = {}
     for d in raw.get('documents') or []:
@@ -226,6 +281,10 @@ def finish(args):
         m['name_variants'] = m['name_variants'] or fm['name_variants']
         m['duplicates'] = [list(p) for p in sorted({tuple(p) for p in m['duplicates'] + fm['duplicates']})]
         m['unreadable'] = sorted(set(m['unreadable']) | set(fm['unreadable']) | {d['file'] for d in result['documents'] if not d['readable']})
+    # Fleet decides these from the documents' names, not from the model's own judgement, which flagged accents and
+    # missing middle names: name_variants is true only when the documents name more than one person.
+    result['model']['people'] = people(result['documents'])
+    result['model']['name_variants'] = len(result['model']['people']) > 1
     result['files'] = len(names)
     result['summary'] = summary(result)
     write_output(result)
@@ -240,7 +299,10 @@ def summary(result):
         parts.append('%d unreadable' % len(m['unreadable']))
     if m['duplicates']:
         parts.append('%d duplicate pair%s' % (len(m['duplicates']), '' if len(m['duplicates']) == 1 else 's'))
-    if m['name_variants']:
+    persons = distinct_people(result['documents'], m.get('people') or [])
+    if persons > 1:
+        parts.append('%d people' % persons)
+    if len(m.get('people') or []) > max(persons, 1):
         parts.append('name variants')
     return ' · '.join(parts)
 
