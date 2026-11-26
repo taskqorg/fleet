@@ -233,6 +233,8 @@
   .gaprow > .spark { grid-area: spark; }
   .gaprow > .badge { grid-area: chip; justify-self: end; }
   .gaprow-fact { grid-area: fact; justify-self: end; color: var(--fg-muted); font-size: var(--font-size-sm); white-space: nowrap; }
+  /* Without a sparkline (System › Problems) the fact is longer ("HAL0 · 26 Nov"): it takes its own width. */
+  .gaprow.nospark { grid-template-columns: minmax(0, 1fr) 0 max-content max-content; }
   @container (width < 26rem) {
     .gaprow { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "name name name" "detail detail detail" "spark chip fact"; gap: var(--space-1) var(--space-2); }
     .gaprow > .badge { justify-self: start; }

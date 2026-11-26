@@ -24,7 +24,7 @@ export function GapRow(p: {
   onOpen: () => void;
 }) {
   return (
-    <li class={['gaprow', { cur: !!p.current }]} data-ui="gap-row" aria-label={`${p.name}, ${p.chip.text}`}>
+    <li class={['gaprow', { cur: !!p.current, nospark: !p.days }]} data-ui="gap-row" aria-label={`${p.name}, ${p.chip.text}`}>
       <a class="gaprow-name" href={p.href} aria-current={p.current ? 'true' : undefined}
         onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(); } }}>{p.name}</a>
       <span class="gaprow-detail">{p.detail}</span>
