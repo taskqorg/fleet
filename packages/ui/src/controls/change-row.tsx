@@ -27,7 +27,7 @@ export function ChangeRow(p: {
     <li class="chrow-w">
       <article class={['chrow', p.tone && `t-${p.tone}`]} data-ui="change-row" aria-label={[p.name, p.kind, p.chip?.text].filter(Boolean).join(', ')}>
         <header>
-          <h3><a class="chrow-link" href={p.href} onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(); } }}>{p.name}</a></h3>
+          <h3><a class="chrow-link" data-tip={p.name.length > 40 ? p.name : undefined} href={p.href} onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(); } }}>{p.name}</a></h3>
           <Show when={p.kind}><span class="chrow-kind">{p.kind}</span></Show>
         </header>
         <Show when={p.summary}><p>{p.summary}</p></Show>

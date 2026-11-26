@@ -128,7 +128,7 @@ function ChangeRowDemo() {
       actions={[{ label: 'Open task', primary: true, onClick: open }]} />
     <ChangeRow name="cs-review-helper" kind="agent" summary="made in Fleet, not named by any experiment" chip={{ text: 'New in Fleet', tone: 'neutral' }} at={NOW - 3 * hr} href="#" onOpen={open}
       actions={[{ label: 'Publish', primary: true, onClick: open }]} />
-    <ChangeRow name="Antigravity researcher, code mode" chip={{ text: 'Draft', tone: 'neutral' }} summary="3 variants: antigravity-researcher, -code-only, -code-add" at={NOW - 50 * hr} href="#" onOpen={open} />
+    <ChangeRow name="Measure Fleet code mode on antigravity: tokens, cost, time and correctness for multi-search research, and check every host that runs antigravity." chip={{ text: 'Draft', tone: 'neutral' }} summary="3 variants: antigravity-researcher, -code-only, -code-add" at={NOW - 9 * 24 * hr} href="#" onOpen={open} />
   </ul>;
 }
 
