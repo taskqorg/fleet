@@ -188,6 +188,17 @@ func (e *hostWakeEntry) wake() {
 }
 
 func init() {
+	// The rolling-update turn survives a coordinator restart: the hosts that reported a drain just before it count as
+	// draining until they poll again (rollingDrain).
+	onStart(func(ctx context.Context, a *App) {
+		_ = a.store.Read(ctx, nil, func(q *Request) error {
+			ids, err := q.db().HostsDraining(q.ctx(), onlineMs/1000)
+			for _, id := range ids {
+				a.draining.Store(id, nowMs())
+			}
+			return err
+		})
+	})
 	hostRouteObserved(contract.RoutePoll, pollObserved, func(q *Request, b *contract.PollRequest) (contract.PollReply, error) { return q.app.pollOnce(q, b) })
 }
 
@@ -953,8 +964,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	obs.Pacing = pace.view
 	if d := hostDrain(b.Drain, b.Version, pace.target, autoUpdateOf(q.host), time.Now()); d != nil {
 		obs.Drain = d
-		if d.Fenced && len(d.WaitsFor) > 0 {
-			// Work holding a fenced drain is what blocks new starts: the problem explains it and replaces version-behind.
+		if len(d.WaitsFor) > 0 {
+			// Work holding a drain is what blocks new starts (dispatch places none for the whole episode, pauses included):
+			// the problem explains it and replaces version-behind.
 			// A drained host installs within minutes and is no problem.
 			kept := []hostProblem{{Kind: "updating", Detail: drainDetail(d)}}
 			for _, p := range ps {

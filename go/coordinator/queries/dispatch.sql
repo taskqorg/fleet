@@ -333,3 +333,8 @@ ORDER BY t.priority DESC, t.created_at;
 
 -- name: DispTaskSetWaitReason :exec
 UPDATE task SET wait_reason=sqlc.narg(wait_reason), updated_at=now() WHERE id= @id AND state='queued' AND wait_reason IS DISTINCT FROM sqlc.narg(wait_reason);
+
+-- name: HostsDraining :many
+-- The hosts whose last poll, within secs, reported an update drain: the rolling-update turn across a coordinator restart.
+SELECT id FROM host_observation WHERE jsonb_typeof(payload->'drain') = 'object'
+ AND last_seen_at > now() - make_interval(secs => @secs::float8) ORDER BY seq;
