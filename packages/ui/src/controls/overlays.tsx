@@ -205,7 +205,7 @@ export function EntityCode(p: {
     <Show when={ref()} fallback={
       <Show when={!k0() && p.id}>
         {/* A bare id (agent text) never shows itself (OR-38): a placeholder while its kind loads, then Copy id when it names no visible entity. */}
-        <Show when={holder()?.read() === null} fallback={<span class="ec-pending muted" aria-busy="true">…</span>}>
+        <Show when={!holder() || holder()!.read() === null} fallback={<span class="ec-pending muted" aria-busy="true">…</span>}>
           <CopyButton label="Copy id" value={p.id!} iconOnly />
         </Show>
       </Show>
