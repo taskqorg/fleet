@@ -3,7 +3,7 @@
  "masters": [
   {
    "master": "Live: status pill",
-   "id": "3333bf1b163969ff",
+   "id": "626a0676d4d848e2",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#status-pill",
    "spec": "docs/design-system/controls/status-pill.md",
@@ -29,7 +29,7 @@
   },
   {
    "master": "Live: figure tile with sparkline",
-   "id": "7217b53921026e3b",
+   "id": "50bef8082e7a6bca",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#figure-tile",
    "spec": "docs/design-system/controls/figure-tile.md",
@@ -65,7 +65,7 @@
   },
   {
    "master": "Live: gauge",
-   "id": "4fed8e04c86fbc6f",
+   "id": "7a4b39ff8e8a463f",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#gauge",
    "spec": "docs/design-system/controls/fill-bar.md",
@@ -96,7 +96,7 @@
   },
   {
    "master": "Live: run strip",
-   "id": "31542ecb0eb2c42d",
+   "id": "beaec23678008eb6",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#run-strip",
    "spec": "docs/design-system/controls/time-strip.md",
@@ -127,7 +127,7 @@
   },
   {
    "master": "Live: worker slot",
-   "id": "6db65544ffbbec31",
+   "id": "3016f73753c8efaf",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#worker-slot",
    "spec": "docs/design-system/controls/worker-slot.md",
@@ -158,7 +158,7 @@
   },
   {
    "master": "Live: host band",
-   "id": "50a948fbc0dd10a6",
+   "id": "95c700cc93d0ad22",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#host-band",
    "spec": "docs/design-system/controls/host-band.md",
@@ -189,7 +189,7 @@
   },
   {
    "master": "Changes: drift rows",
-   "id": "07471ce2c8f021b5",
+   "id": "a3e5953aafffee9c",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#drift-row",
    "spec": "docs/design-system/controls/drift-row.md",
@@ -204,7 +204,7 @@
   },
   {
    "master": "System › Agents: gap rows",
-   "id": null,
+   "id": "33c528a0521e406a",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#gap-row",
    "spec": "docs/design-system/controls/gap-row.md",
@@ -229,7 +229,7 @@
   },
   {
    "master": "Changes: change rows",
-   "id": "9b625841f37be83f",
+   "id": "b6fca0a3b7cd98dd",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#change-row",
    "spec": "docs/design-system/controls/change-row.md",
@@ -244,7 +244,7 @@
   },
   {
    "master": "Live: live rows",
-   "id": "ede0c39e6eb8a8f9",
+   "id": "4c10f81c7b4de348",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#live-row",
    "spec": "docs/design-system/controls/live-row.md",
@@ -295,7 +295,7 @@
   },
   {
    "master": "Rows: work facts",
-   "id": "49f841b7530f9691",
+   "id": "45e99992f48931e1",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#work-facts",
    "spec": "docs/design-system/controls/work-facts.md",
@@ -346,7 +346,7 @@
   },
   {
    "master": "Sections: catalogue rows and list groups",
-   "id": "d4eb39e8ba8adb14",
+   "id": "6b27b0a43a4a1f4c",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#catalogue-row",
    "spec": "docs/design-system/controls/catalogue-tree.md",
@@ -412,7 +412,7 @@
   },
   {
    "master": "Sections: search, view chip, filter bar",
-   "id": "3ec96f8d2934b94e",
+   "id": "4598c8eb8b140553",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#filter-blocks",
    "spec": "docs/design-system/controls/filter-bar.md",
@@ -488,7 +488,7 @@
   },
   {
    "master": "Sections: detail head, tab bar, detail section and key rows",
-   "id": "620810ac3401d9a3",
+   "id": "f9d34c3938052eca",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#detail-head",
    "spec": "docs/design-system/controls/detail-section.md",
@@ -594,7 +594,7 @@
   },
   {
    "master": "Sections: table rows",
-   "id": "3252ad53bc235227",
+   "id": "2479650dd5aed3b8",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#table-row",
    "spec": "docs/design-system/controls/data-list.md",
@@ -675,7 +675,7 @@
   },
   {
    "master": "Sections: share bar, normal and partial",
-   "id": "ed459e693385a640",
+   "id": "92d701f5e6b8377b",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#share-bar-partial",
    "spec": "docs/design-system/controls/share-bar.md",
@@ -701,7 +701,7 @@
   },
   {
    "master": "Sections: matrix cells",
-   "id": "f2d8ad5e494a0bb3",
+   "id": "6608cdd89c7e67dd",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#matrix-cell",
    "spec": "docs/design-system/controls/matrix-cell.md",
@@ -727,7 +727,7 @@
   },
   {
    "master": "Sections: problem rows with Details and repeats",
-   "id": "c43a3a1f694e604f",
+   "id": "4ddcd6609bc88d7f",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#problem-blocks",
    "spec": "docs/design-system/controls/problem-row.md",
@@ -758,7 +758,7 @@
   },
   {
    "master": "Pinned zone in the navigation",
-   "id": "6a04e3ecb457846c",
+   "id": "48b5b507089b1f19",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#rail-pinned",
    "spec": "docs/design-system/controls/nav-rail.md",
@@ -824,7 +824,7 @@
   },
   {
    "master": "Navigation rail with pinned sections",
-   "id": "ededfd990d724bfd",
+   "id": "8739639daedb7ee7",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#nav-rail",
    "spec": "docs/design-system/controls/nav-rail.md",
@@ -885,7 +885,7 @@
   },
   {
    "master": "Spotlight palette",
-   "id": "16d02cad29f7ddd4",
+   "id": "71499d2a37b664f2",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#spotlight",
    "spec": "docs/design-system/controls/spotlight.md",
@@ -956,7 +956,7 @@
   },
   {
    "master": "Focus chip in the shell header",
-   "id": "76211be1aa4cced1",
+   "id": "d49138943395f603",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#focus-control",
    "spec": "docs/design-system/controls/focus-control.md",
@@ -1022,7 +1022,7 @@
   },
   {
    "master": "Split button",
-   "id": "5999e05d847f01bf",
+   "id": "849bf7bc0ff637e5",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#split-button",
    "spec": "docs/design-system/controls/split-button.md",
@@ -1042,7 +1042,7 @@
   },
   {
    "master": "Button",
-   "id": "2aae30ea3b0c3332",
+   "id": "9746a2ca927dab2c",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#button",
    "spec": "docs/design-system/controls/button.md",
@@ -1103,7 +1103,7 @@
   },
   {
    "master": "Entity reference and card",
-   "id": "4b8f60f1088847d9",
+   "id": "1b02d80b353133b9",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#entity-card",
    "spec": "docs/design-system/controls/entity-card.md",
@@ -1123,7 +1123,7 @@
   },
   {
    "master": "State badge",
-   "id": "22dbf1984dfcf5d8",
+   "id": "e85bc86e92f56ac2",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#state-badge",
    "spec": "docs/design-system/controls/state-badge.md",
@@ -1189,7 +1189,7 @@
   },
   {
    "master": "Numbers, totals, age chips",
-   "id": "17867564e719a9a5",
+   "id": "2c6968d5a0d6c021",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#number",
    "spec": "docs/design-system/controls/number.md",
@@ -1270,7 +1270,7 @@
   },
   {
    "master": "Fill bar",
-   "id": "f5c9c0bbf342d954",
+   "id": "53854473b9794009",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#fill-bar",
    "spec": "docs/design-system/controls/fill-bar.md",
@@ -1285,7 +1285,7 @@
   },
   {
    "master": "Time strip",
-   "id": "36d1f188cd737ea8",
+   "id": "b356d7f5b14384a8",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#time-strip",
    "spec": "docs/design-system/controls/time-strip.md",
@@ -1300,7 +1300,7 @@
   },
   {
    "master": "Area chart",
-   "id": "045ed58b87eb8291",
+   "id": "6f338a10fc8c69f4",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#area-chart",
    "spec": "docs/design-system/controls/area-chart.md",
@@ -1315,7 +1315,7 @@
   },
   {
    "master": "Harness marks, delivery stages, outcome block, detail sections",
-   "id": "5d8d66f5d1f04299",
+   "id": "eedde39bcf81e403",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#lifecycle",
    "spec": "docs/design-system/controls/harness-counts.md",
@@ -1361,7 +1361,7 @@
   },
   {
    "master": "Stat strip",
-   "id": "59f78bdafcc82d71",
+   "id": "c178f7d571f6bf1e",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#stat-strip",
    "spec": "docs/design-system/controls/stat-strip.md",
@@ -1376,7 +1376,7 @@
   },
   {
    "master": "Updating list: pending counters and rows, row checks",
-   "id": "d34d87d6dbcfd528",
+   "id": "c9494b297609b36f",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#list-pending",
    "spec": null,
@@ -1472,7 +1472,7 @@
   },
   {
    "master": "Group and sort",
-   "id": "114617e19761dfd8",
+   "id": "f6cf22a72ce1e91b",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#group-sort",
    "spec": "docs/design-system/controls/filter-bar.md",
@@ -1502,7 +1502,7 @@
   },
   {
    "master": "Task list view: views, state counters, grouping, filters, virtual list",
-   "id": "716cb796cbf17b53",
+   "id": "f50e47c3d31e4ba3",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#data-list",
    "spec": "docs/design-system/controls/data-list.md",
@@ -1568,7 +1568,7 @@
   },
   {
    "master": "Execution tree",
-   "id": "051c0ac3a5c59f52",
+   "id": "28fa04d8e775ea0c",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#execution-tree",
    "spec": "docs/design-system/controls/execution-tree.md",
@@ -1583,7 +1583,7 @@
   },
   {
    "master": "Step list and flow strip",
-   "id": "115904584263b933",
+   "id": "069563a1e51f9124",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#step-list",
    "spec": "docs/design-system/controls/step-list.md",
@@ -1614,7 +1614,7 @@
   },
   {
    "master": "Draft bar and choice",
-   "id": "8537a4144a6be682",
+   "id": "3f2ff60bde6d921d",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#draft-bar",
    "spec": "docs/design-system/controls/draft-bar.md",
@@ -1634,7 +1634,7 @@
   },
   {
    "master": "Live transcript",
-   "id": "1fd7de34646bba78",
+   "id": "3ee89eac888bd4db",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#transcript-viewer",
    "spec": "docs/design-system/controls/transcript-viewer.md",
@@ -1700,7 +1700,7 @@
   },
   {
    "master": "Decision block",
-   "id": "d76062025048bfdf",
+   "id": "e8b0bd837da56cac",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#decision-block",
    "spec": "docs/design-system/controls/decision-block.md",
@@ -1766,7 +1766,7 @@
   },
   {
    "master": "Result viewer shell",
-   "id": "eac008667be89a90",
+   "id": "26f6a8e4e5fe2145",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#result-viewer",
    "spec": "docs/design-system/controls/result-viewer.md",
@@ -1786,7 +1786,7 @@
   },
   {
    "master": "Text field",
-   "id": "41e5b5c4ec2820ee",
+   "id": "e9cfe60cc65ec337",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#text-field",
    "spec": "docs/design-system/controls/text-field.md",
@@ -1807,7 +1807,7 @@
   },
   {
    "master": "Setting field",
-   "id": "21d0b3f7bce9f0ed",
+   "id": "8724bc7b195d770f",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#setting-field",
    "spec": "docs/design-system/controls/setting-field.md",
@@ -1822,7 +1822,7 @@
   },
   {
    "master": "Start a conversation: project, preset, start facts",
-   "id": "6c4e518cd8834e04",
+   "id": "fbf14639330f4a26",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#start-picker",
    "spec": null,
@@ -1868,7 +1868,7 @@
   },
   {
    "master": "Composer: idle, with files, running",
-   "id": "a3b8cbc6d7ad5654",
+   "id": "d7d43cfce046c9db",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#composer",
    "spec": "docs/design-system/controls/composer.md",
@@ -1914,7 +1914,7 @@
   },
   {
    "master": "File picker: files for a run",
-   "id": "32dc5dd888593efb",
+   "id": "c4f90c693dc08413",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#file-picker",
    "spec": "docs/design-system/controls/file-picker.md",
@@ -1929,7 +1929,7 @@
   },
   {
    "master": "Code editor and diff text",
-   "id": "4af64a24bbb2eaf3",
+   "id": "6019c45e26e20e7a",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#code-editor",
    "spec": "docs/design-system/controls/code-editor.md",
@@ -1944,7 +1944,7 @@
   },
   {
    "master": "Offline marker",
-   "id": "a5a5627b9dfb0ee8",
+   "id": "91f96dd6f990c4a7",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#offline-marker",
    "spec": "docs/design-system/controls/offline-marker.md",
@@ -1959,7 +1959,7 @@
   },
   {
    "master": "Problem row",
-   "id": "7833ab45438a3c49",
+   "id": "fa1e78689433f22e",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#problem-row",
    "spec": "docs/design-system/controls/problem-row.md",
@@ -1990,7 +1990,7 @@
   },
   {
    "master": "Loading, empty, error, stale",
-   "id": "ed17547d45cfc13a",
+   "id": "0a21627d5cb7ab71",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#status-states",
    "spec": "docs/design-system/controls/status-states.md",
@@ -2071,7 +2071,7 @@
   },
   {
    "master": "State dot and word",
-   "id": "22fc7a0d532e75a6",
+   "id": "0957b0e863c0f29a",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#state-dot",
    "spec": "docs/design-system/controls/state-badge.md",
@@ -2132,7 +2132,7 @@
   },
   {
    "master": "Avatar, project chip, button kinds",
-   "id": "fd40a6013ad152b0",
+   "id": "655346886f22c178",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#avatar",
    "spec": "docs/design-system/controls/session-card.md",
@@ -2208,7 +2208,7 @@
   },
   {
    "master": "Bot avatar",
-   "id": "e08c735f3acc9b84",
+   "id": "3083ac16d283b33c",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#bot-avatar",
    "spec": "docs/design-system/controls/avatar.md",
@@ -2274,7 +2274,7 @@
   },
   {
    "master": "Question card",
-   "id": "ecc63e81e6339f99",
+   "id": "cfd0fc3075aa7c12",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#question-card",
    "spec": "docs/design-system/controls/decision-block.md",
@@ -2330,7 +2330,7 @@
   },
   {
    "master": "Open question",
-   "id": "ad3fbd57f261e762",
+   "id": "edf5a18dfb8b61d9",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#open-question",
    "spec": "docs/design-system/controls/decision-block.md",
@@ -2345,7 +2345,7 @@
   },
   {
    "master": "Session card",
-   "id": "5e895f090953e21b",
+   "id": "d0adad06a5695985",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#session-card",
    "spec": "docs/design-system/controls/session-card.md",
@@ -2416,7 +2416,7 @@
   },
   {
    "master": "Bot tile",
-   "id": "1200c3b4ca3f5bb3",
+   "id": "9515c9f64b5b82e0",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#bot-tile",
    "spec": "docs/design-system/controls/bot-tile.md",
@@ -2447,7 +2447,7 @@
   },
   {
    "master": "Pulse line and blocker chip",
-   "id": "450909e83454396a",
+   "id": "c34e7a18fb8c7662",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#pulse-line",
    "spec": "docs/design-system/controls/pulse-line.md",
@@ -2473,7 +2473,7 @@
   },
   {
    "master": "Quiet summary",
-   "id": "1705666a8727c946",
+   "id": "51a4eef8962bf93d",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#quiet-summary",
    "spec": "docs/design-system/controls/quiet-summary.md",
@@ -2604,7 +2604,7 @@
   },
   {
    "master": "Composer target picker",
-   "id": "87458ab091ab93c1",
+   "id": "561e5ff57cb2a9a8",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#target-picker",
    "spec": "docs/design-system/controls/composer.md",
@@ -2645,7 +2645,7 @@
   },
   {
    "master": "Message in the session view",
-   "id": "4a06334a13b6312c",
+   "id": "de63a1cc3f8c0633",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#message",
    "spec": "docs/design-system/controls/transcript-viewer.md",
@@ -2660,7 +2660,7 @@
   },
   {
    "master": "Tool line",
-   "id": "a462766cae03d70c",
+   "id": "20d893407d9d3368",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#tool-line",
    "spec": "docs/design-system/controls/tool-line.md",
@@ -2701,7 +2701,7 @@
   },
   {
    "master": "Plan item, timer row, swarm member",
-   "id": "e8987d67c5bf9f26",
+   "id": "468d0e5ac0b1a5c4",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#context-parts",
    "spec": "docs/design-system/controls/context-panel.md",
@@ -2752,7 +2752,7 @@
   },
   {
    "master": "Timer chip",
-   "id": "35307268a1e691dd",
+   "id": "dfa97a24acdaa898",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#timer-chip",
    "spec": "docs/design-system/controls/context-panel.md",
@@ -2767,7 +2767,7 @@
   },
   {
    "master": "Composer command with preview",
-   "id": "1e3aed9e215c2773",
+   "id": "5ed3801cee137d2b",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#composer-command",
    "spec": "docs/design-system/controls/composer.md",
@@ -2853,7 +2853,7 @@
   },
   {
    "master": "Context panel",
-   "id": "178efa7cddb07228",
+   "id": "2f609e58b13f7077",
    "canvas": "components",
    "book": "docs/design-system/book/index.html#context-panel",
    "spec": "docs/design-system/controls/context-panel.md",

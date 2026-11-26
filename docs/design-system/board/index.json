@@ -101,7 +101,7 @@
    "status": null
   },
   {
-   "id": "43a0ae360e02c8ae",
+   "id": "1dbab19740a6d8ad",
    "canvas": "components",
    "name": "Components 1 · Pinned zone in the navigation, Navigation rail with pinned sections, Spotlight palette, Focus chip in the shell header, ",
    "page": null,
@@ -112,7 +112,7 @@
    "status": null
   },
   {
-   "id": "a5d18b878c5ddc55",
+   "id": "8edaa0707d8ad4a4",
    "canvas": "components",
    "name": "Components 2 · Time strip, Area chart, Harness marks, delivery stages, outcome block, detail sections, Stat strip, Updating list: pendi",
    "page": null,
@@ -123,7 +123,7 @@
    "status": null
   },
   {
-   "id": "4e3c133ad0a8ca5d",
+   "id": "258ae883fcb0aed9",
    "canvas": "components",
    "name": "Components 3 · Live transcript, Decision block, Result viewer shell, Text field, Setting field, Start a conversation: project, preset, ",
    "page": null,
@@ -134,7 +134,7 @@
    "status": null
   },
   {
-   "id": "e03dfdb847aa6790",
+   "id": "7d793279ee8b6121",
    "canvas": "components",
    "name": "Components 4 · Problem row, Loading, empty, error, stale, State dot and word, Avatar, project chip, button kinds, Bot avatar, Question ",
    "page": null,
@@ -145,7 +145,7 @@
    "status": null
   },
   {
-   "id": "72b3432a992cd6ec",
+   "id": "d977769475a1c388",
    "canvas": "components",
    "name": "Components 5 · Quiet summary, Composer target picker, Message in the session view, Tool line, Plan item, timer row, swarm member, Timer",
    "page": null,
@@ -156,7 +156,7 @@
    "status": null
   },
   {
-   "id": "eee72b2a905e1929",
+   "id": "091eb2c72064e83c",
    "canvas": "components",
    "name": "Components 6 · Live: figure tile with sparkline, Live: gauge, Live: run strip, Live: worker slot, Live: host band, Changes: drift rows,",
    "page": null,
@@ -167,9 +167,9 @@
    "status": null
   },
   {
-   "id": "1b2682b75cf6820d",
+   "id": "003dc3ea346aebe4",
    "canvas": "components",
-   "name": "Components 7 · Sections: search, view chip, filter bar, Sections: detail head, tab bar, detail section and key rows, Sections: table ro",
+   "name": "Components 7 · Sections: catalogue rows and list groups, Sections: search, view chip, filter bar, Sections: detail head, tab bar, detai",
    "page": null,
    "width": null,
    "frameWidth": 1400,
@@ -178,7 +178,7 @@
    "status": null
   },
   {
-   "id": "0c0b51273f462d55",
+   "id": "f4cc371d1013d1e4",
    "canvas": "components",
    "name": "Components · light check (16 core masters as instances)",
    "page": null,
