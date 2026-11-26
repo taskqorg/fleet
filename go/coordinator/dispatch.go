@@ -186,7 +186,9 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 				}
 				terminal = map[string]bool{}
 				for _, m := range ms {
+					_, ts := obs.Start(q.ctx(), "promote.terminal-check", obs.KindInternal)
 					t, err := boardWakeTerminal(q, m)
+					ts.End(err)
 					if err != nil {
 						return err
 					}
