@@ -514,7 +514,7 @@ func reclassifyGaps(ctx context.Context, a *App, q *Request, days int) (contract
 		out.Executions += int64(len(runs))
 		after = runs[len(runs)-1].ID
 	}
-	err = a.store.Write(ctx, q, []string{"agent-gaps"}, func(q *Request) error {
+	err = a.store.Write(ctx, q, []string{gapLock}, func(q *Request) error {
 		if _, err := q.db().AgentGapsClearGateway(q.ctx(), since); err != nil {
 			return err
 		}
@@ -561,7 +561,7 @@ func agentGapsCatchUp(ctx context.Context, a *App) error {
 			return err
 		}
 	}
-	return a.store.Write(ctx, nil, []string{"agent-gaps"}, func(q *Request) error { return agentGapFindingsPass(q, r, time.Now().UTC()) })
+	return a.store.Write(ctx, nil, []string{gapLock}, func(q *Request) error { return agentGapFindingsPass(q, r, time.Now().UTC()) })
 }
 
 func agentGapsReclassify(q *Request, r *contract.AgentGapsReclassifyRequest) (contract.AgentGapsReclassifyReply, error) {

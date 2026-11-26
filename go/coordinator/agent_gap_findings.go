@@ -25,6 +25,9 @@ func init() {
 
 const gapSource = "agent-gaps"
 
+// gapLock: the findings lock (a problems scope: problem questions are written under it, as the rules pass does).
+const gapLock = "problems:agent-gaps"
+
 var agentGapFindingTransitions = map[string][]string{
 	"open":          {"investigating", "dismissed", "linked"},
 	"investigating": {"linked", "dismissed"},
@@ -344,38 +347,43 @@ func gapFixed(beforeCount, beforeRuns, afterCount, afterRuns int32, ratio float6
 	return float64(afterCount)/float64(afterRuns) <= ratio*float64(beforeCount)/float64(max(beforeRuns, 1))
 }
 
-// agentGapAnswerAfter (runAnswerAfter): investigate starts the PM conversation, dismiss sets the finding aside.
+// agentGapAnswerAfter (runAnswerAfter): investigate starts the PM conversation, dismiss sets the finding aside. The
+// conversation starts before the findings lock is taken: a start takes project and session locks, which rank below it.
 func agentGapAnswerAfter(q *Request, id string) error {
 	qu, err := q.db().AgentGapQuestion(q.ctx(), id)
 	if err != nil || qu.Source != gapSource || qu.Class == "" {
 		return nil
 	}
-	if err := acquireTxLock(q, "agent-gaps"); err != nil {
-		return err
-	}
 	f, err := agentGapFindingOf(q, qu.Class)
-	if err != nil || f == nil || deref(f.QuestionID) != id {
+	if err != nil || f == nil || deref(f.QuestionID) != id || (qu.Answer != "dismiss" && qu.Answer != "investigate") {
 		return err
 	}
-	switch qu.Answer {
-	case "dismiss":
+	var sid string
+	var startErr error
+	if qu.Answer == "investigate" {
+		sid, startErr = startGapInvestigation(q, *f, id)
+	}
+	if err := acquireTxLock(q, gapLock); err != nil {
+		return err
+	}
+	if f, err = agentGapFindingOf(q, qu.Class); err != nil || f == nil || deref(f.QuestionID) != id {
+		return err
+	}
+	if qu.Answer == "dismiss" {
 		_, err := agentGapFindingTransition(q, *f, "dismissed")
 		return err
-	case "investigate":
-		sid, err := startGapInvestigation(q, *f, id)
-		if err != nil {
-			f.Note = cutRunes("Investigate could not start: "+err.Error(), 300)
-		} else {
-			f.SessionID, f.Note = &sid, ""
-		}
-		to := "investigating"
-		if f.State == "linked" {
-			to = f.State
-		}
-		_, err = agentGapFindingTransition(q, *f, to)
-		return err
 	}
-	return nil
+	if startErr != nil {
+		f.Note = cutRunes("Investigate could not start: "+startErr.Error(), 300)
+	} else {
+		f.SessionID, f.Note = &sid, ""
+	}
+	to := "investigating"
+	if f.State == "linked" {
+		to = f.State
+	}
+	_, err = agentGapFindingTransition(q, *f, to)
+	return err
 }
 
 // startGapInvestigation starts the PM conversation (preset investigate, project fleet) as the person who answered,
@@ -447,7 +455,7 @@ func agentGapsLink(q *Request, r *contract.AgentGapsLinkRequest) (contract.Agent
 	if r.Pr < 1 {
 		return none, fail(400, "pr: a pull request number")
 	}
-	if err := acquireTxLock(q, "agent-gaps"); err != nil { // the findings pass writes whole findings under this lock
+	if err := acquireTxLock(q, gapLock); err != nil { // the findings pass writes whole findings under this lock
 		return none, err
 	}
 	f, err := agentGapFindingOf(q, r.Class)
