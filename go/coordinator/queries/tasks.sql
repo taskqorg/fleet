@@ -126,7 +126,7 @@ UPDATE task SET accepted_by= @accepted_by,accepted_at=now(),accepted_artifact_id
 -- Question rows (questions_list): each filter optional; projects keeps those projects (projects_null: and questions
 -- outside projects), excluded leaves those out (exclude_null: and questions outside projects).
 SELECT id,code,kind,project_id,task_id,execution_id,session_id,text,options,asked_by,asked_at,answer,answered_by,answered_at,state::text AS state,
- (data->'artifactIds')::jsonb AS artifact_ids,(data->'cause')::jsonb AS cause
+ (data->'artifactIds')::jsonb AS artifact_ids,(data->'cause')::jsonb AS cause,addressed_to
 FROM question
 WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
  AND (sqlc.narg(task_id)::text IS NULL OR task_id = sqlc.narg(task_id))

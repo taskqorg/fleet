@@ -30,8 +30,11 @@ const TARGET_KEY = 'fleet:home-target';
 
 /** The card groups in attention order: a session is in the group of its state's word (registry `life`, OR-55). */
 type Group = 'waiting' | 'failed' | 'working' | 'queued';
-// Queued holds preparing sessions whose run has not started (lifeOfCard): its link filters Conversations to preparing.
-const GROUPS = (['waiting', 'failed', 'working', 'queued'] as const).map(id => ({ id, ...states.life[id], states: id === 'queued' ? ['preparing'] : statesOf('session', [id]) as string[] }));
+// A group's Conversations filter: Queued holds preparing sessions whose run has not started (lifeOfCard); Working also
+// holds sessions waiting on other work, not on this person.
+const groupStates = (id: Group): string[] =>
+  id === 'queued' ? ['preparing'] : id === 'working' ? [...statesOf('session', ['working']), 'waiting'] : statesOf('session', [id]) as string[];
+const GROUPS = (['waiting', 'failed', 'working', 'queued'] as const).map(id => ({ id, ...states.life[id], states: groupStates(id) }));
 /** Failed sessions that share a plain cause (OR-58): the cause, how many, their hosts. */
 type Cause = { id: string; text: string; n: number; hosts: string[] };
 /**
@@ -214,7 +217,7 @@ function HomePage() {
   createEffect(() => [loaded(), view.data?.bots] as const, () => { requestAnimationFrame(measure); });
   const quiet = createMemo(() => loaded() && !grouped().some(g => (g.id === 'waiting' || g.id === 'failed') && g.cards.length > 0));
 
-  // Pulse: the Working group's count (one source with the group below), queued sessions, done today, then problems.
+  // Pulse: the Working and Queued groups' card counts (one source with the groups below), done today, then problems.
   const rows = () => view.data?.sessions ?? [];
   const chips = createMemo(() => blockers(view.data?.blockers ?? []));
   const problems = createMemo((): PulseProblems | undefined => {
@@ -225,7 +228,7 @@ function HomePage() {
     if (p.stuck > 0) pills.push({ text: `${p.stuck} stuck${p.firstStuck ? `: ${headline(p.firstStuck.text)}` : ''}`, tone: 'attention', href: p.firstStuck ? `/system/problems/${p.firstStuck.code}` : '/system/problems' });
     return { n: p.open, owner: p.owners.length === 1 ? p.owners[0].name : undefined, href: '/system/problems', pills };
   });
-  const stateHref = (l: Life) => formatView({ view: 'conversations', state: statesOf('session', [l]) });
+  const stateHref = (l: Life) => formatView({ view: 'conversations', state: GROUPS.find(g => g.id === l)?.states ?? statesOf('session', [l]) });
 
   // Quiet summary: since the last visit, or today on a first one (home_view counts).
   const quietFacts = createMemo(() => {
@@ -414,8 +417,8 @@ function HomePage() {
           <Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} />
         </Show>
         <PulseLine
-          working={grouped().find(g => g.id === 'working')?.cards.filter(c => c.s && lifeOfCard(c.s) === 'working').length ?? 0}
-          queued={rows().filter(s => lifeOfCard(s) === 'queued').length}
+          working={grouped().find(g => g.id === 'working')?.cards.length ?? 0}
+          queued={grouped().find(g => g.id === 'queued')?.cards.length ?? 0}
           done={view.data?.counts.doneToday ?? 0}
           blockers={chips()}
           problems={problems()}

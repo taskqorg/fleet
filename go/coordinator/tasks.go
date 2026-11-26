@@ -1073,7 +1073,7 @@ func questionRows(q *Request, p db.TaskQuestionsParams, projects, exclude []stri
 		}
 		out = append(out, contract.QuestionRow{Id: r.ID, Code: r.Code, Kind: contract.QuestionKind(r.Kind), ProjectId: r.ProjectID, TaskId: r.TaskID, ExecutionId: r.ExecutionID,
 			SessionId: r.SessionID, Text: r.Text, Options: rawJSON(r.Options), AskedBy: r.AskedBy, AskedAt: timeText(r.AskedAt), Answer: r.Answer, AnsweredBy: r.AnsweredBy,
-			AnsweredAt: optTime(r.AnsweredAt), State: r.State, ArtifactIds: r.ArtifactIds, Cause: r.Cause}) // artifactIds and cause: absent, not null, as in the TypeScript view
+			AnsweredAt: optTime(r.AnsweredAt), State: r.State, ArtifactIds: r.ArtifactIds, Cause: r.Cause, AddressedTo: strPtr(r.AddressedTo)}) // artifactIds, cause, addressedTo: absent, not null
 	}
 	return out, nil
 }

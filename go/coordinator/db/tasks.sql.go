@@ -1261,7 +1261,7 @@ func (q *Queries) TaskQuestionLock(ctx context.Context, id string) (TaskQuestion
 
 const taskQuestions = `-- name: TaskQuestions :many
 SELECT id,code,kind,project_id,task_id,execution_id,session_id,text,options,asked_by,asked_at,answer,answered_by,answered_at,state::text AS state,
- (data->'artifactIds')::jsonb AS artifact_ids,(data->'cause')::jsonb AS cause
+ (data->'artifactIds')::jsonb AS artifact_ids,(data->'cause')::jsonb AS cause,addressed_to
 FROM question
 WHERE ($1::text IS NULL OR id = $1)
  AND ($2::text IS NULL OR task_id = $2)
@@ -1311,6 +1311,7 @@ type TaskQuestionsRow struct {
 	State       string
 	ArtifactIds []byte
 	Cause       []byte
+	AddressedTo *string
 }
 
 // Question rows (questions_list): each filter optional; projects keeps those projects (projects_null: and questions
@@ -1354,6 +1355,7 @@ func (q *Queries) TaskQuestions(ctx context.Context, arg TaskQuestionsParams) ([
 			&i.State,
 			&i.ArtifactIds,
 			&i.Cause,
+			&i.AddressedTo,
 		); err != nil {
 			return nil, err
 		}
