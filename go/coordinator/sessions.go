@@ -48,9 +48,10 @@ type sessionListDBRow struct {
 }
 
 func (x sessionListDBRow) row() contract.SessionRow {
-	// The stored title (session_rename, or the generated one: session_titles.go); until it exists, the first message.
+	// The stored title (session_rename, or the generated one: session_titles.go); until it exists, the first message with
+	// its links named, never raw (plainTitle).
 	var title *string
-	if t := []rune(firstString(deref(x.Title), deref(x.FirstMessage))); len(t) > 0 {
+	if t := []rune(firstString(plainTitle(deref(x.Title)), plainTitle(clip(deref(x.FirstMessage), 400)))); len(t) > 0 {
 		title = ptr(string(t[:min(200, len(t))]))
 	}
 	harness := x.Harness

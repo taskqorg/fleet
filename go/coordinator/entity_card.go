@@ -35,7 +35,7 @@ var codeKinds = map[string]contract.EntityKind{"T": contract.EntityKindTask, "Q"
 
 func init() {
 	op("entity_card", func(q *Request, r *contract.EntityCardRequest) (contract.EntityCardReply, error) {
-		kind, id, err := cardTarget(q, r, nil)
+		kind, id, err := cardTarget(q, r, nil, nil)
 		if err != nil {
 			return contract.EntityCardReply{}, err
 		}
@@ -58,10 +58,20 @@ func entityRefs(q *Request, r *contract.EntityRefsRequest) (contract.EntityRefsR
 	if len(r.Refs) > maxEntityRefs {
 		return contract.EntityRefsReply{}, fail(400, fmt.Sprintf("At most %d references", maxEntityRefs))
 	}
-	var codes []string
+	var codes, bare []string
 	for _, ref := range r.Refs {
 		if ref.Code != nil && ref.Kind == nil && ref.Id == nil {
 			codes = append(codes, strings.ToUpper(strings.TrimSpace(*ref.Code)))
+		}
+		if ref.Kind == nil && ref.Code == nil && ref.Id != nil {
+			bare = append(bare, strings.TrimSpace(*ref.Id))
+		}
+	}
+	kinds := map[string]contract.EntityKind{}
+	if len(bare) > 0 {
+		var err error
+		if kinds, err = kindsOf(q, bare); err != nil {
+			return contract.EntityRefsReply{}, err
 		}
 	}
 	found := map[string]contract.EntityCode{}
@@ -74,7 +84,7 @@ func entityRefs(q *Request, r *contract.EntityRefsRequest) (contract.EntityRefsR
 	out := contract.EntityRefsReply{Items: []contract.EntityRefState{}}
 	seen := map[string]*contract.EntityCardReply{}
 	for i, ref := range r.Refs {
-		kind, id, err := cardTarget(q, &ref, found)
+		kind, id, err := cardTarget(q, &ref, found, kinds)
 		if err != nil {
 			continue
 		}
@@ -95,12 +105,39 @@ func entityRefs(q *Request, r *contract.EntityRefsRequest) (contract.EntityRefsR
 
 const maxEntityRefs = 200
 
+// kindsOf: the card kind of each bare id (a UUID in agent text) the caller may see; an id two tables share keeps the
+// first kind in EntKindOf's order.
+func kindsOf(q *Request, ids []string) (map[string]contract.EntityKind, error) {
+	rows, err := q.db().EntKindOf(q.ctx(), ids)
+	out := map[string]contract.EntityKind{}
+	for _, r := range rows {
+		if _, ok := out[r.ID]; !ok {
+			out[r.ID] = contract.EntityKind(r.Kind)
+		}
+	}
+	return out, err
+}
+
 // cardTarget: the kind and id a card request names. A code resolves through found when the caller resolved a batch
-// (entity_refs), else on its own; an unknown or forbidden code is errNotFound.
-func cardTarget(q *Request, r *contract.EntityCardRequest, found map[string]contract.EntityCode) (contract.EntityKind, string, error) {
+// (entity_refs), else on its own; an id alone (a UUID in agent text) takes its kind from kinds, else from its own read;
+// an unknown or forbidden code or id is errNotFound.
+func cardTarget(q *Request, r *contract.EntityCardRequest, found map[string]contract.EntityCode, kinds map[string]contract.EntityKind) (contract.EntityKind, string, error) {
 	kind, id := contract.EntityKind(""), strings.TrimSpace(deref(r.Id))
 	if r.Kind != nil {
 		kind = *r.Kind
+	}
+	if r.Kind == nil && r.Code == nil && id != "" {
+		if kinds == nil {
+			var err error
+			if kinds, err = kindsOf(q, []string{id}); err != nil {
+				return "", "", err
+			}
+		}
+		k, ok := kinds[id]
+		if !ok {
+			return "", "", errNotFound
+		}
+		return k, id, nil
 	}
 	switch {
 	case r.Code != nil && (r.Kind != nil || r.Id != nil):
@@ -234,7 +271,7 @@ func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) 
 	if r.ActivityAt.Valid {
 		at = &r.ActivityAt.Time
 	}
-	title := []rune(strings.Join(strings.Fields(firstString(r.FirstMessage, deref(r.Code), "Conversation")), " "))
+	title := []rune(firstString(plainTitle(clip(r.FirstMessage, 400)), deref(r.Code), "Conversation"))
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Code: optStr(deref(r.Code)), Title: string(title[:min(200, len(title))]), State: optStr(r.State),
 		ProjectId: optStr(deref(r.ProjectID)), Harness: optStr(r.Harness), At: optStr(cardTime(at)), AtLabel: ptr("active"), Path: itemPath("conversations", id),
 		Facts: facts(fact("Profile", contract.EntityFactTypeCode, r.Profile), fact("Task", contract.EntityFactTypeCode, deref(r.TaskCode)),

@@ -187,3 +187,13 @@ SELECT count(*) FROM artifact
 -- Configured hosts (removed ones left out) with the name their record gives.
 SELECT host_id, (CASE WHEN jsonb_typeof(payload->'name')='string' THEN payload->>'name' ELSE '' END)::text AS name
  FROM host WHERE state<>'removed' ORDER BY seq;
+
+-- name: EntKindOf :many
+-- The card kinds of the entities a bare id names (a UUID in agent text, entity-card.md): run, task, conversation,
+-- result, question or experiment, as each table's row-level security lets the caller see it.
+SELECT 'execution'::text AS kind, id FROM execution WHERE id = ANY (@ids::text[])
+UNION ALL SELECT 'task', id FROM task WHERE id = ANY (@ids::text[])
+UNION ALL SELECT 'conversation', id FROM session WHERE id = ANY (@ids::text[])
+UNION ALL SELECT 'result', id FROM artifact WHERE id = ANY (@ids::text[])
+UNION ALL SELECT 'question', id FROM question WHERE id = ANY (@ids::text[])
+UNION ALL SELECT 'experiment', id FROM experiment WHERE id = ANY (@ids::text[]);

@@ -4,7 +4,7 @@ import { createContext, createEffect, createMemo, createSignal, For, onSettled, 
 import type { JSX } from '@solidjs/web';
 import { type IconName, type Harness, type EntityKind, entityKinds, codeKind, ENTITY_CODE, states, actions, harnesses } from '../registry.ts';
 import { bytes, count, duration } from '../format.ts';
-import { PR_REF } from '../markdown.ts';
+import { PR_REF, UUID_REF } from '../markdown.ts';
 import type { EntityCardReply } from '../../../../contracts/generated/ops.ts';
 import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, HarnessMark, Ago, CopyButton, popoverAttr, type PopoverElement } from './primitives.tsx';
@@ -84,7 +84,7 @@ export type EntityLive = { kind: EntityKind; id: string; code: string | null; st
 export type EntityCardSource = {
   useCard: (ref: EntityRef) => EntityCardRead;
   open?: (path: string) => void;
-  live?: (ref: EntityRef) => { read: () => EntityLive | null | undefined; release: () => void };
+  live?: (ref: EntityRef | { id: string; kind?: undefined }) => { read: () => EntityLive | null | undefined; release: () => void };
   src?: (resultId: string) => string;
 };
 export const EntityCards = createContext<EntityCardSource | null>(null);
@@ -134,16 +134,24 @@ export function EntityCode(p: {
 }) {
   let el: HTMLButtonElement | undefined;
   const source = useContext(EntityCards);
-  const k = createMemo(() => p.kind ?? (p.code ? codeKind[p.code[0]] : undefined));
-  const ref = createMemo<EntityRef | null>(() => {
-    const kind = k();
-    if (!kind || !(p.id || p.code)) return null;
+  // The kind the reference names, else the one its live state learns (a bare id from agent text, `id` alone).
+  const k0 = createMemo(() => p.kind ?? (p.code ? codeKind[p.code[0]] : undefined));
+  const reg = createMemo<EntityRef | { id: string } | null>(() => {
+    const kind = k0();
+    if (!kind) return p.id && !p.code ? { id: p.id } : null;
+    if (!(p.id || p.code)) return null;
     return p.id ? { kind, id: p.id, ...(p.code ? { code: p.code } : {}) } : { kind, code: p.code! };
   });
   // One registration per mounted reference and entity; released when it unmounts or names another entity.
   const holder = createMemo(() => {
-    const r = ref();
+    const r = reg();
     return r && source?.live ? untrack(() => source.live!(r)) : null;
+  });
+  const k = createMemo(() => k0() ?? holder()?.read()?.kind);
+  const ref = createMemo<EntityRef | null>(() => {
+    const kind = k(), r = reg();
+    if (!kind || !r) return null;
+    return 'kind' in r && r.kind ? r : { kind, id: (r as { id: string }).id };
   });
   createEffect(holder, h => () => h?.release());
   onSettled(() => () => { if (el && untrack(shown)?.anchor === el) showCard(null); });
@@ -194,7 +202,14 @@ export function EntityCode(p: {
     ? <span class="ec-ico"><ProjectTile code={code()!} color={projectIdentity(code()!)?.color} pattern={projectIdentity(code()!)?.pattern} size="xs" /></span>
     : <span class={['ec-ico', st() ? `t-${st()!.tone}` : 't-neutral']}><Icon name={entityKinds[k()!].icon} /></span>;
   return (
-    <Show when={ref()}>
+    <Show when={ref()} fallback={
+      <Show when={!k0() && p.id}>
+        {/* A bare id (agent text) never shows itself (OR-38): a placeholder while its kind loads, then Copy id when it names no visible entity. */}
+        <Show when={!holder() || holder()!.read() === null} fallback={<span class="ec-pending muted" aria-busy="true">…</span>}>
+          <CopyButton label="Copy id" value={p.id!} iconOnly />
+        </Show>
+      </Show>
+    }>
       {(() => {
         const inner = () => {
           switch (form()) {
@@ -253,6 +268,7 @@ export function linkCodes(text: string, _key: number, literal = (value: string, 
   const out: JSX.Element[] = []; let last = 0;
   const found = [
     ...[...text.matchAll(ENTITY_CODE)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode code={m[0]} cls="inline" /> })),
+    ...[...text.matchAll(UUID_REF)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode id={m[0].toLowerCase()} cls="inline" /> })),
     ...[...text.matchAll(PR_REF)].map(m => {
       const owner = m[1] ?? m[4], repo = m[2] ?? m[5], n = m[3] ?? m[6];
       return { at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode kind="pull_request" id={`${owner}/${repo}#${n}`} code={'#' + n} cls="inline" /> };

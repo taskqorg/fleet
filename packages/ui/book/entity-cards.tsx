@@ -36,8 +36,9 @@ export const CARDS: EntityCardData[] = [
     facts: [{ label: 'Hosts', type: 'text', value: '2 of 3' }, { label: 'Pull requests', type: 'count', value: '4' }] },
 ];
 
-const key = (r: EntityRef) => r.id ?? r.code;
-const find = (r: EntityRef) => CARDS.find(c => c.kind === r.kind && (c.id === r.id || c.code === r.code || c.id === key(r)));
+type AnyRef = EntityRef | { id: string; kind?: undefined; code?: undefined };
+const key = (r: AnyRef) => r.id ?? r.code;
+const find = (r: AnyRef) => CARDS.find(c => (!r.kind || c.kind === r.kind) && (c.id === r.id || (!!r.code && c.code === r.code) || c.id === key(r)));
 
 /** The book's card source: fixtures; `slow` stays loading, anything unknown fails like a 404. */
 // The book's live states: the fixture's state, which the demo's Merge button moves (one signal: every reference updates).
@@ -82,6 +83,6 @@ export function EntityCardDemo() {
     <div class="ec-demo"><For each={CARDS}>{c => <span class="ec-demo-i"><span class="muted">{c.kind.replace('_', ' ')}</span><EntityCode kind={c.kind} id={c.id} code={c.code ?? (c.uuid ? undefined : c.id)} /></span>}</For>
       <span class="ec-demo-i"><span class="muted">loading</span><EntityCode kind="task" id="slow" code="T-FLT-1" /></span>
       <span class="ec-demo-i"><span class="muted">no access</span><EntityCode kind="task" id="gone" code="T-ABC-9" /></span></div>
-    <Markdown text={'Done with **T-FLT-42**; the open decision is Q-FLT-7, discussed in C-FLT-311. `T-FLT-42` in code stays text.'} />
+    <Markdown text={'Done with **T-FLT-42**; the open decision is Q-FLT-7, discussed in C-FLT-311; run 00000000-0000-4000-8000-000000000900 failed. `T-FLT-42` in code stays text.'} />
   </div>;
 }
