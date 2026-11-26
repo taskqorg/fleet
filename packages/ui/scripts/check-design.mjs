@@ -33,8 +33,8 @@ const RULES = [
   { id: 'OR-2', re: /\b(toLocaleDateString|toLocaleTimeString|Intl\.DateTimeFormat|Intl\.RelativeTimeFormat)\b|new Date\([^)]*\)\.(getHours|getDate|getMonth)/g, where: f => /\.tsx?$/.test(f) && !/src\/format\.ts$/.test(f), say: 'date formatting outside packages/ui/src/format.ts' },
   { id: 'OR-25', re: /100d?vh/g, where: () => true, skip: line => /^\.shell\{/.test(line), say: 'viewport height outside the shell; only .shell takes it (patterns/app-shell.md)' },
   { id: 'OR-7', re: /[↑↓▲▼⬆⬇]/g, where: f => /\.(tsx|html)$/.test(f), say: 'direction arrow; show change with the value tint' },
-  // OR-7: an arrow icon beside a value or in a pill. Icons on buttons (jump, previous/next) and the sort icons are actions, not direction.
-  { id: 'OR-7', re: /<(?!Button\b|MenuTrigger\b)[A-Z]\w*\b[^>]*?\b(?:name|icon)=\{?["'`](?:arrow-(?:up|down)|trending-(?:up|down)|move-(?:up|down)|triangle(?:-down)?)["'`]/g, where: f => /\.tsx$/.test(f), say: 'arrow icon beside a value or in a pill; show change with the value tint and say it in words (`12 new`)' },
+  // OR-7: an arrow icon beside a value or in a pill. Icons on or inside buttons (jump, previous/next) and the sort icons are actions, not direction.
+  { id: 'OR-7', re: /<(?!Button\b|MenuTrigger\b)[A-Z]\w*\b[^>]*?\b(?:name|icon)=\{?["'`](?:arrow-(?:up|down)|trending-(?:up|down)|move-(?:up|down)|triangle(?:-down)?)["'`]/g, where: f => /\.tsx$/.test(f), inAction: true, say: 'arrow icon beside a value or in a pill; show change with the value tint and say it in words (`12 new`)' },
   { id: 'OR-9', re: /<select\b/g, where: f => /\.tsx$/.test(f), say: 'select; long collections use VirtualList or a searchable scope control' },
   { id: 'OR-38', re: /\b\w*[iI]d\)?\.slice\(0, ?\d+\)|>T-\{/g, where: f => /\.tsx$/.test(f), say: 'short UUID or hand-made code shown; render <EntityCode> (D17)' },
   // OR-36: a button or menu labelled Filter or "… filters" (Clear filters and Remove filter chips are allowed).
@@ -49,12 +49,19 @@ const RULES = [
   { id: 'OR-49', re: /role="tablist"/g, where: f => /\.tsx$/.test(f) && !/controls\/tables\.tsx$/.test(f), say: 'raw role="tablist"; use TabBar from packages/ui' },
   { id: 'OR-65', re: /label=\{?[`'"](?:Show (?:more|less)|Load more|Older|Newer)\b|label=\{`\+\$\{[^`]*\} more`\}/g, where: f => /\.tsx$/.test(f), say: 'toggle pagination; lists load on scroll (InfiniteList, ListEnd) and card previews open the full list from their title' },
 ];
+// An icon that is the child of an open <Button>, <button> or <MenuTrigger> is an action, not a direction mark (OR-7).
+const inAction = (text, at) => {
+  const opens = [...text.slice(Math.max(0, at - 600), at).matchAll(/<(Button|button|MenuTrigger)\b[^>]*?(\/?)>|<\/(Button|button|MenuTrigger)>/g)];
+  let depth = 0;
+  for (const m of opens) if (m[3]) depth = Math.max(0, depth - 1); else if (!m[2]) depth++;
+  return depth > 0;
+};
 const warn = [];
 for (const f of files) {
   const text = readFileSync(f, 'utf8');
   for (const r of RULES) if (r.where(f)) for (const m of text.matchAll(r.re)) {
     const line = text.slice(0, m.index).split('\n').length;
-    if (r.skip?.(text.split('\n')[line - 1])) continue;
+    if (r.skip?.(text.split('\n')[line - 1]) || (r.inAction && inAction(text, m.index))) continue;
     warn.push(`${relative(root, f)}:${line}  ${r.id}  ${r.say}  [${m[0].slice(0, 30)}]`);
   }
 }
