@@ -4240,7 +4240,13 @@
     "Sections: search, view chip, filter bar",
     "Updating list: pending counters and rows, row checks"
    ],
-   "usedIn": []
+   "usedIn": [
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    }
+   ]
   },
   {
    "master": "State icon",

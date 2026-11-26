@@ -15,7 +15,7 @@
 | `full` | the kind icon in its state's tone, the code, the title (one line, truncated; left out when it is the code), and the state badge | a related object shown on its own line inside a detail (a task's result, a release's pull requests, a conversation's tasks), a Needs-you item that names one object |
 
 * A kind without a code (run, experiment, a result without a code) shows its kind icon; in `chip` the icon carries the state tone and a short label (`Run`); in `full` the title follows.
-* Kinds without a state (project, agent, pipeline) show the kind icon in the neutral tone.
+* Kinds without a state (agent, pipeline) show the kind icon in the neutral tone. A project shows its 16 px [project tile](project-tile.md) in its identity colour in place of the kind icon (the app sets the colours from `project_list`).
 * The state is never colour alone: the accessible name and the tooltip-free card carry its word; `full` shows the word in its badge.
 * The copy slot (`code` and `chip` with a code): a slot reserved immediately to the right; hover, keyboard focus or touch reveals Copy, which writes the displayed code and briefly replaces the icon with a check. The slot keeps its size (OR-23).
 * A reference never becomes a plain link or plain text, and no screen draws its own code chip (the check-design warning below). One exception: a row that is itself a link to its entity (a project overview line, a live row) shows its own code as text inside that link, since a button cannot sit inside a link; the row opens the entity.

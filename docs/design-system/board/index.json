@@ -1399,6 +1399,17 @@
    "status": "approved"
   },
   {
+   "id": "1b9e342bf3f115f4",
+   "canvas": "screens/projects",
+   "name": "P-B · Projects list: code tile, identity colour, fact glyphs (approved 2026-11-27)",
+   "page": "projects",
+   "width": null,
+   "frameWidth": 2534,
+   "theme": null,
+   "component": false,
+   "status": "approved"
+  },
+  {
    "id": "aebda8347e2993ea",
    "canvas": "screens/session",
    "name": "Session view: one view for every bot, PM and run",

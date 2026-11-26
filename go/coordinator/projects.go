@@ -176,6 +176,22 @@ func projectHeadText(in map[string]json.RawMessage) error {
 			return fail(400, "Invalid project setting domain: a host name such as example.com")
 		}
 	}
+	return identityCheck("project", in)
+}
+
+// identityCheck: the optional identity colour and pattern a project or bot names (OR-72, contracts/vocabulary.json
+// identity); absent, null or empty means automatic: the colour from the code, a solid bar.
+func identityCheck(what string, in map[string]json.RawMessage) error {
+	for k, allowed := range map[string][]string{"color": contract.Vocabulary.Identity.Colors, "pattern": contract.Vocabulary.Identity.Patterns} {
+		v, present := in[k]
+		if !present || isNull(v) {
+			continue
+		}
+		s, ok := jsonString(v)
+		if !ok || (s != "" && !slices.Contains(allowed, s)) {
+			return fail(400, "Invalid "+what+" setting "+k+": one of "+strings.Join(allowed, ", "))
+		}
+	}
 	return nil
 }
 
@@ -204,7 +220,7 @@ func projectSettings(p any) (rawObject, []string, error) {
 		return nil
 	}
 	in := recOf(p)
-	top := append([]string{"id", "name", "description", "domain", "capability", "recommendedMethod", "contextFiles", "artifact_locations", "artifact_rules"}, settingsOrder...)
+	top := append([]string{"id", "name", "description", "domain", "color", "pattern", "capability", "recommendedMethod", "contextFiles", "artifact_locations", "artifact_rules"}, settingsOrder...)
 	for k := range in {
 		if !slices.Contains(top, k) {
 			unknown = append(unknown, k)

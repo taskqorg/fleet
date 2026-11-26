@@ -24,6 +24,7 @@ type VocabularyData struct {
 		State, NotState []string
 	}
 	NavDefaults map[string]string
+	Identity    struct{ Colors, Patterns []string }
 }
 
 var Vocabulary = func() (v VocabularyData) {

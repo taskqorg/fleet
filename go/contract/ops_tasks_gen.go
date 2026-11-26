@@ -753,6 +753,7 @@ type ProjectContextReply struct {
 	ArtifactRules     json.RawMessage            `json:"artifact_rules,omitempty"`
 	Capability        *string                    `json:"capability,omitempty"`
 	Cleanup           json.RawMessage            `json:"cleanup,omitempty"`
+	Color             json.RawMessage            `json:"color,omitempty"`
 	Content           ProjectBundle              `json:"content"`
 	ContentSha        string                     `json:"contentSha"`
 	Context           []ProjectContextEntry      `json:"context"`
@@ -767,6 +768,7 @@ type ProjectContextReply struct {
 	InitialAccess     *ProjectInitialAccess      `json:"initialAccess,omitempty"`
 	Integration       json.RawMessage            `json:"integration,omitempty"`
 	Name              *string                    `json:"name,omitempty"`
+	Pattern           json.RawMessage            `json:"pattern,omitempty"`
 	RecommendedMethod *string                    `json:"recommendedMethod,omitempty"`
 	RepoSha           *string                    `json:"repoSha,omitempty"`
 	Repos             json.RawMessage            `json:"repos,omitempty"`

@@ -16,7 +16,7 @@ Colour carries meaning only ([principles §1](principles.md#1-density-and-calm))
 | `fg`, `fg-muted`, `fg-faint` | Main text; secondary text (IDs, reasons, column heads); placeholder and disabled. All meet 4.5:1 on `surface` except `fg-faint`, which is used only for placeholders and disabled text. |
 | `line`, `line-soft` | Pane and header borders; row separators. |
 | `hover`, `selected` | Row hover; selected row (plus a 3 px `accent` bar at the left edge). |
-| `accent`, `on-accent` | Primary action, focus ring, links, the current-item tick, the new-rows pill. The accent has no hue (D19): the only colours on a screen are the state tones below. |
+| `accent`, `on-accent` | Primary action, focus ring, links, the current-item tick, the new-rows pill. The accent has no hue (D19): the only colours on a screen are the state tones below and the identity colours of projects and bots (OR-72). |
 | `attention-*` | Waiting for a person, warnings, problems. `-fg` text, `-bg` badge fill, `-soft` block fill, `-line` block border. |
 | `danger-*` | Failed, apply error, destructive confirm. |
 | `running-*` | In progress, running, preparing when active. |
@@ -24,6 +24,7 @@ Colour carries meaning only ([principles §1](principles.md#1-density-and-calm))
 | `neutral-*` | Queued, paused, cancelled, unknown. |
 | `estimated-fg` | Estimated numbers ([number](controls/number.md)). |
 | `data-1` … `data-4` | Series in fill bars and charts, in order. More series reuse `data-1..4` with a pattern, never new hues. |
+| `id-rose` … `id-slate` | Identity colours ([OR-72](controls/project-tile.md#rules-kept-here)): a project's tile code and bar, a bot's avatar. Never a state. Text-grade (4.5:1) on `bg` and `surface`. The names are `contracts/vocabulary.json` `identity.colors`. |
 | `data-1-ink` … `data-4-ink` | Text set inside a `data-N` fill (a [share bar](controls/share-bar.md) segment): near-white or near-black by the fill's luminance, at least 4.5:1. |
 
 State to colour mapping lives in [state badge](controls/state-badge.md).

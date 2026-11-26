@@ -22,7 +22,8 @@ Standing principles:
 
 - **Useful empty pane.** An idle detail pane shows the page summary, findings or recent history, never "Pick a row" (UR-35).
 - **Infinite lists.** No Show more or less, no `+N` toggles, no page buttons; one request per page; a card preview shows a fixed count and its title opens the full list (OR-65, OR-30).
-- **Row facts.** Time is the rightmost fact (OR-64); work facts in the quiet form (OR-63); repeats fold into `×N` (OR-58).
+- **Row facts.** Counts are glyphs with numbers, never words (OR-73); time is the rightmost fact (OR-64); work facts in the quiet form (OR-63); repeats fold into `×N` (OR-58).
+- **Identity colour.** A project's tile carries its code in its own colour; identity colour never means state (OR-72).
 - **Dark first.** Review dark before light, at 1440 and 390 px (UR-48).
 - **Plain words.** No UUIDs, raw keys, host paths or JSON; only real results show as results (OR-38, OR-67).
 - **No filler.** Every element answers a question the owner has; no repeated labels, no empty sections (OR-68, OR-17).
@@ -94,6 +95,8 @@ These rules left the list above on 2026-11-26 (owner, one pass). Their ids stay;
 | OR-55 One state vocabulary | component | [controls/state-badge.md](controls/state-badge.md#rules-kept-here) |
 | OR-63 Work facts, OR-64 Time last | component | [controls/work-facts.md](controls/work-facts.md#rules-kept-here) |
 | OR-66 No horizontal scroll | component | [patterns/no-horizontal-scroll.md](patterns/no-horizontal-scroll.md#rules-kept-here) |
+| OR-72 Identity colour is not state colour | component | [controls/project-tile.md](controls/project-tile.md#rules-kept-here) |
+| OR-73 Facts are glyphs | component | [controls/fact-count.md](controls/fact-count.md#rules-kept-here) |
 | OR-7 No added arrows | check | `check-design.mjs` OR-7: the glyphs ↑↓▲▼⬆⬇ in markup, and an `arrow-up`, `arrow-down`, `trending-*`, `move-*` or `triangle` icon on any component but a button or menu trigger (a jump or previous/next action is not direction). The owner's words: "Never add an arrow next to a value or in a pill to show direction. Example: the new-rows pill says `12 new`." |
 | OR-8 One icon set | check | `check-design.mjs` OR-8: inline SVG, emoji (pictographs other than © ® ™ and the arrows of OR-7), icon font classes and `font-family` (Material, Font Awesome, Bootstrap Icons, Codicons), and its icon colour check on `icons.json`. The owner's words: "Icons come only from the registry, which holds the TaskQ Lucide set. No inline SVG, icon fonts or emoji." |
 | OR-36 Filters live in the query | check | `check-design.mjs` OR-36: a button or menu trigger labelled Filter, Filters or "… filter" (Clear filters and Remove filter are allowed); `tests/ui/ux.check.mjs`: the same label on a rendered button; `tests/ui/search-syntax.test.ts`: one query syntax in `search` and every list. The owner's words: "There is no separate Filter button. Filters are typed in search with the query syntax (OR-32)." |

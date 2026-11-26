@@ -1,5 +1,5 @@
 {
-  "$comment": "Fixed words the app and the coordinator share (docs/designs/fleet-standard.md S9): harnesses (model: the model a start without a profile model records; none or an unknown harness takes codex's), the operator-app view grammar and the system presets of the lists with saved views (OR-33), and the plain sentences of run failure causes (causes: the first entry with a match that the stored cause code starts with; the last matches everything). The app imports this file (packages/view-url, app/src/system-views.ts, packages/ui registry); go/gen copies it into go/contract/vocabulary_gen.go and go/contract/vocabulary.go decodes it. One source: edit here only.",
+  "$comment": "Fixed words the app and the coordinator share (docs/designs/fleet-standard.md S9): harnesses (model: the model a start without a profile model records; none or an unknown harness takes codex's), the operator-app view grammar and the system presets of the lists with saved views (OR-33), identity (the colours and patterns a project or bot may name, OR-72; tokens id-<colour>), and the plain sentences of run failure causes (causes: the first entry with a match that the stored cause code starts with; the last matches everything). The app imports this file (packages/view-url, app/src/system-views.ts, packages/ui registry); go/gen copies it into go/contract/vocabulary_gen.go and go/contract/vocabulary.go decodes it. One source: edit here only.",
   "causes": [
     {"id": "abandoned", "match": ["unknown:abandoned"], "text": "The run stopped without reporting how it ended: its host lost the process or restarted. Run it again; if it keeps happening, check the host."},
     {"id": "stopped", "match": ["unknown:caller-cancelled", "step:cancelled", "cancelled"], "text": "The run was stopped before it finished. Nothing is broken; run it again if the work is still needed."},
@@ -48,5 +48,6 @@
     "results": [{"name": "Last 24 h", "label": "new in 24 h"}],
     "hosts": [{"name": "Offline", "label": "offline"}]
   },
-  "navDefaults": {"tasks": "Running", "conversations": "Running", "delivery": "In flight", "results": "Last 24 h", "hosts": "Offline"}
+  "navDefaults": {"tasks": "Running", "conversations": "Running", "delivery": "In flight", "results": "Last 24 h", "hosts": "Offline"},
+  "identity": {"colors": ["rose", "violet", "sky", "teal", "lime", "sand", "coral", "slate"], "patterns": ["solid", "hatch"]}
 }

@@ -7,9 +7,9 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from
 import { useLocation, useSearch } from '../router.ts';
 import {
   Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, InheritedRows, KvRow, Preview, ListDetail, ListFrame,
-  RowFacts, Fact, ShellActions, Skeleton, StateBadge, StateDot, TabBar, VirtualList,
-  catalogueRow, matchSearch, statesOf, type IconName,
-  EntityCode,
+  ShellActions, Skeleton, StateBadge, TabBar, VirtualList,
+  ROW2, matchSearch, statesOf, type IconName,
+  EntityCode, FactCounts, ProjectTile,
 } from '../../../packages/ui/src/index.ts';
 import { useOp, useView } from '../store.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
@@ -56,16 +56,6 @@ function readiness(p: Record<string, unknown>): { state: 'ready' | 'missing' | '
   if (sourceState === 'repository-changed') return { state: 'changed', reason: 'Repository changed' };
   if (sourceState === 'ahead') return { state: 'draft', reason: 'Local changes ahead' };
   return envs.length > 0 ? { state: 'ready' } : { state: 'unchecked', reason: 'No environment configured' };
-}
-
-function ReadinessBadge(props: { p: Record<string, unknown> }) {
-  const r = createMemo(() => readiness(props.p));
-  return (
-    <Switch>
-      <Match when={r().state === 'missing' || r().state === 'changed'}><StateBadge family="source" state={r().state as 'missing' | 'changed'} reason={r().reason} compact /></Match>
-      <Match when={true}><StateBadge family="definition" state={r().state as 'ready' | 'draft' | 'unchecked'} reason={r().reason} compact /></Match>
-    </Switch>
-  );
 }
 
 /** The facet path of a project (the router writes the project's code in the address bar). */
@@ -124,7 +114,7 @@ export function Projects(props: { screen: Screen; id?: string }) {
           <CrossWork facet={props.screen} item={item()} />
         ) : undefined
       }
-      idle={<CrossWork facet="summary" names={new Map(all().map(p => [p.id, p.name]))} />}
+      idle={<CrossWork facet="summary" names={new Map(all().map(p => [p.id, p.name]))} rows={new Map(all().map(p => [p.id, p]))} />}
       detailKey={creating() ? 'create' : (project() ?? (props.screen !== 'projects' ? props.screen : undefined))}
     />
   );
@@ -136,9 +126,11 @@ export function Projects(props: { screen: Screen; id?: string }) {
  */
 const useProjectsView = () => useView('projects_view', () => (prefsRead.value ? scopeIds() : null), { quiet: 5000 });
 
+type CatalogueEntry = { id: string; name: string; code: string; raw: Record<string, unknown> };
+
 /** The control column: one row per project with readiness, name and code, and its live facts (OR-22, OR-29). */
 function Catalogue(props: {
-  rows: { id: string; name: string; code: string; raw: Record<string, unknown> }[]; pending: boolean; error: string | null; reload: () => void;
+  rows: CatalogueEntry[]; pending: boolean; error: string | null; reload: () => void;
   selected?: string; creating: boolean; onOpen: (id: string) => void; onCreate: () => void;
 }) {
   const [query, setQuery] = createSignal('');
@@ -163,28 +155,32 @@ function Catalogue(props: {
                 fill
                 items={shown()}
                 getKey={p => p.id}
-                rowHeight={catalogueRow()}
+                rowHeight={ROW2}
                 follow="top"
                 label="Projects"
-                columns="1.25rem minmax(0,1fr) auto"
-                rowClass={p => (p.id === props.selected ? 'sel' : '')}
-                render={p => (
-                  <>
-                    <span class="lead"><ReadinessBadge p={p.raw} /></span>
-                    <span class="tt">
-                      <a class="title row-link" href={'/projects/' + encodeURIComponent(projectSegment(p.id))} onClick={e => { e.preventDefault(); props.onOpen(p.id); }}>{p.name}</a>
-                      <EntityCode code={p.code || p.id} id={p.id} kind="project" form="code" />
-                    </span>
-                    <span class="rz">
-                      <RowFacts>
-                        <Show when={asks().get(p.id)}>{n => <Fact tip="Open questions"><span class="t-attention">{n()} {n() === 1 ? 'question' : 'questions'}</span></Fact>}</Show>
-                        <Show when={working().get(p.id)}>{n => <Fact tip="Sessions working"><span class="t-running">{n()} working</span></Fact>}</Show>
-                        <Show when={inFlight().get(p.id)}>{n => <Fact text={`${n()} in flight`} tip="Tasks not finished" />}</Show>
-                        <Show when={view.data && !asks().get(p.id) && !working().get(p.id) && !inFlight().get(p.id)}><span class="muted">nothing in flight</span></Show>
-                      </RowFacts>
-                    </span>
-                  </>
-                )}
+                columns="var(--size-row) minmax(0,1fr) auto"
+                rowClass={p => (p.id === props.selected ? 'sel pcat' : 'pcat')}
+                render={p => {
+                  const r = readiness(p.raw);
+                  const desc = [str(p.raw.description).trim(), str(p.raw.domain).trim()].filter(Boolean).join(' · ');
+                  return (
+                    <>
+                      <span class="lead"><ProjectTile code={p.code} color={str(p.raw.color)} pattern={str(p.raw.pattern)} /></span>
+                      <span class="tt pcat-tt">
+                        <a class="title row-link" href={'/projects/' + encodeURIComponent(projectSegment(p.id))} onClick={e => { e.preventDefault(); props.onOpen(p.id); }}>{p.name}</a>
+                        <Show when={desc}><span class="pcat-desc">{desc}</span></Show>
+                      </span>
+                      <span class="rz">
+                        <FactCounts facts={{
+                          setup: r.state === 'ready' ? undefined : true,
+                          questions: asks().get(p.id),
+                          working: working().get(p.id),
+                          inFlight: inFlight().get(p.id),
+                        }} tips={{ setup: r.reason }} />
+                      </span>
+                    </>
+                  );
+                }}
               />
             }
           >
@@ -213,13 +209,13 @@ function ListFacetView(props: { facet: ListFacet; item?: string; project?: strin
 }
 
 /** The work area with no project open: Summary, Tasks, Delivery and Results over every project in the focus. */
-function CrossWork(props: { facet: CrossFacet; item?: string; names?: Map<string, string> }) {
+function CrossWork(props: { facet: CrossFacet; item?: string; names?: Map<string, string>; rows?: Map<string, CatalogueEntry> }) {
   const [, go] = useLocation();
   return (
     <section class="pwork" data-ui="project-work" aria-label="All projects">
       <TabBar cls="detail-tabs pw-tabs" label="Across projects" tabs={CROSS} value={props.facet} onChange={f => go(f === 'summary' ? '/projects' : '/' + f)} />
       <div class="pw-facet" role="tabpanel" aria-label={CROSS.find(c => c.id === props.facet)?.label}>
-        <Show when={props.facet !== 'summary'} fallback={<Summary names={props.names ?? new Map()} />}>
+        <Show when={props.facet !== 'summary'} fallback={<Summary names={props.names ?? new Map()} rows={props.rows ?? new Map()} />}>
           <ListFacetView facet={props.facet as ListFacet} item={props.item} />
         </Show>
       </div>
@@ -228,8 +224,10 @@ function CrossWork(props: { facet: CrossFacet; item?: string; names?: Map<string
 }
 
 /** The cross-project glance (UR-52): what waits for the person, then each project's work in one line, then delivery in flight. */
-function Summary(props: { names: Map<string, string> }) {
+function Summary(props: { names: Map<string, string>; rows: Map<string, CatalogueEntry> }) {
   const [, go] = useLocation();
+  const raw = (id: string) => props.rows.get(id)?.raw;
+  const code = (id: string) => props.rows.get(id)?.code ?? '';
   const view = useProjectsView();
   const name = (id: string | null) => (id ? props.names.get(id) ?? id : 'No project');
   // Every project with sessions working or tasks in flight, in name order.
@@ -251,9 +249,9 @@ function Summary(props: { names: Map<string, string> }) {
           <For each={lines()}>
             {l => (
               <KvRow
-                icon="folder-open"
+                lead={<ProjectTile code={code(l.id)} color={str(raw(l.id)?.color)} pattern={str(raw(l.id)?.pattern)} size="sm" />}
                 label={name(l.id)}
-                meta={<WorkLine working={l.working} tasks={l.tasks} />}
+                meta={<FactCounts facts={{ working: l.working, inFlight: l.tasks }} />}
                 value={<Button label="Open" icon="arrow-right" iconOnly kind="quiet" onClick={() => go('/projects/' + encodeURIComponent(l.id))} />}
               />
             )}
@@ -281,16 +279,6 @@ function Summary(props: { names: Map<string, string> }) {
         </Switch>
       </DetailSection>
     </article>
-  );
-}
-
-/** A project's work in one line: sessions working and tasks in flight; zeros are left out (OR-29). */
-function WorkLine(props: { working: number; tasks: number }) {
-  return (
-    <span class="deps">
-      <Show when={props.working > 0}><span class="t-running">{props.working} {props.working === 1 ? 'session' : 'sessions'} working</span></Show>
-      <Show when={props.tasks > 0}><span>{props.tasks} {props.tasks === 1 ? 'task' : 'tasks'} in flight</span></Show>
-    </span>
   );
 }
 
@@ -325,15 +313,14 @@ function ProjectWork(props: {
   return (
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
+        lead={<ProjectTile code={props.p?.code ?? ''} color={str(props.p?.raw.color)} pattern={str(props.p?.raw.pattern)} size="lg" />}
         title={title()}
         aside={aside() || undefined}
         onClose={props.onClose}
         actions={<Button label="Talk to PM" icon="messages-square" onClick={talk} />}
         state={
           <>
-            <Show when={asks() > 0}><StateDot state="waiting" /></Show>
-            <Show when={asks() > 0}><span>{asks()} {asks() === 1 ? 'question' : 'questions'}</span></Show>
-            <Show when={working() > 0}><span>{working()} {working() === 1 ? 'session' : 'sessions'} working</span></Show>
+            <FactCounts facts={{ questions: asks(), working: working() }} />
             <Show when={ready()?.reason}>{r => <span class="t-attention" data-tip="Fix it in Setup">{r()}</span>}</Show>
           </>
         }
@@ -422,7 +409,7 @@ function ProjectSetup(props: { projectId: string; name: string; raw?: Record<str
   const edit = () => <Button label="Edit" icon="pencil" iconOnly kind="quiet" onClick={() => setEditing(true)} />;
   return (
     <Show when={!editing()} fallback={
-      <ProjectEditor id={props.projectId} embedded onName={props.onName} onClose={close} onSaved={() => { doc.reload(); close(); }} />
+      <ProjectEditor id={props.projectId} code={str(props.raw?.code)} embedded onName={props.onName} onClose={close} onSaved={() => { doc.reload(); close(); }} />
     }>
       <article class="detail" data-ui="project-setup" tabindex={-1} aria-label="Setup">
         <Show when={ready()?.reason}>{r => <p class="t-attention pw-tone pw-setup-alert">{r()}</p>}</Show>
@@ -431,12 +418,11 @@ function ProjectSetup(props: { projectId: string; name: string; raw?: Record<str
           <Match when={!doc.data}><Skeleton rows={6} /></Match>
           <Match when={doc.data}>
             <DetailSection title="About" action={edit()}>
-              <Show when={str(doc.data?.description).trim() || str(doc.data?.domain).trim()}>
-                <div class="pw-list">
+              <div class="pw-list">
+                  <div class="pw-line"><span class="pw-k">Colour</span><span class="pw-line-m"><ProjectTile code={str(props.raw?.code)} color={str(doc.data?.color)} pattern={str(doc.data?.pattern)} size="sm" /> {str(doc.data?.color) || 'auto'}{str(doc.data?.pattern) === 'hatch' ? ' · hatched' : ''}</span></div>
                   <Show when={str(doc.data?.description).trim()}>{d => <div class="pw-line"><span class="pw-k">Description</span><span class="pw-line-m">{d()}</span></div>}</Show>
                   <Show when={str(doc.data?.domain).trim()}>{d => <div class="pw-line"><span class="pw-k">Domain</span><span class="pw-line-m">{d()}</span></div>}</Show>
-                </div>
-              </Show>
+              </div>
               <div class="pw-about">
                 <For each={about()} fallback={<p class="muted">Nothing written about {props.name} yet.</p>}>{p => <p>{p}</p>}</For>
               </div>

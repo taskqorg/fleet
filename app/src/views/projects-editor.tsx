@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSet
 import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  Button, CodeEditor, DetailSection, Disclosure, Empty, ErrorBanner, KvRow, Skeleton, StatusLine, TextField,
+  Button, CodeEditor, DetailSection, Disclosure, Empty, ErrorBanner, IdentityPicker, KvRow, Skeleton, StatusLine, TextField,
 } from '../../../packages/ui/src/index.ts';
 import {
   op, useAlive, writeOnce, preparedResourcesAvailable, createDraftPersistence, authorizedDraftScope,
@@ -31,6 +31,8 @@ const fresh = (): Bundle => ({
 /** Configuration and creation editor for a project, including draft persistence, readiness checks, and resource breakdown. */
 export function ProjectEditor(props: {
   id?: string;
+  /** The project's code, for its tile in the colour picker (OR-72). */
+  code?: string;
   onClose?: () => void;
   onSaved: (id: string) => void;
   renderWork?: (projectId: string, detail: Detail | null) => JSX.Element;
@@ -201,6 +203,11 @@ export function ProjectEditor(props: {
     untrack(doc).reload();
   };
   const setting = (key: string, value: unknown) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
+  // A cleared identity setting (Auto, Solid) leaves the key out: the project takes the automatic colour and bar.
+  const unsetting = (key: string, value: string | null) => setBundle(b => {
+    const { [key]: _, ...rest } = b.settings;
+    return { ...b, settings: value == null ? rest : { ...rest, [key]: value } };
+  });
   const field = (label: string, value: string, onChange: (s: string) => void) => (
     <TextField label={label} value={value} onChange={onChange} />
   );
@@ -346,6 +353,9 @@ export function ProjectEditor(props: {
             {field('Name', str(bundle().settings.name), v => setting('name', v))}
             {field('Description', str(bundle().settings.description), v => setting('description', v))}
             {field('Domain', str(bundle().settings.domain), v => setting('domain', v))}
+            <KvRow label="Colour" value={<IdentityPicker code={props.code ?? ''}
+              color={str(bundle().settings.color)} pattern={str(bundle().settings.pattern)}
+              onColor={c => unsetting('color', c)} onPattern={x => unsetting('pattern', x)} />} />
             <For each={bundle().contextFiles}>
               {(f, i) => (
                 <Disclosure summary={f.path} summaryClass="muted">
