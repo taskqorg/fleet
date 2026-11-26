@@ -300,3 +300,30 @@ func TestAccessCreditLimitAsksForTopUp(t *testing.T) {
 		t.Fatalf("a later success still fails: %s", it.StateText)
 	}
 }
+
+// Requirement: a project access connection reads its grant, never "Needs a key": ready works, a failed last call or a
+// failed grant fails, a revoked grant takes no calls, and no grant at all says so.
+func TestAccessGrantItem(t *testing.T) {
+	c := apiConnection{Name: "fleet-postgres", Provider: "project-postgres", Access: connAccess{Projects: []string{"fleet"}}}
+	g := accessGrant{}
+	g.ServerID, g.Level, g.State = "pds18", "read", "ready"
+	it := accessGrantItem(accessConnection(c, nil, db.AccessLastCallsRow{}, nil, nil), g, true, false)
+	if it.State != contract.AccessStateWorks || it.Kind != "grant" || it.Keys != nil || it.Next != nil || !strings.Contains(it.StateText, "pds18") {
+		t.Fatalf("ready: %+v", it)
+	}
+	failed := accessConnection(c, nil, db.AccessLastCallsRow{LastID: "call:1", LastState: "failed", LastStartedAt: 2}, nil, nil)
+	if it := accessGrantItem(failed, g, true, false); it.State != contract.AccessStateFailing {
+		t.Fatalf("failed call: %+v", it)
+	}
+	g.State = "revoked"
+	if it := accessGrantItem(accessConnection(c, nil, db.AccessLastCallsRow{}, nil, nil), g, true, false); it.State != contract.AccessStatePaused {
+		t.Fatalf("revoked: %+v", it)
+	}
+	if it := accessGrantItem(accessConnection(c, nil, db.AccessLastCallsRow{}, nil, nil), accessGrant{}, false, false); it.State != contract.AccessStateFailing || it.Next != nil {
+		t.Fatalf("no grant: %+v", it)
+	}
+	g.State = "ready"
+	if it := accessGrantItem(accessConnection(c, nil, db.AccessLastCallsRow{}, nil, nil), g, true, true); it.State != contract.AccessStatePaused {
+		t.Fatalf("paused intake: %+v", it)
+	}
+}
