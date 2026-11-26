@@ -221,6 +221,26 @@ func (v ProjectAppState) Valid() bool {
 	return false
 }
 
+// ProjectAppUse: Real use over the last 30 days: pipeline runs, failed runs, and the cost of their leaf executions (fleet-analytics.md).
+type ProjectAppUse struct {
+	Cost   []CostFigure `json:"cost"`
+	Failed int64        `json:"failed"`
+	Runs   int64        `json:"runs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAppUse) Validate() error {
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ProjectAppView struct {
 	ApprovedBy      *string             `json:"approvedBy,omitempty"`
 	AskedBy         string              `json:"askedBy"`
@@ -237,6 +257,7 @@ type ProjectAppView struct {
 	Reason          string              `json:"reason"`
 	RequestId       string              `json:"requestId"`
 	State           ProjectAppState     `json:"state"`
+	Use30d          ProjectAppUse       `json:"use30d"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -259,6 +280,9 @@ func (v *ProjectAppView) Validate() error {
 		return Missing("pipelines")
 	}
 	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	if err := Check(&v.Use30d, "use30d"); err != nil {
 		return err
 	}
 	return nil
@@ -407,7 +431,7 @@ func init() {
 		"project_app_revoke":            {Read: false, Long: false, Errors: []int{403, 404}, Auth: "owner", Agent: "tool", Description: "Owner or full access: retires every key of an app at once and revokes it (an asked app's card is withdrawn).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
 		"project_app_rotate":            {Read: false, Long: false, Errors: []int{403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full access: mints a new key for an active app; the previous key works until the new key's first use. Take it with project_app_key_take.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
 		"project_app_set":               {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full access: changes an active app's pipelines, callback origins or limits (each given field replaces the old one).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"},\"callbackOrigins\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limits\":{\"$comment\":\"Empty or absent: no limit.\",\"additionalProperties\":false,\"properties\":{\"concurrentRuns\":{\"minimum\":1,\"type\":\"integer\"},\"runsPerDay\":{\"minimum\":1,\"type\":\"integer\"},\"spendPerMonth\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"currency\":{\"type\":\"string\"}},\"required\":[\"amount\",\"currency\"],\"type\":\"object\"}},\"type\":\"object\"},\"pipelines\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
-		"project_apps":                  {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "The project's apps (docs/designs/fleet-project-apps.md): state, pipelines, callback origins, limits, keys (created, last use, taken, retired) and last use. Never a key value.", Changes: []string{"project-app"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"project_apps":                  {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "The project's apps (docs/designs/fleet-project-apps.md): state, pipelines, callback origins, limits, keys (created, last use, taken, retired), last use, and use over 30 days (runs, failed runs, leaf cost). Never a key value.", Changes: []string{"project-app"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_archive":               {Read: false, Long: false, Errors: []int{403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.\",\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create a project (requestId, id, content)", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
 		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Revoke a project's initial access grants (projectId, baseAccessVersion)", InputSchema: json.RawMessage("{\"properties\":{\"baseAccessVersion\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"baseAccessVersion\"],\"type\":\"object\"}")},

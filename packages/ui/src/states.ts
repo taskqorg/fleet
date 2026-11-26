@@ -149,6 +149,13 @@ export const states = {
     revoking: { label: 'Revoking', tone: 'running', icon: 'history' },
     revoked: { label: 'Revoked', tone: 'neutral', icon: 'circle-dashed' },
   },
+  /** A project's own app (project_apps, docs/designs/fleet-project-apps.md): asked waits for the owner's card. */
+  projectApp: {
+    asked: { label: 'Asked', tone: 'attention', icon: 'message-circle-question' },
+    active: { label: 'Active', tone: 'success', icon: 'circle-check' },
+    declined: { label: 'Declined', tone: 'neutral', icon: 'circle-slash' },
+    revoked: { label: 'Revoked', tone: 'neutral', icon: 'circle-dashed' },
+  },
   intake: {
     all: { label: 'Open', tone: 'success', icon: 'circle-check' },
     paused: { label: 'Paused', tone: 'attention', icon: 'circle-pause' },

@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const appCallbackDelivered = `-- name: AppCallbackDelivered :exec
@@ -708,6 +710,84 @@ func (q *Queries) ProjectAppSetState(ctx context.Context, arg ProjectAppSetState
 	return err
 }
 
+const projectAppUse = `-- name: ProjectAppUse :many
+WITH RECURSIVE runs AS MATERIALIZED (
+ SELECT e.id, e.app_id AS caller, (e.state = 'failed') AS failed
+ FROM execution e
+ WHERE e.app_id = ANY($1::text[]) AND e.started_at >= $2::timestamptz AND e.kind = 'pipeline_run'
+), tree(root, id) AS (
+ SELECT r.id, r.id FROM runs r
+ UNION
+ SELECT t.root, c.id FROM tree t JOIN execution c ON c.parent_execution_id = t.id
+), leaves AS MATERIALIZED (
+ SELECT DISTINCT ON (x.id) r.caller, x.id
+ FROM tree t JOIN runs r ON r.id = t.root JOIN execution x ON x.id = t.id
+ LEFT JOIN execution_totals tt ON tt.execution_id = x.id
+ WHERE x.kind NOT IN ('pipeline_run', 'pipeline_step') AND NOT (x.kind = 'child_agent' AND tt.execution_id IS NULL)
+ ORDER BY x.id, r.caller
+), figures AS (
+ SELECT l.caller, s.cost_currency AS currency, s.cost_basis AS basis, s.cost_value AS value, 0::bigint AS unpriced
+ FROM leaves l JOIN execution_spend s ON s.execution_id = l.id
+ WHERE NOT s.stale AND s.payload IS NULL AND s.cost_currency IS NOT NULL AND s.cost_value IS NOT NULL
+ UNION ALL
+ SELECT l.caller, f.currency, f.basis, f.value, 0::bigint
+ FROM leaves l JOIN execution_spend s ON s.execution_id = l.id CROSS JOIN LATERAL jsonb_to_recordset(s.payload) f(currency text, basis text, value float8)
+ WHERE NOT s.stale AND s.payload IS NOT NULL AND f.currency IS NOT NULL AND f.value IS NOT NULL
+ UNION ALL
+ SELECT l.caller, NULL, NULL, NULL, CASE WHEN s.execution_id IS NULL OR s.stale THEN 1 ELSE s.cost_unpriced END::bigint
+ FROM leaves l LEFT JOIN execution_spend s ON s.execution_id = l.id
+ WHERE s.execution_id IS NULL OR s.stale OR s.cost_unpriced > 0
+), costs AS (
+ SELECT z.caller, jsonb_agg(jsonb_build_object('currency', z.currency, 'basis', z.basis, 'value', z.value, 'unpriced', z.unpriced)) AS j
+ FROM (SELECT caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM figures GROUP BY 1, 2, 3) z
+ GROUP BY z.caller
+)
+SELECT r.caller::text AS caller, count(*)::bigint AS runs, (count(*) FILTER (WHERE r.failed))::bigint AS failed,
+ coalesce(min(k.j::text), '[]')::jsonb AS costs
+FROM runs r LEFT JOIN costs k ON k.caller = r.caller
+GROUP BY r.caller
+`
+
+type ProjectAppUseParams struct {
+	AppIds []string
+	Since  pgtype.Timestamptz
+}
+
+type ProjectAppUseRow struct {
+	Caller string
+	Runs   int64
+	Failed int64
+	Costs  []byte
+}
+
+// Each app's real use since @since (fleet-project-apps.md, Screens): its pipeline runs (execution_app) and the failed
+// ones, and the cost of their leaf executions only (fleet-analytics.md: containers never count, a leaf counts once),
+// summed per currency and basis from execution_spend; a leaf without a fresh spend row counts as unpriced.
+func (q *Queries) ProjectAppUse(ctx context.Context, arg ProjectAppUseParams) ([]ProjectAppUseRow, error) {
+	rows, err := q.db.Query(ctx, projectAppUse, arg.AppIds, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectAppUseRow
+	for rows.Next() {
+		var i ProjectAppUseRow
+		if err := rows.Scan(
+			&i.Caller,
+			&i.Runs,
+			&i.Failed,
+			&i.Costs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectAppUsed = `-- name: ProjectAppUsed :exec
 UPDATE project_app SET last_used_at = clock_timestamp() WHERE id = $1
 `
@@ -759,6 +839,88 @@ func (q *Queries) ProjectAppsOfProject(ctx context.Context, projectID string) ([
 			&i.LastUsedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectPipelineUse = `-- name: ProjectPipelineUse :many
+WITH RECURSIVE runs AS MATERIALIZED (
+ SELECT e.id, coalesce(e.app_id, '') AS caller, (e.state = 'failed') AS failed
+ FROM execution e
+ WHERE e.project_id = $1::text AND e.started_at >= $2::timestamptz AND e.pipeline_id = $3::text
+  AND e.experiment_id IS NULL AND e.kind = 'pipeline_run'
+), tree(root, id) AS (
+ SELECT r.id, r.id FROM runs r
+ UNION
+ SELECT t.root, c.id FROM tree t JOIN execution c ON c.parent_execution_id = t.id
+), leaves AS MATERIALIZED (
+ SELECT DISTINCT ON (x.id) r.caller, x.id
+ FROM tree t JOIN runs r ON r.id = t.root JOIN execution x ON x.id = t.id
+ LEFT JOIN execution_totals tt ON tt.execution_id = x.id
+ WHERE x.kind NOT IN ('pipeline_run', 'pipeline_step') AND NOT (x.kind = 'child_agent' AND tt.execution_id IS NULL)
+ ORDER BY x.id, r.caller
+), figures AS (
+ SELECT l.caller, s.cost_currency AS currency, s.cost_basis AS basis, s.cost_value AS value, 0::bigint AS unpriced
+ FROM leaves l JOIN execution_spend s ON s.execution_id = l.id
+ WHERE NOT s.stale AND s.payload IS NULL AND s.cost_currency IS NOT NULL AND s.cost_value IS NOT NULL
+ UNION ALL
+ SELECT l.caller, f.currency, f.basis, f.value, 0::bigint
+ FROM leaves l JOIN execution_spend s ON s.execution_id = l.id CROSS JOIN LATERAL jsonb_to_recordset(s.payload) f(currency text, basis text, value float8)
+ WHERE NOT s.stale AND s.payload IS NOT NULL AND f.currency IS NOT NULL AND f.value IS NOT NULL
+ UNION ALL
+ SELECT l.caller, NULL, NULL, NULL, CASE WHEN s.execution_id IS NULL OR s.stale THEN 1 ELSE s.cost_unpriced END::bigint
+ FROM leaves l LEFT JOIN execution_spend s ON s.execution_id = l.id
+ WHERE s.execution_id IS NULL OR s.stale OR s.cost_unpriced > 0
+), costs AS (
+ SELECT z.caller, jsonb_agg(jsonb_build_object('currency', z.currency, 'basis', z.basis, 'value', z.value, 'unpriced', z.unpriced)) AS j
+ FROM (SELECT caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM figures GROUP BY 1, 2, 3) z
+ GROUP BY z.caller
+)
+SELECT r.caller::text AS caller, coalesce(min(a.name), '')::text AS name, count(*)::bigint AS runs,
+ (count(*) FILTER (WHERE r.failed))::bigint AS failed, coalesce(min(k.j::text), '[]')::jsonb AS costs
+FROM runs r LEFT JOIN costs k ON k.caller = r.caller LEFT JOIN project_app a ON a.id = r.caller
+GROUP BY r.caller
+ORDER BY (r.caller = ''), count(*) DESC, r.caller
+`
+
+type ProjectPipelineUseParams struct {
+	ProjectID  string
+	Since      pgtype.Timestamptz
+	PipelineID string
+}
+
+type ProjectPipelineUseRow struct {
+	Caller string
+	Name   string
+	Runs   int64
+	Failed int64
+	Costs  []byte
+}
+
+// Who ran a project's pipeline since @since (the pipeline page's Used by): one row per app, and an empty caller for agents and
+// people; Lab runs (experiment_id) are left out. Runs, failed runs and the leaf cost as ProjectAppUse counts them.
+func (q *Queries) ProjectPipelineUse(ctx context.Context, arg ProjectPipelineUseParams) ([]ProjectPipelineUseRow, error) {
+	rows, err := q.db.Query(ctx, projectPipelineUse, arg.ProjectID, arg.Since, arg.PipelineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectPipelineUseRow
+	for rows.Next() {
+		var i ProjectPipelineUseRow
+		if err := rows.Scan(
+			&i.Caller,
+			&i.Name,
+			&i.Runs,
+			&i.Failed,
+			&i.Costs,
 		); err != nil {
 			return nil, err
 		}

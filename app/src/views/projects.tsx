@@ -23,6 +23,7 @@ import { Tasks } from './tasks.tsx';
 import { Results } from './results.tsx';
 import { Delivery } from './delivery.tsx';
 import { ProjectAccess } from './access-grants.tsx';
+import { ProjectApps } from './project-apps.tsx';
 import { AskCard, PipelinePage, ProjectHistory, ProjectOverview, ProjectPipelines, projectFacetPath, useProjectView } from './project-overview.tsx';
 
 type Facet = 'overview' | ListFacet | 'pipelines' | 'setup' | 'history';
@@ -385,7 +386,7 @@ const roleName = (r: string) => (r.length <= 3 ? r.toUpperCase() : r[0].toUpperC
 const SHOWN = new Set(['repos', 'environments', 'roles', 'integration.mode', 'integration.mergeMethod', 'integration.autoMerge', 'capability', 'recommendedMethod']);
 
 /**
- * Setup: About (the context text), Code, Where agents work, Who works, Access, Open questions, then what differs from the
+ * Setup: About (the context text), Code, Where agents work, Who works, Access, Apps, Open questions, then what differs from the
  * shared defaults with "Inherited defaults (N)" folded (OR-45). Each section's pencil opens the project editor in place of
  * the reading; its Save is the one write, and Close (or a verified save) returns to the reading.
  */
@@ -475,6 +476,9 @@ function ProjectSetup(props: { projectId: string; name: string; raw?: Record<str
             </DetailSection>
             <DetailSection title="Access">
               <ProjectAccess projectId={props.projectId} data={dataClass()} />
+            </DetailSection>
+            <DetailSection title="Apps">
+              <ProjectApps projectId={props.projectId} />
             </DetailSection>
             <Show when={(view.data?.waiting.length ?? 0) > 0}>
               <DetailSection title="Open questions">

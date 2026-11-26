@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -365,7 +366,8 @@ func init() {
 // and whether the project uses it, the comparison on the project's sample for its job, and the project's experiments
 // that ran it.
 func projectPipelineView(q *Request, r *contract.ProjectPipelineViewRequest) (contract.ProjectPipelineViewReply, error) {
-	out := contract.ProjectPipelineViewReply{PipelineId: r.PipelineId, Outline: []contract.PipelineOutlineLine{}, Ranking: []contract.LabLeaderboardEntry{}, Experiments: []contract.LabExperimentRecord{}}
+	out := contract.ProjectPipelineViewReply{PipelineId: r.PipelineId, Outline: []contract.PipelineOutlineLine{}, Ranking: []contract.LabLeaderboardEntry{},
+		Experiments: []contract.LabExperimentRecord{}, Use: []contract.ProjectPipelineUse{}}
 	id := r.ProjectId
 	if id == "" || id == "-" || r.PipelineId == "" {
 		return out, fail(400, "projectId and pipelineId")
@@ -429,5 +431,20 @@ func projectPipelineView(q *Request, r *contract.ProjectPipelineViewRequest) (co
 		}
 	}
 	sort.SliceStable(out.Experiments, func(i, j int) bool { return out.Experiments[i].CreatedAt > out.Experiments[j].CreatedAt })
-	return out, nil
+	out.Use, err = projectPipelineUse(q, id, r.PipelineId)
+	return out, err
+}
+
+// projectPipelineUse: who ran the project's pipeline over the last 30 days outside Lab: each app, then agents and people.
+func projectPipelineUse(q *Request, projectID, pipelineID string) ([]contract.ProjectPipelineUse, error) {
+	rs, err := q.db().ProjectPipelineUse(q.ctx(), db.ProjectPipelineUseParams{ProjectID: projectID, PipelineID: pipelineID, Since: appUseSince()})
+	out := make([]contract.ProjectPipelineUse, 0, len(rs))
+	for _, r := range rs {
+		c := contract.ProjectPipelineCaller{Kind: contract.ProjectPipelineCallerKindPeople}
+		if r.Caller != "" {
+			c = contract.ProjectPipelineCaller{Kind: contract.ProjectPipelineCallerKindApp, Id: new(r.Caller), Name: new(firstString(r.Name, r.Caller))}
+		}
+		out = append(out, contract.ProjectPipelineUse{Caller: c, Runs: r.Runs, Failed: r.Failed, Cost: callGroupCost(r.Costs)})
+	}
+	return out, err
 }

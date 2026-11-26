@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -97,7 +98,8 @@ func projectAppView(r db.ProjectAppGetRow, keys []db.ProjectAppKeysRow) contract
 	p := projectAppPayloadOf(r.Payload)
 	v := contract.ProjectAppView{Id: r.ID, ProjectId: r.ProjectID, Name: r.Name, State: contract.ProjectAppState(r.State), Pipelines: p.Pipelines,
 		CallbackOrigins: p.CallbackOrigins, Limits: p.Limits, RequestId: r.RequestID, AskedBy: r.AskedBy, ApprovedBy: r.ApprovedBy, QuestionId: r.QuestionID,
-		Reason: p.Reason, Keys: []contract.ProjectAppKeyView{}, CreatedAt: r.CreatedAt.UnixMilli(), LastUsedAt: appMs(r.LastUsedAt)}
+		Reason: p.Reason, Keys: []contract.ProjectAppKeyView{}, CreatedAt: r.CreatedAt.UnixMilli(), LastUsedAt: appMs(r.LastUsedAt),
+		Use30d: contract.ProjectAppUse{Cost: []contract.CostFigure{}}}
 	for _, k := range keys {
 		if k.AppID == r.ID {
 			v.Keys = append(v.Keys, contract.ProjectAppKeyView{Id: k.ID, CreatedAt: k.CreatedAt.UnixMilli(), LastUsedAt: appMs(k.LastUsedAt),
@@ -117,7 +119,35 @@ func projectAppRead(q *Request, id string) (contract.ProjectAppView, error) {
 		return contract.ProjectAppView{}, err
 	}
 	keys, err := q.db().ProjectAppKeys(q.ctx(), []string{id})
-	return projectAppView(db.ProjectAppGetRow(r), keys), err
+	if err != nil {
+		return contract.ProjectAppView{}, err
+	}
+	use, err := projectAppUse(q, []string{id})
+	v := projectAppView(db.ProjectAppGetRow(r), keys)
+	if u, ok := use[id]; ok {
+		v.Use30d = u
+	}
+	return v, err
+}
+
+// appUseDays: the window of an app's and a pipeline's use (fleet-project-apps.md, Screens).
+const appUseDays = 30
+
+func appUseSince() pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: time.Now().Add(-appUseDays * 24 * time.Hour), Valid: true}
+}
+
+// projectAppUse: each app's runs, failed runs and leaf cost over the last 30 days, by app id (absent: no runs).
+func projectAppUse(q *Request, ids []string) (map[string]contract.ProjectAppUse, error) {
+	out := map[string]contract.ProjectAppUse{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rs, err := q.db().ProjectAppUse(q.ctx(), db.ProjectAppUseParams{AppIds: ids, Since: appUseSince()})
+	for _, r := range rs {
+		out[r.Caller] = contract.ProjectAppUse{Runs: r.Runs, Failed: r.Failed, Cost: callGroupCost(r.Costs)}
+	}
+	return out, err
 }
 
 func projectApps(q *Request, r *contract.ProjectAppsRequest) (contract.ProjectAppsReply, error) {
@@ -130,9 +160,17 @@ func projectApps(q *Request, r *contract.ProjectAppsRequest) (contract.ProjectAp
 		ids = append(ids, a.ID)
 	}
 	keys, err := q.db().ProjectAppKeys(q.ctx(), ids)
+	if err != nil {
+		return contract.ProjectAppsReply{}, err
+	}
+	use, err := projectAppUse(q, ids)
 	out := contract.ProjectAppsReply{Apps: []contract.ProjectAppView{}}
 	for _, a := range rs {
-		out.Apps = append(out.Apps, projectAppView(db.ProjectAppGetRow(a), keys))
+		v := projectAppView(db.ProjectAppGetRow(a), keys)
+		if u, ok := use[a.ID]; ok {
+			v.Use30d = u
+		}
+		out.Apps = append(out.Apps, v)
 	}
 	return out, err
 }

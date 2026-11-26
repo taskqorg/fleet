@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"fleet/contract"
 )
@@ -170,5 +171,77 @@ func TestAppCallbackSignature(t *testing.T) {
 	}
 	if appCallbackSign("fcs_other", body) == appCallbackSign("fcs_secret", body) {
 		t.Fatalf("the signature does not depend on the secret")
+	}
+}
+
+// Requirement: an app's 30-day use (project_apps use30d) and a pipeline's callers (project_pipeline_view use) count the
+// pipeline runs and failed runs of the window and the cost of their leaf executions only, each leaf once; the pipeline
+// page leaves Lab runs out and puts agents and people after the apps. Risk: a container's spend counts, an older or Lab
+// run counts, or app runs are mixed with people's.
+func TestProjectAppUse(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	exec(`INSERT INTO project_app (id, project_id, name, state, request_id, asked_by, payload) VALUES ('use-site', 'desiign', 'Use site', 'active', 'u1', 'owner', '{}')`)
+	now := time.Now().UTC()
+	run := func(id, kind, state, parent, app, experiment string, ago time.Duration, usd float64) {
+		t.Helper()
+		at := now.Add(-ago)
+		exec(`INSERT INTO execution (id, kind, state, project_id, started_at, ended_at, data, observation, config_ref, parent_execution_id, app_id, experiment_id, pipeline_id)
+		 VALUES ($1, $2::execution_kind, $3::execution_state, 'desiign', $4, $4, '{}', 'confirmed', '{}', nullif($5, ''), nullif($6, ''), nullif($7, ''),
+		  CASE WHEN $2 = 'pipeline_run' THEN 'use-pipe' END)`, id, kind, state, at, parent, app, experiment)
+		if usd > 0 {
+			exec(`INSERT INTO execution_spend (execution_id, project_id, started_at, kind, state, purpose, cost_currency, cost_basis, cost_value)
+			 VALUES ($1, 'desiign', $2, $3::execution_kind, $4::execution_state, 'other', 'USD', 'estimated', $5)
+			 ON CONFLICT (execution_id) DO UPDATE SET cost_currency = 'USD', cost_basis = 'estimated', cost_value = $5, stale = false, payload = NULL, cost_unpriced = 0`,
+				id, at, kind, state, usd)
+		}
+	}
+	// App: two runs in the window (one failed) with a step, a leaf under the step and a tool call under the leaf; the
+	// run's and the step's own spend must not count.
+	run("use-r1", "pipeline_run", "succeeded", "", "use-site", "", time.Hour, 100)
+	run("use-s1", "pipeline_step", "succeeded", "use-r1", "", "", time.Hour, 50)
+	run("use-a1", "agent_run", "succeeded", "use-s1", "", "", time.Hour, 1.5)
+	run("use-t1", "tool_run", "succeeded", "use-a1", "", "", time.Hour, 0.25)
+	run("use-r2", "pipeline_run", "failed", "", "use-site", "", 2*time.Hour, 0)
+	run("use-a2", "agent_run", "failed", "use-r2", "", "", 2*time.Hour, 0.5)
+	run("use-r3", "pipeline_run", "succeeded", "", "use-site", "", 40*24*time.Hour, 0) // older than 30 days
+	run("use-a3", "agent_run", "succeeded", "use-r3", "", "", 40*24*time.Hour, 9)
+	// Agents and people: one run. Lab: one run, left out.
+	run("use-r4", "pipeline_run", "succeeded", "", "", "", 3*time.Hour, 0)
+	run("use-a4", "agent_run", "succeeded", "use-r4", "", "", 3*time.Hour, 2)
+	run("use-r5", "pipeline_run", "succeeded", "", "", "use-x", 3*time.Hour, 0)
+	run("use-a5", "agent_run", "succeeded", "use-r5", "", "", 3*time.Hour, 7)
+
+	usd := func(cs []contract.CostFigure) float64 {
+		for _, c := range cs {
+			if deref(c.Currency) == "USD" && c.Value != nil {
+				return *c.Value
+			}
+		}
+		return -1
+	}
+	var apps contract.ProjectAppsReply
+	e.opInto(t, "project_apps", doc{"projectId": "desiign"}, e.ownerHeaders(), &apps)
+	if len(apps.Apps) != 1 {
+		t.Fatalf("apps %+v", apps.Apps)
+	}
+	if u := apps.Apps[0].Use30d; u.Runs != 2 || u.Failed != 1 || usd(u.Cost) != 2.25 {
+		t.Fatalf("use30d %+v (USD %v), want 2 runs, 1 failed, $2.25", u, usd(u.Cost))
+	}
+	var use []contract.ProjectPipelineUse
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) (err error) {
+		use, err = projectPipelineUse(q, "desiign", "use-pipe")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(use) != 2 || use[0].Caller.Kind != "app" || deref(use[0].Caller.Name) != "Use site" || use[0].Runs != 2 || use[0].Failed != 1 ||
+		usd(use[0].Cost) != 2.25 || use[1].Caller.Kind != "people" || use[1].Runs != 1 || usd(use[1].Cost) != 2 {
+		t.Fatalf("pipeline use %+v", use)
 	}
 }
