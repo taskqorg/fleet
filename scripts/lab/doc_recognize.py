@@ -16,7 +16,7 @@ finish   --from STEP [--merge FROM] reads step STEP's answer (an agent's output.
          three providers), takes the JSON object out of its text, normalizes it to the result shape and writes
          output.json. --merge FROM keeps FROM's documents that STEP did not return (the two-step pipeline).
 
-Result shape: {documents: [{file, type, side, front, alias, legal_name, dob, site, signature, readable}],
+Result shape: {documents: [{file, type, side, front, id_number, same_person_as, alias, legal_name, dob, site, signature, readable}],
                model: {legal_name, aliases, name_variants, people, duplicates, unreadable}}; finish groups the
                documents by name and date of birth (people) and sets name_variants when there are two or more groups,
                whatever the answer says; the summary tells different people (different dates of birth) from name
@@ -49,6 +49,8 @@ From each document extract exactly what is written on it, null when the document
 - dob: date of birth as YYYY-MM-DD;
 - side: for id_card and passport, front or back; null for other types;
 - front: for the back side of an ID, the file of its front side when it is among the files, else null;
+- id_number: the identity document's number as written (ID card, passport or driving licence number), on the ID itself and on a 2257 form or release that records the performer's ID number; null when none is shown or it is empty;
+- same_person_as: for a selfie_with_id, the file of the ID card or passport among the files whose photo shows the same face as the person in the selfie (or whose ID is the one held in the selfie), else null; compare the faces only within these files, never with anything else;
 - site: the website or producing company a release or 2257 form names (prefer the website domain when both are shown); always null for identity documents and selfies, which name no site;
 - signature: true when the model's signature is present, false when the model's signature line is empty, null when the document has no signature place for the model (selfies, other files). For identity documents, the holder's signature counts.
 Do not fill a field of one document from another document.
@@ -61,7 +63,7 @@ Then, for the model as a whole:
 - unreadable: the files you could not read.
 
 Answer with only one JSON object, no prose:
-{{"documents": [{{"file": "...", "type": "...", "side": null, "front": null, "alias": null, "legal_name": null, "dob": null, "site": null, "signature": null, "readable": true}}],
+{{"documents": [{{"file": "...", "type": "...", "side": null, "front": null, "id_number": null, "same_person_as": null, "alias": null, "legal_name": null, "dob": null, "site": null, "signature": null, "readable": true}}],
  "model": {{"legal_name": "...", "aliases": [], "name_variants": false, "duplicates": [], "unreadable": []}}}}
 {extra}"""
 SECOND = """
@@ -242,10 +244,13 @@ def people(documents):
     """The people the documents name: documents join one person when their legal names are the same name up to noise
     (same_person_name) and their dates of birth do not differ. A scene's documents can belong to several models, so
     two people are reported as two people, not as a spelling problem. Answers [[file, ...], ...], first file order."""
-    named = [d for d in documents if d.get('legal_name')]
+    # an ID before the documents that point at it (a back side, a selfie), so their link finds its group
+    named = sorted((d for d in documents if d.get('legal_name')), key=lambda d: d['type'] not in IDS or d.get('side') == 'back')
     groups = []
     for d in named:
-        hit = [g for g in groups if all(same_person_name(d['legal_name'], o['legal_name']) and not (d.get('dob') and o.get('dob') and d['dob'] != o['dob']) for o in g)]
+        link = d.get('front') or d.get('same_person_as')
+        hit = [g for g in groups if any(link and o['file'] == link or d.get('id_number') and d.get('id_number') == o.get('id_number') for o in g)] or \
+              [g for g in groups if all(same_person_name(d['legal_name'], o['legal_name']) and not (d.get('dob') and o.get('dob') and d['dob'] != o['dob']) for o in g)]
         if hit:
             hit[0].append(d)
         else:
@@ -290,14 +295,25 @@ def normalize(raw, names):
         sig = d.get('signature')
         side = d.get('side') if t in ('id_card', 'passport') and d.get('side') in ('front', 'back') else None
         front = pathlib.PurePath(str(d.get('front') or '')).name if side == 'back' else ''
+        same = pathlib.PurePath(str(d.get('same_person_as') or '')).name if t == 'selfie_with_id' else ''
+        idn = re.sub(r'[^0-9A-Za-z]', '', str(d.get('id_number') or '')).upper() if t in ('id_card', 'passport', '2257_form', 'model_release') else ''
         docs[f] = {'file': f, 'type': t, 'side': side, 'front': front if front in names and front != f else None,
+                   'id_number': idn or None, 'same_person_as': same if same in names and same != f else None,
                    'alias': d.get('alias') or None, 'legal_name': d.get('legal_name') or None,
                    'dob': norm_date(d.get('dob')), 'site': None if t in IDS else (d.get('site') or None),
                    'signature': sig if isinstance(sig, bool) else None, 'readable': d.get('readable') is not False}
-    for d in docs.values():  # an ID's back side belongs to the person of its front
-        fr = docs.get(d['front']) if d['front'] else None
-        if fr:
+    for d in docs.values():  # an ID's back side belongs to the person of its front; a selfie to the ID whose face it shows
+        fr = docs.get(d['front'] or d['same_person_as'] or '')
+        if fr and fr['type'] in IDS:
             d['legal_name'], d['dob'] = d['legal_name'] or fr['legal_name'], d['dob'] or fr['dob']
+    by_number = {}
+    for d in docs.values():  # a form that records an ID's number belongs to that ID's person
+        if d['id_number'] and d['type'] in ('id_card', 'passport'):
+            by_number.setdefault(d['id_number'], d)
+    for d in docs.values():
+        idd = by_number.get(d['id_number']) if d['id_number'] and d['type'] not in ('id_card', 'passport') else None
+        if idd:
+            d['legal_name'], d['dob'] = d['legal_name'] or idd['legal_name'], d['dob'] or idd['dob']
     m = raw.get('model') if isinstance(raw.get('model'), dict) else {}
     dups = [sorted(pathlib.PurePath(str(x)).name for x in p) for p in m.get('duplicates') or [] if isinstance(p, list) and len(p) == 2]
     unreadable = sorted({pathlib.PurePath(str(x)).name for x in m.get('unreadable') or []} | {f for f, d in docs.items() if not d['readable']})
