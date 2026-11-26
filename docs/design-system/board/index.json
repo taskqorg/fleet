@@ -211,6 +211,17 @@
    "status": null
   },
   {
+   "id": "63796525a633a07e",
+   "canvas": "local-agents",
+   "name": "Frame 1",
+   "page": null,
+   "width": null,
+   "frameWidth": 3900,
+   "theme": null,
+   "component": false,
+   "status": null
+  },
+  {
    "id": "31027fc48364aa19",
    "canvas": "masters",
    "name": "State",
