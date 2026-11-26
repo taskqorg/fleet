@@ -46,6 +46,7 @@ type projectAppPayload struct {
 	CallbackOrigins []string                  `json:"callbackOrigins"`
 	Limits          contract.ProjectAppLimits `json:"limits"`
 	Reason          string                    `json:"reason"`
+	AskedByPerson   string                    `json:"askedByPerson,omitempty"` // the person an asking agent ran for
 }
 
 // appCaller: the app a request on /api/apps authenticated as.
@@ -190,6 +191,9 @@ func projectAppAsk(q *Request, r *contract.ProjectAppAskRequest) (contract.Proje
 		return no, err
 	}
 	payload.Reason = reason
+	if q.person != nil {
+		payload.AskedByPerson = q.person.Email
+	}
 	prev, err := q.db().ProjectAppByRequest(q.ctx(), db.ProjectAppByRequestParams{ProjectID: r.ProjectId, RequestID: r.RequestId})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return no, err
@@ -355,9 +359,11 @@ func projectAppMint(q *Request, app db.ProjectAppGetRow, directedBy string) (str
 		return "", err
 	}
 	// The file comes first: a key row whose value is missing could never be taken, a value without a row is never used.
-	if err := os.WriteFile(filepath.Join(dir, strings.TrimPrefix(keyID, "appkey:")), []byte(value), 0o600); err != nil {
+	file := filepath.Join(dir, strings.TrimPrefix(keyID, "appkey:"))
+	if err := os.WriteFile(file, []byte(value), 0o600); err != nil {
 		return "", err
 	}
+	afterRollback(q, func() { _ = os.Remove(file) })
 	if err := q.db().ProjectAppKeyInsert(q.ctx(), db.ProjectAppKeyInsertParams{ID: keyID, AppID: app.ID, ProjectID: app.ProjectID, DirectedBy: directedBy,
 		Sha256: secretHash(value)}); err != nil {
 		return "", err
@@ -380,7 +386,8 @@ func projectAppKeyTake(q *Request, r *contract.ProjectAppKeyTakeRequest) (contra
 	if err != nil {
 		return no, err
 	}
-	if !fullAccess(q.person) && !q.person.Owner && actor(q, "") != app.AskedBy {
+	asker := projectAppPayloadOf(app.Payload).AskedByPerson
+	if !fullAccess(q.person) && !q.person.Owner && actor(q, "") != app.AskedBy && (asker == "" || q.person.Email != asker) {
 		return no, fail(403, "Only the asker or the owner takes an app key")
 	}
 	if app.State != "active" {
