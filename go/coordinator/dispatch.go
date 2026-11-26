@@ -170,7 +170,12 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 			}
 			sctx, span := obs.Start(ctx, "dispatch.promote.session", obs.KindInternal)
 			span.Set("fleet.session.id", sid)
-			err := a.store.Write(sctx, nil, []string{DISPATCH, "session:" + sid}, func(q *Request) error { return agentPromoteOnly(q, sid) })
+			err := a.store.Write(sctx, nil, []string{DISPATCH}, func(q *Request) error {
+				if busy, err := trySessionLock(q, sid); err != nil || busy {
+					return err // busy: its writer wakes dispatch when it commits
+				}
+				return agentPromoteOnly(q, sid)
+			})
 			span.End(err)
 			if err != nil {
 				return err
@@ -188,6 +193,16 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 		}
 	}
 	return dispatchStep(ctx, "dispatch.place", func(ctx context.Context) error { return a.dispatchRun(ctx, "") })
+}
+
+// trySessionLock takes the session's lock in q's transaction without waiting; busy is true when another transaction
+// holds it. Dispatch holds DISPATCH when it calls this, so it never waits there for a session's writer.
+func trySessionLock(q *Request, sid string) (busy bool, err error) {
+	err = acquireTxLocksMode(q.ctx(), q.tx, true, "session:"+sid)
+	if errors.Is(err, errAdvisoryBusy) {
+		return true, nil
+	}
+	return false, err
 }
 
 // dispatchStep runs one step of a dispatch pass under a span of its own, a child of the pass's span.
@@ -1111,10 +1126,7 @@ func (a *App) dispatchRun(ctx context.Context, polling string) error {
 			if e.PipelineRunID != nil {
 				locks = append(locks, GLOBAL)
 			}
-			locks = append(locks, DISPATCH)
-			if e.SessionID != "" {
-				locks = append(locks, "session:"+e.SessionID)
-			}
+			locks = append(locks, DISPATCH) // the session's lock: tried in dispatchOne, never waited for under DISPATCH
 			return nil
 		}); err != nil {
 			return err
@@ -1145,7 +1157,9 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 		}
 		if sid := e.SessionID; sid != "" && !txHasLock(q.tx, "session:"+sid) {
 			if canAcquireTxLock(q.tx, "session:"+sid) {
-				if err := acquireTxLock(q, "session:"+sid); err != nil {
+				// Tried, not waited for: a wait here would hold DISPATCH (and every write queued behind it) until the session's
+				// writer commits; that writer wakes dispatch when it does, and the fallback pass comes back anyway.
+				if busy, err := trySessionLock(q, sid); err != nil || busy {
 					return err
 				}
 				// Re-read after acquiring the session lock so any concurrent session write is visible (a stop does not take it:
