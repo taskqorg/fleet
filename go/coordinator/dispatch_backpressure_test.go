@@ -105,10 +105,27 @@ func TestHostDrainMirrorsExecutorFence(t *testing.T) {
 		t.Fatal("fenced without a pending update")
 	}
 	open := &contract.DrainReport{Target: newer, Fenced: false, WaitsFor: []string{"1 run"}}
-	if d := hostDrain(open, &old, &newer, "on", now); (hostSeen{Drain: d}).drainTarget() != "" {
-		t.Fatal("an open fence still kept work away")
+	if d := hostDrain(open, &old, &newer, "on", now); (hostSeen{Drain: d}).drainTarget() != newer {
+		t.Fatal("an open pause of the drain let work in: the host would never reach its idle moment")
 	}
 	if got := drainDetail(&contract.DrainReport{Target: newer, Fenced: true, WaitsFor: []string{"1 run"}}); got != "updating to 1.261125.165: takes no new start; waits for 1 run" {
 		t.Fatal(got)
+	}
+}
+
+func TestRollingDrainOneHostAtATime(t *testing.T) {
+	a := &App{}
+	if other := a.rollingDrain("pds18", true, true); other != "" {
+		t.Fatalf("a draining host was held: %q", other)
+	}
+	if other := a.rollingDrain("windows", false, true); other != "pds18" {
+		t.Fatalf("a second host was offered while pds18 drains: %q", other)
+	}
+	if other := a.rollingDrain("windows", false, false); other != "" {
+		t.Fatalf("nothing offered, still held: %q", other)
+	}
+	a.rollingDrain("pds18", false, false) // pds18 updated: its drain ended
+	if other := a.rollingDrain("windows", false, true); other != "" {
+		t.Fatalf("windows held after pds18 finished: %q", other)
 	}
 }

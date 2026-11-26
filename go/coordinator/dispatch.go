@@ -303,10 +303,12 @@ type hostSeen struct {
 	Drain          *contract.DrainReport `json:"drain"`
 }
 
-// drainTarget: the newer release a host's executor drains for while it admits no new start (executor_launch.go,
-// hostDrain), so a run placed there would stay preparing until the update lands.
+// drainTarget: the newer release a host's executor drains for (executor_launch.go, hostDrain). Dispatch places no new
+// work there for the whole drain, its executor's open pauses included: a pause let new runs in, so a busy host never
+// reached the idle moment its update installs at (2026-11-26: pds18-native drained 3 h for .109 to .133 while new runs
+// kept starting). The other hosts take the work; one host updates at a time (pollOnce, rollingDrain).
 func (o hostSeen) drainTarget() string {
-	if o.Drain == nil || !o.Drain.Fenced {
+	if o.Drain == nil {
 		return ""
 	}
 	return o.Drain.Target

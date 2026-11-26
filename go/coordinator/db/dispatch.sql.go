@@ -1248,3 +1248,29 @@ func (q *Queries) DispWaitReason(ctx context.Context, arg DispWaitReasonParams) 
 	_, err := q.db.Exec(ctx, dispWaitReason, arg.WaitReason, arg.ID)
 	return err
 }
+
+const hostsDraining = `-- name: HostsDraining :many
+SELECT id FROM host_observation WHERE jsonb_typeof(payload->'drain') = 'object'
+ AND last_seen_at > now() - make_interval(secs => $1::float8) ORDER BY seq
+`
+
+// The hosts whose last poll, within secs, reported an update drain: the rolling-update turn across a coordinator restart.
+func (q *Queries) HostsDraining(ctx context.Context, secs float64) ([]string, error) {
+	rows, err := q.db.Query(ctx, hostsDraining, secs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

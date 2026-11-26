@@ -188,6 +188,17 @@ func (e *hostWakeEntry) wake() {
 }
 
 func init() {
+	// The rolling-update turn survives a coordinator restart: the hosts that reported a drain just before it count as
+	// draining until they poll again (rollingDrain).
+	onStart(func(ctx context.Context, a *App) {
+		_ = a.store.Read(ctx, nil, func(q *Request) error {
+			ids, err := q.db().HostsDraining(q.ctx(), onlineMs/1000)
+			for _, id := range ids {
+				a.draining.Store(id, nowMs())
+			}
+			return err
+		})
+	})
 	hostRouteObserved(contract.RoutePoll, pollObserved, func(q *Request, b *contract.PollRequest) (contract.PollReply, error) { return q.app.pollOnce(q, b) })
 }
 
@@ -944,11 +955,18 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	// Release pacing (update_pacing.go): the target this poll offers, decided once for the observation and the reply.
 	offered, offeredRel := healthyRelease()
 	pace := paceUpdate(offered, offeredRel, b.Version, b.Drain != nil, len(b.ActiveExecutions) == 0, b.UtcOffsetMinutes, time.Now())
+	if other := a.rollingDrain(host, b.Drain != nil, pace.target != nil); other != "" {
+		// One host updates at a time, so the fleet keeps the others' capacity while it drains (2026-11-26: all three
+		// hosts drained at once and took no new start).
+		pace = hostPace{view: &contract.HostUpdatePacing{Release: *pace.target, State: contract.UpdatePacingStateDeferred,
+			Class: contract.UpdatePacingClassNormal, Reason: "waits for " + other + " to finish its update"}}
+	}
 	obs.Pacing = pace.view
 	if d := hostDrain(b.Drain, b.Version, pace.target, autoUpdateOf(q.host), time.Now()); d != nil {
 		obs.Drain = d
-		if d.Fenced && len(d.WaitsFor) > 0 {
-			// Work holding a fenced drain is what blocks new starts: the problem explains it and replaces version-behind.
+		if len(d.WaitsFor) > 0 {
+			// Work holding a drain is what blocks new starts (dispatch places none for the whole episode, pauses included):
+			// the problem explains it and replaces version-behind.
 			// A drained host installs within minutes and is no problem.
 			kept := []hostProblem{{Kind: "updating", Detail: drainDetail(d)}}
 			for _, p := range ps {
@@ -1241,6 +1259,30 @@ type hostPollObservationPayload struct {
 	Drain            *contract.DrainReport      `json:"drain,omitempty"`
 	Pacing           *contract.HostUpdatePacing `json:"pacing,omitempty"`
 	PollError        json.RawMessage            `json:"pollError,omitempty"`
+}
+
+// rollingDrain: the other executing host that drains now, when this host should wait for it before its own update is
+// offered; "" when this host may update. A host already draining keeps going; a host reported draining within onlineMs
+// counts, so one that went offline releases the turn. Two hosts asking in the same instant may both start (rare).
+func (a *App) rollingDrain(host string, draining, offered bool) string {
+	now := nowMs()
+	if draining {
+		a.draining.Store(host, now)
+		return ""
+	}
+	a.draining.Delete(host)
+	if !offered {
+		return ""
+	}
+	other := ""
+	a.draining.Range(func(k, v any) bool {
+		if id := k.(string); id != host && float64(now-v.(int64)) < onlineMs {
+			other = id
+			return false
+		}
+		return true
+	})
+	return other
 }
 
 // hostDrain: the drain of a host's executor as dispatch and Live read it; nil while it drains for nothing. An executor
