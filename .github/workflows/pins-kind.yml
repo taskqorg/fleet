@@ -64,7 +64,8 @@ jobs:
           same=false
           if [ -n "$pr" ] && [ -n "$remote" ]; then
             git fetch origin "$remote"
-            git diff --quiet "$remote" -- "$PINS" && git merge-base --is-ancestor "$remote^" origin/main && same=true
+            # The dispatched ci runs the head's own ci.yml, so a head whose ci.yml lags main is rebuilt too.
+            git diff --quiet "$remote" -- "$PINS" && git diff --quiet "$remote" origin/main -- .github/workflows/ci.yml && git merge-base --is-ancestor "$remote^" origin/main && same=true
           fi
           if [ "$same" = true ]; then
             sha=$remote
