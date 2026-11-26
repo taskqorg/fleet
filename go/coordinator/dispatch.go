@@ -1214,7 +1214,8 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 			if err := exec(q, "RELEASE SAVEPOINT start_command"); err != nil {
 				return err
 			}
-			k.running[best.Host]++
+			host := best.Host
+			afterCommit(q, func() { k.running[host]++ }) // a retried or rolled-back attempt takes no slot
 			if err := recordDecision(q, claimed, firstString(polling, best.Host), cs, best); err != nil {
 				return err
 			}
@@ -1334,7 +1335,8 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 			holder = deref(first.Subscription.Holder)
 		}
 		if !isBackpressureCause(cause) {
-			st.add(cause, dispatchStall{reason, deref(cur.DirectedBy), holder, deref(cur.projectID())})
+			s := dispatchStall{reason, deref(cur.DirectedBy), holder, deref(cur.projectID())}
+			afterCommit(q, func() { st.add(cause, s) })
 		}
 	}
 	return nil
