@@ -347,20 +347,20 @@ func accessConnections(q *Request, profiles []accessProfile) ([]contract.AccessI
 	has := map[string]bool{}
 	out := []contract.AccessItem{}
 	for _, c := range conns {
-		if isAccessProvider(c.Provider) {
-			it := accessConnection(c, nil, last[c.Name], nil, profiles)
-			g, ok := grants[c.Name]
-			out = append(out, accessGrantItem(it, g, ok))
-			continue
-		}
-		has[c.Provider] = true
-		ks := slices.DeleteFunc(slices.Clone(keys), func(k connKey) bool { return k.ConnectionID != c.Name })
 		var b *contract.Budget
 		for i := range budgets.Budgets {
 			if x := budgets.Budgets[i]; x.Scope == "connection" && x.ScopeId == c.Name {
 				b = &budgets.Budgets[i]
 			}
 		}
+		if isAccessProvider(c.Provider) {
+			it := accessConnection(c, nil, last[c.Name], b, profiles)
+			g, ok := grants[c.Name]
+			out = append(out, accessGrantItem(it, g, ok, c.Intake == "paused"))
+			continue
+		}
+		has[c.Provider] = true
+		ks := slices.DeleteFunc(slices.Clone(keys), func(k connKey) bool { return k.ConnectionID != c.Name })
 		out = append(out, accessConnection(c, ks, last[c.Name], b, profiles))
 	}
 	for _, p := range accessOffered {
@@ -506,9 +506,11 @@ func accessConnection(c apiConnection, keys []connKey, call db.AccessLastCallsRo
 
 // accessGrantItem: a project access connection's row from its grant: kind grant, no keys, the grant's state; a ready
 // grant whose last call failed reads failing, as a key's does.
-func accessGrantItem(it contract.AccessItem, g accessGrant, ok bool) contract.AccessItem {
+func accessGrantItem(it contract.AccessItem, g accessGrant, ok, paused bool) contract.AccessItem {
 	it.Kind, it.Keys, it.Next = "grant", nil, nil
 	switch {
+	case paused:
+		it.State, it.StateText = contract.AccessStatePaused, "Takes no new calls (intake paused)"
 	case !ok:
 		it.State, it.StateText = contract.AccessStateFailing, "No grant serves it: ask one with access_grant_ask"
 	case g.State == "ready" && it.LastCheck != nil && !it.LastCheck.Ok:
