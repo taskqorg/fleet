@@ -5,7 +5,8 @@
 // whose target commit contains the merge; main is linear behind the merge queue, so "contains" is "merged no later than
 // the release's target"), installed on hosts (every host seen in the last hour runs that version or newer). A UI-only
 // release (ui-<backend>-v<UI version>, release.yml) ships the web app alone: hosts install nothing, so it is installed
-// when the site serves that UI or newer.
+// when the site serves that UI or newer. Fleet releases and installs only the fleet repository: in every other one (GitLab
+// repositories, external projects' GitHub repositories) merged is the last stage, listed for the day after the merge.
 // Reads go through the gateway's github connection when it exists (the owner adds a read-only key: scripts/key-add.sh github); without it
 // the coordinator reads the fleet repository unauthenticated (60 requests an hour per address), which the reply says.
 // Each read also stores the per-stage counts, so the chart is the recorded history of the last 24 hours.
@@ -360,7 +361,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 				repos[key] = r
 				continue
 			}
-			its, merged := gitlabDeliveryStages(t.projects[0], t.host, t.slug, gl)
+			its, merged := gitlabDeliveryStages(t.projects[0], t.host, t.slug, gl, now)
 			repos[key] = &deliveryRepo{projects: t.projects, items: its, delivered: merged}
 			c := map[string]int64{}
 			for _, s := range contract.DeliveryStageValues {
@@ -717,7 +718,9 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 			MergeSHA: p.MergeSHA,
 			MergedAt: m,
 		}
-		if len(rels) == 0 {
+		// Fleet releases and installs only its own repository: in another one (an external project's repository, whose v*
+		// tags no Fleet host installs) and in one without releases a merge is the last stage, listed for a day like Installed.
+		if len(rels) == 0 || !fleetRepo {
 			dm.Stage = string(contract.DeliveryStageMerged)
 			dm.DeliveredAt = m
 			dm.Delivered = !fleetRepo
@@ -740,10 +743,6 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 		case r.uiOnly && versionLess(ui, r.version), !r.uiOnly && !installed(r.version, versions):
 			dm.Stage = string(contract.DeliveryStageInstalling)
 			dm.Release = r.tag
-			if !fleetRepo {
-				dm.Delivered = true
-				dm.DeliveredAt = r.published
-			}
 			it := item(p, contract.DeliveryStageInstalling, r.published)
 			it.Release = &r.tag
 			out = append(out, it)
@@ -862,7 +861,12 @@ type glRepo struct {
 	releases                 []glRelease
 }
 
-func gitlabDeliveryStages(project, host, repo string, g glRepo) ([]contract.DeliveryItem, []deliveryMergedPR) {
+// gitlabDeliveryStages: a GitLab repository's merge requests by stage. Fleet runs no release or install for a GitLab
+// repository, so merged is its last stage and, as for a GitHub repository without releases, a merged row is listed for
+// the 24 hours after its merge only: the merges read from before then (a repository's history from before it was
+// connected, gradus/dam's 2023 merge requests on 2026-11-27) are done, not work in flight. Every merge read still goes to
+// the task reconcile (delivered).
+func gitlabDeliveryStages(project, host, repo string, g glRepo, now time.Time) ([]contract.DeliveryItem, []deliveryMergedPR) {
 	items := []contract.DeliveryItem{}
 	delivered := []deliveryMergedPR{}
 	prov := string(contract.PublishingProviderGitlab)
@@ -940,7 +944,9 @@ func gitlabDeliveryStages(project, host, repo string, g glRepo) ([]contract.Deli
 		if mergedAt == "" {
 			continue
 		}
-		items = append(items, mkItem(m, contract.DeliveryStageMerged, mergedAt))
+		if at, err := time.Parse(time.RFC3339, mergedAt); err == nil && !at.Before(now.Add(-24*time.Hour)) {
+			items = append(items, mkItem(m, contract.DeliveryStageMerged, mergedAt))
+		}
 		delivered = append(delivered, deliveryMergedPR{
 			Repo:        repo,
 			Number:      m.IID,
