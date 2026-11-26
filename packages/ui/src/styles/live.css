@@ -156,7 +156,7 @@
   .chrow-w { container-type: inline-size; }
   .chrow {
     position: relative; display: grid; align-items: center; gap: var(--space-1) var(--space-3);
-    grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto auto 4ch; grid-template-areas: "name sum chip acts at";
+    grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto auto minmax(4ch, auto); grid-template-areas: "name sum chip acts at";
     padding: var(--space-2) var(--space-3); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--surface);
   }
   .chrow.t-attention { border-color: var(--attention-fg); background: var(--attention-soft); }
@@ -164,16 +164,19 @@
   .chrow:has(.chrow-link:hover) { background: var(--hover); }
   .chrow:has(.chrow-link:focus-visible) { outline: var(--size-focus-ring) solid var(--accent); outline-offset: calc(-1 * var(--size-focus-ring)); }
   .chrow > header { grid-area: name; min-width: 0; display: flex; flex-direction: column; }
-  .chrow h3 { margin: 0; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+  /* The row's own title: it sits inside a detail section, whose h3 is a small mono label (layout.css .dsec h3). A long name
+     (an experiment's goal) shows two lines; the full text is its tooltip (OR-66). */
+  .chrow h3 { margin: 0; font-family: var(--font-sans); font-size: var(--font-size-md); font-weight: var(--font-weight-medium); text-transform: none; letter-spacing: normal; color: var(--fg);
+    overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
   .chrow-link { color: var(--fg); text-decoration: none; }
   .chrow-link:focus-visible { outline: none; }
   .chrow-link::after { content: ""; position: absolute; inset: 0; }
-  .chrow :is(button, a:not(.chrow-link), [data-tip]) { position: relative; z-index: 1; }
+  .chrow :is(button, a:not(.chrow-link), [data-tip]:not(.chrow-link)) { position: relative; z-index: 1; }
   .chrow-kind { color: var(--fg-muted); font-size: var(--font-size-sm); }
   .chrow > p { grid-area: sum; margin: 0; min-width: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
   .chrow > .badge { grid-area: chip; justify-self: start; }
   .chrow > footer { grid-area: acts; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-  .chrow > .when { grid-area: at; justify-self: end; color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--font-size-sm); }
+  .chrow > .when { grid-area: at; justify-self: end; white-space: nowrap; color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--font-size-sm); }
   @container (width < 40rem) {
     .chrow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name at" "chip chip" "sum sum" "acts acts"; }
     .chrow > header { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); }
