@@ -72,6 +72,8 @@ func TestAccessScopeCheck(t *testing.T) {
 		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{"a\"b"}}, false},
 		{"postgres", contract.AccessScope{Database: new("Fleet"), Tables: []string{star}}, false},
 		{"mysql", contract.AccessScope{Database: &db, Tables: []string{star}, Exclude: []string{"x"}}, false},
+		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{star}, Exclude: []string{star}}, false},
+		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{star, "task"}}, false},
 	} {
 		if err := accessScopeCheck(c.kind, &c.scope); (err == nil) != c.ok {
 			t.Errorf("%s %+v: err %v, want ok %v", c.kind, c.scope, err, c.ok)

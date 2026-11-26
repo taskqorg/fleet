@@ -453,8 +453,13 @@ func accessScopeCheck(kind string, s *contract.AccessScope) error {
 		if len(s.Exclude) > 0 && !all {
 			return fail(400, "exclude goes with tables [\"*\"] only")
 		}
-		for _, t := range append(slices.Clone(s.Exclude), s.Tables...) {
-			if !(all && t == "*") && !accessPGName.MatchString(t) {
+		for _, t := range s.Exclude {
+			if !accessPGName.MatchString(t) {
+				return fail(400, "Bad table name "+t)
+			}
+		}
+		for _, t := range s.Tables {
+			if !all && !accessPGName.MatchString(t) {
 				return fail(400, "Bad table name "+t)
 			}
 		}
@@ -658,9 +663,9 @@ func accessGrantCheck(q *Request, r *contract.AccessGrantCheckRequest) (contract
 	switch g.State {
 	case "ready":
 		if g.Kind == "postgres" && strings.HasPrefix(accessPGTables(g.Scope), "*") {
-			// Every table "that exists at provisioning": provisioning again reaches the tables added since.
-			err = accessQueue(q, g.ID, "provisioning", "provision")
-			g.State = "provisioning"
+			// Every table "that exists at provisioning": provisioning again reaches the tables added since. The grant
+			// stays ready meanwhile, so its connection keeps serving; the outcome moves it to ready or failed.
+			err = accessQueue(q, g.ID, "", "provision")
 			break
 		}
 		err = accessQueue(q, g.ID, "", "probe")

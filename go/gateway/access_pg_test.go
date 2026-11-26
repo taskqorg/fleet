@@ -52,6 +52,13 @@ func testPGCluster(t *testing.T) (sock string, psql func(db, sql string)) {
 		t.Fatal(err)
 	}
 	env := append(os.Environ(), "LC_ALL=C.UTF-8", "LANG=C.UTF-8")
+	data := filepath.Join(dir, "d")
+	t.Cleanup(func() {
+		cmd := osexec.Command(filepath.Join(bin, "pg_ctl"), "-D", data, "-m", "immediate", "stop")
+		cmd.Env = env
+		_ = cmd.Run()
+		_ = os.RemoveAll(dir)
+	})
 	run := func(name string, args ...string) {
 		cmd := osexec.Command(filepath.Join(bin, name), args...)
 		cmd.Env = env
@@ -59,15 +66,8 @@ func testPGCluster(t *testing.T) (sock string, psql func(db, sql string)) {
 			t.Fatalf("%s: %v: %s", name, err, out)
 		}
 	}
-	data := filepath.Join(dir, "d")
 	run("initdb", "-D", data, "-U", "postgres", "-A", "trust", "-E", "UTF8", "--no-instructions", "--no-sync")
 	run("pg_ctl", "-D", data, "-l", filepath.Join(dir, "log"), "-w", "-o", fmt.Sprintf("-k %s -p 5432 -c listen_addresses=", dir), "start")
-	t.Cleanup(func() {
-		cmd := osexec.Command(filepath.Join(bin, "pg_ctl"), "-D", data, "-m", "immediate", "stop")
-		cmd.Env = env
-		_ = cmd.Run()
-		_ = os.RemoveAll(dir)
-	})
 	return filepath.Join(dir, ".s.PGSQL.5432"), func(db, sql string) {
 		run("psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-h", dir, "-p", "5432", "-U", "postgres", "-d", db, "-c", sql)
 	}
