@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -173,6 +174,7 @@ func TestAgentGapQueries(t *testing.T) {
 		"SET fleet.project_ids = '*'",
 		`INSERT INTO execution(id, kind, state, host_id, harness, project_id, session_id, config_ref, started_at, ended_at)
 		 VALUES ('x1', 'agent_run', 'failed', 'pds18-native', 'codex', 'fleet', NULL, '{"profileId":"codex-worker"}', now() - interval '1 hour', now())`,
+		`INSERT INTO execution(id, kind, state, host_id, started_at) VALUES ('x2', 'agent_run', 'failed', 'owner-mac', now())`,
 		`INSERT INTO execution(id, kind, state, parent_execution_id, project_id, started_at, data)
 		 VALUES ('call:1', 'tool_run', 'failed', 'x1', 'fleet', now(), '{"tool":"commit_status","connection":"github","errorCode":"unknown-tool","outcome":"error"}')`,
 		`INSERT INTO event(id, execution_id, at, payload) VALUES
@@ -186,7 +188,7 @@ func TestAgentGapQueries(t *testing.T) {
 	q := db.New(conn)
 	since := gapTime(time.Now().Add(-24 * time.Hour))
 	runs, err := q.AgentGapRuns(ctx, db.AgentGapRunsParams{Since: since, After: "", Lim: 10})
-	if err != nil || len(runs) != 1 || runs[0].ID != "x1" {
+	if err != nil || len(runs) != 2 || runs[0].ID != "x1" {
 		t.Fatalf("runs %+v %v", runs, err)
 	}
 	evs, err := q.AgentGapFailedEvents(ctx, "x1")
@@ -203,6 +205,7 @@ func TestAgentGapQueries(t *testing.T) {
 	for _, p := range []db.AgentGapPutParams{
 		{ID: "event:x1:1#0", ExecutionID: "x1", ProjectID: ptr("fleet"), Source: "agent", At: gapTime(time.Now()), Class: "missing-command:jq", Family: "missing-command", Tool: "commandExecution", Line: "jq", Rules: "r1"},
 		{ID: "event:x1:1#0", ExecutionID: "x1", ProjectID: ptr("fleet"), Source: "agent", At: gapTime(time.Now()), Class: "missing-command:jq", Family: "missing-command", Tool: "commandExecution", Line: "jq", Rules: "r2"},
+		{ID: "event:x2:1#0", ExecutionID: "x2", Source: "agent", At: gapTime(time.Now()), Class: "sandbox-write", Family: "sandbox-write", Tool: "Bash", Line: "EPERM", Rules: "r2"},
 		{ID: "call:1", ExecutionID: "x1", ProjectID: ptr("fleet"), Source: "gateway", At: gapTime(time.Now()), Class: "gateway-unknown-tool", Family: "gateway-unknown-tool", Tool: "github/commit_status", Line: "unknown-tool", Rules: "r2"},
 	} {
 		if err := q.AgentGapPut(ctx, p); err != nil {
@@ -210,7 +213,12 @@ func TestAgentGapQueries(t *testing.T) {
 		}
 	}
 	rows, err := q.AgentGapRows(ctx, db.AgentGapRowsParams{Since: since, Until: gapTime(time.Now().Add(time.Hour))})
-	if err != nil || len(rows) != 2 || rows[0].ProfileID != "codex-worker" || deref(rows[0].HostID) != "pds18-native" || rows[1].Rules != "r2" {
+	// A run without a profile (no config_ref) reads as no profile, not a scan error (prod, 2026-11-26).
+	if err != nil || len(rows) != 3 || !slices.ContainsFunc(rows, func(r db.AgentGapRowsRow) bool { return r.ExecutionID == "x2" && r.ProfileID == "" }) {
+		t.Fatalf("rows %+v %v", rows, err)
+	}
+	rows = slices.DeleteFunc(rows, func(r db.AgentGapRowsRow) bool { return r.ExecutionID == "x2" })
+	if len(rows) != 2 || rows[0].ProfileID != "codex-worker" || deref(rows[0].HostID) != "pds18-native" || rows[1].Rules != "r2" {
 		t.Fatalf("rows %+v %v", rows, err)
 	}
 	if n, err := q.AgentGapsClear(ctx, []string{"x1"}); err != nil || n != 1 {

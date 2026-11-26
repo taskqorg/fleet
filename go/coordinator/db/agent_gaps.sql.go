@@ -386,7 +386,7 @@ func (q *Queries) AgentGapQuestion(ctx context.Context, id string) (AgentGapQues
 
 const agentGapRows = `-- name: AgentGapRows :many
 SELECT g.id, g.execution_id, g.project_id, g.source, g.at, g.class, g.family, g.tool, g.line, g.rules,
-  x.host_id, x.harness, coalesce(x.config_ref->>'profileId', x.data->>'profileId')::text AS profile_id, x.session_id, x.task_id, x.experiment_id
+  x.host_id, x.harness, coalesce(x.config_ref->>'profileId', x.data->>'profileId', '')::text AS profile_id, x.session_id, x.task_id, x.experiment_id
 FROM agent_gap g JOIN execution x ON x.id = g.execution_id
 WHERE g.at >= $1::timestamptz AND g.at < $2::timestamptz
 ORDER BY g.at DESC, g.id
