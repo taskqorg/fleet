@@ -187,8 +187,15 @@ func registerServers(harness, home, exe string, env map[string]string, names []s
 		current := claudeFleetServers(home)
 		for _, n := range names {
 			cfg, _ := json.Marshal(map[string]any{"type": "stdio", "command": exe, "args": []string{"mcp", "connection", n}, "env": env})
-			_ = exec.Command("claude", "mcp", "remove", "-s", "user", n).Run() // a former entry of the same name (an old spec copy)
-			if b, err := exec.Command("claude", "mcp", "add-json", "-s", "user", n, string(cfg)).CombinedOutput(); err != nil {
+			// Add first; an entry of the same name (an older copy with its spec inline) is replaced only then, so a refused
+			// add never loses a server.
+			b, err := exec.Command("claude", "mcp", "add-json", "-s", "user", n, string(cfg)).CombinedOutput()
+			if err != nil && exec.Command("claude", "mcp", "get", n).Run() == nil {
+				if err = exec.Command("claude", "mcp", "remove", "-s", "user", n).Run(); err == nil {
+					b, err = exec.Command("claude", "mcp", "add-json", "-s", "user", n, string(cfg)).CombinedOutput()
+				}
+			}
+			if err != nil {
 				return fmt.Errorf("claude mcp add-json %s: %v: %s", n, err, bytes.TrimSpace(b))
 			}
 			fmt.Fprintf(out, "%s: registered in Claude Code\n", n)
@@ -328,8 +335,8 @@ func antigravityServers(path, exe string, env map[string]string, names []string,
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if old, err := os.ReadFile(path); err == nil {
-		_ = os.WriteFile(path+".before-fleet", old, 0o600) // the file as it was, once per run
+	if old, err := os.ReadFile(path); err == nil && !fileExists(path+".before-fleet") {
+		_ = os.WriteFile(path+".before-fleet", old, 0o600) // the file as it was before Fleet first wrote it
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o600)
 }

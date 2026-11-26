@@ -152,10 +152,18 @@ func localAgents(q *Request, _ *contract.LocalAgentsRequest) (contract.LocalAgen
 	if err != nil {
 		return out, err
 	}
+	hosts, err := hostRecords(q)
+	if err != nil {
+		return out, err
+	}
+	isHost := map[string]bool{}
+	for _, h := range hosts {
+		isHost[h.ID] = true
+	}
 	newest := map[string]runToken{}
 	for _, t := range toks {
 		name := deref(t.Personal)
-		if !localAgentName.MatchString(name) {
+		if m := localAgentName.FindStringSubmatch(name); m == nil || !isHost[m[1]] {
 			continue
 		}
 		cur, seen := newest[name]
