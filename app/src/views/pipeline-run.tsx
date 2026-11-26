@@ -30,9 +30,13 @@ function cell(v: unknown): { text: string; tone?: string } {
 /** Run with files: the drop area, Start run, and the run started here, live. ref marks the block the head's Run focuses. */
 export function PipelineRun(props: { projectId: string; pipelineId: string; method?: string | null; ref?: (el: HTMLElement) => void }) {
   const files = useAttachments(() => ({ projectId: props.projectId }));
+  // A changed file list is a new request; the same files again (a retry) keep the requestId.
+  const add = (fs: File[]) => { requestId = undefined; files.add(fs); };
+  const remove = (id: string) => { requestId = undefined; files.remove(id); };
   const [runId, setRunId] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
+  let requestId: string | undefined;
   const why = () => {
     const xs = files.items;
     if (!props.method) return 'This pipeline has no method to run';
@@ -50,15 +54,18 @@ export function PipelineRun(props: { projectId: string; pipelineId: string; meth
     setBusy(true);
     setError('');
     try {
-      // ready waits for uploads still running; its ids follow the files' order.
-      const names = inputPaths(files.items.map(x => x.name));
+      // ready waits for uploads still running; its ids follow the order of the files still there, so names come after it.
       const ids = await files.ready();
+      const names = inputPaths(files.items.map(x => x.name));
+      // A retry after a lost reply asks with the same requestId and gets the run that already started.
+      requestId ??= crypto.randomUUID();
       const run = await op('pipeline_run', {
-        projectId: props.projectId, requestId: crypto.randomUUID(), methodId: props.method!, wait: false,
+        projectId: props.projectId, requestId, methodId: props.method!, wait: false,
         query: `Read ${names.length} ${names.length === 1 ? 'file' : 'files'}: ${names.join(', ')}`.slice(0, 2000),
         inputs: ids.map((artifactId, i) => ({ path: names[i], artifactId })),
       });
       setRunId(run.id);
+      requestId = undefined;
       files.clear(ids);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -69,7 +76,7 @@ export function PipelineRun(props: { projectId: string; pipelineId: string; meth
   return (
     <section class="pw-run" ref={el => props.ref?.(el)} tabindex={-1} aria-label="Run on files">
       <DetailSection title="Run on files">
-        <FilePicker files={files.items} onFiles={fs => files.add(fs)} onRemove={id => files.remove(id)} prompt="Drop the files to read, or" />
+        <FilePicker files={files.items} onFiles={add} onRemove={remove} prompt="Drop the files to read, or" />
         <div class="pw-run-foot">
           <p class="pw-muted-line">{note()}</p>
           <Button label="Start run" icon="play" kind="primary" busy={busy()} disabledReason={why()} onClick={() => void start()} />
