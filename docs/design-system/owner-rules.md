@@ -29,8 +29,6 @@ Standing principles:
 - **No sideways scroll.** Nothing scrolls horizontally, at any width: rows wrap, tables stack at narrow widths, long values wrap or truncate with the full text on click (OR-66).
 - **Terms.** Inactive things are Idle, then Archived; "park" means host stickiness only; the product word is conversation (разговор) (OR-70).
 
-The principles, the rail and the new rules are drawn on the design board: [rules-v2.bl](board/rules-v2.bl).
-
 A rule marked *Target* is approved and not built yet; until it is built, the current screens keep the behaviour the rule replaces.
 
 ## Rules

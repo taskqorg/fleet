@@ -21,7 +21,6 @@ The board has one home, like a shared design file: the persistent board worktree
 | Canvas | Holds | Changes when |
 |---|---|---|
 | [styles](board/styles.bl) | Every Fleet colour in both themes and the type scale, drawn from the tokens | `tokens.json` changes (`pnpm run board:tokens`) |
-| [rules-v2](board/rules-v2.bl) | The principles and rules as one picture; the text of record is [owner-rules.md](owner-rules.md) | An owner rule changes |
 | [ia](board/ia.bl) | The sections, the question each answers, the journeys | The [information architecture](../designs/fleet-ia-and-journeys.md) changes |
 | [blocks](board/blocks.bl) | Every block of Home, Live and the session view as a component with all its states ([block list](controls/README.md#blocks-of-home-live-and-the-session-view)) | A block's spec changes; screens use its instances, so the change reaches them |
 | `screens/<page>` ([home](board/screens/home.bl), [people](board/screens/people.bl), [live](board/screens/live.bl), [session](board/screens/session.bl), [conversations](board/screens/conversations.bl), [projects](board/screens/projects.bl), [lab](board/screens/lab.bl), [library](board/screens/library.bl), [system](board/screens/system.bl)) | The approved states of one page: a row at 1440 px, then phone 390 px, then the parts it adds | The owner approves a state; the [page spec](pages/README.md) links its canvas |
@@ -38,7 +37,7 @@ How a screen moves through the board:
 4. **Screens.** Draw the approved states on `screens/<page>.bl` (and blocks on `blocks.bl`), and commit them in the same pull request as the page spec, before or with the code.
 5. **Build.** Build from `packages/ui` and the book (OR-13). Compare the app at 1440 and 390 px with the canvas, and run `pnpm run check:design`. After each deploy, walk the same live pages and their neighbours again on real data and compare them with the canvas; the comparison goes into the pull request description (owner, 2026-11-26).
 
-Board drawings use Fleet's tokens through the board's style file ([tokens](tokens.md#design-board)): `$color.*` roles and `$fleet.*` colours, never bare colours. The canvases drawn before the tokens were imported (`rules-v2`, `ia`) still hold bare colours copied from `tokens.json`; they move to tokens when next redrawn. A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
+Board drawings use Fleet's tokens through the board's style file ([tokens](tokens.md#design-board)): `$color.*` roles and `$fleet.*` colours, never bare colours. The canvas drawn before the tokens were imported (`ia`) still holds bare colours copied from `tokens.json`; it moves to tokens when next redrawn. A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
 
 ## Files
 
