@@ -1654,6 +1654,33 @@ func (v *ConnectionsTokenRevokeRequest) Validate() error {
 	return nil
 }
 
+type ConnectionsTokenSetReply struct {
+	Connections []map[string]json.RawMessage `json:"connections"`
+	Name        string                       `json:"name"`
+	Refused     []string                     `json:"refused,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsTokenSetReply) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	return nil
+}
+
+type ConnectionsTokenSetRequest struct {
+	Connections []string `json:"connections"`
+	Name        string   `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsTokenSetRequest) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	return nil
+}
+
 // GrantChange: The latest audited change of a connection's settings.
 type GrantChange struct {
 	Actor      string  `json:"actor"`
@@ -2444,6 +2471,7 @@ func init() {
 		"connections_token_create":    {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "The owner only (not an agent). The token value is answered once.", InputSchema: json.RawMessage("{\"$comment\":\"The owner only (not an agent). The token value is answered once.\",\"additionalProperties\":true,\"properties\":{\"connections\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
 		"connections_token_list":      {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Gateway tokens of connections: id, connection, created and revoked, never the token value", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_token_revoke":    {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
+		"connections_token_set":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "The owner only (not an agent). Replaces a live personal token's connections, checked as connections_token_create checks them; the token keeps its value. Answers the connection specs for the session's MCP servers.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"connections\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\",\"connections\"],\"type\":\"object\"}")},
 		"price_add":                   {Read: false, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Record a price observation for a subject and unit (price, currency, source, optional sourceRef, observedAt, effectiveFrom)", InputSchema: json.RawMessage("{\"properties\":{\"currency\":{\"type\":\"string\"},\"effectiveFrom\":{\"type\":\"integer\"},\"observedAt\":{\"type\":\"integer\"},\"price\":{\"$comment\":\"Per one unit.\",\"type\":\"number\"},\"source\":{\"$comment\":\"vendor | snapshot | owner\",\"type\":\"string\"},\"sourceRef\":{\"type\":\"string\"},\"subject\":{\"$comment\":\"A resolved model ID or \\u003cconnection\\u003e/\\u003ctool\\u003e.\",\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"subject\",\"unit\",\"price\",\"currency\",\"source\"],\"type\":\"object\"}")},
 		"price_refresh":               {Read: false, Long: true, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "Preview official standard provider API rate changes without writes. Apply a verified preview with its planId. Report provider gaps, proposed changes and appended IDs for prices_list and setting_changes readback.", InputSchema: json.RawMessage("{\"properties\":{\"planId\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"prices_list":                 {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Recorded prices, optionally of one subject", InputSchema: json.RawMessage("{\"properties\":{\"subject\":{\"type\":\"string\"}},\"type\":\"object\"}")},

@@ -40,6 +40,41 @@ func connectionsTokenCreate(q *Request, r *contract.ConnectionsTokenCreateReques
 	}{g, name}, nil
 }
 
+// connectionsTokenSet replaces a live personal token's connections with the same checks as a mint, keeping its value:
+// a dev session's token gains a new connection (fleet-postgres) without a new file on every host. It answers the
+// specs, never the value.
+func connectionsTokenSet(q *Request, r *contract.ConnectionsTokenSetRequest) (contract.ConnectionsTokenSetReply, error) {
+	var no contract.ConnectionsTokenSetReply
+	toks, err := runTokensAll(q)
+	if err != nil {
+		return no, err
+	}
+	for _, t := range toks {
+		if deref(t.Personal) != r.Name || t.revoked() {
+			continue
+		}
+		director := directorOf(q)
+		g, err := mintSpecs(q, mintRun{ExecutionID: t.ExecutionID, DirectedBy: &director, Personal: t.Personal}, append([]string{}, r.Connections...))
+		if err != nil {
+			return no, err
+		}
+		if len(g.names) == 0 {
+			return no, fail(409, "No usable connection: "+strings.Join(g.Refused, ", "))
+		}
+		t.Connections, t.FileDownloads, t.DirectedBy = g.names, g.fileDownloads, &director
+		if err := runTokenPut(q, t); err != nil {
+			return no, err
+		}
+		publish(q)
+		return replyAs[contract.ConnectionsTokenSetReply](struct {
+			Name        string     `json:"name"`
+			Refused     []string   `json:"refused"`
+			Connections []connSpec `json:"connections"`
+		}{r.Name, g.Refused, g.Connections}, nil)
+	}
+	return no, fail(404, "Unknown token")
+}
+
 func connectionsTokenList(q *Request) (contract.ConnectionsTokenListReply, error) {
 	out := contract.ConnectionsTokenListReply{Tokens: []contract.TokenInfo{}}
 	toks, err := runTokensAll(q)
@@ -176,9 +211,38 @@ func mint(q *Request, run any, requested []string) (mintGrant, error) {
 }
 
 func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error) {
+	g, err := mintSpecs(q, run, requested)
+	if err != nil || len(g.names) == 0 {
+		return g.mintGrant, err
+	}
+	token := randomToken()
+	sha := sha256hex([]byte(token))
+	project := run.ProjectID
+	if project != nil && *project == "" {
+		project = nil
+	}
+	row := runToken{ID: "run-token:" + sha, Sha256: sha, ExecutionID: run.ExecutionID, DirectedBy: run.DirectedBy, ProjectID: project,
+		ExperimentID: run.ExperimentID, PipelineRunID: run.PipelineRunID, Connections: g.names, CreatedAt: jsonBytes(nowMs()), FileDownloads: g.fileDownloads,
+		Step: run.Step, Personal: run.Personal, SystemActor: run.SystemActor} // systemActor: its calls are Fleet's own activity (connRecord)
+	if err := runTokenPut(q, row); err != nil {
+		return mintGrant{}, err
+	}
+	publish(q)
+	g.Token = &token
+	return g.mintGrant, nil
+}
+
+// mintSpecs: what a mint of requested for run grants: the connection names, their client specs, the refused names
+// and the connections whose tools download files; no token yet.
+type mintedSpecs struct {
+	mintGrant
+	names, fileDownloads []string
+}
+
+func mintSpecs(q *Request, run mintRun, requested []string) (mintedSpecs, error) {
 	requested, err := accessExpand(q, run, requested)
 	if err != nil {
-		return mintGrant{}, err
+		return mintedSpecs{}, err
 	}
 	seen, uniq := map[string]bool{}, []string{}
 	for _, r := range requested {
@@ -191,17 +255,15 @@ func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error
 	for _, name := range uniq {
 		c, err := apiConnectionMaybe(q, "connection:"+name)
 		if err != nil {
-			return mintGrant{}, err
+			return mintedSpecs{}, err
 		}
 		if c != nil && c.Intake == "all" && (connAllowedFor(*c, run) || accessTokenAllowed(q, *c, run)) && coordinatorOnlyAllowed(name, run) {
 			granted = append(granted, *c)
 		}
 	}
 	if len(granted) == 0 {
-		return mintGrant{Refused: uniq, Connections: []connSpec{}}, nil
+		return mintedSpecs{mintGrant: mintGrant{Refused: uniq, Connections: []connSpec{}}}, nil
 	}
-	token := randomToken()
-	sha := sha256hex([]byte(token))
 	names, specs, refused := []string{}, []connSpec{}, []string{}
 	var fileDownloads []string
 	for _, c := range granted {
@@ -229,18 +291,7 @@ func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error
 			refused = append(refused, n)
 		}
 	}
-	project := run.ProjectID
-	if project != nil && *project == "" {
-		project = nil
-	}
-	row := runToken{ID: "run-token:" + sha, Sha256: sha, ExecutionID: run.ExecutionID, DirectedBy: run.DirectedBy, ProjectID: project,
-		ExperimentID: run.ExperimentID, PipelineRunID: run.PipelineRunID, Connections: names, CreatedAt: jsonBytes(nowMs()), FileDownloads: fileDownloads,
-		Step: run.Step, Personal: run.Personal, SystemActor: run.SystemActor} // systemActor: its calls are Fleet's own activity (connRecord)
-	if err := runTokenPut(q, row); err != nil {
-		return mintGrant{}, err
-	}
-	publish(q)
-	return mintGrant{Token: &token, Refused: refused, Connections: specs}, nil
+	return mintedSpecs{mintGrant: mintGrant{Refused: refused, Connections: specs}, names: names, fileDownloads: fileDownloads}, nil
 }
 
 func revokeTokens(q *Request, executionID string) error {
