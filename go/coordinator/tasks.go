@@ -323,13 +323,17 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 // (its bot's name, else its profile, else its harness), else the request person; nil for the coordinator. Any other
 // transition clears both with pause_reason (TaskSetState).
 func taskHolder(q *Request) (*string, *string, error) {
-	if q.agent != "" {
-		name := "agent"
-		e, err := q.db().ExecutionByID(q.ctx(), strings.TrimPrefix(q.agent, "execution:"))
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil, err
-		}
-		if err == nil {
+	if eid := strings.TrimPrefix(q.agent, "execution:"); eid != "" {
+		// The holder's own run and bot, whatever the request person may see (as createTask reads its session).
+		name, err := unscoped(q, func() (string, error) {
+			name := "agent"
+			e, err := q.db().ExecutionByID(q.ctx(), eid)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return name, nil
+			}
+			if err != nil {
+				return "", err
+			}
 			if deref(e.ProfileID) != "" {
 				name = *e.ProfileID
 			} else if deref(e.Harness) != "" {
@@ -338,12 +342,16 @@ func taskHolder(q *Request) (*string, *string, error) {
 			if deref(e.BotID) != "" {
 				b, err := q.db().BotGet(q.ctx(), *e.BotID)
 				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-					return nil, nil, err
+					return "", err
 				}
 				if err == nil && b.Name != "" {
 					name = b.Name
 				}
 			}
+			return name, nil
+		})
+		if err != nil {
+			return nil, nil, err
 		}
 		return strPtr(q.agent), &name, nil
 	}
