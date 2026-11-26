@@ -14,6 +14,7 @@ import { useView } from '../store.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { CHIP_STAGE, idOf } from './delivery-model.tsx';
 import { HistoryFeed } from './history.tsx';
+import { PipelineRun } from './pipeline-run.tsx';
 
 type ProjectView = Ops['project_view']['reply'];
 type Group = ProjectView['pipelines'][number];
@@ -286,6 +287,10 @@ export function PipelinePage(props: { projectId: string; projectName: string; pi
   const view = useView('project_pipeline_view', () => ({ projectId: props.projectId, pipelineId: props.pipelineId }), { quiet: 5000 });
   const tab = createMemo<PipeTab>(() => PIPE_TABS.find(t => t.id === props.tab)?.id ?? 'overview');
   const back = () => projectFacetPath(props.projectId, 'pipelines');
+  // Run in the head brings Run on files into view; from another tab the block mounts first and its ref scrolls to it.
+  let runBlock: HTMLElement | undefined, toRun = false;
+  const showRun = (el: HTMLElement) => { el.scrollIntoView({ block: 'start' }); el.focus({ preventScroll: true }); };
+  const run = () => { if (tab() === 'overview' && runBlock?.isConnected) showRun(runBlock); else { toRun = true; go(pipelinePath(props.projectId, props.pipelineId)); } };
   return (
     <article class="detail pw-pipe" data-ui="detail" tabindex={-1} aria-label={props.pipelineId}>
       <header class="pw-pipe-h">
@@ -293,6 +298,9 @@ export function PipelinePage(props: { projectId: string; projectName: string; pi
         <Show when={view.data?.capability}>{c => <span class="muted">Pipelines · {jobName(c())}</span>}</Show>
         <span class="grow" />
         <Show when={view.data?.useCaseId}>{u => <Button label="Run in Lab" icon="play" onClick={() => go(labNew(u()))} />}</Show>
+        <Show when={view.data?.method}>
+          <Button label="Run" icon="play" kind="primary" onClick={run} />
+        </Show>
       </header>
       <div class="pw-pipe-h">
         <h3>{props.pipelineId}</h3>
@@ -311,6 +319,7 @@ export function PipelinePage(props: { projectId: string; projectName: string; pi
             <div role="tabpanel" aria-label={PIPE_TABS.find(t => t.id === tab())?.label}>
               <Switch>
                 <Match when={tab() === 'overview'}>
+                  <Show when={v().method}>{m => <PipelineRun projectId={props.projectId} pipelineId={props.pipelineId} method={m()} ref={el => { runBlock = el; if (toRun) { toRun = false; queueMicrotask(() => showRun(el)); } }} />}</Show>
                   <Show when={v().outline.length > 0}>
                     <DetailSection title="How it works"><PipelineOutline lines={v().outline} /></DetailSection>
                   </Show>

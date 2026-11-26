@@ -736,9 +736,10 @@ type pipelineCatalogue struct {
 	} `json:"methods"`
 }
 
-// runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); waits for the run.
-// inv is pipeline (pipeline_run) or direct (direct_search); methodID nil selects the project's recommended method.
-func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string, inputs []contract.PipelineRunInput) (recordRest, error) {
+// runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); with wait it waits
+// for the run, else it answers the started run (a person's page follows it with pipeline_get, since a run outlasts a
+// request). inv is pipeline (pipeline_run) or direct (direct_search); methodID nil selects the recommended method.
+func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string, inputs []contract.PipelineRunInput, wait bool) (recordRest, error) {
 	if rid == "" || len(rid) > 200 || strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 {
 		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
 	}
@@ -807,7 +808,7 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 	if q.tx != nil {
 		return pipelineRun(q, run.ID)
 	}
-	if old {
+	if old || !wait {
 		return pipelinePublicRead(q.ctx(), q.app, run.ID)
 	}
 	return pipelineWait(q.ctx(), q.app, run.ID)
