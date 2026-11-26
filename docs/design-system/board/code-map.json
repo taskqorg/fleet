@@ -13,6 +13,18 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/status-pill.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    }
    ]
   },
   {
@@ -26,6 +38,28 @@
      "name": "FigureTile",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/figure-tile.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -41,6 +75,23 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/gauge.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -54,6 +105,23 @@
      "name": "RunStrip",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/run-strip.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -69,6 +137,23 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/worker-slot.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -82,6 +167,23 @@
      "name": "HostBand",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/host-band.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -97,7 +199,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/drift-row.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "System › Agents: gap rows",
@@ -121,7 +224,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/gap-row.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Changes: change rows",
@@ -135,7 +239,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/change-row.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Live: live rows",
@@ -153,6 +258,38 @@
      "name": "WorkFacts",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/lists.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -173,6 +310,38 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/lists.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -186,6 +355,58 @@
      "name": "CatalogueTree",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/catalogue-tree.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/conversations",
+     "id": "e383471614154c03",
+     "name": "Work facts · Conversations"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "93e128382536e485",
+     "name": "Work facts · Results"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "544e669957d0c6b0",
+     "name": "Work facts · Runners"
     }
    ]
   },
@@ -225,6 +446,43 @@
      "name": "StateCounters",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/lists.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -270,6 +528,68 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/tables.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/conversations",
+     "id": "e383471614154c03",
+     "name": "Work facts · Conversations"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "93e128382536e485",
+     "name": "Work facts · Results"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "544e669957d0c6b0",
+     "name": "Work facts · Runners"
+    }
    ]
   },
   {
@@ -299,6 +619,58 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/tables.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/conversations",
+     "id": "e383471614154c03",
+     "name": "Work facts · Conversations"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "93e128382536e485",
+     "name": "Work facts · Results"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "544e669957d0c6b0",
+     "name": "Work facts · Runners"
+    }
    ]
   },
   {
@@ -312,6 +684,18 @@
      "name": "ShareBar",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/charts.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -327,6 +711,18 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/matrix-cell.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    }
    ]
   },
   {
@@ -340,6 +736,23 @@
      "name": "ProblemRow",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -360,6 +773,53 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/rail-pinned.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -373,6 +833,53 @@
      "name": "NavRail",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/navigation.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -398,6 +905,53 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/navigation.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -416,6 +970,53 @@
      "name": "FocusControl",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/navigation.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -436,7 +1037,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Button",
@@ -449,6 +1051,53 @@
      "name": "Button",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -469,7 +1118,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/thread.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "State badge",
@@ -482,6 +1132,58 @@
      "name": "StateBadge",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/conversations",
+     "id": "e383471614154c03",
+     "name": "Work facts · Conversations"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "93e128382536e485",
+     "name": "Work facts · Results"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "544e669957d0c6b0",
+     "name": "Work facts · Runners"
     }
    ]
   },
@@ -517,6 +1219,53 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -531,7 +1280,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/metrics.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Time strip",
@@ -545,7 +1295,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/metrics.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Area chart",
@@ -559,7 +1310,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/metrics.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Harness marks, delivery stages, outcome block, detail sections",
@@ -598,6 +1350,13 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -612,7 +1371,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/metrics.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Updating list: pending counters and rows, row checks",
@@ -646,6 +1406,68 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/lists.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/conversations",
+     "id": "e383471614154c03",
+     "name": "Work facts · Conversations"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "93e128382536e485",
+     "name": "Work facts · Results"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "544e669957d0c6b0",
+     "name": "Work facts · Runners"
+    }
    ]
   },
   {
@@ -675,7 +1497,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/lists.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Task list view: views, state counters, grouping, filters, virtual list",
@@ -694,6 +1517,53 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/patterns.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -708,7 +1578,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/metrics.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Step list and flow strip",
@@ -732,6 +1603,13 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/metrics.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -751,7 +1629,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/forms.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Live transcript",
@@ -769,6 +1648,53 @@
      "name": "Thread",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/thread.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -789,6 +1715,53 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/thread.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -808,7 +1781,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/thread.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Text field",
@@ -821,6 +1795,13 @@
      "name": "TextField",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/forms.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -836,7 +1817,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/forms.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Start a conversation: project, preset, start facts",
@@ -859,6 +1841,28 @@
      "name": "ProjectPick",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/forms.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
     }
    ]
   },
@@ -884,6 +1888,28 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/thread.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
    ]
   },
   {
@@ -898,7 +1924,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/forms.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Code editor and diff text",
@@ -912,7 +1939,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/forms.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Offline marker",
@@ -926,7 +1954,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Problem row",
@@ -939,6 +1968,23 @@
      "name": "ProblemRow",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -974,6 +2020,53 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/primitives.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -987,6 +2080,53 @@
      "name": "StateDot",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/state-dot.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -1012,6 +2152,58 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/avatar.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -1025,6 +2217,58 @@
      "name": "Avatar",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/avatar.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   },
@@ -1040,6 +2284,48 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/question-card.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -1054,7 +2340,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/open-question.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Session card",
@@ -1083,6 +2370,48 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/session-card.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -1097,6 +2426,23 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/bot-tile.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    }
    ]
   },
   {
@@ -1110,6 +2456,18 @@
      "name": "PulseLine",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/pulse-line.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
     }
    ]
   },
@@ -1190,6 +2548,58 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/target-picker.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
    ]
   },
   {
@@ -1209,6 +2619,28 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/target-picker.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
    ]
   },
   {
@@ -1223,7 +2655,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/thread.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Tool line",
@@ -1236,6 +2669,33 @@
      "name": "ToolLine",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/tool-line.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
     }
    ]
   },
@@ -1261,6 +2721,33 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/context-panel.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    }
    ]
   },
   {
@@ -1275,7 +2762,8 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/context-panel.tsx"
     }
-   ]
+   ],
+   "usedIn": []
   },
   {
    "master": "Composer command with preview",
@@ -1329,6 +2817,38 @@
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/tool-line.tsx"
     }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    }
    ]
   },
   {
@@ -1342,6 +2862,2135 @@
      "name": "ContextPanel",
      "from": "packages/ui/src/index.ts",
      "file": "packages/ui/src/controls/context-panel.tsx"
+    }
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  }
+ ],
+ "blocks": [
+  {
+   "master": "Avatar",
+   "id": "73f13190a1b1f4a6",
+   "canvas": "blocks",
+   "import": {
+    "name": "Avatar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/avatar.tsx"
+   },
+   "generated": [
+    "Avatar, project chip, button kinds",
+    "Bot avatar",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Blocker chip",
+   "id": "7f1d321f0cf9854c",
+   "canvas": "blocks",
+   "import": {
+    "name": "BlockerChip",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/pulse-line.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    }
+   ]
+  },
+  {
+   "master": "Bot avatar",
+   "id": "87be445ad9d0c0c9",
+   "canvas": "blocks",
+   "import": {
+    "name": "Avatar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/avatar.tsx"
+   },
+   "generated": [
+    "Avatar, project chip, button kinds",
+    "Bot avatar",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    }
+   ]
+  },
+  {
+   "master": "Bot tile",
+   "id": "ae9fd2156431cf4e",
+   "canvas": "blocks",
+   "import": {
+    "name": "BotTile",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/bot-tile.tsx"
+   },
+   "generated": [
+    "Bot tile",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    }
+   ]
+  },
+  {
+   "master": "Bottom bar",
+   "id": "8b5224ba6f3450b9",
+   "canvas": "blocks",
+   "import": {
+    "name": "BottomBar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/navigation.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Button",
+   "id": "546ee01f9d789ae9",
+   "canvas": "blocks",
+   "import": {
+    "name": "Button",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/primitives.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows",
+    "Spotlight palette",
+    "Focus chip in the shell header",
+    "Button",
+    "Numbers, totals, age chips",
+    "Updating list: pending counters and rows, row checks",
+    "Task list view: views, state counters, grouping, filters, virtual list",
+    "Live transcript",
+    "Decision block",
+    "Loading, empty, error, stale",
+    "Avatar, project chip, button kinds",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Catalogue row",
+   "id": "8a90f3a275b72596",
+   "canvas": "blocks",
+   "import": {
+    "name": "CatalogueTree",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/catalogue-tree.tsx"
+   },
+   "generated": [
+    "Sections: catalogue rows and list groups"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Composer",
+   "id": "820a958166965ac1",
+   "canvas": "blocks",
+   "import": {
+    "name": "Composer",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/forms.tsx"
+   },
+   "generated": [
+    "Start a conversation: project, preset, start facts",
+    "Composer: idle, with files, running",
+    "Quiet summary",
+    "Composer target picker",
+    "Composer command with preview"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Context panel",
+   "id": "f54c4eca57445a3f",
+   "canvas": "blocks",
+   "import": {
+    "name": "ContextPanel",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/context-panel.tsx"
+   },
+   "generated": [
+    "Composer command with preview",
+    "Context panel"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Detail head",
+   "id": "d6c8992f353bcbc4",
+   "canvas": "blocks",
+   "import": {
+    "name": "DetailHead",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/detail-head.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Detail section",
+   "id": "fe8e6886dadbd328",
+   "canvas": "blocks",
+   "import": {
+    "name": "DetailSection",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/primitives.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows",
+    "Harness marks, delivery stages, outcome block, detail sections"
+   ],
+   "usedIn": []
+  },
+  {
+   "master": "Diff row",
+   "id": "80e3224b61e4180a",
+   "canvas": "blocks",
+   "import": {
+    "name": "DiffRow",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/diff-row.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    }
+   ]
+  },
+  {
+   "master": "Figure tile",
+   "id": "18eb8ff8c4799cb6",
+   "canvas": "blocks",
+   "import": {
+    "name": "FigureTile",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/figure-tile.tsx"
+   },
+   "generated": [
+    "Live: figure tile with sparkline"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Filter bar",
+   "id": "8dec040ccb292a6a",
+   "canvas": "blocks",
+   "import": {
+    "name": "FilterBar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/lists.tsx"
+   },
+   "generated": [
+    "Sections: search, view chip, filter bar"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Gauge",
+   "id": "18f13a6e5607e56b",
+   "canvas": "blocks",
+   "import": {
+    "name": "Gauge",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/gauge.tsx"
+   },
+   "generated": [
+    "Live: gauge"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Group head",
+   "id": "ce4609ecbc3ed812",
+   "canvas": "blocks",
+   "import": {
+    "name": "GroupHeader",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/lists.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Host band",
+   "id": "bb152cbda2adf4cf",
+   "canvas": "blocks",
+   "import": {
+    "name": "HostBand",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/host-band.tsx"
+   },
+   "generated": [
+    "Live: host band"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Key row",
+   "id": "7b48b1e2335cefa3",
+   "canvas": "blocks",
+   "import": {
+    "name": "KvRow",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/primitives.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows",
+    "Harness marks, delivery stages, outcome block, detail sections",
+    "Step list and flow strip"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "List group",
+   "id": "b101e1213808ab34",
+   "canvas": "blocks",
+   "import": {
+    "name": "CatalogueTree",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/catalogue-tree.tsx"
+   },
+   "generated": [
+    "Sections: catalogue rows and list groups"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/conversations",
+     "id": "e383471614154c03",
+     "name": "Work facts · Conversations"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "93e128382536e485",
+     "name": "Work facts · Results"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "544e669957d0c6b0",
+     "name": "Work facts · Runners"
+    }
+   ]
+  },
+  {
+   "master": "Live row",
+   "id": "303b6c51cb84998e",
+   "canvas": "blocks",
+   "import": {
+    "name": "LiveRow",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/live-row.tsx"
+   },
+   "generated": [
+    "Live: live rows",
+    "Rows: work facts"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Matrix cell",
+   "id": "6627e5d91fc92ce2",
+   "canvas": "blocks",
+   "import": {
+    "name": "MatrixCell",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/matrix-cell.tsx"
+   },
+   "generated": [
+    "Sections: matrix cells"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    }
+   ]
+  },
+  {
+   "master": "Message",
+   "id": "e4905cfccae802e2",
+   "canvas": "blocks",
+   "import": {
+    "name": "Thread",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/thread.tsx"
+   },
+   "generated": [
+    "Live transcript"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Nav item",
+   "id": "e3c8744c5abdd01c",
+   "canvas": "blocks",
+   "import": {
+    "name": "NavRail",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/navigation.tsx"
+   },
+   "generated": [
+    "Pinned zone in the navigation",
+    "Navigation rail with pinned sections"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Nav rail",
+   "id": "5d75778df2d3254d",
+   "canvas": "blocks",
+   "import": {
+    "name": "NavRail",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/navigation.tsx"
+   },
+   "generated": [
+    "Pinned zone in the navigation",
+    "Navigation rail with pinned sections"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Picker row",
+   "id": "72275ea7dc985a9a",
+   "canvas": "blocks",
+   "import": {
+    "name": "TargetPicker",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/target-picker.tsx"
+   },
+   "generated": [
+    "Quiet summary",
+    "Composer target picker"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    }
+   ]
+  },
+  {
+   "master": "Plan item",
+   "id": "e4b3f9e6fc53e24f",
+   "canvas": "blocks",
+   "import": {
+    "name": "PlanItem",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/context-panel.tsx"
+   },
+   "generated": [
+    "Plan item, timer row, swarm member",
+    "Composer command with preview"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Problem row",
+   "id": "353adc7523b09ced",
+   "canvas": "blocks",
+   "import": {
+    "name": "ProblemRow",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/primitives.tsx"
+   },
+   "generated": [
+    "Sections: problem rows with Details and repeats",
+    "Problem row"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Project chip",
+   "id": "4932319d438eca17",
+   "canvas": "blocks",
+   "import": {
+    "name": "ProjectChip",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/avatar.tsx"
+   },
+   "generated": [
+    "Avatar, project chip, button kinds",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Pulse line",
+   "id": "f52420d03e6ea640",
+   "canvas": "blocks",
+   "import": {
+    "name": "PulseLine",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/pulse-line.tsx"
+   },
+   "generated": [
+    "Pulse line and blocker chip",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    }
+   ]
+  },
+  {
+   "master": "Question card",
+   "id": "218a700aff3b9fb2",
+   "canvas": "blocks",
+   "import": {
+    "name": "QuestionCard",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/question-card.tsx"
+   },
+   "generated": [
+    "Question card",
+    "Session card",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Quiet summary",
+   "id": "40024645e9ac30cf",
+   "canvas": "blocks",
+   "import": {
+    "name": "QuietSummary",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/quiet-summary.tsx"
+   },
+   "generated": [
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    }
+   ]
+  },
+  {
+   "master": "Run strip",
+   "id": "71a4e9e7e1521c9f",
+   "canvas": "blocks",
+   "import": {
+    "name": "RunStrip",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/run-strip.tsx"
+   },
+   "generated": [
+    "Live: run strip"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Search",
+   "id": "4e6c28075a2e7bb7",
+   "canvas": "blocks",
+   "import": {
+    "name": "SearchBox",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/primitives.tsx"
+   },
+   "generated": [
+    "Sections: search, view chip, filter bar"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Session card",
+   "id": "79f20372b44b79f6",
+   "canvas": "blocks",
+   "import": {
+    "name": "SessionCard",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/session-card.tsx"
+   },
+   "generated": [
+    "Session card",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    }
+   ]
+  },
+  {
+   "master": "Setting field",
+   "id": "c3ab4184fe089105",
+   "canvas": "blocks",
+   "import": {
+    "name": "SettingField",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/forms.tsx"
+   },
+   "generated": [
+    "Setting field"
+   ],
+   "usedIn": []
+  },
+  {
+   "master": "Share bar",
+   "id": "8dc09ae7e72f86c5",
+   "canvas": "blocks",
+   "import": {
+    "name": "ShareBar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/charts.tsx"
+   },
+   "generated": [
+    "Sections: share bar, normal and partial"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Shell header",
+   "id": "bc2af49b31564299",
+   "canvas": "blocks",
+   "import": {
+    "name": "AppShell",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/patterns.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Sparkline",
+   "id": "43745736afdb61a5",
+   "canvas": "blocks",
+   "import": {
+    "name": "Sparkline",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/figure-tile.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "State",
+   "id": "acd2ba23ae19f3ab",
+   "canvas": "blocks",
+   "import": {
+    "name": "StateDot",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/state-dot.tsx"
+   },
+   "generated": [
+    "State dot and word",
+    "Quiet summary"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "57f7062f7e4db38e",
+     "name": "Work facts · Home cards"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "State counters",
+   "id": "308243c31175f0dd",
+   "canvas": "blocks",
+   "import": {
+    "name": "StateCounters",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/lists.tsx"
+   },
+   "generated": [
+    "Sections: search, view chip, filter bar",
+    "Updating list: pending counters and rows, row checks"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "State icon",
+   "id": "7c162d5983ea5d24",
+   "canvas": "blocks",
+   "import": {
+    "name": "StateBadge",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/primitives.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows",
+    "Sections: table rows",
+    "State badge",
+    "Updating list: pending counters and rows, row checks"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/conversations",
+     "id": "e383471614154c03",
+     "name": "Work facts · Conversations"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "93e128382536e485",
+     "name": "Work facts · Results"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "544e669957d0c6b0",
+     "name": "Work facts · Runners"
+    }
+   ]
+  },
+  {
+   "master": "Status bar",
+   "id": "a21c6f32d0577098",
+   "canvas": "blocks",
+   "import": {
+    "name": "StatusLine",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/primitives.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    }
+   ]
+  },
+  {
+   "master": "Status pill",
+   "id": "d9b76767275a0740",
+   "canvas": "blocks",
+   "import": {
+    "name": "StatusPill",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/status-pill.tsx"
+   },
+   "generated": [
+    "Live: status pill"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    }
+   ]
+  },
+  {
+   "master": "Step row",
+   "id": "d977d1fe893c1d12",
+   "canvas": "blocks",
+   "import": {
+    "name": "StepList",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/metrics.tsx"
+   },
+   "generated": [
+    "Step list and flow strip"
+   ],
+   "usedIn": []
+  },
+  {
+   "master": "Swarm member",
+   "id": "c5f912c62b2930df",
+   "canvas": "blocks",
+   "import": {
+    "name": "SwarmMember",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/context-panel.tsx"
+   },
+   "generated": [
+    "Plan item, timer row, swarm member",
+    "Composer command with preview"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Tab",
+   "id": "4a0beef231f623c3",
+   "canvas": "blocks",
+   "import": {
+    "name": "TabBar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/tables.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    }
+   ]
+  },
+  {
+   "master": "Tab bar",
+   "id": "01c228c9ee6ca3d3",
+   "canvas": "blocks",
+   "import": {
+    "name": "TabBar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/tables.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows"
+   ],
+   "usedIn": []
+  },
+  {
+   "master": "Tab item",
+   "id": "7f01715f4ee91da3",
+   "canvas": "blocks",
+   "import": {
+    "name": "TabBar",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/tables.tsx"
+   },
+   "generated": [
+    "Sections: detail head, tab bar, detail section and key rows"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Table row",
+   "id": "ca22b39c575cf3e0",
+   "canvas": "blocks",
+   "import": {
+    "name": "TableRow",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/tables.tsx"
+   },
+   "generated": [
+    "Sections: table rows"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Target chip",
+   "id": "2545153e7807ee0b",
+   "canvas": "blocks",
+   "import": {
+    "name": "TargetPicker",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/target-picker.tsx"
+   },
+   "generated": [
+    "Quiet summary",
+    "Composer target picker"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Target picker",
+   "id": "9e47c8027fda3ff6",
+   "canvas": "blocks",
+   "import": {
+    "name": "TargetPicker",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/target-picker.tsx"
+   },
+   "generated": [
+    "Quiet summary",
+    "Composer target picker"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    }
+   ]
+  },
+  {
+   "master": "Text field",
+   "id": "f2ecdceb592ca0b2",
+   "canvas": "blocks",
+   "import": {
+    "name": "TextField",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/forms.tsx"
+   },
+   "generated": [
+    "Text field"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Timer row",
+   "id": "8230df8ebb844e31",
+   "canvas": "blocks",
+   "import": {
+    "name": "TimerRow",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/context-panel.tsx"
+   },
+   "generated": [
+    "Plan item, timer row, swarm member",
+    "Composer command with preview"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "Tool line",
+   "id": "fb79b36433c4f58f",
+   "canvas": "blocks",
+   "import": {
+    "name": "ToolLine",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/tool-line.tsx"
+   },
+   "generated": [
+    "Tool line",
+    "Composer command with preview"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/home",
+     "id": "5d1a3719df6354ea",
+     "name": "Home · screens from blocks · 5 states"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    }
+   ]
+  },
+  {
+   "master": "View chip",
+   "id": "c4edefb61167c8b9",
+   "canvas": "blocks",
+   "import": {
+    "name": "FacetChips",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/lists.tsx"
+   },
+   "generated": [],
+   "usedIn": [
+    {
+     "canvas": "screens/conversations",
+     "id": "a0d0d427ce83447b",
+     "name": "Conversations: every session, past and present"
+    },
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/lab",
+     "id": "d471a9466962f9f8",
+     "name": "Lab: which model, harness or pipeline is best right now"
+    },
+    {
+     "canvas": "screens/library",
+     "id": "f891df993f1fe937",
+     "name": "Library: methods, pipelines, agents, bots and skills"
+    },
+    {
+     "canvas": "screens/projects",
+     "id": "1cafe85ae35b6a7c",
+     "name": "Projects: products, who works on each, what they produce"
+    },
+    {
+     "canvas": "screens/session",
+     "id": "aebda8347e2993ea",
+     "name": "Session view: one view for every bot, PM and run"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
+    }
+   ]
+  },
+  {
+   "master": "Worker slot",
+   "id": "af768b28eddadd81",
+   "canvas": "blocks",
+   "import": {
+    "name": "WorkerSlot",
+    "from": "packages/ui/src/index.ts",
+    "file": "packages/ui/src/controls/worker-slot.tsx"
+   },
+   "generated": [
+    "Live: worker slot"
+   ],
+   "usedIn": [
+    {
+     "canvas": "screens/flow",
+     "id": "903c60d389c41101",
+     "name": "Flow: where everything is and how one moves · J1–J5"
+    },
+    {
+     "canvas": "screens/live",
+     "id": "7a8f4e3d91caf590",
+     "name": "Live · screens from blocks · 3 states"
+    },
+    {
+     "canvas": "screens/system",
+     "id": "43b6cb072b23118a",
+     "name": "System: hosts, accounts, connections, spend and people"
     }
    ]
   }

@@ -31,7 +31,7 @@ The board has one home, like a shared design file: the persistent board worktree
 | [screens/shell](board/screens/shell.bl) | The rail's user block: update strip, avatar, version and its overview in every state, expanded, collapsed and phone | The [nav rail](controls/nav-rail.md) user block or version changes |
 | [screens/flow](board/screens/flow.bl) | The journeys J1–J5, answering a question from Home and waking a bot as click paths over instances of the screens | A screen or a journey changes; screens are components, so their changes reach it |
 
-[index.json](board/index.json) lists every committed frame (id, canvas, page, width, theme, status); `pnpm run board:index` regenerates it and the code map. A task names its frame by id; an agent finds it there without opening a canvas.
+[index.json](board/index.json) lists every committed frame (id, canvas, page, width, theme, status); `pnpm run board:index` regenerates it and the code map. A task names its frame by id; an agent finds it there without opening a canvas. In [code-map.json](board/code-map.json), `blocks` lists each master the screens are drawn with: the `packages/ui` export it stands for, the generated masters that render it, and every screen frame that uses it (`usedIn`), so a build agent goes from a frame's `inst(...)` rows straight to the import.
 
 How a screen moves through the board:
 
