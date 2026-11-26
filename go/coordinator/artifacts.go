@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -585,16 +586,6 @@ func contains(l []string, s string) bool {
 
 func failCode(code int, msg, c string) error { return &codedError{HTTPError{Code: code, Msg: msg}, c} }
 
-func uploadRecoveryError(code, message string) error {
-	return &HTTPError{Code: 409, Msg: message, Extra: struct {
-		Code string `json:"code"`
-	}{code}}
-}
-
-func missingStagingKey() error {
-	return uploadRecoveryError("no_such_key", "Staging object not found (NoSuchKey)")
-}
-
 type codedError struct {
 	HTTPError
 	code string
@@ -643,17 +634,22 @@ func reopenPendingCopy(ctx context.Context, a *App, id, executionID, hostID stri
 	if err != nil {
 		return nil, err
 	}
-	var recovery string
+	var priorUnreachable bool
 	if c != nil && c.awaitingVerification(x) {
 		s, err := storeGet(ctx, a, c.StoreID)
 		if err != nil {
 			return nil, err
 		}
-		recovery, err = resumeVerification(ctx, a, x, s, c, hostID)
+		priorUnreachable = s.State == "unreachable"
+		state, err := reverify(ctx, a, x, s, c, hostID)
 		if err != nil {
 			return nil, err
 		}
-		if recovery == "" {
+		switch state {
+		case "stored", "failed":
+			return &contract.ArtifactReserveReply{ArtifactId: id, StoreId: &s.ID, State: state}, nil
+		case "missing":
+		default:
 			return nil, fail(503, "Awaiting artifact verification")
 		}
 	}
@@ -699,7 +695,7 @@ func reopenPendingCopy(ctx context.Context, a *App, id, executionID, hostID stri
 			if err != nil {
 				return err
 			}
-			if open || recovery == "store_unreachable" && s.State != "unreachable" {
+			if open || priorUnreachable && (s.State != "unreachable" || target.ID == s.ID) {
 				return fail(503, "Awaiting artifact verification")
 			}
 		}
@@ -1046,7 +1042,11 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	}
 	// A retried remote commit of a committed copy uses the same recovery fence as lease renewal.
 	if c.awaitingVerification(x) && b.HostId != s.HostID {
-		return contract.ArtifactStateReply{State: "verifying"}, renewCopy(ctx, a, x, s, c, b.HostId, false)
+		state, err := renewCopy(ctx, a, x, s, c, b.HostId, false)
+		if state == c.State {
+			state = "verifying"
+		}
+		return contract.ArtifactStateReply{State: state}, err
 	}
 	parts := make([]S3Part, len(b.Parts))
 	for i, p := range b.Parts {
@@ -1076,12 +1076,12 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 		if err := clearCommittedUpload(ctx, a, x.ID, c); err != nil {
 			return nil, err
 		}
-		return nil, missingStagingKey()
+		return nil, failCode(409, "Staging object not found (NoSuchKey)", "no_such_key")
 	}
 	if size != x.Size {
 		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, *c.StagingKey, fmt.Sprintf("size %d differs from reserved %d", size, x.Size), c)
 	}
-	verify, err := verificationFor(s, x.ID, c, *c.StagingKey)
+	verify, err := verificationFor(s, x.ID, c)
 	if err != nil {
 		return nil, err
 	}
@@ -1156,111 +1156,78 @@ func artifactRenew(q *Request, b *contract.ArtifactLeaseRequest) (any, error) {
 	if err := allowedHost(ctx, a, x, s, b.HostId); err != nil {
 		return nil, err
 	}
-	return contract.ArtifactStateReply{State: c.State}, renewCopy(ctx, a, x, s, c, b.HostId, deref(b.StoreId) != "")
+	state, err := renewCopy(ctx, a, x, s, c, b.HostId, deref(b.StoreId) != "")
+	return contract.ArtifactStateReply{State: state}, err
 }
 
-func renewCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, hostID string, waitingOnStore bool) error {
-	if err := lease(ctx, a, x.ID, s.ID, false, true); err != nil {
-		return err
-	}
-	if !c.awaitingVerification(x) {
-		return nil
-	}
-	if hostID == s.HostID {
-		// A colocated uploader awaiting an asynchronous verification supplies its store. Its periodic
-		// upload lease does not, so renewing an inline verification never starts a duplicate read.
-		if !waitingOnStore || x.ExecutionID == nil {
-			return nil
+func renewCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, hostID string, waitingOnStore bool) (string, error) {
+	if c.awaitingVerification(x) {
+		// A colocated upload that is waiting for asynchronous verification supplies its store.
+		// Its periodic upload lease does not. A remote verifier never speaks for the upload owner.
+		owner := hostID != s.HostID
+		if !owner && waitingOnStore && x.ExecutionID != nil {
+			e, err := execGet(ctx, a, *x.ExecutionID)
+			if err != nil {
+				return c.State, err
+			}
+			owner = e.HostID == hostID
 		}
-		e, err := execGet(ctx, a, *x.ExecutionID)
-		if err != nil || e.HostID != hostID {
-			return err
+		if owner {
+			state, err := reverify(ctx, a, x, s, c, hostID)
+			if err != nil || state != c.State {
+				return state, err
+			}
 		}
 	}
-	recovery, err := resumeVerification(ctx, a, x, s, c, hostID)
-	if err != nil {
-		return err
-	}
-	switch recovery {
-	case "no_such_key":
-		return missingStagingKey()
-	case "store_unreachable":
-		// The text also lets older executors enter their existing recovery.
-		return uploadRecoveryError(recovery, "No upload in progress: previous store is unreachable")
-	}
-	return nil
+	return c.State, lease(ctx, a, x.ID, s.ID, false, true)
 }
 
 func verificationOpen(ctx context.Context, a *App, artifactID string, s *StoreRow) (bool, error) {
 	return connDB(ctx, a).ArtVerifyQueued(ctx, db.ArtVerifyQueuedParams{HostID: &s.HostID, ArtifactID: artifactID, StoreID: s.ID})
 }
 
-func verificationFor(s *StoreRow, artifactID string, c *copyRow, key string) (*contract.ArtifactVerify, error) {
-	url, err := presignFor(s, s.HostID, "GET", key, nil)
+func verificationFor(s *StoreRow, artifactID string, c *copyRow) (*contract.ArtifactVerify, error) {
+	url, err := presignFor(s, s.HostID, "GET", *c.StagingKey, nil)
 	if err != nil {
 		return nil, err
 	}
 	return &contract.ArtifactVerify{ArtifactId: artifactID, StoreId: s.ID, Url: url, StagingKey: c.StagingKey}, nil
 }
 
-// probeObject requires the store's explicit NoSuchKey. A bare 404 can come from the tunnel. A ranged GET
-// distinguishes those cases without transferring the object; the store host still hashes the whole object.
-func probeObject(t *S3, bucket, key string) (bool, error) {
-	r, err := t.Get(bucket, key, []int64{0, 0})
-	if err == nil {
-		return true, r.Close()
-	}
-	var se *S3Error
-	if errors.As(err, &se) {
-		switch {
-		case se.Status == 404 && se.Code == "NoSuchKey":
-			return false, nil
-		case se.Status == 416 && se.Code == "InvalidRange":
-			return true, nil // zero-byte object
-		}
-	}
-	return false, err
-}
+// Keep main's retry budget for failed verifications of one staging object in the last hour.
+const maxVerifyFailures = 5
 
-// resumeVerification probes without a database lock. Fence the result against re-reservation, promotion,
-// and another verifier at the point where we queue work or tell the owner to recover its upload.
-func resumeVerification(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, hostID string) (string, error) {
+// reverify retains the missing, already-promoted and failed outcomes of renewal. It reads the store without
+// a write lock, then rechecks the reservation and open work before applying any outcome or sending a fresh GET.
+func reverify(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, uploader string) (string, error) {
 	open, err := verificationOpen(ctx, a, x.ID, s)
 	if err != nil || open {
-		return "", err
+		return c.State, err
 	}
-	key := *c.StagingKey
-	recovery := ""
+	next := c.State
 	if s.State == "unreachable" {
-		target, err := selectStore(ctx, a, artifactLocations(a, x.ProjectID), hostID)
-		if err != nil || target == nil {
-			return "", err
+		target, err := selectStore(ctx, a, artifactLocations(a, x.ProjectID), uploader)
+		if err != nil || target == nil || target.ID == s.ID {
+			return c.State, err
 		}
-		recovery = "store_unreachable"
-	} else {
-		t, err := tunnel(s)
-		if err != nil {
-			return "", err
-		}
-		exists, err := probeObject(t, s.Bucket, key)
-		if err != nil {
-			return "", err
-		}
-		if !exists {
-			key = keyOf(x)
-			exists, err = probeObject(t, s.Bucket, key)
-			if err != nil {
-				return "", err
+		next = "missing"
+	} else if t, err := tunnel(s); err == nil {
+		if size, err := t.Head(s.Bucket, *c.StagingKey); err == nil && size < 0 {
+			present, err := promotedSize(t, x, s)
+			if err == nil {
+				next = "missing"
+				if present {
+					next = "stored"
+				}
 			}
 		}
-		if !exists {
-			recovery = "no_such_key"
-		}
 	}
-	result := ""
+
+	state := c.State
 	err = txCtx(ctx, a, func(tx pgx.Tx) error {
-		result = ""
+		state = c.State
 		tctx := context.WithValue(ctx, txKey{}, tx)
+		d := db.New(tx)
 		fresh, err := copyOf(tctx, a, x.ID, s.ID)
 		if err != nil || !c.sameReservation(fresh) {
 			return err
@@ -1269,36 +1236,73 @@ func resumeVerification(ctx context.Context, a *App, x *Artifact, s *StoreRow, c
 		if err != nil || open {
 			return err
 		}
-		if recovery == "store_unreachable" {
-			current, err := storeGet(tctx, a, s.ID)
-			if err != nil || current.State != "unreachable" {
-				return err
+		switch next {
+		case "missing":
+			if s.State == "unreachable" {
+				current, err := storeGet(tctx, a, s.ID)
+				if err != nil || current.State != "unreachable" {
+					return err
+				}
 			}
-		}
-		if recovery != "" {
-			result = recovery
+			state = next
 			return nil
+		case "stored":
+			state = next
+			return copyVerified(tctx, d, x, s)
 		}
-		verify, err := verificationFor(s, x.ID, c, key)
+		failed, err := d.ArtVerifyFailures(tctx, db.ArtVerifyFailuresParams{HostID: &s.HostID, ArtifactID: x.ID,
+			StoreID: s.ID, StagingKey: *c.StagingKey, PathSuffix: "/" + s3enc(*c.StagingKey, true)})
+		if err != nil {
+			return err
+		}
+		if failed >= maxVerifyFailures {
+			state = "failed"
+			return rejectCopy(tctx, d, x.ID, s.ID, fmt.Sprintf("the store host failed to verify the upload %d times", failed))
+		}
+		verify, err := verificationFor(s, x.ID, c)
 		if err != nil {
 			return err
 		}
 		return queueCommand(tctx, a, s.HostID, "artifact-verify", x.ID, verify)
 	})
-	return result, err
+	if err != nil {
+		return c.State, err
+	}
+	if state == "failed" {
+		deleteRejectedStaging(s, *c.StagingKey)
+	}
+	if state == "stored" || state == "failed" {
+		return state, settleCopy(ctx, a, x)
+	}
+	return state, nil
+}
+
+// Content keys are written only from verified content. Matching the reserved size at this key
+// lets an interrupted settlement complete without another read of the entire object.
+func promotedSize(t *S3, x *Artifact, s *StoreRow) (bool, error) {
+	n, err := t.Head(s.Bucket, keyOf(x))
+	return err == nil && n >= 0 && n == x.Size, err
+}
+
+func copyVerified(ctx context.Context, d *db.Queries, x *Artifact, s *StoreRow) error {
+	if err := artifactCopyTransition(ctx, d, x.ID, s.ID, artifactCopyEvent{To: "verified"}); err != nil {
+		return err
+	}
+	return d.ArtStoredNow(ctx, x.ID)
+}
+
+func settleCopy(ctx context.Context, a *App, x *Artifact) error {
+	if x.ExecutionID == nil {
+		return nil
+	}
+	return settleWaiting(ctx, a, *x.ExecutionID)
 }
 
 // reject: the staging object goes, the copy fails with a retry backoff (1 minute doubling, up to the retry window), the
 // artifact fails when it has no verified copy.
 func reject(ctx context.Context, a *App, x *Artifact, s *StoreRow, key, why string, reservation *copyRow) error {
-	if s.Bucket != "" && key != "" {
-		if t, err := tunnel(s); err == nil {
-			t.Delete(s.Bucket, key)
-		}
-	}
 	err := txCtx(ctx, a, func(tx pgx.Tx) error {
 		tctx := context.WithValue(ctx, txKey{}, tx)
-		d := db.New(tx)
 		if reservation != nil {
 			fresh, err := copyOf(tctx, a, x.ID, s.ID)
 			if err != nil {
@@ -1308,15 +1312,28 @@ func reject(ctx context.Context, a *App, x *Artifact, s *StoreRow, key, why stri
 				return fail(503, "Artifact reservation changed")
 			}
 		}
-		if err := artifactCopyTransition(tctx, d, x.ID, s.ID, artifactCopyEvent{To: "failed", Why: &why, RetryWindowMs: retryWindowMS}); err != nil {
-			return err
-		}
-		return d.ArtFailUnstored(tctx, db.ArtFailUnstoredParams{ID: x.ID, Why: &why})
+		return rejectCopy(tctx, db.New(tx), x.ID, s.ID, why)
 	})
-	if err != nil || x.ExecutionID == nil {
+	if err != nil {
 		return err
 	}
-	return settleWaiting(ctx, a, *x.ExecutionID)
+	deleteRejectedStaging(s, key)
+	return settleCopy(ctx, a, x)
+}
+
+func rejectCopy(ctx context.Context, d *db.Queries, artifactID, storeID, why string) error {
+	if err := artifactCopyTransition(ctx, d, artifactID, storeID, artifactCopyEvent{To: "failed", Why: &why, RetryWindowMs: retryWindowMS}); err != nil {
+		return err
+	}
+	return d.ArtFailUnstored(ctx, db.ArtFailUnstoredParams{ID: artifactID, Why: &why})
+}
+
+func deleteRejectedStaging(s *StoreRow, key string) {
+	if s.Bucket != "" && key != "" {
+		if t, err := tunnel(s); err == nil {
+			_ = t.Delete(s.Bucket, key)
+		}
+	}
 }
 
 // artifactRefused: the host reports the store refused an upload permanently; the artifact fails now with its reason.
@@ -1425,7 +1442,7 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 	}
 	rep, err := finishArtifactVerification(ctx, a, x, s, c, b.Sha256)
 	if isMissingKey(err) {
-		return nil, missingStagingKey()
+		return nil, failCode(409, "Staging object not found (NoSuchKey)", "no_such_key")
 	}
 	return rep, err
 }
@@ -1443,36 +1460,35 @@ func finishArtifactVerification(ctx context.Context, a *App, x *Artifact, s *Sto
 	if err := promote(t, s.Bucket, staging, keyOf(x), x.Size); err != nil {
 		return none, err
 	}
-	if err := t.Delete(s.Bucket, staging); err != nil {
-		return none, err
-	}
-	stored := false
-	err = txCtx(ctx, a, func(tx pgx.Tx) error {
-		stored = false
-		tctx := context.WithValue(ctx, txKey{}, tx)
-		d := db.New(tx)
-		fresh, err := copyOf(tctx, a, x.ID, s.ID)
-		if err != nil || !c.sameReservation(fresh) {
-			return err
-		}
-		if err := artifactCopyTransition(tctx, d, x.ID, s.ID, artifactCopyEvent{To: "verified"}); err != nil {
-			return err
-		}
-		stored = true
-		return d.ArtStoredNow(tctx, x.ID)
-	})
+	stored, err := settleReservation(ctx, a, x, s, c)
 	if err != nil {
 		return none, err
 	}
 	if !stored {
 		return contract.ArtifactStateReply{State: "unknown"}, nil
 	}
-	if x.ExecutionID != nil {
-		if err := settleWaiting(ctx, a, *x.ExecutionID); err != nil {
-			return none, err
-		}
+	if err := t.Delete(s.Bucket, staging); err != nil {
+		slog.Warn("artifact staging object kept after verification", "artifact", x.ID, "store", s.ID, "key", staging, "err", err)
+	}
+	if err := settleCopy(ctx, a, x); err != nil {
+		return none, err
 	}
 	return contract.ArtifactStateReply{State: "stored"}, nil
+}
+
+func settleReservation(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow) (bool, error) {
+	stored := false
+	err := txCtx(ctx, a, func(tx pgx.Tx) error {
+		stored = false
+		tctx := context.WithValue(ctx, txKey{}, tx)
+		fresh, err := copyOf(tctx, a, x.ID, s.ID)
+		if err != nil || !c.sameReservation(fresh) {
+			return err
+		}
+		stored = true
+		return copyVerified(tctx, db.New(tx), x, s)
+	})
+	return stored, err
 }
 
 // artifactDeclare: an agent's required declaration (artifact_save required=true), recorded on the execution.
@@ -1880,18 +1896,32 @@ func expireLeases(ctx context.Context, a *App) error {
 		return err
 	}
 	all, _ := storeList(ctx, a)
-	for _, c := range stale {
-		s := storeIn(all, c.StoreID)
-		x, err := artifactRow(ctx, a, c.ArtifactID)
+	for _, copy := range stale {
+		s := storeIn(all, copy.StoreID)
+		x, err := artifactRow(ctx, a, copy.ArtifactID)
 		if err != nil {
 			continue
 		}
-		if up := deref(c.UploadID); up != "" && s.Bucket != "" && s.State != "unreachable" {
+		c := &copyRow{StoreID: copy.StoreID, State: copy.State, StagingKey: copy.StagingKey, UploadID: copy.UploadID}
+		if s.Bucket != "" && s.State != "unreachable" {
 			if t, err := tunnel(s); err == nil {
-				t.AbortMultipartUpload(s.Bucket, deref(c.StagingKey), up)
+				if up := deref(c.UploadID); up != "" {
+					_ = t.AbortMultipartUpload(s.Bucket, deref(c.StagingKey), up)
+				} else if present, err := promotedSize(t, x, s); err == nil && present {
+					stored, err := settleReservation(ctx, a, x, s, c)
+					if err != nil {
+						return err
+					}
+					if stored {
+						if err := settleCopy(ctx, a, x); err != nil {
+							return err
+						}
+					}
+					continue
+				}
 			}
 		}
-		if err := reject(ctx, a, x, s, deref(c.StagingKey), "upload lease expired", nil); err != nil {
+		if err := reject(ctx, a, x, s, deref(c.StagingKey), "upload lease expired", c); err != nil {
 			return err
 		}
 	}

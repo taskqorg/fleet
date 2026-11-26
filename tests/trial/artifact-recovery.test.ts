@@ -44,24 +44,23 @@ test('remote verification recovers missing staging from the uploader spool', {ti
     if (!scenario) return false;
     const {mode} = scenario;
     if (req.method === 'POST' && query.has('uploads')) scenario.uploads++;
-    if (req.method !== 'GET') return false;
     const storeError = (status: number, code: string) => {
       res.writeHead(status);
       res.end('<Error><Code>' + code + '</Code></Error>');
       return true;
     };
-    if (req.headers.range) {
-      if (key === scenario.stage && (scenario.denyProbe || mode === 'unreachable')) {
+    if (req.method === 'HEAD' && key === scenario.stage) {
+      if (scenario.denyProbe || mode === 'unreachable') {
         scenario.deniedProbes++;
         return storeError(403, 'AccessDenied');
       }
-      if (key === scenario.stage && scenario.holdNextProbe) {
+      if (scenario.holdNextProbe) {
         scenario.holdNextProbe = false;
         scenario.staleProbeStarted = true;
         await scenario.staleProbe.wait;
       }
-      return false;
     }
+    if (req.method !== 'GET' || req.headers.range) return false;
     if (!query.has('X-Amz-Signature')) {
       if (mode !== 'legacy-slow' || key !== scenario.stage) return false;
       scenario.streams++;
@@ -80,6 +79,8 @@ test('remote verification recovers missing staging from the uploader spool', {ti
       res.end();
       return true;
     }
+    // A denied probe may requeue the old GET. Only replacement keys count here.
+    if (mode === 'missing' && key === scenario.stage) return storeError(404, 'NoSuchKey');
     scenario.reads.push(key);
     if (scenario.reads.length > 1) {
       if (mode === 'missing' && scenario.reads.length === 2) {
@@ -203,9 +204,12 @@ test('remote verification recovers missing staging from the uploader spool', {ti
   missing.first.release();
   await until(() => missing.deniedProbes || undefined, 'owner checked missing staging with the store', t.signal);
   assert.equal(missing.uploads, 1, 'store authorization failure did not trigger a replacement');
-  const firstVerify = verifierDB.prepare("SELECT state,response FROM transfers WHERE kind='verify' AND json_extract(body,'$.artifactId')=?").get(missing.id);
+  const firstVerify = verifierDB.prepare("SELECT state,response FROM transfers WHERE kind='verify' AND json_extract(body,'$.artifactId')=? ORDER BY created_at LIMIT 1").get(missing.id);
   assert.equal(firstVerify?.state, 'failed');
   assert.match(String(firstVerify?.response), /NoSuchKey/);
+  await until(() => Number(coordinator.sql(
+    `SELECT count(*) FROM command WHERE kind='artifact-verify' AND status='failed' AND payload->'payload'->>'artifactId'=${lit(missing.id)}`,
+  )) >= 2 || undefined, 'the old key recheck finished after the denied probe', t.signal);
   missing.holdNextProbe = true;
   missing.denyProbe = false;
   const staleRenew = uploader.post('artifacts/renew', request);
@@ -270,8 +274,7 @@ test('remote verification recovers missing staging from the uploader spool', {ti
       await until(() => queuedLegacyWork(local) === 0 || undefined, 'legacy proof with missing bytes closed', t.signal);
       assert.equal(ok(await verifier.post('artifacts/renew', {artifactId: local})).state, 'pending');
       const missingLocal = await verifier.post('artifacts/renew', localCopy);
-      assert.equal(missingLocal.status, 409);
-      assert.equal(missingLocal.body.code, 'no_such_key');
+      assert.deepEqual(missingLocal, {status: 200, body: {state: 'missing'}});
 
       await startExecutor(alternate);
       enqueue(s);
@@ -298,7 +301,7 @@ test('remote verification recovers missing staging from the uploader spool', {ti
       assert.equal(s.deniedProbes, 0, 'recovery does not probe a store already recorded unreachable');
       assert.ok(s.reads[1].includes('.alternate-store.'), 'the alternate store independently verifies its staging bytes');
     } else {
-      const retryKeys = s.mode === 'missing' ? [s.newStage, s.thirdStage] : [s.mode === 'promoted' ? finalKey(s.bytes) : s.stage];
+      const retryKeys = s.mode === 'missing' ? [s.newStage, s.thirdStage] : s.mode === 'expired' ? [s.stage] : [];
       assert.deepEqual(s.reads, [s.stage, ...retryKeys]);
     }
     const view = ok(await uploader.post('artifacts/get', {artifactId: s.id, executionId}));

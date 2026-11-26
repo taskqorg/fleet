@@ -217,7 +217,7 @@ func (c *transferClient) post(route string, body any) (json.RawMessage, *failure
 	case answerEdge:
 		return nil, retryf("coordinator edge answered %d (%s)", a.status, a.text)
 	case answerRetry:
-		if route != contract.RouteArtifactsRenew.Path && isRecoverableUploadText(a.text) {
+		if isRecoverableUploadText(a.text) {
 			return nil, &failure{recoverable: true, msg: a.text}
 		}
 		return nil, retryf("%s", a.text)
@@ -225,13 +225,6 @@ func (c *transferClient) post(route string, body any) (json.RawMessage, *failure
 	// 409 no_store: no listed store is reachable now: wait and retry.
 	if a.status == 409 && strings.Contains(a.text, "No reachable store") {
 		return nil, retryf("409 %s", a.text)
-	}
-	if route == contract.RouteArtifactsRenew.Path {
-		var problem struct {
-			Code string `json:"code"`
-		}
-		_ = json.Unmarshal([]byte(a.text), &problem)
-		return nil, &failure{recoverable: a.status == 409 && (problem.Code == "no_such_key" || problem.Code == "store_unreachable"), msg: fmt.Sprintf("%d %s", a.status, a.text)}
 	}
 	msg := fmt.Sprintf("%d %s", a.status, a.text)
 	return nil, &failure{recoverable: isRecoverableUploadText(a.text), msg: msg}

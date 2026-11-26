@@ -472,12 +472,13 @@ func (q *Queries) ArtInsertStored(ctx context.Context, arg ArtInsertStoredParams
 }
 
 const artLeasesExpired = `-- name: ArtLeasesExpired :many
-SELECT artifact_id,store_id,upload_id,staging_key FROM artifact_copy WHERE state IN ('pending','copying') AND lease_expires_at < now()
+SELECT artifact_id,store_id,state,upload_id,staging_key FROM artifact_copy WHERE state IN ('pending','copying') AND lease_expires_at < now()
 `
 
 type ArtLeasesExpiredRow struct {
 	ArtifactID string
 	StoreID    string
+	State      string
 	UploadID   *string
 	StagingKey *string
 }
@@ -494,6 +495,7 @@ func (q *Queries) ArtLeasesExpired(ctx context.Context) ([]ArtLeasesExpiredRow, 
 		if err := rows.Scan(
 			&i.ArtifactID,
 			&i.StoreID,
+			&i.State,
 			&i.UploadID,
 			&i.StagingKey,
 		); err != nil {
@@ -1347,30 +1349,34 @@ func (q *Queries) ArtVerifiedContent(ctx context.Context, arg ArtVerifiedContent
 	return exists, err
 }
 
-const artVerifyHistory = `-- name: ArtVerifyHistory :one
-SELECT coalesce(bool_or(status IN ('pending','accepted','started')), false)::boolean AS open,
- count(*) FILTER (WHERE status='failed' AND updated_at > now() - interval '1 hour')::int AS failed
-FROM command WHERE kind='artifact-verify' AND host_id= $1
+const artVerifyFailures = `-- name: ArtVerifyFailures :one
+SELECT count(*)::int FROM command
+WHERE kind='artifact-verify' AND host_id= $1 AND status='failed' AND updated_at > now() - interval '1 hour'
  AND payload->'payload'->>'artifactId'= $2::text AND payload->'payload'->>'storeId'= $3::text
+ AND coalesce(payload->'payload'->>'stagingKey'= $4::text,
+  right(split_part(payload->'payload'->>'url', '?', 1), length($5::text))= $5::text)
 `
 
-type ArtVerifyHistoryParams struct {
+type ArtVerifyFailuresParams struct {
 	HostID     *string
 	ArtifactID string
 	StoreID    string
+	StagingKey string
+	PathSuffix string
 }
 
-type ArtVerifyHistoryRow struct {
-	Open   bool
-	Failed int32
-}
-
-// The store host's verifications of one copy: one still open, and how many failed within the last hour (the lease).
-func (q *Queries) ArtVerifyHistory(ctx context.Context, arg ArtVerifyHistoryParams) (ArtVerifyHistoryRow, error) {
-	row := q.db.QueryRow(ctx, artVerifyHistory, arg.HostID, arg.ArtifactID, arg.StoreID)
-	var i ArtVerifyHistoryRow
-	err := row.Scan(&i.Open, &i.Failed)
-	return i, err
+// Count failures of the current staging object within the lease window, including pre-key verifier commands.
+func (q *Queries) ArtVerifyFailures(ctx context.Context, arg ArtVerifyFailuresParams) (int32, error) {
+	row := q.db.QueryRow(ctx, artVerifyFailures,
+		arg.HostID,
+		arg.ArtifactID,
+		arg.StoreID,
+		arg.StagingKey,
+		arg.PathSuffix,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const artVerifyQueued = `-- name: ArtVerifyQueued :one
