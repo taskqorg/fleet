@@ -30,7 +30,8 @@ const TARGET_KEY = 'fleet:home-target';
 
 /** The card groups in attention order: a session is in the group of its state's word (registry `life`, OR-55). */
 type Group = 'waiting' | 'failed' | 'working' | 'queued';
-const GROUPS = (['waiting', 'failed', 'working', 'queued'] as const).map(id => ({ id, ...states.life[id], states: statesOf('session', [id]) as string[] }));
+// Queued holds preparing sessions whose run has not started (lifeOfCard): its link filters Conversations to preparing.
+const GROUPS = (['waiting', 'failed', 'working', 'queued'] as const).map(id => ({ id, ...states.life[id], states: id === 'queued' ? ['preparing'] : statesOf('session', [id]) as string[] }));
 /** Failed sessions that share a plain cause (OR-58): the cause, how many, their hosts. */
 type Cause = { id: string; text: string; n: number; hosts: string[] };
 /**
@@ -73,6 +74,10 @@ function who(s: SessionRow, bot: BotListItem | undefined): { name: string; avata
   return { name: s.title || s.code || 'Session', avatar: s.harness ? { harness: s.harness } : { letter: (s.title || 'S').trim() } };
 }
 const lifeOfSession = (state: string): Life => life('session', state);
+/** A card's life: a preparing session whose run has not started waits for a host, so it is Queued, not Working (live
+ * 2026-11-26: 32 working while hosts ran 3 during an update drain). */
+const lifeOfCard = (s: { state: string; runStartedAt?: string | null }): Life =>
+  s.state === 'preparing' && !s.runStartedAt ? 'queued' : lifeOfSession(s.state);
 /** The address of a session on Home: its human code (OR-38), else its id. */
 const sessionPath = (s: { id: string; code?: string | null }) => `/home/${encodeURIComponent(s.code ?? s.id)}`;
 const newRequestId = () => crypto.randomUUID();
@@ -155,7 +160,7 @@ function HomePage() {
     const failedBy = new Map<string, Card[]>();
     for (const s of rows) {
       const mine = qs.get(s.id) ?? [];
-      const l = lifeOfSession(s.state);
+      const l = lifeOfCard(s);
       // Waiting for you holds only a question to this person (home.md); a session waiting on other work (its task, a
       // worker, a review) is in work, so it is Working, and its card still says what it waits for.
       const group = mine.length ? 'waiting' : l === 'waiting' ? 'working' : GROUPS.find(g => g.id === l)?.id;
@@ -390,7 +395,7 @@ function HomePage() {
         name={w().name}
         project={s().projectId ?? undefined}
         avatar={w().avatar}
-        state={c().qs.length && s().state !== 'failed' ? 'waiting' : lifeOfSession(s().state)}
+        state={c().qs.length && s().state !== 'failed' ? 'waiting' : lifeOfCard(s())}
         now={(s().state === 'failed' ? failureOf().get(s().id)?.text : undefined) || s().now || (w().name === s().title ? 'No message yet' : s().title || 'No message yet')}
         facts={cardFacts(c())}
         question={question()}
@@ -409,8 +414,8 @@ function HomePage() {
           <Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} />
         </Show>
         <PulseLine
-          working={grouped().find(g => g.id === 'working')?.cards.filter(c => c.s && lifeOfSession(c.s.state) === 'working').length ?? 0}
-          queued={rows().filter(s => lifeOfSession(s.state) === 'queued').length}
+          working={grouped().find(g => g.id === 'working')?.cards.filter(c => c.s && lifeOfCard(c.s) === 'working').length ?? 0}
+          queued={rows().filter(s => lifeOfCard(s) === 'queued').length}
           done={view.data?.counts.doneToday ?? 0}
           blockers={chips()}
           problems={problems()}
