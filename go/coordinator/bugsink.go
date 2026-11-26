@@ -354,16 +354,15 @@ type bugsinkProblemData struct {
 	IssueID        string `json:"issueId"`
 }
 
-// bugsinkProblem opens the owner's needs-you problem for an issue: a new issue asks once while its problem holds the
-// cause (Dismiss keeps it quiet); a regression or an unmute is the issue coming back, so an earlier problem is let go
-// and the issue asks again. The problem belongs to the Fleet project whose errors.bugsink names the Bugsink project.
+// bugsinkProblem opens the problem of an issue: a new issue opens it once while it is open; a regression or an unmute
+// is the issue coming back, so it reopens whatever happened before. The problem belongs to the Fleet project whose errors.bugsink names the Bugsink project.
 //
 // title is the issue's reported title, untrusted: it is only matched against the project's errors.ignore, never shown.
-// A matching issue asks nothing; it stays in Bugsink, where people mute or resolve it.
+// A matching issue opens nothing; it stays in Bugsink, where people mute or resolve it.
 func bugsinkProblem(q *Request, issue, project, reason, title string) (bool, error) {
 	cause := bugsinkCause + issue
 	if reason == "NEW" {
-		if held, err := problemHeld(q, cause); err != nil || held != nil {
+		if open, err := q.db().ProblemIsOpen(q.ctx(), cause); err != nil || open {
 			return false, err
 		}
 	} else if err := problemClose(q, cause); err != nil {
@@ -377,7 +376,7 @@ func bugsinkProblem(q *Request, issue, project, reason, title string) (bool, err
 		return false, err
 	}
 	data := bugsinkProblemData{AlertReason: reason, BugsinkProject: project, IssueID: issue}
-	return true, problemAsk(q, "direct", Problem{Cause: cause, Text: bugsinkText(issue, project, reason), ProjectID: fleetProject, Data: data})
+	return true, problemRaise(q, "direct", Problem{Cause: cause, Text: bugsinkText(issue, project, reason), ProjectID: fleetProject, Data: data})
 }
 
 // bugsinkIgnored: whether the title holds one of the Fleet project's errors.ignore substrings.

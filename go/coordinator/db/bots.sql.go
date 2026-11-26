@@ -80,6 +80,38 @@ func (q *Queries) BotCreate(ctx context.Context, arg BotCreateParams) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const botDuties = `-- name: BotDuties :many
+SELECT b.id, b.project_id, s.duty FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL AND s.duty ? 'problems' ORDER BY b.id
+`
+
+type BotDutiesRow struct {
+	ID        string
+	ProjectID string
+	Duty      []byte
+}
+
+// Live bots with a problem duty (problems.go problemOwner), oldest first so a tie keeps its owner.
+func (q *Queries) BotDuties(ctx context.Context) ([]BotDutiesRow, error) {
+	rows, err := q.db.Query(ctx, botDuties)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotDutiesRow
+	for rows.Next() {
+		var i BotDutiesRow
+		if err := rows.Scan(&i.ID, &i.ProjectID, &i.Duty); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const botExecutionMutated = `-- name: BotExecutionMutated :one
 SELECT (
   EXISTS (SELECT 1 FROM session s WHERE s.created_by_execution_id = $1::text AND s.tombstoned_at IS NULL)
@@ -100,7 +132,7 @@ const botGet = `-- name: BotGet :one
 SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        cv.id AS conversation_id,
        b.paused, b.paused_at, b.paused_by, b.resumed_at,
-       s.name, s.purpose, s.profile_id, s.instructions, s.soul,
+       s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.duty,
        s.created_at AS revision_created_at,
        coalesce(m.memory, '')::text AS memory,
        ar.id AS active_run_id,
@@ -147,6 +179,7 @@ type BotGetRow struct {
 	ProfileID             string
 	Instructions          string
 	Soul                  string
+	Duty                  []byte
 	RevisionCreatedAt     time.Time
 	Memory                string
 	ActiveRunID           *string
@@ -180,6 +213,7 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 		&i.ProfileID,
 		&i.Instructions,
 		&i.Soul,
+		&i.Duty,
 		&i.RevisionCreatedAt,
 		&i.Memory,
 		&i.ActiveRunID,
@@ -661,8 +695,8 @@ func (q *Queries) BotSettingsAdvance(ctx context.Context, arg BotSettingsAdvance
 }
 
 const botSettingsRevisionInsert = `-- name: BotSettingsRevisionInsert :exec
-INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul, duty)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
 `
 
 type BotSettingsRevisionInsertParams struct {
@@ -673,6 +707,7 @@ type BotSettingsRevisionInsertParams struct {
 	ProfileID    string
 	Instructions string
 	Soul         string
+	Duty         []byte
 }
 
 func (q *Queries) BotSettingsRevisionInsert(ctx context.Context, arg BotSettingsRevisionInsertParams) error {
@@ -684,6 +719,7 @@ func (q *Queries) BotSettingsRevisionInsert(ctx context.Context, arg BotSettings
 		arg.ProfileID,
 		arg.Instructions,
 		arg.Soul,
+		arg.Duty,
 	)
 	return err
 }

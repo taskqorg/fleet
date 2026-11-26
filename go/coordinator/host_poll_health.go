@@ -196,12 +196,12 @@ func (a *App) openPollProblem(ctx context.Context, host, reason string) {
 		} else if err != nil {
 			return err
 		}
-		if h, err := problemHeld(q, hostPollCause(host)); err != nil || h != nil {
-			held = h != nil
+		if open, err := q.db().ProblemIsOpen(q.ctx(), hostPollCause(host)); err != nil || open {
+			held = open
 			return err
 		}
 		held = true
-		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: hostPollProblemData{host, reason}})
+		return problemRaise(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: hostPollProblemData{host, reason}})
 	}); err != nil {
 		log.Printf("host %s poll problem: %v", host, err)
 		return

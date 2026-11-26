@@ -1279,7 +1279,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if c.ask != "" && c.ask != c.director {
 			tail = fmt.Sprintf(" Ask %v, or change the setting.", c.ask)
 		}
-		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: c.projectID, AddressedTo: c.director, Options: []any{"ok"}})
+		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: c.projectID})
 	}
 	return problemsSet(q, "", dispatchStallCauses, stalls)
 }

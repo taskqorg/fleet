@@ -44,7 +44,7 @@ func TestHomeView(t *testing.T) {
 		 VALUES ($1, 'agent_run', 'failed', 'mac', $2, $2, '{}', 'confirmed', '{}', 'infra:http-503')`, id, now.Add(-time.Duration(i+1)*time.Minute))
 	}
 	exec(`INSERT INTO question (id, kind, session_id, execution_id, text, asked_at) VALUES ('hv-q', 'agent_question', 'hv-run', 'hv-run-r', 'Merge it?', $1)`, now.Add(-5*time.Minute))
-	exec(`INSERT INTO question (id, kind, text, data) VALUES ('hv-prob', 'agent_question', 'Host mac is saturated.', '{"cause":"problem:host:mac:saturated:1"}')`)
+	exec(`INSERT INTO problem (id, cause, text) VALUES ('hv-prob', 'problem:host:mac:saturated:1', 'Host mac is saturated.')`)
 
 	// Two pull requests merged, one since the visit.
 	deliveryMu.Lock()
@@ -85,22 +85,21 @@ func TestHomeView(t *testing.T) {
 	if len(got.Questions) != 1 || got.Questions[0].Id != "hv-q" {
 		t.Fatalf("questions: the agent question only: %+v", got.Questions)
 	}
-	var run, prob *contract.HomeBlocker
+	var run *contract.HomeBlocker
 	for i, b := range got.Blockers {
-		switch b.Kind {
-		case contract.HomeBlockerKindRun:
-			if deref(b.HostId) == "mac" {
-				run = &got.Blockers[i]
-			}
-		case contract.HomeBlockerKindProblem:
-			prob = &got.Blockers[i]
+		if b.Kind == contract.HomeBlockerKindRun && deref(b.HostId) == "mac" {
+			run = &got.Blockers[i]
+		}
+		if b.Kind == contract.HomeBlockerKindProblem && (b.Cause != "problem:host:mac:saturated" || deref(b.HostId) != "mac") {
+			t.Fatalf("problem blocker by host and kind: %+v", b)
 		}
 	}
 	if run == nil || run.N != 2 || run.Cause != "provider-down" || len(got.Blockers) != 3 {
 		t.Fatalf("run blocker: two provider-down failures on mac: %+v", got.Blockers)
 	}
-	if prob == nil || prob.Cause != "problem:host:mac:saturated" || deref(prob.HostId) != "mac" {
-		t.Fatalf("problem blocker by host and kind: %+v", got.Blockers)
+	// A problem is the pulse line's count, owned by no bot here; never a question.
+	if got.Problems == nil || got.Problems.Open != 1 || got.Problems.Unowned != 1 || len(got.Problems.Owners) != 0 {
+		t.Fatalf("problems: one open without an owner: %+v", got.Problems)
 	}
 
 	// Scoped to a project no row is in: no cards, no counts.

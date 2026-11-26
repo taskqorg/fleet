@@ -1,14 +1,14 @@
 {
   "id": "needs-you",
   "name": "Needs you",
-  "description": "Within one pass of a new open question or a failed run in the bot's project: the bot handles it.",
+  "description": "Within one pass of a new open question, a failed run in the bot's project or a change of a problem it owns: the bot handles it.",
   "target": "bot",
   "settings": {
     "name": "Needs you",
-    "text": "Fleet: new Needs you entries in your project; handle them.",
+    "text": "Fleet: new Needs you entries in your project and changes of the problems you own; handle them.",
     "when": "every",
     "everyMs": 15000,
-    "ifChanged": ["question", "execution"],
+    "ifChanged": ["question", "execution", "problem"],
     "enabled": true
   }
 }

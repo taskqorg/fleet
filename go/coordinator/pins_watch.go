@@ -128,7 +128,7 @@ func pinsWatchPass(ctx context.Context, a *App, closed []ghPull) error {
 				return err
 			}
 		}
-		problems = append(problems, Problem{Cause: "pins:cli:revert:" + r.Harness + "@" + r.Version, Options: []any{"ok"},
+		problems = append(problems, Problem{Cause: "pins:cli:revert:" + r.Harness + "@" + r.Version,
 			Text: "Managed CLI " + r.Harness + " " + r.Version + " is being reverted: " + r.describe() + ". The next pins run proposes the previous version and skips this one (" + pr.URL + ")."})
 	}
 	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {

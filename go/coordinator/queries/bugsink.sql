@@ -13,5 +13,5 @@ SELECT coalesce(r.content::jsonb #> '{settings,errors,ignore}', '[]'::jsonb)::js
  WHERE d.kind='project' AND d.id=sqlc.arg(project_id)::text AND d.retired_at IS NULL;
 
 -- name: BugsinkHeldProblems :many
--- The open or answered problems of Bugsink issues, with their project ('' for none).
-SELECT cause::text AS cause, coalesce(project_id,'')::text AS project FROM question WHERE cause LIKE @prefix::text || '%' AND state IN ('open','answered') ORDER BY seq;
+-- The open problems of Bugsink issues, with their project ('' for none).
+SELECT cause::text AS cause, coalesce(project_id,'')::text AS project FROM problem WHERE cause LIKE @prefix::text || '%' AND state = 'open' ORDER BY seq;

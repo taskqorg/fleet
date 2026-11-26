@@ -40,7 +40,7 @@ func TestGrantsDrift(t *testing.T) {
 	held := func(cause string) bool {
 		t.Helper()
 		var n int
-		if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT count(*) FROM question WHERE cause = $1 AND state = 'open'`, cause).Scan(&n); err != nil {
+		if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT count(*) FROM problem WHERE cause = $1 AND state = 'open'`, cause).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n > 0

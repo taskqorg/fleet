@@ -286,10 +286,10 @@ SELECT DISTINCT sid::text FROM (
 ) x WHERE coalesce(sid,'')<>'';
 
 -- name: DispNeedsSweep :one
--- Open delegations, open stall questions (causes matching the pattern), unfinished executions or a queued task nothing
+-- Open delegations, open stall problems (causes matching the pattern), unfinished executions or a queued task nothing
 -- has started (one waiting for a worker role is rechecked on the next explicit pass).
 SELECT (EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed')
- OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ @pattern::text)
+ OR EXISTS(SELECT 1 FROM problem WHERE state = 'open' AND cause ~ @pattern::text)
  OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))
  OR EXISTS(SELECT 1 FROM task t WHERE t.state='queued' AND t.project_id IS NOT NULL AND t.tombstoned_at IS NULL AND t.accepted_at IS NULL
   AND coalesce(t.wait_reason,'') NOT IN ('no worker role','worker start refused')

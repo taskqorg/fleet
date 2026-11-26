@@ -498,7 +498,7 @@ type AgentGapFinding struct {
 	Class        string
 	ProjectID    *string
 	State        string
-	QuestionID   *string
+	ProblemID    *string
 	SessionID    *string
 	Pr           *int64
 	PrUrl        *string
@@ -683,6 +683,7 @@ type BotRevision struct {
 	ScheduleZone   string
 	WakeOnNeedsYou bool
 	CreatedAt      time.Time
+	Duty           []byte
 }
 
 type BotRun struct {
@@ -1405,6 +1406,33 @@ type PriceEntry struct {
 	EffectiveFrom time.Time
 	CreatedBy     *string
 	Seq           int64
+}
+
+type Problem struct {
+	ID           string
+	Seq          int64
+	Cause        string
+	Source       string
+	Rule         string
+	ProjectID    *string
+	Text         string
+	Data         []byte
+	State        string
+	Phase        string
+	OwnerBotID   *string
+	Note         string
+	Work         string
+	QuestionID   *string
+	Count        int32
+	Misses       int32
+	QuietWakes   int32
+	Reopened     int32
+	OpenedAt     time.Time
+	SeenAt       time.Time
+	PhaseAt      time.Time
+	ClosedAt     *time.Time
+	CloseReason  *string
+	TombstonedAt *time.Time
 }
 
 type ProblemDismissal struct {

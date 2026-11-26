@@ -129,6 +129,7 @@ func readBotFull(q *Request, id string) (botFull, error) {
 			ProfileId:    row.ProfileID,
 			Instructions: row.Instructions,
 			Soul:         row.Soul,
+			Duty:         botDutyOf(row.Duty),
 		},
 	}
 	return botFull{
@@ -137,6 +138,23 @@ func readBotFull(q *Request, id string) (botFull, error) {
 		PausedBy:          row.PausedBy,
 		ResumedAt:         row.ResumedAt,
 	}, nil
+}
+
+// botDutyJSON: a duty as stored ({} for none).
+func botDutyJSON(d *contract.BotDuty) []byte {
+	if d == nil || d.Problems == nil {
+		return []byte("{}")
+	}
+	return jsonBytes(d)
+}
+
+// botDutyOf: a stored duty, nil for none.
+func botDutyOf(raw []byte) *contract.BotDuty {
+	var d contract.BotDuty
+	if json.Unmarshal(raw, &d) != nil || d.Problems == nil {
+		return nil
+	}
+	return &d
 }
 
 func readBot(q *Request, id string) (contract.BotRecord, error) {
@@ -201,6 +219,7 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 		return out, errNotFound
 	}
 	var prevName string
+	var prevDuty *contract.BotDuty
 	bot, err := readBot(q, r.BotId)
 	switch {
 	case err == nil:
@@ -210,13 +229,13 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 		if err := botDirects(q, bot); err != nil {
 			return out, err
 		}
-		if (bot.Revision == r.BaseRevision || bot.Revision-1 == r.BaseRevision) && bot.Settings == r.Settings {
+		if (bot.Revision == r.BaseRevision || bot.Revision-1 == r.BaseRevision) && string(jsonBytes(bot.Settings)) == string(jsonBytes(r.Settings)) {
 			return contract.BotSettingsSaveReply{Bot: bot}, nil
 		}
 		if bot.Revision != r.BaseRevision {
 			return out, fail(409, "Bot settings changed. Reload before saving")
 		}
-		prevName = bot.Settings.Name
+		prevName, prevDuty = bot.Settings.Name, bot.Settings.Duty
 	case errors.Is(err, errNotFound):
 		if r.BaseRevision != 0 {
 			return out, err
@@ -226,6 +245,10 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	}
 	if err := validateBotSettings(q, r.Settings); err != nil {
 		return out, err
+	}
+	// A duty decides who owns problems across projects: only the owner (a person with full access) changes it.
+	if string(botDutyJSON(prevDuty)) != string(botDutyJSON(r.Settings.Duty)) && (q.agent != "" || !fullAccess(q.person)) {
+		return out, fail(403, "Only the owner changes a bot's duty")
 	}
 	var changed int64
 	if r.BaseRevision == 0 {
@@ -246,7 +269,7 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	revision := r.BaseRevision + 1
 	err = q.db().BotSettingsRevisionInsert(q.ctx(), db.BotSettingsRevisionInsertParams{
 		BotID: r.BotId, Revision: int32(revision), Name: settings.Name, Purpose: settings.Purpose,
-		ProfileID: settings.ProfileId, Instructions: settings.Instructions, Soul: settings.Soul,
+		ProfileID: settings.ProfileId, Instructions: settings.Instructions, Soul: settings.Soul, Duty: botDutyJSON(settings.Duty),
 	})
 	if err != nil {
 		return out, err
@@ -259,6 +282,9 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 		return out, err
 	}
 	if _, err := botConversation(q, &saved, ""); err != nil {
+		return out, err
+	}
+	if err := problemsAdopt(q, saved.Id, settings.Duty); err != nil {
 		return out, err
 	}
 	if r.BaseRevision > 0 && settings.Name != prevName {

@@ -112,7 +112,7 @@ CREATE TABLE agent_gap_finding (
   "class" text NOT NULL,
   "project_id" text,
   "state" text NOT NULL,
-  "question_id" text,
+  "problem_id" text,
   "session_id" text,
   "pr" bigint,
   "pr_url" text,
@@ -284,7 +284,8 @@ CREATE TABLE bot_revision (
   "schedule_time" text NOT NULL,
   "schedule_zone" text NOT NULL,
   "wake_on_needs_you" boolean NOT NULL,
-  "created_at" timestamp with time zone NOT NULL
+  "created_at" timestamp with time zone NOT NULL,
+  "duty" jsonb NOT NULL
 );
 CREATE TABLE bot_run (
   "id" text NOT NULL,
@@ -954,6 +955,32 @@ CREATE TABLE price_entry (
   "effective_from" timestamp with time zone NOT NULL,
   "created_by" text,
   "seq" bigint NOT NULL
+);
+CREATE TABLE problem (
+  "id" text NOT NULL,
+  "seq" bigint NOT NULL,
+  "cause" text NOT NULL,
+  "source" text NOT NULL,
+  "rule" text NOT NULL,
+  "project_id" text,
+  "text" text NOT NULL,
+  "data" jsonb NOT NULL,
+  "state" text NOT NULL,
+  "phase" text NOT NULL,
+  "owner_bot_id" text,
+  "note" text NOT NULL,
+  "work" text NOT NULL,
+  "question_id" text,
+  "count" integer NOT NULL,
+  "misses" integer NOT NULL,
+  "quiet_wakes" integer NOT NULL,
+  "reopened" integer NOT NULL,
+  "opened_at" timestamp with time zone NOT NULL,
+  "seen_at" timestamp with time zone NOT NULL,
+  "phase_at" timestamp with time zone NOT NULL,
+  "closed_at" timestamp with time zone,
+  "close_reason" text,
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE problem_dismissal (
   "execution_id" text NOT NULL,

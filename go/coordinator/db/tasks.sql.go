@@ -746,7 +746,7 @@ SELECT id, project_id, title, expected_outcome, state, state_before_pause, wait_
 `
 
 // Tasks, their questions and acceptance (tasks.go), owner problems (problems.go) and execution trace origins
-// (execution_trace.go). tasks.go alone writes task.state (taskTransition); problems.go alone writes question.cause.
+// (execution_trace.go). tasks.go alone writes task.state (taskTransition); problems.go alone writes problem rows.
 func (q *Queries) TaskGet(ctx context.Context, id string) (Task, error) {
 	row := q.db.QueryRow(ctx, taskGet, id)
 	var i Task
@@ -1157,186 +1157,6 @@ func (q *Queries) TaskOpenIDs(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
-const taskProblemHeld = `-- name: TaskProblemHeld :one
-SELECT id,state FROM question WHERE cause=$1 AND state IN ('open','answered') ORDER BY seq DESC LIMIT 1
-`
-
-type TaskProblemHeldRow struct {
-	ID    string
-	State QuestionState
-}
-
-// The open or answered question holding cause.
-func (q *Queries) TaskProblemHeld(ctx context.Context, cause *string) (TaskProblemHeldRow, error) {
-	row := q.db.QueryRow(ctx, taskProblemHeld, cause)
-	var i TaskProblemHeldRow
-	err := row.Scan(&i.ID, &i.State)
-	return i, err
-}
-
-const taskProblemMissed = `-- name: TaskProblemMissed :exec
-UPDATE question SET data=jsonb_set(data,'{misses}',to_jsonb( $1::int)) WHERE id= $2
-`
-
-type TaskProblemMissedParams struct {
-	Misses int32
-	ID     string
-}
-
-func (q *Queries) TaskProblemMissed(ctx context.Context, arg TaskProblemMissedParams) error {
-	_, err := q.db.Exec(ctx, taskProblemMissed, arg.Misses, arg.ID)
-	return err
-}
-
-const taskProblemPresent = `-- name: TaskProblemPresent :exec
-UPDATE question SET data=data-'misses' WHERE id=$1 AND data ? 'misses'
-`
-
-func (q *Queries) TaskProblemPresent(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, taskProblemPresent, id)
-	return err
-}
-
-const taskProblemRefresh = `-- name: TaskProblemRefresh :exec
-UPDATE question SET text=CASE WHEN state='open' THEN $1::text ELSE text END, data=data-'misses'
-WHERE id= $2 AND (data ? 'misses' OR (state='open' AND text IS DISTINCT FROM $1::text))
-`
-
-type TaskProblemRefreshParams struct {
-	Text string
-	ID   string
-}
-
-// A present cause: its open question's text refreshed, its miss count cleared.
-func (q *Queries) TaskProblemRefresh(ctx context.Context, arg TaskProblemRefreshParams) error {
-	_, err := q.db.Exec(ctx, taskProblemRefresh, arg.Text, arg.ID)
-	return err
-}
-
-const taskProblemSetCause = `-- name: TaskProblemSetCause :exec
-
-UPDATE question SET cause= $1,addressed_to= $2 WHERE id= $3
-`
-
-type TaskProblemSetCauseParams struct {
-	Cause       *string
-	AddressedTo *string
-	ID          string
-}
-
-// Owner problems (problems.go).
-func (q *Queries) TaskProblemSetCause(ctx context.Context, arg TaskProblemSetCauseParams) error {
-	_, err := q.db.Exec(ctx, taskProblemSetCause, arg.Cause, arg.AddressedTo, arg.ID)
-	return err
-}
-
-const taskProblemsHeld = `-- name: TaskProblemsHeld :many
-SELECT id,state FROM question WHERE (cause=ANY($1::text[]) OR starts_with(cause,$2::text))
- AND state IN ('open','answered') ORDER BY id FOR UPDATE
-`
-
-type TaskProblemsHeldParams struct {
-	Causes []string
-	Prefix *string
-}
-
-type TaskProblemsHeldRow struct {
-	ID    string
-	State QuestionState
-}
-
-// The open or answered questions holding one of causes or a cause starting with prefix, locked.
-func (q *Queries) TaskProblemsHeld(ctx context.Context, arg TaskProblemsHeldParams) ([]TaskProblemsHeldRow, error) {
-	rows, err := q.db.Query(ctx, taskProblemsHeld, arg.Causes, arg.Prefix)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TaskProblemsHeldRow
-	for rows.Next() {
-		var i TaskProblemsHeldRow
-		if err := rows.Scan(&i.ID, &i.State); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const taskProblemsLetGo = `-- name: TaskProblemsLetGo :exec
-UPDATE question SET cause=NULL WHERE id=ANY( $1::text[]) AND cause IS NOT NULL
-`
-
-func (q *Queries) TaskProblemsLetGo(ctx context.Context, ids []string) error {
-	_, err := q.db.Exec(ctx, taskProblemsLetGo, ids)
-	return err
-}
-
-const taskProblemsMatching = `-- name: TaskProblemsMatching :many
-SELECT id,state,cause::text AS cause FROM question WHERE state IN ('open','answered') AND cause ~ $1::text ORDER BY id
-`
-
-type TaskProblemsMatchingRow struct {
-	ID    string
-	State QuestionState
-	Cause string
-}
-
-// The open or answered questions whose cause matches pattern (a regular expression).
-func (q *Queries) TaskProblemsMatching(ctx context.Context, pattern string) ([]TaskProblemsMatchingRow, error) {
-	rows, err := q.db.Query(ctx, taskProblemsMatching, pattern)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TaskProblemsMatchingRow
-	for rows.Next() {
-		var i TaskProblemsMatchingRow
-		if err := rows.Scan(&i.ID, &i.State, &i.Cause); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const taskProblemsOfSource = `-- name: TaskProblemsOfSource :many
-SELECT id,cause::text AS cause,coalesce(data->>'misses','0')::text AS misses FROM question
-WHERE cause LIKE 'problem:%' AND state IN ('open','answered') AND data->>'source'= $1::text
-`
-
-type TaskProblemsOfSourceRow struct {
-	ID     string
-	Cause  string
-	Misses string
-}
-
-func (q *Queries) TaskProblemsOfSource(ctx context.Context, source string) ([]TaskProblemsOfSourceRow, error) {
-	rows, err := q.db.Query(ctx, taskProblemsOfSource, source)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TaskProblemsOfSourceRow
-	for rows.Next() {
-		var i TaskProblemsOfSourceRow
-		if err := rows.Scan(&i.ID, &i.Cause, &i.Misses); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const taskQuestion = `-- name: TaskQuestion :one
 SELECT id, kind, project_id, task_id, execution_id, session_id, text, options, asked_by, asked_at, answer, answered_by, answered_at, state, updated_at, data, seq, cause, addressed_to, request_id, code, tombstoned_at FROM question WHERE id=$1
 `
@@ -1630,6 +1450,7 @@ func (q *Queries) TaskStoredArtifactNames(ctx context.Context, taskID *string) (
 
 const taskTraceCommand = `-- name: TaskTraceCommand :one
 
+
 SELECT traceparent,(payload->'run')::jsonb AS run FROM command WHERE id=$1
 `
 
@@ -1638,6 +1459,7 @@ type TaskTraceCommandRow struct {
 	Run         []byte
 }
 
+// Owner problems (problems.go).
 // Execution trace origins (execution_trace.go).
 func (q *Queries) TaskTraceCommand(ctx context.Context, id string) (TaskTraceCommandRow, error) {
 	row := q.db.QueryRow(ctx, taskTraceCommand, id)

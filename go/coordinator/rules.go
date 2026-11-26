@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -15,8 +14,6 @@ import (
 
 	"fleet/contract"
 	"fleet/obs"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // Rule factors (settings rules.<rule>.*; these are the defaults, tuned from the first week of data).
@@ -91,7 +88,6 @@ func rulesPass(ctx context.Context, a *App) error {
 	rulesSince = since
 	rulesMu.Unlock()
 	var ps []Problem
-	var execs []*string // the finding's execution of each problem in ps
 	for _, f := range fs {
 		if f.GroupCause != nil {
 			continue
@@ -106,31 +102,6 @@ func rulesPass(ctx context.Context, a *App) error {
 			p.ProjectID = *f.ProjectId
 		}
 		ps = append(ps, p)
-		execs = append(execs, f.ExecutionId)
-	}
-	needDirector := false
-	for i := range ps {
-		if execs[i] != nil && ps[i].ProjectID != "" {
-			needDirector = true
-			break
-		}
-	}
-	if needDirector {
-		if err := a.store.Read(ctx, nil, func(q *Request) error {
-			for i := range ps {
-				if execs[i] != nil && ps[i].ProjectID != "" {
-					// A project cause goes to the project's director: the execution's directedBy.
-					by, err := q.db().RulesExecutionDirector(q.ctx(), *execs[i])
-					if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-						return err
-					}
-					ps[i].AddressedTo = deref(by)
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
 	}
 	if err := a.store.Write(ctx, nil, []string{"problems:rules"}, func(q *Request) error {
 		return problemsSync(q, "rules", ps)

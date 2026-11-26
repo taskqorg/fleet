@@ -235,7 +235,7 @@ func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult
 	} else if reason == "unhealthy" {
 		what = "rolled back"
 	}
-	return problemRaise(q, "", Problem{Cause: "update:" + host + ":" + r.Version, Text: host + ": update to " + r.Version + " " + what + " (" + reason + ").", AddressedTo: holderName(holder), Options: []any{"ok"}})
+	return problemRaise(q, "", Problem{Cause: "update:" + host + ":" + r.Version, Text: host + ": update to " + r.Version + " " + what + " (" + reason + ")."})
 }
 
 func ptr[T any](v T) *T { return &v }

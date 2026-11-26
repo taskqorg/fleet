@@ -45,7 +45,7 @@ func pinsProblems(open []ghPull) []Problem {
 			failures = append(failures[:3], "and more in the pull request")
 		}
 		text := "Managed " + kind + " pin proposal failed qualification and stays unmerged (" + pr.URL + "): " + strings.Join(failures, "; ") + "."
-		out = append(out, Problem{Cause: "pins:" + kind + ":" + pr.Head.SHA, Text: text, Options: []any{"ok"}})
+		out = append(out, Problem{Cause: "pins:" + kind + ":" + pr.Head.SHA, Text: text})
 	}
 	return out
 }
@@ -77,7 +77,7 @@ func pinsPass(ctx context.Context, a *App, open []ghPull) error {
 				fs = append(fs[:3], "and more in the Lab experiment")
 			}
 			current = append(current, Problem{Cause: "pins:" + pinsKind(pr.Head.Ref) + ":" + pr.Head.SHA,
-				Text: "Managed " + pinsKind(pr.Head.Ref) + " pin proposal failed host qualification and stays unmerged (" + pr.URL + "): " + strings.Join(fs, "; ") + ".", Options: []any{"ok"}})
+				Text: "Managed " + pinsKind(pr.Head.Ref) + " pin proposal failed host qualification and stays unmerged (" + pr.URL + "): " + strings.Join(fs, "; ") + "."})
 		}
 	}
 	causes := []string{}

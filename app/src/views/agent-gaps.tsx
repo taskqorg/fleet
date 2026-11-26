@@ -17,8 +17,11 @@ const t = (s?: string | null) => (s ? Date.parse(s) : NaN);
 const plural = (n: number, one: string) => `${n.toLocaleString('en')} ${one}${n === 1 ? '' : 's'}`;
 const listOf = (xs: string[]) => xs.length <= 2 ? xs.join(' and ') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`;
 const path = (c: string) => `/agent-gaps/${encodeURIComponent(c)}`;
-const OPEN_STATES = ['open', 'investigating', 'still-failing'];
+const OPEN_STATES = ['open', 'still-failing'];
 const WATCH_STATES = ['linked', 'watching'];
+
+/** A problem's phase in words. */
+const PHASE_WORDS: Record<string, string> = { new: 'New', working: 'Agent working', review: 'Fix in review', watching: 'Watching', stuck: 'Stuck', escalated: 'Asked you' };
 
 /** "743 runs · 3 hosts · codex, claude" or "91 calls · tavily". */
 function detailOf(c: AgentGapClass): string {
@@ -44,24 +47,21 @@ function chipOf(c: AgentGapClass): { text: string; tone: Tone; tip?: string } {
   const pr = f?.pr ? `#${f.pr}` : '';
   switch (f?.state) {
     case 'open': return { text: 'Open', tone: 'attention' };
-    case 'investigating': return { text: 'Investigating', tone: 'running' };
     case 'linked': return { text: `Waiting · ${pr}`, tone: 'running', tip: f.note ?? undefined };
     case 'watching': return { text: `Watching · ${pr} on hosts`, tone: 'running' };
     case 'fixed': return { text: 'Fixed', tone: 'success' };
     case 'still-failing': return { text: `Still failing after ${pr}`, tone: 'danger' };
-    case 'dismissed': return { text: 'Dismissed', tone: 'neutral' };
   }
   if (c.class === 'other') return { text: 'Add a rule', tone: 'neutral', tip: 'config/agent-gaps.json names its class and setting' };
   return { text: c.aboveThreshold ? 'Above threshold' : 'Below threshold', tone: 'neutral' };
 }
 
-/** The finding's steps: Found, Investigating, Change, On hosts, Watching, Fixed. */
+/** The finding's steps: Found, Change, On hosts, Watching, Fixed. */
 function stepsOf(f: AgentGapFinding | undefined | null): TrailStep[] {
-  const names = ['Found', 'Investigating', 'Change', 'On hosts', 'Watching', 'Fixed'];
-  const reached = !f ? -1 : ({ open: 0, dismissed: 0, investigating: 1, linked: 2, watching: 4, 'still-failing': 5, fixed: 6 } as Record<string, number>)[f.state] ?? 0;
+  const names = ['Found', 'Change', 'On hosts', 'Watching', 'Fixed'];
+  const reached = !f ? -1 : ({ open: 0, linked: 1, watching: 3, 'still-failing': 4, fixed: 5 } as Record<string, number>)[f.state] ?? 0;
   return names.map((label, i): TrailStep => {
-    if (f?.state === 'still-failing' && i === 5) return { label: 'Still failing', state: 'current', tone: 'danger' };
-    if (f?.state === 'dismissed' && i === 1) return { label: 'Dismissed', state: 'current' };
+    if (f?.state === 'still-failing' && i === 4) return { label: 'Still failing', state: 'current', tone: 'danger' };
     return { label, state: i < reached ? 'done' : i === reached ? 'current' : 'todo' };
   });
 }
@@ -171,14 +171,7 @@ function GapDetail(p: { c: AgentGapClass; days: number; onClose?: () => void; on
   const cmp = createMemo(() => compareOf(c(), now()));
   const delivery = useOp('delivery_history', () => (f()?.pr ? { number: f()!.pr! } : null));
   const pr = createMemo(() => delivery.data?.prs.find(x => x.number === f()?.pr));
-  const [busy, setBusy] = createSignal('');
-  const [err, setErr] = createSignal('');
-  const answer = async (a: 'investigate' | 'dismiss') => {
-    const qid = f()?.questionId;
-    if (!qid) return;
-    setBusy(a); setErr('');
-    try { await op('question_answer', { questionId: qid, answer: a }); p.reload(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(''); }
-  };
+  const problem = useOp('problem_get', () => (f()?.problemId ? { id: f()!.problemId! } : null));
   const summary = createMemo(() => {
     const x = c(), e = x.examples[0];
     const hosts = x.hosts.filter(h => h.key !== '-').map(h => h.key);
@@ -193,13 +186,14 @@ function GapDetail(p: { c: AgentGapClass; days: number; onClose?: () => void; on
         <GapCompare before={x().before} after={x().after} days={c().daily.map(d => d.count)} changeAt={changeIndex(c())} note={x().note}
           label={`${c().label}: failures a day before and after the change`} />
       )}</Show>
-      <Show when={err()}><ErrorBanner text={err()} /></Show>
-      <Show when={f()?.state === 'open' || f()?.state === 'still-failing'}>
-        <div class="fbar-line">
-          <Button label="Investigate" kind="primary" busy={busy() === 'investigate'} onClick={() => void answer('investigate')} />
-          <Button label="Dismiss" busy={busy() === 'dismiss'} onClick={() => void answer('dismiss')} />
-        </div>
-      </Show>
+      <Show when={problem.data?.problem}>{pb => (
+        <DetailSection title="Problem">
+          <KvRow icon="bot" label={`${pb().code} · ${pb().ownerName ?? 'No owner yet'}`} meta={<span class="muted">{pb().note || PHASE_WORDS[pb().phase]}</span>}
+            value={<Show when={pb().conversationId} fallback={<span class="muted">{PHASE_WORDS[pb().phase]}</span>}>{cid => (
+              <a href={`/conversations/${encodeURIComponent(cid())}`} onClick={e => { e.preventDefault(); p.onOpen(`/conversations/${encodeURIComponent(cid())}`); }}>Open conversation</a>
+            )}</Show>} />
+        </DetailSection>
+      )}</Show>
       <Show when={f()?.sessionId}>{sid => (
         <DetailSection title="Investigation">
           <KvRow icon="messages-square" label="PM conversation" meta={<span class="muted">started from this finding</span>}
@@ -207,7 +201,7 @@ function GapDetail(p: { c: AgentGapClass; days: number; onClose?: () => void; on
           <Show when={f()?.note}><p class="muted">{f()!.note}</p></Show>
         </DetailSection>
       )}</Show>
-      <Show when={f() && f()!.state !== 'dismissed'}>
+      <Show when={f()}>
         <DetailSection title="What changed">
           <Show when={f()?.pr} fallback={<p class="muted">The pull request will link here (agent_gaps_link). Setting: {c().setting.ref}.</p>}>
             <KvRow icon="git-pull-request" label={pr() ? `#${pr()!.number} ${pr()!.title}` : `#${f()!.pr}`}

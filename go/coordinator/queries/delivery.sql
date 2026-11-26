@@ -113,8 +113,8 @@ DELETE FROM delivery_baseline WHERE name = @name;
 SELECT EXISTS (SELECT 1 FROM delivery_baseline WHERE name = @name);
 
 -- name: DeliveryProblemRefresh :exec
--- A held regression question shows the latest numbers and range, not those of the check that opened it.
-UPDATE question SET text = @text, data = data || @data::jsonb WHERE cause = @cause AND state IN ('open', 'answered') AND text <> @text;
+-- An open regression problem shows the latest numbers and range, not those of the check that opened it.
+UPDATE problem SET text = @text, data = data || @data::jsonb WHERE cause = @cause AND state = 'open' AND text <> @text;
 
 -- name: DeliveryStatePut :exec
 INSERT INTO delivery_state(id, project_id, refreshed_at) VALUES (@id, @project_id, @refreshed_at)

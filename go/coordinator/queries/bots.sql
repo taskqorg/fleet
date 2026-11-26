@@ -2,7 +2,7 @@
 SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        cv.id AS conversation_id,
        b.paused, b.paused_at, b.paused_by, b.resumed_at,
-       s.name, s.purpose, s.profile_id, s.instructions, s.soul,
+       s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.duty,
        s.created_at AS revision_created_at,
        coalesce(m.memory, '')::text AS memory,
        ar.id AS active_run_id,
@@ -71,8 +71,8 @@ VALUES ($1, $2, $3, 1)
 ON CONFLICT (id) DO NOTHING;
 
 -- name: BotSettingsRevisionInsert :exec
-INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul)
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul, duty)
+VALUES ($1, $2, $3, $4, $5, $6, $7, @duty::jsonb);
 
 -- name: BotSettingsAdvance :execrows
 UPDATE bot SET revision = revision + 1 WHERE id = $1 AND revision = $2;
@@ -260,3 +260,8 @@ SELECT id FROM session WHERE bot_id = $1 AND tombstoned_at IS NULL;
 -- A message of this trigger still queued in one of the bot's conversations.
 SELECT EXISTS (SELECT 1 FROM queued_message qm JOIN session s ON s.id = qm.session_id
  WHERE s.bot_id = $1 AND qm.state = 'queued' AND qm.payload->>'triggerId' = $2::text);
+
+-- name: BotDuties :many
+-- Live bots with a problem duty (problems.go problemOwner), oldest first so a tie keeps its owner.
+SELECT b.id, b.project_id, s.duty FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL AND s.duty ? 'problems' ORDER BY b.id;

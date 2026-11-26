@@ -1014,7 +1014,7 @@ func runAnswerAfter(q *Request, id string) error {
 		return fmt.Errorf("question %s: invalid record", id)
 	}
 	data := json.RawMessage(r.Data)
-	if err := agentGapAnswerAfter(q, id); err != nil {
+	if err := problemAnswerAfter(q, id, data); err != nil {
 		return err
 	}
 	if err := labAnswerAfter(q, jsonBytes(pipelineAnswered{ID: r.ID, Kind: r.Kind, Answer: r.Answer, AnsweredBy: r.AnsweredBy, Options: orNull(r.Options), Data: data})); err != nil {

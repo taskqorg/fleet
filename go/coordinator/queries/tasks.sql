@@ -1,5 +1,5 @@
 -- Tasks, their questions and acceptance (tasks.go), owner problems (problems.go) and execution trace origins
--- (execution_trace.go). tasks.go alone writes task.state (taskTransition); problems.go alone writes question.cause.
+-- (execution_trace.go). tasks.go alone writes task.state (taskTransition); problems.go alone writes problem rows.
 
 -- name: TaskGet :one
 SELECT * FROM task WHERE id=$1;
@@ -290,40 +290,6 @@ INSERT INTO task_dependency(task_id,depends_on_task_id,kind,project_id) VALUES(@
 SELECT session_id FROM execution WHERE id=$1;
 
 -- Owner problems (problems.go).
-
--- name: TaskProblemSetCause :exec
-UPDATE question SET cause= @cause,addressed_to= @addressed_to WHERE id= @id;
-
--- name: TaskProblemHeld :one
--- The open or answered question holding cause.
-SELECT id,state FROM question WHERE cause=$1 AND state IN ('open','answered') ORDER BY seq DESC LIMIT 1;
-
--- name: TaskProblemsHeld :many
--- The open or answered questions holding one of causes or a cause starting with prefix, locked.
-SELECT id,state FROM question WHERE (cause=ANY(sqlc.narg(causes)::text[]) OR starts_with(cause,sqlc.narg(prefix)::text))
- AND state IN ('open','answered') ORDER BY id FOR UPDATE;
-
--- name: TaskProblemsLetGo :exec
-UPDATE question SET cause=NULL WHERE id=ANY( @ids::text[]) AND cause IS NOT NULL;
-
--- name: TaskProblemsMatching :many
--- The open or answered questions whose cause matches pattern (a regular expression).
-SELECT id,state,cause::text AS cause FROM question WHERE state IN ('open','answered') AND cause ~ @pattern::text ORDER BY id;
-
--- name: TaskProblemsOfSource :many
-SELECT id,cause::text AS cause,coalesce(data->>'misses','0')::text AS misses FROM question
-WHERE cause LIKE 'problem:%' AND state IN ('open','answered') AND data->>'source'= @source::text;
-
--- name: TaskProblemRefresh :exec
--- A present cause: its open question's text refreshed, its miss count cleared.
-UPDATE question SET text=CASE WHEN state='open' THEN @text::text ELSE text END, data=data-'misses'
-WHERE id= @id AND (data ? 'misses' OR (state='open' AND text IS DISTINCT FROM @text::text));
-
--- name: TaskProblemPresent :exec
-UPDATE question SET data=data-'misses' WHERE id=$1 AND data ? 'misses';
-
--- name: TaskProblemMissed :exec
-UPDATE question SET data=jsonb_set(data,'{misses}',to_jsonb( @misses::int)) WHERE id= @id;
 
 -- Execution trace origins (execution_trace.go).
 

@@ -271,6 +271,312 @@ func (v *PreparedToolsV1) Validate() error {
 	return nil
 }
 
+type ProblemClose string
+
+const (
+	ProblemCloseFixed     ProblemClose = "fixed"
+	ProblemCloseDuplicate ProblemClose = "duplicate"
+)
+
+// ProblemCloseValues lists every ProblemClose in schema order.
+var ProblemCloseValues = []ProblemClose{ProblemCloseFixed, ProblemCloseDuplicate}
+
+// Valid: v is one of the schema's values.
+func (v ProblemClose) Valid() bool {
+	for _, x := range ProblemCloseValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProblemEscalateReply struct {
+	Problem    ProblemRow `json:"problem"`
+	QuestionId string     `json:"questionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemEscalateReply) Validate() error {
+	if err := Check(&v.Problem, "problem"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProblemEscalateRequest struct {
+	Id      string                `json:"id"`
+	Kind    ProblemEscalationKind `json:"kind"`
+	Options []string              `json:"options,omitempty"`
+	Text    string                `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemEscalateRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ProblemEscalateRequest) Closed() bool { return true }
+
+type ProblemEscalationKind string
+
+const (
+	ProblemEscalationKindOnlyYou   ProblemEscalationKind = "only-you"
+	ProblemEscalationKindProduct   ProblemEscalationKind = "product"
+	ProblemEscalationKindAuthority ProblemEscalationKind = "authority"
+)
+
+// ProblemEscalationKindValues lists every ProblemEscalationKind in schema order.
+var ProblemEscalationKindValues = []ProblemEscalationKind{ProblemEscalationKindOnlyYou, ProblemEscalationKindProduct, ProblemEscalationKindAuthority}
+
+// Valid: v is one of the schema's values.
+func (v ProblemEscalationKind) Valid() bool {
+	for _, x := range ProblemEscalationKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProblemGetReply struct {
+	Problem ProblemRow `json:"problem"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemGetReply) Validate() error {
+	if err := Check(&v.Problem, "problem"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProblemGetRequest struct {
+	Cause *string `json:"cause,omitempty"`
+	Id    *string `json:"id,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemGetRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ProblemGetRequest) Closed() bool { return true }
+
+type ProblemListState string
+
+const (
+	ProblemListStateOpen   ProblemListState = "open"
+	ProblemListStateClosed ProblemListState = "closed"
+	ProblemListStateAll    ProblemListState = "all"
+)
+
+// ProblemListStateValues lists every ProblemListState in schema order.
+var ProblemListStateValues = []ProblemListState{ProblemListStateOpen, ProblemListStateClosed, ProblemListStateAll}
+
+// Valid: v is one of the schema's values.
+func (v ProblemListState) Valid() bool {
+	for _, x := range ProblemListStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProblemPhase string
+
+const (
+	ProblemPhaseNew       ProblemPhase = "new"
+	ProblemPhaseWorking   ProblemPhase = "working"
+	ProblemPhaseReview    ProblemPhase = "review"
+	ProblemPhaseWatching  ProblemPhase = "watching"
+	ProblemPhaseStuck     ProblemPhase = "stuck"
+	ProblemPhaseEscalated ProblemPhase = "escalated"
+)
+
+// ProblemPhaseValues lists every ProblemPhase in schema order.
+var ProblemPhaseValues = []ProblemPhase{ProblemPhaseNew, ProblemPhaseWorking, ProblemPhaseReview, ProblemPhaseWatching, ProblemPhaseStuck, ProblemPhaseEscalated}
+
+// Valid: v is one of the schema's values.
+func (v ProblemPhase) Valid() bool {
+	for _, x := range ProblemPhaseValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// ProblemRow: One problem (problems.go); docs/designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner.
+type ProblemRow struct {
+	Cause          string          `json:"cause"`
+	CloseReason    *string         `json:"closeReason"`
+	ClosedAt       *string         `json:"closedAt"`
+	Code           string          `json:"code"`
+	ConversationId *string         `json:"conversationId,omitempty"`
+	Count          int64           `json:"count"`
+	Data           json.RawMessage `json:"data,omitempty"`
+	Id             string          `json:"id"`
+	Note           string          `json:"note"`
+	OpenedAt       string          `json:"openedAt"`
+	OwnerBotId     *string         `json:"ownerBotId"`
+	OwnerName      *string         `json:"ownerName"`
+	Phase          ProblemPhase    `json:"phase"`
+	PhaseAt        string          `json:"phaseAt"`
+	ProjectId      *string         `json:"projectId"`
+	QuestionId     *string         `json:"questionId"`
+	Reopened       int64           `json:"reopened"`
+	Rule           *string         `json:"rule,omitempty"`
+	SeenAt         string          `json:"seenAt"`
+	Source         string          `json:"source"`
+	State          ProblemState    `json:"state"`
+	Text           string          `json:"text"`
+	Work           string          `json:"work"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemRow) Validate() error {
+	if err := Check(&v.Phase, "phase"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProblemSetPhase string
+
+const (
+	ProblemSetPhaseWorking  ProblemSetPhase = "working"
+	ProblemSetPhaseReview   ProblemSetPhase = "review"
+	ProblemSetPhaseWatching ProblemSetPhase = "watching"
+	ProblemSetPhaseStuck    ProblemSetPhase = "stuck"
+)
+
+// ProblemSetPhaseValues lists every ProblemSetPhase in schema order.
+var ProblemSetPhaseValues = []ProblemSetPhase{ProblemSetPhaseWorking, ProblemSetPhaseReview, ProblemSetPhaseWatching, ProblemSetPhaseStuck}
+
+// Valid: v is one of the schema's values.
+func (v ProblemSetPhase) Valid() bool {
+	for _, x := range ProblemSetPhaseValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProblemState string
+
+const (
+	ProblemStateOpen   ProblemState = "open"
+	ProblemStateClosed ProblemState = "closed"
+)
+
+// ProblemStateValues lists every ProblemState in schema order.
+var ProblemStateValues = []ProblemState{ProblemStateOpen, ProblemStateClosed}
+
+// Valid: v is one of the schema's values.
+func (v ProblemState) Valid() bool {
+	for _, x := range ProblemStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProblemUpdateReply struct {
+	Problem ProblemRow `json:"problem"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemUpdateReply) Validate() error {
+	if err := Check(&v.Problem, "problem"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProblemUpdateRequest struct {
+	Close       *ProblemClose    `json:"close,omitempty"`
+	DuplicateOf *string          `json:"duplicateOf,omitempty"`
+	Id          string           `json:"id"`
+	Note        *string          `json:"note,omitempty"`
+	Phase       *ProblemSetPhase `json:"phase,omitempty"`
+	Work        *string          `json:"work,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemUpdateRequest) Validate() error {
+	if v.Close != nil {
+		if err := Check(v.Close, "close"); err != nil {
+			return err
+		}
+	}
+	if v.Phase != nil {
+		if err := Check(v.Phase, "phase"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ProblemUpdateRequest) Closed() bool { return true }
+
+type ProblemsListReply struct {
+	HasMore  bool         `json:"hasMore"`
+	Problems []ProblemRow `json:"problems"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemsListReply) Validate() error {
+	if v.Problems == nil {
+		return Missing("problems")
+	}
+	for i := range v.Problems {
+		if err := Check(&v.Problems[i], "problems"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProblemsListRequest struct {
+	Before     *string           `json:"before,omitempty"`
+	Limit      *int64            `json:"limit,omitempty"`
+	OwnerBotId *string           `json:"ownerBotId,omitempty"`
+	Phase      *ProblemPhase     `json:"phase,omitempty"`
+	ProjectId  *string           `json:"projectId,omitempty"`
+	State      *ProblemListState `json:"state,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProblemsListRequest) Validate() error {
+	if v.Phase != nil {
+		if err := Check(v.Phase, "phase"); err != nil {
+			return err
+		}
+	}
+	if v.State != nil {
+		if err := Check(v.State, "state"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ProblemsListRequest) Closed() bool { return true }
+
 type ProjectCodeSetReply struct {
 	Code      string `json:"code"`
 	ProjectId string `json:"projectId"`
@@ -2393,6 +2699,10 @@ func init() {
 		"entity_card":             {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "A short card of one entity: code (T-FLT-42, Q-…, C-…, old codes too) or kind (task, question, conversation, execution, result, experiment, project, host, agent, pipeline, pull_request as owner/repo#n, release as its tag) with id. Returns its state, title, project, harness, last time, 1-4 facts, the app path and an outside url; unknown and forbidden are both 404", Changes: []string{"task", "question", "session", "artifact", "experiment", "host", "definition", "delivery", "command"}, InputSchema: json.RawMessage("{\"$comment\":\"A code, or a kind with its id. Unknown and forbidden both answer 404.\",\"additionalProperties\":false,\"properties\":{\"code\":{\"$comment\":\"A D17 code (T-, Q-, C-; old codes too), case-insensitive.\",\"type\":\"string\"},\"id\":{\"$comment\":\"The entity id: a UUID, a host, project, agent or pipeline id, owner/repo#number for a pull request, a release tag (v1.2.3, ui-1.2.2-v1.2.3).\",\"type\":\"string\"},\"kind\":{\"$comment\":\"What an entity reference names (docs/design-system/controls/entity-card.md).\",\"enum\":[\"task\",\"question\",\"conversation\",\"execution\",\"result\",\"experiment\",\"project\",\"host\",\"agent\",\"pipeline\",\"pull_request\",\"release\"],\"type\":\"string\"}},\"type\":\"object\"}")},
 		"entity_resolve":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Case-insensitive; unknown and forbidden codes both answer 404.", InputSchema: json.RawMessage("{\"$comment\":\"Case-insensitive; unknown and forbidden codes both answer 404.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}")},
 		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Resolve every entity code in a text to its kind and id", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
+		"problem_escalate":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look.", InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"kind\":{\"enum\":[\"only-you\",\"product\",\"authority\"],\"type\":\"string\"},\"options\":{\"$comment\":\"at most 4\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"text\":{\"$comment\":\"the diagnosis in one line, what was tried, what only the owner can give and the recommendation\",\"type\":\"string\"}},\"required\":[\"id\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"problem_get":             {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "One problem by id, code (P-12) or open cause.", Changes: []string{"problem"}, InputSchema: json.RawMessage("{\"properties\":{\"cause\":{\"$comment\":\"the open problem of this cause\",\"type\":\"string\"},\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"problem_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot (or the owner) sets a problem's phase, note or linked work, or closes it as fixed or as a duplicate of another problem.", InputSchema: json.RawMessage("{\"properties\":{\"close\":{\"enum\":[\"fixed\",\"duplicate\"],\"type\":\"string\"},\"duplicateOf\":{\"$comment\":\"with close duplicate: the other problem's id or code\",\"type\":\"string\"},\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"note\":{\"type\":\"string\"},\"phase\":{\"enum\":[\"working\",\"review\",\"watching\",\"stuck\"],\"type\":\"string\"},\"work\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"problems_list":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Problems (anomalies with a bot owner), newest first; open by default.", Changes: []string{"problem"}, InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"$comment\":\"the code of the last row of the previous page\",\"type\":\"string\"},\"limit\":{\"$comment\":\"1 to 200, default 50\",\"type\":\"integer\"},\"ownerBotId\":{\"type\":\"string\"},\"phase\":{\"enum\":[\"new\",\"working\",\"review\",\"watching\",\"stuck\",\"escalated\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"state\":{\"enum\":[\"open\",\"closed\",\"all\"],\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"project_code_set":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.", InputSchema: json.RawMessage("{\"$comment\":\"2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"code\"],\"type\":\"object\"}")},
 		"project_context":         {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "bound:project", Description: "A project's definition, settings and context (projectId)", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_detail":          {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a project definition and revision independently of resource statistics; requires projectId", Changes: []string{"definition", "task", "execution", "resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},

@@ -6,7 +6,6 @@ package main
 // visit, and the blocker chips grouped by cause and host. No finished session or run is sent to be counted.
 
 import (
-	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
@@ -104,9 +103,13 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		return out, err
 	}
 
-	// Questions: a problem question is a blocker; any other one is a card's question, oldest first.
+	// Questions: every open question is a card's question, oldest first; problems are a summary, never questions.
 	qs, err := questionsList(q, "", "", "open", "", r.ProjectIds, r.ExcludeProjectIds, nil)
 	if err != nil {
+		return out, err
+	}
+	out.Questions = append(out.Questions, qs...)
+	if out.Problems, err = homeProblems(q); err != nil {
 		return out, err
 	}
 	blockers := map[string]*contract.HomeBlocker{}
@@ -121,26 +124,30 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		b.N = 1
 		blockers[key] = &b
 	}
-	for _, x := range qs {
-		cause := questionCause(x)
-		if !strings.HasPrefix(cause, "problem:") {
-			out.Questions = append(out.Questions, x)
+	// Open problems as blockers by family (a host problem by host and kind), so Home keeps showing them passively
+	// until its pulse line reads home_view.problems (docs/design-system/controls/pulse-line.md).
+	ps, err := q.db().ProblemsList(q.ctx(), db.ProblemsListParams{State: ptr("open"), Lim: 200})
+	if err != nil {
+		return out, err
+	}
+	for _, p := range ps {
+		if len(r.ProjectIds) > 0 && (p.ProjectID == nil || !slices.Contains(r.ProjectIds, *p.ProjectID)) ||
+			p.ProjectID != nil && slices.Contains(r.ExcludeProjectIds, *p.ProjectID) {
 			continue
 		}
-		// A host problem names its host and kind (problem:host:owner-mac:saturated); the others group by family.
-		parts := strings.Split(cause, ":")
-		family := "unknown"
-		if len(parts) > 1 {
+		parts := strings.Split(p.Cause, ":")
+		family := parts[0]
+		if family == "problem" && len(parts) > 1 {
 			family = parts[1]
 		}
 		key, host := "problem:"+family, (*string)(nil)
-		if family == "host" {
+		if family == "host" && parts[0] == "problem" {
 			key = strings.Join(parts[:min(4, len(parts))], ":")
 			if len(parts) > 2 && parts[2] != "" {
 				host = &parts[2]
 			}
 		}
-		add(key, contract.HomeBlocker{Kind: contract.HomeBlockerKindProblem, Cause: key, Text: x.Text, HostId: host, At: textMs(x.AskedAt)})
+		add(key, contract.HomeBlocker{Kind: contract.HomeBlockerKindProblem, Cause: key, Text: p.Text, HostId: host, At: p.SeenAt.UnixMilli()})
 	}
 	sort.SliceStable(out.Questions, func(i, j int) bool { return textMs(out.Questions[i].AskedAt) < textMs(out.Questions[j].AskedAt) })
 
@@ -243,13 +250,48 @@ func homeDone(q *Request, f rowFilter, today, since time.Time) (int64, int64, er
 	return rs[0].Today, rs[0].Since, nil
 }
 
-// questionCause: a question row's cause as text ("" without one).
-func questionCause(x contract.QuestionRow) string {
-	var s string
-	if len(x.Cause) > 0 && json.Unmarshal(x.Cause, &s) == nil {
-		return s
+// homeProblems: the pulse line's problems: how many are open, who owns them, the stuck ones and those no bot owns.
+func homeProblems(q *Request) (*contract.HomeProblems, error) {
+	rows, err := q.db().ProblemsSummary(q.ctx())
+	if err != nil {
+		return nil, err
 	}
-	return ""
+	out := &contract.HomeProblems{Owners: []contract.HomeProblemOwner{}}
+	by := map[string]int64{}
+	for _, r := range rows {
+		out.Open += int64(r.N)
+		if r.Phase == "stuck" {
+			out.Stuck += int64(r.N)
+		}
+		if r.Owner == "" {
+			out.Unowned += int64(r.N)
+			continue
+		}
+		by[r.Owner] += int64(r.N)
+	}
+	for id, n := range by {
+		name := id
+		if b, err := readBotFull(q, id); err == nil {
+			name = b.Settings.Name
+		}
+		out.Owners = append(out.Owners, contract.HomeProblemOwner{BotId: id, Name: name, N: n})
+	}
+	sort.Slice(out.Owners, func(i, j int) bool {
+		if out.Owners[i].N != out.Owners[j].N {
+			return out.Owners[i].N > out.Owners[j].N
+		}
+		return out.Owners[i].Name < out.Owners[j].Name
+	})
+	if out.Stuck > 0 {
+		ps, err := q.db().ProblemsList(q.ctx(), db.ProblemsListParams{State: ptr("open"), Phase: ptr("stuck"), Lim: 1})
+		if err != nil {
+			return nil, err
+		}
+		if len(ps) > 0 {
+			out.FirstStuck = &contract.HomeProblemFirst{Code: problemCode(ps[0].Seq), Text: ps[0].Text}
+		}
+	}
+	return out, nil
 }
 
 // msOf: a nullable time as Unix milliseconds (0 without one).
