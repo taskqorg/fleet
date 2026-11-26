@@ -8,6 +8,7 @@ import { createMemo, For, onSettled, Show } from 'solid-js';
 import { AgeChip, DetailSection, Disclosure, EntityCode, Icon, LiveRow, timeOf } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useOp } from '../store.ts';
+import { plainAnswer } from '../plain-answer.ts';
 
 export function HostDiagnosis(p: { hostId: string; clockOffsetMs: number }) {
   onSettled(() => { void op('host_diagnose', { host: p.hostId, wait: 0 }).catch(() => {}); });
@@ -34,18 +35,18 @@ export function HostDiagnosis(p: { hostId: string; clockOffsetMs: number }) {
       <ul class="live-list" data-ui="host-diagnosis">
         <For each={waiting()}>{w => (
           <LiveRow kind="event" state="queued" at={at(w.decidedAt ?? w.since)} text="waits for a host"
-            facts={<span class="lr-fact"><EntityCode id={w.sessionId ?? w.executionId} kind={w.sessionId ? 'conversation' : 'execution'} /> <span class="t-attention">skipped here: {w.skippedHere}</span></span>} />
+            facts={<span class="lr-fact"><EntityCode id={w.sessionId ?? w.executionId} kind={w.sessionId ? 'conversation' : 'execution'} label /> <span class="t-attention">skipped here: {w.skippedHere}</span></span>} />
         )}</For>
         <For each={transfers()}>{t => (
           <LiveRow kind="event" state="failed" trouble at={at(t.at)} text={t.name ?? t.kind}
-            facts={<span class="lr-fact"><Show when={t.executionId}>{x => <EntityCode id={x()} kind="execution" />}</Show> {t.error}</span>} />
+            facts={<span class="lr-fact"><Show when={t.executionId}>{x => <EntityCode id={x()} kind="execution" label />}</Show> {plainAnswer(t.error)}</span>} />
         )}</For>
         <For each={refusedRoutes()}>{f => (
-          <LiveRow kind="event" state="failed" trouble at={at(f.at)} text={`${f.route.replace('/api/hosts/', '')} refused`} facts={<span class="lr-fact">{f.status} · {f.reason}</span>} />
+          <LiveRow kind="event" state="failed" trouble at={at(f.at)} text={`Fleet refused ${f.route.replace('/api/hosts/', '')}`} facts={<span class="lr-fact">{plainAnswer(f.reason)}</span>} />
         )}</For>
         <For each={commands()}>{c => (
           <LiveRow kind="event" state="working" at={at(c.updatedAt)} text={`${c.kind} not confirmed`}
-            facts={<Show when={c.executionId}>{x => <span class="lr-fact"><EntityCode id={x()} kind="execution" /> {c.state}</span>}</Show>} />
+            facts={<Show when={c.executionId}>{x => <span class="lr-fact"><EntityCode id={x()} kind="execution" label /> {c.state}</span>}</Show>} />
         )}</For>
       </ul>
       <Show when={log().length}>
