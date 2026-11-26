@@ -6,7 +6,7 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   Button, DetailHead, DetailSection, Empty, ErrorBanner, GapCompare, GapRow, KvRow, ListDetail, OfflineMarker, PickMenu,
-  ShellStatus, Skeleton, StepTrail, Totals, day, moment, useTick, type TrailStep, type Tone,
+  ShellStatus, Skeleton, StepTrail, Totals, day, dayStart, moment, useTick, type TrailStep, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useOp, useView } from '../store.ts';
@@ -133,7 +133,7 @@ export function AgentGaps(p: { id?: string; onOpen: (path: string) => void }) {
                 const last = t(c.lastAt);
                 return <GapRow name={c.label} detail={c.class === 'other' ? `${detailOf(c)} · ${c.examples[0]?.line ?? ''}` : detailOf(c)}
                   days={c.daily.map(x => x.count)} changeAt={changeIndex(c)} chip={chipOf(c)}
-                  fact={Number.isNaN(last) ? undefined : (nowMs() - last < DAY ? moment(last, nowMs()) : day(last, nowMs()))}
+                  fact={Number.isNaN(last) ? undefined : (dayStart(last) === dayStart(nowMs()) ? moment(last, nowMs()) : day(last, nowMs()))}
                   factTip={c.lastAt ? `last failure ${moment(last, nowMs())}` : undefined}
                   href={path(c.class)} current={c.class === p.id} onOpen={() => p.onOpen(path(c.class))} />;
               }}</For>
