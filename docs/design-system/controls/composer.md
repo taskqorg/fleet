@@ -6,7 +6,7 @@
 
 **Anatomy.** One bordered box, as in Orca, Claude Code and Codex ([decision](../decisions.md#2026-11-17-composer-as-one-box-message-attachments)):
 
-* Attachment chips above the text, one per file: a thumbnail for an image or a file icon, the name, the size (the upload percentage while uploading, `failed` after a failure), and × to remove it. A thin accent bar under the chip shows the upload progress.
+* Attachment chips above the text, one per file: a thumbnail for an image or a file icon, the name, the size (the upload percentage while uploading, `storing` once every byte is sent and the server still writes the file, `failed` after a failure), and × to remove it. A thin accent bar under the chip shows the upload progress.
 * The text area (2 lines, grows with the text up to 6).
 * The bottom row: `+` (attach files), the chips of the target (the agent profile as the harness mark with model and effort, `opus-5.5 · high`, and the permissions the profile grants as a shield with `Workspace` or the profile's mode, plus `network` when it has git network access), then on the right one primary icon button: Send (arrow up), or Stop (square) while the agent runs and the box is empty.
 
