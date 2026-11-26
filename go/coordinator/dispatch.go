@@ -364,7 +364,9 @@ func boundElsewhere(subs []*dispatchAccountRec, host string) string {
 			if *b.HostID == host {
 				return ""
 			}
-			hosts = append(hosts, *b.HostID)
+			if !slices.Contains(hosts, *b.HostID) {
+				hosts = append(hosts, *b.HostID)
+			}
 		}
 		if len(hosts) > 0 {
 			parts = append(parts, deref(s.Name)+" on "+strings.Join(hosts, ", "))
