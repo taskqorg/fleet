@@ -352,6 +352,7 @@ type bugsinkProblemData struct {
 	AlertReason    string `json:"alertReason"`
 	BugsinkProject string `json:"bugsinkProject,omitempty"`
 	IssueID        string `json:"issueId"`
+	URL            string `json:"url"`
 }
 
 // bugsinkProblem opens the problem of an issue: a new issue opens it once while it is open; a regression or an unmute
@@ -375,7 +376,7 @@ func bugsinkProblem(q *Request, issue, project, reason, title string) (bool, err
 	if ignored, err := bugsinkIgnored(q, fleetProject, title); err != nil || ignored {
 		return false, err
 	}
-	data := bugsinkProblemData{AlertReason: reason, BugsinkProject: project, IssueID: issue}
+	data := bugsinkProblemData{AlertReason: reason, BugsinkProject: project, IssueID: issue, URL: bugsinkURL() + "/issues/issue/" + issue + "/"}
 	return true, problemRaise(q, "direct", Problem{Cause: cause, Text: bugsinkText(issue, project, reason), ProjectID: fleetProject, Data: data})
 }
 
@@ -416,7 +417,7 @@ func bugsinkText(issue, project, reason string) string {
 	if project != "" {
 		where = " in Bugsink project " + project
 	}
-	return what + where + ": " + bugsinkURL() + "/issues/issue/" + issue + "/ (bugsink issue_get {\"issue\": \"" + issue + "\"})."
+	return what + where + " (issue " + issue[:min(8, len(issue))] + ")." // its link is the problem's data (url), never its words (OR-38)
 }
 
 // bugsinkFleetProject: the live Fleet project whose settings errors.bugsink list the Bugsink project; "" for none. A

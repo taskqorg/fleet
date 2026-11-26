@@ -1304,9 +1304,7 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 			}
 			text += "."
 		}
-		if len(r.Links) > 0 {
-			text += " " + strings.Join(r.Links, " ")
-		}
+		// The pull request and compare links stay in the problem's data (links), never in its words (OR-38).
 		ps = append(ps, Problem{Cause: "problem:delivery:" + r.Key + ":" + string(r.Metric), Text: text, Rule: "delivery-regression", ProjectID: ciProject,
 			Data: deliveryProblemData{r.Key, string(r.Metric), r.BaselineMs, r.CurrentMs, r.Links}})
 	}

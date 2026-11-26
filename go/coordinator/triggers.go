@@ -863,7 +863,7 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 		children[sid] = true
 	}
 	cursor := t.ChangeCursor
-	parts, seen := []threadPart{}, map[string]bool{}
+	parts, seen, ownedProblems := []threadPart{}, map[string]bool{}, map[string]bool{}
 	for {
 		page, next, resync, _, err := since(q.ctx(), q.tx, cursor, 500)
 		if err != nil {
@@ -886,7 +886,7 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 				if part, ok, err := problemChangePart(q, c.Id, target.bot.Id); err != nil {
 					return nil, t.ChangeCursor, t.LimitsSignaled, err
 				} else if ok {
-					parts = append(parts, part)
+					parts, ownedProblems[c.Id] = append(parts, part), true
 				}
 				continue
 			}
@@ -915,6 +915,13 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 		if len(page) < 500 {
 			break
 		}
+	}
+	if target.bot != nil && !target.bot.Paused && slices.Contains(t.IfChanged, "problem") { // a paused bot is woken by nothing
+		more, err := problemTriggerParts(q, target.bot.Id, seen, ownedProblems)
+		if err != nil {
+			return nil, t.ChangeCursor, t.LimitsSignaled, err
+		}
+		parts = append(parts, more...)
 	}
 	keys := t.LimitsSignaled
 	if slices.Contains(t.IfChanged, "limits") {

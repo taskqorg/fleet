@@ -30,10 +30,12 @@ const (
 // Problem is one current cause of a source.
 type Problem struct {
 	Cause, Text, Rule string
-	ProjectID         string // "" for a system cause
-	RefreshText       bool   // Refresh the text while this problem is open.
-	Unowned           bool   // No duty owns it (the watchdog's: the duty bot itself is down).
-	Data              any    // a struct whose JSON fields join the problem's data: hostId, storeId, executionId, exemplars, value
+	ProjectID         string     // "" for a system cause
+	RefreshText       bool       // Refresh the text while this problem is open.
+	Unowned           bool       // No duty owns it (the watchdog's: the duty bot itself is down).
+	Count             int64      // >0: the source's own tally of occurrences (agent gaps), not one per raise
+	SeenAt            *time.Time // with Count: the last occurrence
+	Data              any        // a struct whose JSON fields join the problem's data: hostId, storeId, executionId, exemplars, value
 }
 
 // problemData: the problem's data: cause, source and rule, then the problem's own fields over them.
@@ -67,6 +69,9 @@ func problemRaiseID(q *Request, source string, p Problem) (string, error) {
 		if p.RefreshText {
 			text = &p.Text
 		}
+		if p.Count > 0 {
+			return open.ID, problemTally(q, open.ID, p, text, data)
+		}
 		return open.ID, q.db().ProblemSeen(q.ctx(), db.ProblemSeenParams{ID: open.ID, Text: text, Data: data})
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -87,8 +92,20 @@ func problemRaiseID(q *Request, source string, p Problem) (string, error) {
 		return "", err
 	}
 	id = newID()
-	return id, q.db().ProblemInsert(q.ctx(), db.ProblemInsertParams{ID: id, Cause: p.Cause, Source: source, Rule: p.Rule,
-		ProjectID: optStr(p.ProjectID), Text: p.Text, Data: data, OwnerBotID: owner})
+	if err := q.db().ProblemInsert(q.ctx(), db.ProblemInsertParams{ID: id, Cause: p.Cause, Source: source, Rule: p.Rule,
+		ProjectID: optStr(p.ProjectID), Text: p.Text, Data: data, OwnerBotID: owner}); err != nil || p.Count <= 0 {
+		return id, err
+	}
+	return id, problemTally(q, id, p, nil, nil)
+}
+
+// problemTally: the source's own count and last occurrence on the problem.
+func problemTally(q *Request, id string, p Problem, text *string, data []byte) error {
+	seen := time.Now()
+	if p.SeenAt != nil {
+		seen = *p.SeenAt
+	}
+	return q.db().ProblemTally(q.ctx(), db.ProblemTallyParams{ID: id, Count: int32(min(p.Count, 1<<31-1)), SeenAt: tsOf(&seen), Text: text, Data: data})
 }
 
 // problemRaise: problemRaiseID without the id.
@@ -709,4 +726,38 @@ func dutyRecovered(q *Request, cause string) error {
 		}
 	}
 	return problemsCloseIDs(q, []string{p.ID}, "cleared")
+}
+
+// problemTriggerParts: after the changes, the owner's problems it never started (adopted with a duty, or a wake that
+// was lost) join its wake, one conversation each; and every problem in this wake counts one wake, so a problem woken
+// problems.stuckWakes times with no update of its owner turns stuck (problem_update resets the count).
+func problemTriggerParts(q *Request, bot string, seen, owned map[string]bool) ([]threadPart, error) {
+	ids, err := q.db().ProblemsUnstarted(q.ctx(), bot)
+	if err != nil {
+		return nil, err
+	}
+	var parts []threadPart
+	for _, id := range ids {
+		if seen["problem"+id] {
+			continue
+		}
+		seen["problem"+id] = true
+		if part, ok, err := problemChangePart(q, id, bot); err != nil {
+			return nil, err
+		} else if ok {
+			parts, owned[id] = append(parts, part), true
+		}
+	}
+	woken := []string{}
+	for k := range seen {
+		if id, ok := strings.CutPrefix(k, "problem"); ok && owned[id] {
+			woken = append(woken, id)
+		}
+	}
+	if len(woken) > 0 {
+		if err := q.db().ProblemQuietWake(q.ctx(), db.ProblemQuietWakeParams{Ids: woken, StuckWakes: problemStuckWakes}); err != nil {
+			return nil, err
+		}
+	}
+	return parts, nil
 }

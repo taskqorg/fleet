@@ -121,3 +121,16 @@ SELECT EXISTS(SELECT 1 FROM question WHERE id = $1 AND state = 'open');
 -- name: ProblemOwnerName :one
 -- A problem owner's display name (problemOut): one light read, not the bot page's.
 SELECT s.name FROM bot b JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision WHERE b.id = $1;
+
+-- name: ProblemTally :exec
+-- A source that counts its own occurrences (agent gaps): count and last seen are the source's, not one per pass.
+UPDATE problem SET count = @count::int, seen_at = @seen_at::timestamptz, misses = 0,
+ text = coalesce(sqlc.narg(text), text), data = coalesce(sqlc.narg(data)::jsonb, data)
+WHERE id = @id;
+
+-- name: ProblemsUnstarted :many
+-- Open problems a bot owns that it never started: no conversation of the bot for them yet (a problem adopted with a
+-- duty, or one whose wake was lost). The owner's problem trigger takes them up.
+SELECT p.id FROM problem p WHERE p.state = 'open' AND p.owner_bot_id = @bot::text AND p.phase = 'new'
+ AND NOT EXISTS (SELECT 1 FROM session s WHERE s.bot_id = p.owner_bot_id AND s.subject = 'problem:' || p.id)
+ORDER BY p.seq;

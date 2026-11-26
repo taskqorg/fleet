@@ -127,7 +127,14 @@ func gapProblem(q *Request, c contract.AgentGapClass, text string) (*string, err
 	for _, e := range c.Examples {
 		ex = append(ex, e.ExecutionId)
 	}
-	id, err := problemRaiseID(q, gapSource, Problem{Cause: gapCause(c.Class), Text: text, Rule: "agent-gap", RefreshText: true, Data: gapProblemData{c.Class, c.Count, ex}})
+	var last *time.Time
+	if c.LastAt != "" {
+		if t, err := time.Parse(time.RFC3339Nano, c.LastAt); err == nil {
+			last = &t
+		}
+	}
+	id, err := problemRaiseID(q, gapSource, Problem{Cause: gapCause(c.Class), Text: text, Rule: "agent-gap", RefreshText: true,
+		Data: gapProblemData{c.Class, c.Count, ex}, Count: max(c.Count, 1), SeenAt: last})
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +184,18 @@ func agentGapFindingsPass(q *Request, rules *gapRules, now time.Time) error {
 				return err
 			}
 		} else if held {
+			// An open finding's problem shows the class's current failures and its last one (a still-failing verdict
+			// keeps its own text with both rates).
+			if f.State == "open" || f.State == "linked" || f.State == "watching" {
+				// Only while it is open: a problem its owner closed (fixed, duplicate) stays closed.
+				if open, err := q.db().ProblemIsOpen(q.ctx(), gapCause(c.Class)); err != nil {
+					return err
+				} else if open {
+					if _, err := gapProblem(q, c, gapProblemText(c, fr.Days, "")); err != nil {
+						return err
+					}
+				}
+			}
 			continue
 		}
 		pid, err := gapProblem(q, c, gapProblemText(c, fr.Days, prefix))
