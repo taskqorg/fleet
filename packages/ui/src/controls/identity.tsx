@@ -48,7 +48,8 @@ export function ProjectTile(p: { code: string; color?: string | null; pattern?: 
  * zero shows nothing (OR-29); a fact without a count (needs setup) shows its glyph alone. */
 export function FactCount(p: { kind: FactKind; n?: number | null; tip?: string }) {
   const k = () => factKinds[p.kind];
-  const name = () => (p.n == null ? k().label : `${k().label}: ${p.n.toLocaleString('en')}`);
+  // A caller's tooltip says what the count is here ("3 of 4 slots busy"), so it is the accessible name too.
+  const name = () => p.tip ?? (p.n == null ? k().label : `${k().label}: ${p.n.toLocaleString('en')}`);
   return (
     <Show when={p.n !== 0}>
       <span class={['fcount', `t-${k().tone}`]} data-ui="fact-count" data-tip={p.tip ?? k().label} role="img" aria-label={name()}>

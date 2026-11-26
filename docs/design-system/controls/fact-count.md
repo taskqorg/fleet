@@ -22,7 +22,7 @@
 
 **Do.** Add a fact to `factKinds` before a screen shows it. **Don't.** Write the fact as words ("3 questions", "1 in flight", "needs setup"), invent a glyph per screen, or show a zero.
 
-**Used in.** Projects list rows, the Projects Summary, the project head. *Follow-ups:* Conversations rows (questions), Hosts (slots busy, polls failing), Changes (reverts in flight), Project Overview delivery, the rail's Projects badge.
+**Used in.** Projects list rows, the Projects Summary, the project head, Conversations rows (open questions), Hosts rows (workers running; a failing poll as `failed`). *Follow-ups:* Changes (reverts in flight), Project Overview delivery, the rail's Projects badge.
 
 ## Rules kept here
 
