@@ -108,6 +108,26 @@ CREATE TABLE agent_gap (
   "rules" text NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE agent_gap_finding (
+  "class" text NOT NULL,
+  "project_id" text,
+  "state" text NOT NULL,
+  "question_id" text,
+  "session_id" text,
+  "pr" bigint,
+  "pr_url" text,
+  "release" text,
+  "change_at" timestamp with time zone,
+  "before_count" integer,
+  "after_count" integer,
+  "before_runs" integer,
+  "after_runs" integer,
+  "verdict_at" timestamp with time zone,
+  "note" text NOT NULL,
+  "opened_at" timestamp with time zone NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE agent_gap_pass (
   "rules" text NOT NULL,
   "days" integer NOT NULL,

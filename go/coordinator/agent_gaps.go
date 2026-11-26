@@ -50,6 +50,7 @@ const (
 // gapRules: config/agent-gaps.json, compiled.
 type gapRules struct {
 	Families   map[string]gapFamily `json:"families"`
+	Finding    gapFindingRules      `json:"finding"`
 	ShellTools string               `json:"shellTools"`
 	Rules      []gapRule            `json:"rules"`
 	shell      *regexp.Regexp
@@ -104,6 +105,9 @@ func parseGapRules(raw []byte) (*gapRules, error) {
 	var err error
 	if r.shell, err = regexp.Compile(r.ShellTools); err != nil {
 		return nil, fmt.Errorf("agent-gaps.json shellTools: %w", err)
+	}
+	if err := r.Finding.valid(); err != nil {
+		return nil, err
 	}
 	if _, ok := r.Families["other"]; !ok {
 		return nil, fmt.Errorf("agent-gaps.json: family other is required")
@@ -537,7 +541,8 @@ func reclassifyGaps(ctx context.Context, a *App, q *Request, days int) (contract
 }
 
 // agentGapsCatchUp: the agent-gaps pass. When no classification with the current rules covered gapReclassDays (a
-// first start, or a changed rule table), it classifies that window again.
+// first start, or a changed rule table), it classifies that window again; then it moves the findings
+// (agent_gap_findings.go).
 func agentGapsCatchUp(ctx context.Context, a *App) error {
 	r, err := loadGapRules()
 	if err != nil {
@@ -547,11 +552,15 @@ func agentGapsCatchUp(ctx context.Context, a *App) error {
 	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		done, err = q.db().AgentGapPassDone(q.ctx(), db.AgentGapPassDoneParams{Rules: r.digest, Days: gapReclassDays})
 		return err
-	}); err != nil || done {
+	}); err != nil {
 		return err
 	}
-	_, err = reclassifyGaps(ctx, a, nil, gapReclassDays)
-	return err
+	if !done {
+		if _, err := reclassifyGaps(ctx, a, nil, gapReclassDays); err != nil {
+			return err
+		}
+	}
+	return a.store.Write(ctx, nil, []string{"agent-gaps"}, func(q *Request) error { return agentGapFindingsPass(q, r, time.Now().UTC()) })
 }
 
 func agentGapsReclassify(q *Request, r *contract.AgentGapsReclassifyRequest) (contract.AgentGapsReclassifyReply, error) {
@@ -591,7 +600,15 @@ func agentGaps(q *Request, r *contract.AgentGapsRequest) (contract.AgentGapsRepl
 	if truncated {
 		rows = rows[:gapReadMax]
 	}
-	out := agentGapsReplyOf(rules, rows, r, from, now, int(days))
+	stored, err := q.db().AgentGapFindings(q.ctx())
+	if err != nil {
+		return contract.AgentGapsReply{}, err
+	}
+	findings := map[string]gapFinding{}
+	for _, f := range stored {
+		findings[f.Class] = gapFinding(f)
+	}
+	out := agentGapsReplyOf(rules, rows, r, findings, from, now, int(days))
 	if truncated {
 		out.Truncated = ptr(true)
 	}
@@ -606,7 +623,9 @@ type gapAgg struct {
 	daily      map[string]int64
 }
 
-func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.AgentGapsRequest, from, now time.Time, days int) contract.AgentGapsReply {
+// agentGapsReplyOf groups rows (newest first, the window and the one before it) by class; findings (nil: none) join
+// their classes, and a finding's class with no failure in the window still shows, with its zero days.
+func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.AgentGapsRequest, findings map[string]gapFinding, from, now time.Time, days int) contract.AgentGapsReply {
 	out := contract.AgentGapsReply{From: from.Format(time.RFC3339), To: now.Format(time.RFC3339), Days: int64(days), Rules: rules.digest, Classes: []contract.AgentGapClass{}}
 	want := func(x db.AgentGapRowsRow) bool {
 		if c := deref(r.Class); c != "" && x.Class != c && x.Family != c {
@@ -616,24 +635,29 @@ func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.Ag
 			(deref(r.ProjectId) == "" || deref(x.ProjectID) == deref(r.ProjectId))
 	}
 	by := map[string]*gapAgg{}
+	agg := func(class string) *gapAgg {
+		g := by[class]
+		if g == nil {
+			family := gapFamilyOf(class)
+			fam, ok := rules.Families[family]
+			if !ok {
+				fam = rules.Families["other"]
+			}
+			g = &gapAgg{out: contract.AgentGapClass{Class: class, Family: family, Title: fam.Title, Setting: fam.Setting, Examples: []contract.AgentGapExample{}},
+				executions: map[string]bool{}, exampled: map[string]bool{}, daily: map[string]int64{}}
+			for i := range g.counts {
+				g.counts[i] = map[string]int64{}
+			}
+			by[class] = g
+		}
+		return g
+	}
 	digests := map[string]bool{}
 	for _, x := range rows {
 		if !want(x) {
 			continue
 		}
-		g := by[x.Class]
-		if g == nil {
-			fam := rules.Families[x.Family]
-			if fam.Title == "" {
-				fam = rules.Families["other"]
-			}
-			g = &gapAgg{out: contract.AgentGapClass{Class: x.Class, Family: x.Family, Title: fam.Title, Setting: fam.Setting, Examples: []contract.AgentGapExample{}},
-				executions: map[string]bool{}, exampled: map[string]bool{}, daily: map[string]int64{}}
-			for i := range g.counts {
-				g.counts[i] = map[string]int64{}
-			}
-			by[x.Class] = g
-		}
+		g := agg(x.Class)
 		if x.At.Before(from) {
 			g.out.PreviousCount++
 			continue
@@ -661,9 +685,27 @@ func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.Ag
 				Path: gapPath(x)})
 		}
 	}
+	classWanted := func(class string) bool {
+		c := deref(r.Class)
+		return c == "" || c == class || c == gapFamilyOf(class)
+	}
+	for class, f := range findings {
+		// A fixed finding stays on its class while the class has failures in the window or its verdict falls in it.
+		if f.State == "fixed" && (f.VerdictAt == nil || f.VerdictAt.Before(from)) {
+			if g := by[class]; g == nil || g.out.Count == 0 {
+				continue
+			}
+		}
+		if classWanted(class) && deref(r.HostId) == "" && deref(r.ProfileId) == "" && deref(r.ProjectId) == "" {
+			agg(class).out.Finding = ptr(findingOut(f))
+		}
+	}
 	for _, g := range by {
-		if g.out.Count == 0 {
+		if g.out.Count == 0 && g.out.Finding == nil {
 			continue
+		}
+		if f, ok := findings[g.out.Class]; ok && g.out.Finding == nil {
+			g.out.Finding = ptr(findingOut(f))
 		}
 		g.out.Executions = int64(len(g.executions))
 		for d := 0; d < days; d++ {

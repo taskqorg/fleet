@@ -12,6 +12,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentGapClassCount = `-- name: AgentGapClassCount :one
+SELECT count(*)::int FROM agent_gap WHERE class = $1::text AND at >= $2::timestamptz AND at < $3::timestamptz
+`
+
+type AgentGapClassCountParams struct {
+	Class string
+	Since pgtype.Timestamptz
+	Until pgtype.Timestamptz
+}
+
+// Failures of one class in [since, until) (the watch's before and after windows).
+func (q *Queries) AgentGapClassCount(ctx context.Context, arg AgentGapClassCountParams) (int32, error) {
+	row := q.db.QueryRow(ctx, agentGapClassCount, arg.Class, arg.Since, arg.Until)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const agentGapFailedCalls = `-- name: AgentGapFailedCalls :many
 SELECT id, parent_execution_id, project_id, started_at,
   coalesce(data->>'tool', '')::text AS tool, coalesce(data->>'connection', '')::text AS connection,
@@ -95,6 +113,182 @@ func (q *Queries) AgentGapFailedEvents(ctx context.Context, executionID string) 
 	return items, nil
 }
 
+const agentGapFinding = `-- name: AgentGapFinding :one
+SELECT class, state, question_id, session_id, pr, pr_url, release, change_at, before_count, after_count, before_runs, after_runs,
+  verdict_at, note, opened_at, updated_at
+FROM agent_gap_finding WHERE class = $1::text
+`
+
+type AgentGapFindingRow struct {
+	Class       string
+	State       string
+	QuestionID  *string
+	SessionID   *string
+	Pr          *int64
+	PrUrl       *string
+	Release     *string
+	ChangeAt    *time.Time
+	BeforeCount *int32
+	AfterCount  *int32
+	BeforeRuns  *int32
+	AfterRuns   *int32
+	VerdictAt   *time.Time
+	Note        string
+	OpenedAt    time.Time
+	UpdatedAt   time.Time
+}
+
+func (q *Queries) AgentGapFinding(ctx context.Context, class string) (AgentGapFindingRow, error) {
+	row := q.db.QueryRow(ctx, agentGapFinding, class)
+	var i AgentGapFindingRow
+	err := row.Scan(
+		&i.Class,
+		&i.State,
+		&i.QuestionID,
+		&i.SessionID,
+		&i.Pr,
+		&i.PrUrl,
+		&i.Release,
+		&i.ChangeAt,
+		&i.BeforeCount,
+		&i.AfterCount,
+		&i.BeforeRuns,
+		&i.AfterRuns,
+		&i.VerdictAt,
+		&i.Note,
+		&i.OpenedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const agentGapFindingDelete = `-- name: AgentGapFindingDelete :exec
+DELETE FROM agent_gap_finding WHERE class = $1::text
+`
+
+func (q *Queries) AgentGapFindingDelete(ctx context.Context, class string) error {
+	_, err := q.db.Exec(ctx, agentGapFindingDelete, class)
+	return err
+}
+
+const agentGapFindingPut = `-- name: AgentGapFindingPut :exec
+INSERT INTO agent_gap_finding(class, project_id, state, question_id, session_id, pr, pr_url, release, change_at, before_count, after_count,
+  before_runs, after_runs, verdict_at, note, opened_at, updated_at)
+VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::bigint, $7::text,
+  $8::text, $9::timestamptz, $10::int, $11::int,
+  $12::int, $13::int, $14::timestamptz, $15::text, $16::timestamptz, now())
+ON CONFLICT (class) DO UPDATE SET state = EXCLUDED.state, question_id = EXCLUDED.question_id, session_id = EXCLUDED.session_id,
+  pr = EXCLUDED.pr, pr_url = EXCLUDED.pr_url, release = EXCLUDED.release, change_at = EXCLUDED.change_at,
+  before_count = EXCLUDED.before_count, after_count = EXCLUDED.after_count, before_runs = EXCLUDED.before_runs,
+  after_runs = EXCLUDED.after_runs, verdict_at = EXCLUDED.verdict_at, note = EXCLUDED.note, opened_at = EXCLUDED.opened_at, updated_at = now()
+`
+
+type AgentGapFindingPutParams struct {
+	Class       string
+	ProjectID   string
+	State       string
+	QuestionID  *string
+	SessionID   *string
+	Pr          *int64
+	PrUrl       *string
+	Release     *string
+	ChangeAt    pgtype.Timestamptz
+	BeforeCount *int32
+	AfterCount  *int32
+	BeforeRuns  *int32
+	AfterRuns   *int32
+	VerdictAt   pgtype.Timestamptz
+	Note        string
+	OpenedAt    pgtype.Timestamptz
+}
+
+// The whole finding as agentGapFindingTransition decided it; project_id is the Fleet project, whose members and PM
+// conversations see it (a fix goes into Fleet's settings).
+func (q *Queries) AgentGapFindingPut(ctx context.Context, arg AgentGapFindingPutParams) error {
+	_, err := q.db.Exec(ctx, agentGapFindingPut,
+		arg.Class,
+		arg.ProjectID,
+		arg.State,
+		arg.QuestionID,
+		arg.SessionID,
+		arg.Pr,
+		arg.PrUrl,
+		arg.Release,
+		arg.ChangeAt,
+		arg.BeforeCount,
+		arg.AfterCount,
+		arg.BeforeRuns,
+		arg.AfterRuns,
+		arg.VerdictAt,
+		arg.Note,
+		arg.OpenedAt,
+	)
+	return err
+}
+
+const agentGapFindings = `-- name: AgentGapFindings :many
+SELECT class, state, question_id, session_id, pr, pr_url, release, change_at, before_count, after_count, before_runs, after_runs,
+  verdict_at, note, opened_at, updated_at
+FROM agent_gap_finding ORDER BY class
+`
+
+type AgentGapFindingsRow struct {
+	Class       string
+	State       string
+	QuestionID  *string
+	SessionID   *string
+	Pr          *int64
+	PrUrl       *string
+	Release     *string
+	ChangeAt    *time.Time
+	BeforeCount *int32
+	AfterCount  *int32
+	BeforeRuns  *int32
+	AfterRuns   *int32
+	VerdictAt   *time.Time
+	Note        string
+	OpenedAt    time.Time
+	UpdatedAt   time.Time
+}
+
+// Every finding (agent_gap_findings.go): the pass reads them all; the read joins them to their classes.
+func (q *Queries) AgentGapFindings(ctx context.Context) ([]AgentGapFindingsRow, error) {
+	rows, err := q.db.Query(ctx, agentGapFindings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentGapFindingsRow
+	for rows.Next() {
+		var i AgentGapFindingsRow
+		if err := rows.Scan(
+			&i.Class,
+			&i.State,
+			&i.QuestionID,
+			&i.SessionID,
+			&i.Pr,
+			&i.PrUrl,
+			&i.Release,
+			&i.ChangeAt,
+			&i.BeforeCount,
+			&i.AfterCount,
+			&i.BeforeRuns,
+			&i.AfterRuns,
+			&i.VerdictAt,
+			&i.Note,
+			&i.OpenedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const agentGapPassDone = `-- name: AgentGapPassDone :one
 SELECT EXISTS (SELECT 1 FROM agent_gap_pass WHERE rules = $1::text AND days >= $2::int)::bool
 `
@@ -163,6 +357,31 @@ func (q *Queries) AgentGapPut(ctx context.Context, arg AgentGapPutParams) error 
 		arg.Rules,
 	)
 	return err
+}
+
+const agentGapQuestion = `-- name: AgentGapQuestion :one
+SELECT id, coalesce(answer, '')::text AS answer, coalesce(data->>'source', '')::text AS source, coalesce(data->>'class', '')::text AS class
+FROM question WHERE id = $1::text
+`
+
+type AgentGapQuestionRow struct {
+	ID     string
+	Answer string
+	Source string
+	Class  string
+}
+
+// The answered question an answer hook reads (agentGapAnswerAfter).
+func (q *Queries) AgentGapQuestion(ctx context.Context, id string) (AgentGapQuestionRow, error) {
+	row := q.db.QueryRow(ctx, agentGapQuestion, id)
+	var i AgentGapQuestionRow
+	err := row.Scan(
+		&i.ID,
+		&i.Answer,
+		&i.Source,
+		&i.Class,
+	)
+	return i, err
 }
 
 const agentGapRows = `-- name: AgentGapRows :many
@@ -234,6 +453,23 @@ func (q *Queries) AgentGapRows(ctx context.Context, arg AgentGapRowsParams) ([]A
 		return nil, err
 	}
 	return items, nil
+}
+
+const agentGapRunCount = `-- name: AgentGapRunCount :one
+SELECT count(*)::int FROM execution WHERE kind = 'agent_run' AND started_at >= $1::timestamptz AND started_at < $2::timestamptz
+`
+
+type AgentGapRunCountParams struct {
+	Since pgtype.Timestamptz
+	Until pgtype.Timestamptz
+}
+
+// Agent runs started in [since, until): the denominator of a class's rate.
+func (q *Queries) AgentGapRunCount(ctx context.Context, arg AgentGapRunCountParams) (int32, error) {
+	row := q.db.QueryRow(ctx, agentGapRunCount, arg.Since, arg.Until)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const agentGapRunExists = `-- name: AgentGapRunExists :one

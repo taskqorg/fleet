@@ -134,7 +134,7 @@ func TestAgentGapsReply(t *testing.T) {
 		row("d", "x3", "sandbox-write", from.Add(2*time.Hour)),
 		row("e", "x4", "missing-command:jq", from.Add(-time.Hour)), // the window before
 	}
-	out := agentGapsReplyOf(r, rows, &contract.AgentGapsRequest{}, from, now, 7)
+	out := agentGapsReplyOf(r, rows, &contract.AgentGapsRequest{}, nil, from, now, 7)
 	if out.Total != 4 || len(out.Classes) != 2 {
 		t.Fatalf("total %d classes %d", out.Total, len(out.Classes))
 	}
@@ -148,10 +148,10 @@ func TestAgentGapsReply(t *testing.T) {
 	if jq.Setting.Kind != "host-tools" || jq.Hosts[0].Key != host || jq.Hosts[0].Count != 3 || deref(jq.Examples[0].Path) != "/conversations/s1" {
 		t.Fatalf("setting, hosts or path: %+v", jq)
 	}
-	if one := agentGapsReplyOf(r, rows, &contract.AgentGapsRequest{Class: ptr("sandbox-write")}, from, now, 7); len(one.Classes) != 1 || one.Total != 1 {
+	if one := agentGapsReplyOf(r, rows, &contract.AgentGapsRequest{Class: ptr("sandbox-write")}, nil, from, now, 7); len(one.Classes) != 1 || one.Total != 1 {
 		t.Fatalf("class filter: %+v", one)
 	}
-	if fam := agentGapsReplyOf(r, rows, &contract.AgentGapsRequest{Class: ptr("missing-command")}, from, now, 7); len(fam.Classes) != 1 || fam.Total != 3 {
+	if fam := agentGapsReplyOf(r, rows, &contract.AgentGapsRequest{Class: ptr("missing-command")}, nil, from, now, 7); len(fam.Classes) != 1 || fam.Total != 3 {
 		t.Fatalf("family filter: %+v", fam)
 	}
 }
@@ -227,5 +227,50 @@ func TestAgentGapQueries(t *testing.T) {
 	}
 	if done, _ := q.AgentGapPassDone(ctx, db.AgentGapPassDoneParams{Rules: "r3", Days: 30}); done {
 		t.Fatal("another digest counted as done")
+	}
+}
+
+// Requirement: a finding's class shows in the read with its finding even when the window holds no failure of it (the
+// days after its fix). Risk: the class drops off the dashboard exactly when the fix worked, so nothing shows it went down.
+func TestAgentGapsReplyFindingWithoutFailures(t *testing.T) {
+	r := shippedGapRules(t)
+	from := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	at := from.Add(30 * time.Hour)
+	f := gapFinding{Class: "missing-command:jq", State: "watching", ChangeAt: &at, Pr: ptr(int64(1200)), OpenedAt: from}
+	out := agentGapsReplyOf(r, nil, &contract.AgentGapsRequest{}, map[string]gapFinding{f.Class: f}, from, from.AddDate(0, 0, 6), 7)
+	if len(out.Classes) != 1 || out.Classes[0].Count != 0 || len(out.Classes[0].Daily) != 7 || out.Classes[0].Finding == nil ||
+		deref(out.Classes[0].Finding.ChangeAt) != "2026-11-21T06:00:00Z" || out.Classes[0].Setting.Kind != "host-tools" {
+		t.Fatalf("%+v", out.Classes)
+	}
+	old := from.Add(-48 * time.Hour)
+	f.State, f.VerdictAt = "fixed", &old
+	if out := agentGapsReplyOf(r, nil, &contract.AgentGapsRequest{}, map[string]gapFinding{f.Class: f}, from, from.AddDate(0, 0, 6), 7); len(out.Classes) != 0 {
+		t.Fatalf("a finding fixed before the window still shows: %+v", out.Classes)
+	}
+}
+
+// Requirement: the change point is when the pull request's release ran on the coordinator and every host seen in the
+// last hour, and the verdict compares failures per agent run. Risk: a fix judged before it reached the host that
+// failed, or by raw counts on a quiet week, closes a gap that is still there.
+func TestAgentGapWatch(t *testing.T) {
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	seen := float64(now.Add(-10 * time.Minute).UnixMilli())
+	hosts := []db.DeliveryHostsSeenRow{{ID: "pds18-native", LastSeenMs: seen, Version: "1.2"}, {ID: "old", LastSeenMs: 1, Version: "1.0"}}
+	pr := contract.DeliveryPr{Number: 7, Merged: "2026-11-25T00:00:00Z", Release: ptr("v1.2"), Installed: map[string]string{"coordinator": "2026-11-25T01:00:00Z"}}
+	if _, _, waiting, ok := gapChangePoint([]contract.DeliveryPr{pr}, 7, hosts, now); ok || len(waiting) != 1 || waiting[0] != "pds18-native" {
+		t.Fatalf("a change point before the release ran on pds18-native, or the wait does not name it: %v", waiting)
+	}
+	pr.Installed["pds18-native"] = "2026-11-25T03:00:00Z"
+	at, rel, _, ok := gapChangePoint([]contract.DeliveryPr{pr}, 7, hosts, now)
+	if !ok || at.Format(time.RFC3339) != "2026-11-25T03:00:00Z" || deref(rel) != "v1.2" {
+		t.Fatalf("change point %v %v %v", at, deref(rel), ok)
+	}
+	for _, c := range []struct {
+		bc, br, ac, ar int32
+		fixed          bool
+	}{{20, 100, 0, 100, true}, {20, 100, 5, 100, true}, {20, 100, 15, 100, false}, {20, 100, 5, 20, false}, {0, 100, 1, 100, false}} {
+		if got := gapFixed(c.bc, c.br, c.ac, c.ar, 0.5); got != c.fixed {
+			t.Errorf("%+v: fixed %v", c, got)
+		}
 	}
 }
