@@ -543,6 +543,16 @@ type ApiConnection struct {
 	TombstonedAt *time.Time
 }
 
+type AppCallback struct {
+	RunID         string
+	AppID         string
+	Url           string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+	DeliveredAt   *time.Time
+}
+
 type AppsEdge struct {
 	ID         string
 	State      string

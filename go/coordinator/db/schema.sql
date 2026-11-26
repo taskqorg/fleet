@@ -153,6 +153,15 @@ CREATE TABLE api_connection (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE app_callback (
+  "run_id" text NOT NULL,
+  "app_id" text NOT NULL,
+  "url" text NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text,
+  "delivered_at" timestamp with time zone
+);
 CREATE TABLE apps_edge (
   "id" text NOT NULL,
   "state" text NOT NULL,

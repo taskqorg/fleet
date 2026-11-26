@@ -1,8 +1,13 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"fleet/contract"
@@ -79,6 +84,65 @@ func TestProjectAppKeyAndRoute(t *testing.T) {
 		t.Errorf("own project's history: %d, want 200", code)
 	}
 
+	if deref(take.CallbackSecret) == "" {
+		t.Fatalf("take has no callback secret")
+	}
+
+	// Inputs by reference, callbacks and limits are refused before the run is planned or any file is read.
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	exec(`INSERT INTO access_server (id, address) VALUES ('pds9', '10.0.0.9')`)
+	exec(`INSERT INTO access_grant (id, project_id, server_id, kind, level, state, request_id, asked_by, payload)
+	 VALUES ('ag-sql', 'desiign', 'pds9', 'mysql', 'read', 'ready', 'g1', 'agent:worker', '{"connection": "desiign-mysql"}')`)
+	run := func(rid string, extra doc) doc {
+		b := doc{"projectId": "desiign", "requestId": rid, "query": "read", "wait": false}
+		for k, v := range extra {
+			b[k] = v
+		}
+		return b
+	}
+	ref := func(conn string) doc {
+		return doc{"inputs": []doc{{"path": "a.pdf", "ref": doc{"connection": conn, "path": "/srv/a.pdf"}}}}
+	}
+	for _, c := range []struct {
+		name    string
+		headers map[string]string
+		body    doc
+		want    int
+		message string
+	}{
+		{"unknown connection", ok, run("ref1", ref("nope-files")), 400, "input:a.pdf: unknown connection nope-files"},
+		{"not a files grant", ok, run("ref2", ref("desiign-mysql")), 400, "input:a.pdf: desiign-mysql is a mysql grant, not a files grant"},
+		{"artifact and ref", ok, run("ref3", doc{"inputs": []doc{{"path": "a.pdf", "artifactId": "x", "ref": doc{"connection": "c", "path": "/a"}}}}), 400, "input:a.pdf: give either artifactId or ref"},
+		{"callback off its origins", ok, run("cb1", doc{"notify": doc{"url": "https://other.example/hook"}}), 400, ""},
+		{"callback over http", ok, run("cb2", doc{"notify": doc{"url": "http://example.com/hook"}}), 400, ""},
+		{"callback of a person", owner, run("cb3", doc{"notify": doc{"url": "https://example.com/hook"}}), 400, ""},
+	} {
+		path := "/api/apps/ops/pipeline_run"
+		if c.headers["X-Fleet-App-Key"] == "" {
+			path = "/api/ops/pipeline_run"
+		}
+		if code, body := e.callJSON(t, "POST", path, c.body, c.headers); code != c.want || !strings.HasPrefix(fmt.Sprint(body["message"]), c.message) {
+			t.Errorf("%s: %d %v, want %d %s", c.name, code, body["message"], c.want, c.message)
+		}
+	}
+	e.opInto(t, "project_app_set", doc{"appId": "desiign-site", "limits": doc{"runsPerDay": 1, "concurrentRuns": 5}}, owner, &map[string]any{})
+	exec(`INSERT INTO execution (id, kind, state, project_id, started_at, app_id, data, observation, config_ref)
+	 VALUES ('app-run-1', 'pipeline_run', 'succeeded', 'desiign', now(), 'desiign-site', '{}', 'confirmed', '{}')`)
+	if code, body := e.callJSON(t, "POST", "/api/apps/ops/pipeline_run", run("lim1", nil), ok); code != 429 || body["message"] != "limit:runs-per-day" {
+		t.Errorf("over runsPerDay: %d %v, want 429 limit:runs-per-day", code, body["message"])
+	}
+	e.opInto(t, "project_app_set", doc{"appId": "desiign-site", "limits": doc{"concurrentRuns": 1}}, owner, &map[string]any{})
+	exec(`INSERT INTO execution (id, kind, state, project_id, started_at, app_id, data, observation, config_ref)
+	 VALUES ('app-run-2', 'pipeline_run', 'running', 'desiign', now() - interval '2 days', 'desiign-site', '{}', 'confirmed', '{}')`)
+	if code, body := e.callJSON(t, "POST", "/api/apps/ops/pipeline_run", run("lim2", nil), ok); code != 429 || body["message"] != "limit:concurrent-runs" {
+		t.Errorf("over concurrentRuns: %d %v, want 429 limit:concurrent-runs", code, body["message"])
+	}
+
 	var apps contract.ProjectAppsReply
 	e.opInto(t, "project_apps", doc{"projectId": "desiign"}, owner, &apps)
 	if len(apps.Apps) != 1 || apps.Apps[0].State != "active" || apps.Apps[0].LastUsedAt == nil || len(apps.Apps[0].Keys) != 1 || apps.Apps[0].Keys[0].TakenAt == nil {
@@ -87,5 +151,24 @@ func TestProjectAppKeyAndRoute(t *testing.T) {
 	e.opInto(t, "project_app_revoke", doc{"appId": "desiign-site"}, owner, &map[string]any{})
 	if code, _ := e.callJSON(t, "POST", "/api/apps/ops/apps_ping", doc{}, ok); code != 401 {
 		t.Fatalf("revoked app: %d, want 401", code)
+	}
+}
+
+// Requirement: a callback's X-Fleet-Signature is the hex HMAC-SHA256 of the exact body with the app's callback secret,
+// and the body names the run and its end, never its result. Risk: an app cannot verify a callback, or one leaks
+// personal result fields.
+func TestAppCallbackSignature(t *testing.T) {
+	end := int64(1764200000000)
+	body := jsonBytes(appCallbackBody{RunID: "run-1", RequestID: "r-1", State: "succeeded", FinishedAt: &end})
+	if string(body) != `{"runId":"run-1","requestId":"r-1","state":"succeeded","finishedAt":1764200000000}` {
+		t.Fatalf("body %s", body)
+	}
+	m := hmac.New(sha256.New, []byte("fcs_secret"))
+	m.Write(body)
+	if got, want := appCallbackSign("fcs_secret", body), "sha256="+hex.EncodeToString(m.Sum(nil)); got != want {
+		t.Fatalf("signature %s, want %s", got, want)
+	}
+	if appCallbackSign("fcs_other", body) == appCallbackSign("fcs_secret", body) {
+		t.Fatalf("the signature does not depend on the secret")
 	}
 }

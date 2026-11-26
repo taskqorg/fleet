@@ -99,13 +99,12 @@
         },
         "inputs": {
           "type": "array",
-          "description": "Files for the method: [{path, artifactId}], path a relative file name such as passport.jpg.",
+          "description": "Files for the method: [{path, artifactId}] or [{path, ref: {connection, path}}], path a relative file name such as passport.jpg. ref names a file on one of the project's files grants (connection such as dam-files, path the server's own path); Fleet reads and stores it before the run, so you need not download it first.",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "path",
-              "artifactId"
+              "path"
             ],
             "properties": {
               "path": {
@@ -113,6 +112,22 @@
               },
               "artifactId": {
                 "type": "string"
+              },
+              "ref": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "connection",
+                  "path"
+                ],
+                "properties": {
+                  "connection": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                }
               }
             }
           }

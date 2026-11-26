@@ -47,3 +47,8 @@ SELECT EXISTS (SELECT 1 FROM upload_finish_work WHERE upload_id = @upload_id);
 
 -- name: UploadFinishWorkDelete :exec
 DELETE FROM upload_finish_work WHERE upload_id = @upload_id;
+
+-- name: ArtifactStoredByHash :one
+-- A stored artifact of the project with this content (an input by reference is stored once), by artifact_hash.
+SELECT id FROM artifact WHERE project_id = @project_id AND scope = 'prod' AND content_hash = @content_hash AND state = 'stored'
+ORDER BY seq LIMIT 1;

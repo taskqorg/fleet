@@ -232,14 +232,7 @@ func uploadBegin(q *Request, b *contract.ArtifactUploadBeginRequest) (contract.A
 	if b.Size < 0 {
 		return none, fail(400, "Invalid size")
 	}
-	part := uploadGrid(b.Size)
-	if part == 0 {
-		return none, fail(400, "A file this large is more than the transfer protocol carries (10,000 parts of 95 MiB)")
-	}
-	name := attachmentName(b.Name)
-	u := upload{ID: newID(), Person: q.person.Email, uploadPayload: uploadPayload{Name: name, MediaType: mediaTypeOf(name, deref(b.MediaType)),
-		Size: b.Size, PartBytes: part, Parts: []S3Part{}, CreatedAt: nowMs()}}
-	var projectID *string
+	var projectID, sessionID *string
 	if sid := deref(b.SessionId); sid != "" {
 		s, err := q.db().UploadSessionProject(q.ctx(), sid) // RLS: a session outside the caller's grant is unknown
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -255,34 +248,50 @@ func uploadBegin(q *Request, b *contract.ArtifactUploadBeginRequest) (contract.A
 				projectID = &p
 			}
 		}
-		u.SessionID = &sid
+		sessionID = &sid
 	} else if b.ProjectId != nil && *b.ProjectId != "" {
 		projectID = b.ProjectId
 	}
 	if !mayAccessProject(q.person, projectID) {
 		return none, fail(404, "Unknown project")
 	}
-	u.ProjectID = projectID
-	target, err := selectStore(withTx(q), q.app, artifactLocations(q.app, projectID), "")
+	u, err := uploadInsert(q, q.person.Email, b.Name, deref(b.MediaType), b.Size, sessionID, projectID)
 	if err != nil {
 		return none, err
 	}
+	base := "/api/uploads/"
+	if q.caller != nil {
+		base = "/api/apps/uploads/"
+	}
+	return contract.ArtifactUploadBeginReply{UploadId: u.ID, Url: base + u.ID, PartBytes: u.PartBytes}, nil
+}
+
+// uploadInsert records a new upload of person's into projectID (and sessionID) on a reachable store of the project:
+// artifact_upload_begin's, and an input by reference's (pipeline_refs.go).
+func uploadInsert(q *Request, person, name, mediaType string, size int64, sessionID, projectID *string) (upload, error) {
+	part := uploadGrid(size)
+	if part == 0 {
+		return upload{}, fail(400, "A file this large is more than the transfer protocol carries (10,000 parts of 95 MiB)")
+	}
+	name = attachmentName(name)
+	u := upload{ID: newID(), Person: person, SessionID: sessionID, ProjectID: projectID, uploadPayload: uploadPayload{Name: name,
+		MediaType: mediaTypeOf(name, mediaType), Size: size, PartBytes: part, Parts: []S3Part{}, CreatedAt: nowMs()}}
+	target, err := selectStore(withTx(q), q.app, artifactLocations(q.app, projectID), "")
+	if err != nil {
+		return upload{}, err
+	}
 	if target == nil {
-		return none, failCode(409, "No reachable store in the project locations", "no_store")
+		return upload{}, failCode(409, "No reachable store in the project locations", "no_store")
 	}
 	// The store's multipart upload starts with the first part (uploadPart), never in this transaction, so a begin that
 	// does not commit leaves nothing on the store.
 	u.StoreID, u.Staging = target.ID, projectKey(projectID)+"/prod/.pending/upload-"+u.ID
 	if err := q.db().UploadInsert(q.ctx(), db.UploadInsertParams{ID: u.ID, Person: u.Person, SessionID: u.SessionID, ProjectID: u.ProjectID,
 		Payload: jsonBytes(u.uploadPayload)}); err != nil {
-		return none, err
+		return upload{}, err
 	}
 	sweepUploads(q.app)
-	base := "/api/uploads/"
-	if q.caller != nil {
-		base = "/api/apps/uploads/"
-	}
-	return contract.ArtifactUploadBeginReply{UploadId: u.ID, Url: base + u.ID, PartBytes: part}, nil
+	return u, nil
 }
 
 // upload: the upload row (migration 82, queries/uploads.sql): the fields a write guards or a reference names are
@@ -516,38 +525,7 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 			return nil, uploadConflict(409, "Part cut off; send it again", have)
 		}
 		defer uploadLock(id)()
-		if u, err = a.uploadRecord(ctx, q.person, id); err != nil {
-			return nil, err
-		}
-		if u.Received != first || u.ArtifactID != nil {
-			return nil, uploadConflict(409, "Upload changed meanwhile", u.Received)
-		}
-		h, err := hashFrom(u.Sha)
-		if err != nil {
-			return nil, err
-		}
-		h.Write(body)
-		s, t, err := a.uploadStore(ctx, u)
-		if err != nil {
-			return nil, err
-		}
-		if deref(u.Multipart) == "" {
-			mp, err := a.startMultipart(ctx, q.person, id, s, t, u)
-			if err != nil {
-				return nil, err
-			}
-			u.Multipart = &mp
-		}
-		n := int(first/part) + 1
-		etag, err := t.UploadPart(s.Bucket, u.Staging, *u.Multipart, n, body)
-		body = nil
-		free() // the store has the bytes: the reservation is not held through the record write and a finish
-		if err != nil {
-			return nil, err
-		}
-		u.Parts = append(u.Parts, S3Part{PartNumber: n, ETag: etag})
-		u.Received, u.Sha = last+1, hashState(h)
-		if err := a.saveUpload(ctx, q.person, u, first, nil); err != nil {
+		if err := a.uploadWritePart(ctx, q.person, id, first, body, free); err != nil {
 			return nil, err
 		}
 		if last+1 < size {
@@ -561,6 +539,46 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(out)
+}
+
+// uploadWritePart (under the upload's lock) sends body, the part of upload id that starts at byte first on its grid, to
+// the store as one multipart part and advances the record; sent runs once the store has the bytes, so the caller's
+// memory reservation is not held through the record write. uploadPart's and an input by reference's (pipeline_refs.go).
+func (a *App) uploadWritePart(ctx context.Context, p *Person, id string, first int64, body []byte, sent func()) error {
+	u, err := a.uploadRecord(ctx, p, id)
+	if err != nil {
+		return err
+	}
+	if u.Received != first || u.ArtifactID != nil {
+		return uploadConflict(409, "Upload changed meanwhile", u.Received)
+	}
+	h, err := hashFrom(u.Sha)
+	if err != nil {
+		return err
+	}
+	h.Write(body)
+	s, t, err := a.uploadStore(ctx, u)
+	if err != nil {
+		return err
+	}
+	if deref(u.Multipart) == "" {
+		mp, err := a.startMultipart(ctx, p, id, s, t, u)
+		if err != nil {
+			return err
+		}
+		u.Multipart = &mp
+	}
+	n := int(first/u.PartBytes) + 1
+	size := int64(len(body))
+	etag, err := t.UploadPart(s.Bucket, u.Staging, *u.Multipart, n, body)
+	body = nil
+	sent()
+	if err != nil {
+		return err
+	}
+	u.Parts = append(u.Parts, S3Part{PartNumber: n, ETag: etag})
+	u.Received, u.Sha = first+size, hashState(h)
+	return a.saveUpload(ctx, p, u, first, nil)
 }
 
 // startMultipart starts the store's multipart upload and records its id only if the record has none; a request that

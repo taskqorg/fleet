@@ -11,11 +11,11 @@ import (
 // artifact read.
 func TestPipelineRunInputPaths(t *testing.T) {
 	for _, bad := range [][]contract.PipelineRunInput{
-		{{Path: "../passport.jpg", ArtifactId: "a"}},
-		{{Path: "/etc/passwd", ArtifactId: "a"}},
-		{{Path: "__fleet_control/pipeline.json", ArtifactId: "a"}},
-		{{Path: "", ArtifactId: "a"}},
-		{{Path: "a.jpg", ArtifactId: "a"}, {Path: "a.jpg", ArtifactId: "b"}},
+		{{Path: "../passport.jpg", ArtifactId: new("a")}},
+		{{Path: "/etc/passwd", ArtifactId: new("a")}},
+		{{Path: "__fleet_control/pipeline.json", ArtifactId: new("a")}},
+		{{Path: "", ArtifactId: new("a")}},
+		{{Path: "a.jpg", ArtifactId: new("a")}, {Path: "a.jpg", ArtifactId: new("b")}},
 	} {
 		if _, err := pipelineRunInputs(&Request{}, "dam", bad); err == nil {
 			t.Fatalf("inputs %v must be refused", bad)

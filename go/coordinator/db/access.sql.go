@@ -342,6 +342,31 @@ func (q *Queries) AccessGrantNote(ctx context.Context, arg AccessGrantNoteParams
 	return err
 }
 
+const accessGrantOfConnection = `-- name: AccessGrantOfConnection :one
+SELECT id, project_id, kind, state FROM access_grant WHERE payload->>'connection' = $1::text AND deleted_at IS NULL
+ORDER BY (state = 'ready') DESC, updated_at DESC LIMIT 1
+`
+
+type AccessGrantOfConnectionRow struct {
+	ID        string
+	ProjectID string
+	Kind      string
+	State     string
+}
+
+// The grant a project access connection names, the ready one first, else its latest (an input by reference names one).
+func (q *Queries) AccessGrantOfConnection(ctx context.Context, connection string) (AccessGrantOfConnectionRow, error) {
+	row := q.db.QueryRow(ctx, accessGrantOfConnection, connection)
+	var i AccessGrantOfConnectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.State,
+	)
+	return i, err
+}
+
 const accessGrantSetCredential = `-- name: AccessGrantSetCredential :exec
 UPDATE access_grant SET credential = $1, updated_at = clock_timestamp() WHERE id = $2
 `

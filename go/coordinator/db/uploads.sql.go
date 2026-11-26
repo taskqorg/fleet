@@ -10,6 +10,24 @@ import (
 	"time"
 )
 
+const artifactStoredByHash = `-- name: ArtifactStoredByHash :one
+SELECT id FROM artifact WHERE project_id = $1 AND scope = 'prod' AND content_hash = $2 AND state = 'stored'
+ORDER BY seq LIMIT 1
+`
+
+type ArtifactStoredByHashParams struct {
+	ProjectID   *string
+	ContentHash string
+}
+
+// A stored artifact of the project with this content (an input by reference is stored once), by artifact_hash.
+func (q *Queries) ArtifactStoredByHash(ctx context.Context, arg ArtifactStoredByHashParams) (string, error) {
+	row := q.db.QueryRow(ctx, artifactStoredByHash, arg.ProjectID, arg.ContentHash)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const uploadArtifactInsert = `-- name: UploadArtifactInsert :exec
 INSERT INTO artifact(id, project_id, scope, content_hash, size, media_type, name, session_id, role, state)
 VALUES ($1, $2, 'prod', $3, $4, $5, $6, $7, 'attachment', 'stored')

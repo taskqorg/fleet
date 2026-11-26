@@ -7,6 +7,8 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
+
 	"fleet/contract"
 	"fleet/coordinator/db"
 )
@@ -76,35 +78,12 @@ func projectReceipt(q *Request, operation string, args map[string]json.RawMessag
 	if !ok {
 		return nil, fail(404, "Unknown operation")
 	}
-	sub := &Request{app: q.app, r: q.r, tx: q.tx, host: q.host, body: []byte(js(jsonValue(jsonBytes(args))))}
+	sub := &Request{app: q.app, r: q.r, tx: q.tx, host: q.host, body: []byte(js(jsonValue(jsonBytes(args)))), refInputs: q.refInputs}
 	switch operation {
 	case "connections_key_request", "access_grant_ask": // its question shows in the asking agent's conversation
 		sub.agent = "execution:" + executionID
 	case "pipeline_run", "direct_search":
-		if executionID == "" {
-			return nil, fail(403, "Execution rejected")
-		}
-		row, err := q.db().ExecutionByID(q.ctx(), executionID)
-		if err != nil {
-			return nil, err
-		}
-		if deref(row.SessionID) != session.ID {
-			return nil, fail(403, "Pipeline caller session ownership mismatch")
-		}
-		if deref(row.ProjectID) != session.ProjectID {
-			return nil, fail(403, "Pipeline caller project mismatch")
-		}
-		execution, err := executionAs[agentExecution](row)
-		if err != nil {
-			return nil, err
-		}
-		sub.agent = "execution:" + executionID
-		sub.person, err = hostAgentPerson(sub, firstString(deref(row.DirectedBy), session.DirectedBy), execution.TakenFrom)
-		if err != nil {
-			return nil, err
-		}
-		// Resolve current access and scope the receipt transaction before creating or returning the run.
-		if err := authorizeOp(sub, operation); err != nil {
+		if err := pipelineReceiptCaller(q, sub, operation, executionID, session); err != nil {
 			return nil, err
 		}
 		return op.h(sub)
@@ -115,6 +94,82 @@ func projectReceipt(q *Request, operation string, args map[string]json.RawMessag
 		}
 	}
 	return op.h(sub)
+}
+
+// pipelineReceiptCaller makes sub a native agent's pipeline_run or direct_search caller: its execution in the receipt's
+// session and project, as the person the run works for, with that person's current access and scope.
+func pipelineReceiptCaller(q, sub *Request, operation, executionID string, session agentSession) error {
+	if executionID == "" {
+		return fail(403, "Execution rejected")
+	}
+	row, err := q.db().ExecutionByID(q.ctx(), executionID)
+	if err != nil {
+		return err
+	}
+	if deref(row.SessionID) != session.ID {
+		return fail(403, "Pipeline caller session ownership mismatch")
+	}
+	if deref(row.ProjectID) != session.ProjectID {
+		return fail(403, "Pipeline caller project mismatch")
+	}
+	execution, err := executionAs[agentExecution](row)
+	if err != nil {
+		return err
+	}
+	sub.agent = "execution:" + executionID
+	sub.person, err = hostAgentPerson(sub, firstString(deref(row.DirectedBy), session.DirectedBy), execution.TakenFrom)
+	if err != nil {
+		return err
+	}
+	// Resolve current access and scope the receipt transaction before creating or returning the run.
+	return authorizeOp(sub, operation)
+}
+
+// receiptStageRefs: a native agent's pipeline_run inputs by reference are read and stored before the receipt's
+// transaction, since the read is a gateway call (pipeline_refs.go); the receipt's run then takes their artifacts
+// (Request.refInputs). A retried request reads nothing: its run answers it.
+func receiptStageRefs(q *Request, b *contract.ProjectReceipt) error {
+	var inputs []contract.PipelineRunInput
+	if json.Unmarshal(b.Delegation.Arguments["inputs"], &inputs) != nil || !slices.ContainsFunc(inputs, func(in contract.PipelineRunInput) bool { return in.Ref != nil }) {
+		return nil // no refs, or inputs the operation itself refuses
+	}
+	rid, _ := jsonText(b.Delegation.Arguments["requestId"])
+	sub := &Request{app: q.app, r: q.r, host: q.host}
+	project, fresh := "", false
+	if err := q.app.store.Read(q.ctx(), q, func(r *Request) error {
+		c, err := commandOf(r, b.HostId, b.ExecutionId, b.CommandId, "Project grant rejected")
+		if err != nil {
+			return err
+		}
+		s, err := sessionByID(r, c.SessionID)
+		if err != nil {
+			return err
+		}
+		if s.ProjectID == "" || b.Delegation.ProjectId != s.ProjectID {
+			return fail(403, "Project grant rejected")
+		}
+		project, sub.tx = s.ProjectID, r.tx
+		if err := pipelineReceiptCaller(r, sub, "pipeline_run", b.ExecutionId, s); err != nil {
+			return err
+		}
+		prev, err := r.db().PipelineRunsByProjectRequest(r.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: project, RequestID: rid})
+		fresh = len(prev) == 0
+		return err
+	}); err != nil || !fresh {
+		return err
+	}
+	sub.tx, sub.accessTx = nil, nil
+	staged, err := pipelineRunInputs(sub, project, inputs)
+	if err != nil {
+		return err
+	}
+	q.refInputs = map[string]string{}
+	for i, in := range inputs {
+		if in.Ref != nil {
+			q.refInputs[refKey(*in.Ref)] = staged[i].ArtifactID
+		}
+	}
+	return nil
 }
 
 // commandOf: the receipt's command, which must belong to the receipt's execution and host.
@@ -191,6 +246,11 @@ func projectReceiptRoute(q *Request, b *contract.ProjectReceipt) (any, error) {
 	locks := []string{GLOBAL}
 	if read {
 		locks = nil
+	}
+	if b.Delegation.Operation == "pipeline_run" {
+		if err := receiptStageRefs(q, b); err != nil {
+			return nil, err
+		}
 	}
 	return receiptTx(q, !read, locks, func() (any, string, error) {
 		r, err := projectReceiptIn(q, b)
