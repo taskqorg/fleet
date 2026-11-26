@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // gatewayUse: catalogue tools a part of the coordinator calls. Conn names the connection; "" is every connection of
@@ -83,15 +84,28 @@ func init() {
 		every(ctx, "grants", envMs("FLEET_GRANTS_TICK_MS", 120_000), func(ctx context.Context) error { return grantsPass(ctx, a) })
 	})
 	op("connections_drift", func(q *Request, _ *contract.ConnectionsDriftRequest) (contract.ConnectionsDriftReply, error) {
-		out, err := grantsDrift(q)
+		out, err := grantsDrift(q, true)
 		return replyAs[contract.ConnectionsDriftReply](out, err)
 	})
 }
 
-// grantsPass syncs one problem per connection lacking a needed tool (cause problem:grant:<connection>).
+// grantsPass syncs one problem per connection lacking a needed tool (cause problem:grant:<connection>). It reads first
+// and writes only when a connection lacks a tool or a grant problem is held.
 func grantsPass(ctx context.Context, a *App) error {
+	quiet := false
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		d, err := grantsDrift(q, false)
+		if err != nil {
+			return err
+		}
+		held, err := q.db().TaskProblemsOfSource(q.ctx(), "grants")
+		quiet = d.Missing == 0 && len(held) == 0
+		return err
+	}); err != nil || quiet {
+		return err
+	}
 	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		d, err := grantsDrift(q)
+		d, err := grantsDrift(q, false)
 		if err != nil {
 			return err
 		}
@@ -120,8 +134,8 @@ func grantsPass(ctx context.Context, a *App) error {
 }
 
 // grantsDrift: every connection with its grants, the tools Fleet uses on it and who uses each, missing and stale
-// grants, key policy and pool, and the last change of its settings.
-func grantsDrift(q *Request) (contract.ConnectionsDriftReply, error) {
+// grants, key policy and pool, and with history the last change of its settings (the pass does not need it).
+func grantsDrift(q *Request, history bool) (contract.ConnectionsDriftReply, error) {
 	conns, err := apiConnectionAll(q)
 	if err != nil {
 		return contract.ConnectionsDriftReply{}, err
@@ -134,9 +148,11 @@ func grantsDrift(q *Request) (contract.ConnectionsDriftReply, error) {
 	if err != nil {
 		return contract.ConnectionsDriftReply{}, err
 	}
-	audits, err := q.db().AuditOfKind(q.ctx(), "connection")
-	if err != nil {
-		return contract.ConnectionsDriftReply{}, err
+	var audits []db.AuditOfKindRow
+	if history {
+		if audits, err = q.db().AuditOfKind(q.ctx(), "connection"); err != nil {
+			return contract.ConnectionsDriftReply{}, err
+		}
 	}
 	last := map[string]contract.GrantChange{}
 	for _, r := range audits { // oldest first: the last one stays
@@ -176,15 +192,22 @@ func grantsDrift(q *Request) (contract.ConnectionsDriftReply, error) {
 			}
 		}
 		for _, p := range profiles {
-			if slices.Contains(p.Connections, c.Name) || isAccessProvider(c.Provider) && slices.Contains(runConnections(p.Connections), accessGrantAll) {
+			if slices.Contains(p.Connections, c.Name) {
 				for _, t := range catalogue { // an agent may call any tool of a connection its profile lists
 					need(t, "profile "+p.ID)
 				}
 			}
 		}
+		if isAccessProvider(c.Provider) { // runConnections adds project-access to every agent run
+			for _, t := range catalogue {
+				need(t, "every agent run of its project (project-access)")
+			}
+		}
 		grantsSeen.Range(func(k, v any) bool {
 			g := k.(grantKey)
-			if g.conn == c.Name && slices.Contains(catalogue, g.tool) {
+			if _, live := names[g.conn]; !live {
+				grantsSeen.Delete(k) // a deleted connection
+			} else if g.conn == c.Name && slices.Contains(catalogue, g.tool) {
 				if slices.Contains(c.Tools, g.tool) {
 					grantsSeen.Delete(k)
 				} else {
