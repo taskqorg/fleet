@@ -30,14 +30,12 @@ type inventoryEntry struct {
 
 // worktreesIn: the worktree directories of a session directory (its own and its workspaces'); set-aside copies
 // (worktree-stale-*) are not worktrees git knows, so they are left to teardown's removeStale.
+// A link is never one: Fleet makes its worktrees as real directories.
 func worktreesIn(p string) []string {
 	var out []string
-	if exists(filepath.Join(p, "worktree", ".git")) {
-		out = append(out, filepath.Join(p, "worktree"))
-	}
 	ws, _ := filepath.Glob(filepath.Join(p, "workspaces", "*", "worktree"))
-	for _, w := range ws {
-		if exists(filepath.Join(w, ".git")) {
+	for _, w := range append([]string{filepath.Join(p, "worktree")}, ws...) {
+		if st, err := os.Lstat(w); err == nil && st.IsDir() && exists(filepath.Join(w, ".git")) {
 			out = append(out, w)
 		}
 	}
@@ -185,7 +183,7 @@ func (e *executor) inventoryPass(roots []string, tmpOwned bool) cleanupLedger {
 			continue
 		}
 		for _, w := range en.worktrees {
-			c.add(teardownUnknown(w, en.id))
+			c.add(teardownUnknown(w, en.id, roots))
 		}
 	}
 	return c
@@ -194,7 +192,7 @@ func (e *executor) inventoryPass(roots []string, tmpOwned bool) cleanupLedger {
 // teardownUnknown: the worktree of a session the coordinator has no live row for goes through teardown with the
 // default keepWhen; its outputs go first, since no session can collect them any more. The branch goes only when merged
 // (git branch -d).
-func teardownUnknown(w, session string) cleanupLedger {
+func teardownUnknown(w, session string, roots []string) cleanupLedger {
 	var c cleanupLedger
 	common, err := hardenedGit("-C", w, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 	if err != nil {
@@ -207,7 +205,7 @@ func teardownUnknown(w, session string) cleanupLedger {
 		name = session + "-" + filepath.Base(dir)
 	}
 	size := treeSize(w)
-	t := teardownWith(dir, name, top, contract.ProjectContext{}, teardownOptions{dropOutput: true})
+	t := teardownWith(dir, name, top, contract.ProjectContext{}, teardownOptions{dropOutput: true, roots: roots})
 	if t.Removed {
 		c.dirs++
 		c.bytes += size

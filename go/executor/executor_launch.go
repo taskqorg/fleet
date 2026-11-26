@@ -187,7 +187,7 @@ func (e *executor) run(c M) error {
 				data = teardownWith(dir, workspaceSession(session, key), top, project, teardownOptions{
 					deleteBranch: tp.DeleteBranch != nil && *tp.DeleteBranch, detached: tp.Branch != nil && !*tp.Branch,
 					dropOutput:        (tp.OutputsStored != nil && *tp.OutputsStored) || personal,
-					ignoreUncommitted: personal && tp.Step != nil && *tp.Step})
+					ignoreUncommitted: personal && tp.Step != nil && *tp.Step, roots: e.forbidden()})
 			}
 		}
 		reason := str0(data.Reason)
