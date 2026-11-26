@@ -40,6 +40,8 @@ export function useReorder(o: ReorderOptions) {
 
   /* ---------- pointer ---------- */
   let drag: { key: string; id: number; x: number; y: number; to: number; el: HTMLElement; timer?: ReturnType<typeof setTimeout>; live: boolean; touch: boolean } | null = null;
+  const isCurrent = (d: NonNullable<typeof drag>) =>
+    d.el.isConnected && d.el.dataset.reorderKey === d.key && o.root()?.contains(d.el);
 
   /** The slot the pointer is over: before the first other item whose midpoint lies past the pointer. */
   const slotAt = (px: number, py: number, key: string) => {
@@ -59,13 +61,6 @@ export function useReorder(o: ReorderOptions) {
       setLine({ x: x - 1, y: r.top, w: 2, h: r.height });
     }
   };
-  const start = () => {
-    if (!drag) return;
-    drag.live = true;
-    setLifted(drag.key);
-    drag.el.setPointerCapture?.(drag.id);
-    document.documentElement.classList.add('reordering');
-  };
   const end = (commit: boolean) => {
     const d = drag;
     drag = null;
@@ -76,8 +71,9 @@ export function useReorder(o: ReorderOptions) {
     d.el.style.translate = '';
     setLifted(null);
     setLine(null);
-    if (!commit) return announce(`${o.label(d.key)}: move cancelled.`);
-    const keys = o.keys(), next = reorderTo(keys, d.key, d.to);
+    const keys = o.keys();
+    if (!commit || !keys.includes(d.key)) return announce(`${o.label(d.key)}: move cancelled.`);
+    const next = reorderTo(keys, d.key, d.to);
     // The click that ends a drag must not open the item.
     const guard = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
     window.addEventListener('click', guard, { capture: true, once: true });
@@ -86,20 +82,46 @@ export function useReorder(o: ReorderOptions) {
     o.onOrder(next);
     announce(`${o.label(d.key)} moved to ${pos(d.key, next)}.`);
   };
+  const start = () => {
+    const d = drag;
+    if (!d) return;
+    if (!isCurrent(d)) return end(false);
+    // The pointer can become inactive while waiting for movement or a long press.
+    try {
+      d.el.setPointerCapture(d.id);
+    } catch {
+      return end(false);
+    }
+    if (!d.el.hasPointerCapture(d.id)) return end(false);
+    d.live = true;
+    setLifted(d.key);
+    document.documentElement.classList.add('reordering');
+    return true;
+  };
   const onMove = (e: PointerEvent) => {
-    if (!drag || e.pointerId !== drag.id) return;
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    if (!drag.live) {
-      if (Math.hypot(dx, dy) > SLOP) { if (drag.touch) return end(false); start(); } // a touch that moves before the press is a scroll
-      else return;
+    const d = drag;
+    if (!d || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    if (d.live) {
+      if (!isCurrent(d)) return end(false);
+    } else {
+      if (Math.hypot(dx, dy) <= SLOP) return;
+      if (d.touch) return end(false); // a touch that moves before the press is a scroll
+      if (!start()) return;
     }
     e.preventDefault();
-    drag.el.style.translate = axis() === 'y' ? `0 ${dy}px` : `${dx}px 0`;
-    const { to, others } = slotAt(e.clientX, e.clientY, drag.key);
-    drag.to = to;
-    showLine(to, others, drag.key);
+    d.el.style.translate = axis() === 'y' ? `0 ${dy}px` : `${dx}px 0`;
+    const { to, others } = slotAt(e.clientX, e.clientY, d.key);
+    d.to = to;
+    showLine(to, others, d.key);
   };
-  const onUp = (e: PointerEvent) => { if (drag && e.pointerId === drag.id) end(e.type === 'pointerup'); };
+  const onUp = (e: PointerEvent) => {
+    if (drag && e.pointerId === drag.id) end(e.type === 'pointerup' && !!isCurrent(drag));
+  };
+  const onLostCapture = (e: PointerEvent) => {
+    // On touch, the initial descendant can lose implicit capture when the row takes over.
+    if (drag?.live && e.pointerId === drag.id && !drag.el.hasPointerCapture(drag.id)) end(false);
+  };
   const onKeyEsc = (e: KeyboardEvent) => { if (e.key === 'Escape' && drag?.live) { e.preventDefault(); end(false); } };
   // While a touch drag is live the page must not scroll under it.
   const noScroll = (e: TouchEvent) => { if (drag?.live) e.preventDefault(); };
@@ -108,17 +130,22 @@ export function useReorder(o: ReorderOptions) {
   document.addEventListener('pointermove', onMove, { passive: false });
   document.addEventListener('pointerup', onUp);
   document.addEventListener('pointercancel', onUp);
+  document.addEventListener('lostpointercapture', onLostCapture);
   document.addEventListener('keydown', onKeyEsc, true);
   document.addEventListener('touchmove', noScroll, { passive: false });
   window.addEventListener('contextmenu', noMenu, true);
   onCleanup(() => {
-    if (drag?.live) document.documentElement.classList.remove('reordering');
+    if (drag?.live) {
+      document.documentElement.classList.remove('reordering');
+      drag.el.style.translate = '';
+    }
     if (drag) clearTimeout(drag.timer);
     drag = null;
     window.removeEventListener('contextmenu', noMenu, true);
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('pointercancel', onUp);
+    document.removeEventListener('lostpointercapture', onLostCapture);
     document.removeEventListener('keydown', onKeyEsc, true);
     document.removeEventListener('touchmove', noScroll);
     clearTimeout(sayTimer);
@@ -130,7 +157,7 @@ export function useReorder(o: ReorderOptions) {
     const at = target.closest<HTMLElement>('[data-reorder-key]') ?? target;
     const touch = e.pointerType !== 'mouse';
     drag = { key, id: e.pointerId, x: e.clientX, y: e.clientY, to: o.keys().indexOf(key), el: at, live: false, touch };
-    if (touch) drag.timer = setTimeout(() => { if (drag && !drag.live) { start(); navigator.vibrate?.(10); } }, LONG_PRESS);
+    if (touch) drag.timer = setTimeout(() => { if (start()) navigator.vibrate?.(10); }, LONG_PRESS);
   };
 
   /* ---------- keyboard ---------- */
