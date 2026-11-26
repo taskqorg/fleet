@@ -8,7 +8,8 @@ type Row = { key: string; name: string; detail?: string; chip: { text: string; t
 const ok = (text = 'In sync'): Row['chip'] => ({ text, tone: 'success' });
 const names = (xs: string[]) => xs.length <= 2 ? xs.join(' and ') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`;
 const few = (xs: string[]) => xs.length <= 2 ? xs.join(', ') : `${xs[0]} and ${xs.length - 1} more`;
-const who = (actor: string) => actor.includes('@') ? actor.split('@')[0] : actor === 'fleet' ? 'Fleet' : 'agent';
+/** A person by the part before @ (site-agents, alex); the coordinator as Fleet; an agent execution id as agent. */
+const who = (actor: string) => actor === 'fleet' ? 'Fleet' : /^[0-9a-f-]{20,}$|^(exec|execution)[:_-]/i.test(actor) ? 'agent' : actor.split('@')[0];
 const hostPath = (id: string) => `/hosts/${encodeURIComponent(id)}`;
 
 /** "+6 granted 26 Nov · alex": the connection's last audited change. */
