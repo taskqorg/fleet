@@ -63,7 +63,6 @@ export function RailPinned(p: RailPinnedProps) {
         <For each={shown()} fallback={<li class="nav-i rail-pinned-empty"><span class="nm">Pin a conversation or a bot: the pin in its head, or Pin in a row menu.</span></li>}>
           {x => (
             <li class="nav-i" {...r.item(x.key)} onContextMenu={e => e.preventDefault()} onPointerUp={e => { if (e.button === 2) menu.open(x.key, e); }}>
-              <span class="reorder-grip" aria-hidden="true"><Icon name="grip" /></span>
               <a href={x.href} aria-label={label(x)} aria-roledescription="draggable item" aria-description="Space to reorder" onClick={e => { e.preventDefault(); p.onOpen(x); }} onKeyDown={ctx(x.key)}>
                 <span class="nav-ic" data-tip={label(x)} data-tip-narrow><Avatar {...x.mark} size="sm" state={x.state} /></span>
                 <span class="nm">{x.name}</span>

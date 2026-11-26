@@ -43,6 +43,8 @@ export const workspaces = [
   { id: 'humans', label: 'People', icon: 'shield', section: 'system', nav: false },
 ] as const satisfies readonly { id: string; label: string; icon: IconName; section: string; root?: string; nav: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { nav: false }>['id'];
+/** The phone bottom bar's four section tabs (OR-60, patterns/app-shell.md); More holds the other sections. */
+export const barTabs = ['home', 'live', 'conversations', 'projects'] as const satisfies readonly Extract<(typeof workspaces)[number], { nav: true }>['id'][];
 
 /** What an entity reference names (EntityCode, EntityCard; the coordinator's EntityKind): its word, icon and the state
  *  family of its card's state. A D17 code's letter names T task, Q question, C conversation. */

@@ -430,7 +430,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
                   if (e.key === 'p') { e.preventDefault(); g.pins.toggle(i.r.id); }
                   else if (e.key === 'x') { e.preventDefault(); g.select(i.r); }
                   // The Menu key and Shift+F10 fire contextmenu on the row: onRowMenu opens the menu.
-                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} kind={g.entity} /><Show when={!i.pinned && !g.selecting}><RowPin off label={p.title(i.r)} onToggle={() => g.pins.toggle(i.r.id)} /></Show></span>
+                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} kind={g.entity} /></span>
               <span class="rz">{p.facts(i.r)}</span>
               <Show when={p.after}>{a => a()(i.r)}</Show>
             </>} />}

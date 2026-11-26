@@ -615,17 +615,17 @@ export function RowCheck(p: { checked: boolean; label: string; onToggle: () => v
 /**
  * On a pinned row, the first cell; the caller gives that row the class pin-row, which adds the one leading column
  * (styles.css), so other rows do not move. Both go together: the cell without the class shifts every cell. A click unpins
- * and the row leaves the Pinned group. With `off`, the pin of a row not pinned yet, after its title: shown on row hover and
- * keyboard focus only (never on touch screens, where the row menu pins); a click pins (nav-rail.md, Pinned).
+ * and the row leaves the Pinned group. A row not pinned has no pin: nothing shows on hover (OR-37, no exceptions); Pin is in
+ * the row menu and on `p` (row-pin.md).
  */
-export function RowPin(p: { label: string; onToggle: () => void; /** Not pinned yet: shown on row hover and focus. */ off?: boolean }) {
+export function RowPin(p: { label: string; onToggle: () => void }) {
   return (
     <button
       type="button"
-      class={['row-pin', { off: !!p.off }]}
+      class="row-pin"
       data-ui="row-pin"
-      aria-label={`${p.off ? 'Pin' : 'Unpin'} ${p.label}`}
-      data-tip={p.off ? 'Pin' : 'Unpin'}
+      aria-label={`Unpin ${p.label}`}
+      data-tip="Unpin"
       onClick={e => { e.stopPropagation(); p.onToggle(); }}
     >
       <Icon name="pin" />

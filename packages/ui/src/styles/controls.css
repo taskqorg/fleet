@@ -163,9 +163,8 @@
   .drop-line { position: fixed; z-index: 1000; border-radius: 1px; background: var(--drop-marker-color, var(--running-fg)); pointer-events: none; }
   @media (forced-colors: active) { .drop-line { background: Highlight; } }
   :root.reordering, :root.reordering * { cursor: grabbing !important; -webkit-user-select: none; user-select: none; }
-  .row-pin.off { flex: none; margin-left: var(--space-1); visibility: hidden; }
-  .vl-row:hover .row-pin.off, .vl-row:focus-within .row-pin.off { visibility: visible; }
-  @media (hover: none) { .row-pin.off { display: none; } }
+  /* A pinned row is its own drag handle (reorder.tsx): no grip on hover (OR-37, no exceptions). */
+  .vl-row[data-reorder-key] { cursor: grab; }
   .row-check { width: var(--size-icon); height: var(--size-icon); margin: 0; accent-color: var(--accent); }
   .vl-row .rz { position: relative; display: flex; align-items: center; justify-content: flex-end; min-width: 0; height: 100%; }
   .row-facts { display: inline-flex; align-items: center; gap: var(--space-2); font-family: var(--font-mono); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
