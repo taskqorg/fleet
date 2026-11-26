@@ -28,13 +28,17 @@ import (
 
 // requeueUnauthorized: a 401 is a credential condition of the host, not of the row: at start those rows go back to the
 // queue.
+// requeueUnauthorized also re-queues event rows set aside for their size (see the oversize condition below).
 func requeueUnauthorized(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO outbox(route,body) SELECT route,body FROM outbox_failed WHERE status=401 ORDER BY rowid; DELETE FROM outbox_failed WHERE status=401;`); err != nil {
+	// An event batch refused for its size (400 "Invalid JSON body" before the coordinator said 413) goes again: it is cut
+	// to the cap when sent (shrinkEvents).
+	oversize := `route='/api/hosts/events' AND (status=413 OR status=400 AND reason LIKE '%Invalid JSON body%' AND length(CAST(body AS BLOB))>` + fmt.Sprint(maxRequestBytes) + `)`
+	if _, err := tx.Exec(`INSERT INTO outbox(route,body) SELECT route,body FROM outbox_failed WHERE status=401 OR ` + oversize + ` ORDER BY rowid; DELETE FROM outbox_failed WHERE status=401 OR ` + oversize + `;`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -711,18 +715,23 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			continue
 		}
 		value := decM(r.body)
-		// Consecutive event rows of the lane go in one request.
+		// Consecutive event rows of the lane go in one request, under the coordinator's body cap.
 		batch := []outboxRow{r}
 		if r.route == contract.RouteEvents.Path && !single {
+			size := len(r.body)
 			for i+len(batch) < len(rows) {
 				nx := rows[i+len(batch)]
 				events, _ := value["events"].([]any)
-				if !nx.loaded || nx.route != r.route || nx.execution != r.execution || len(events) >= 500 {
+				if !nx.loaded || nx.route != r.route || nx.execution != r.execution || len(events) >= 500 || size+len(nx.body) > maxRequestBytes {
 					break
 				}
+				size += len(nx.body)
 				value["events"] = append(events, jArr(decM(nx.body), "events")...)
 				batch = append(batch, nx)
 			}
+		}
+		if r.route == contract.RouteEvents.Path {
+			shrinkEvents(value, maxRequestBytes) // one event over the cap is cut, never refused whole (2026-11-25: 1-4 MB events lost)
 		}
 		ok, probe := mayAsk(db)
 		if !ok {
