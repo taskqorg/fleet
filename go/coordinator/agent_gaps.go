@@ -58,6 +58,7 @@ type gapRules struct {
 }
 
 type gapFamily struct {
+	Label   string                   `json:"label"`
 	Title   string                   `json:"title"`
 	Setting contract.AgentGapSetting `json:"setting"`
 }
@@ -643,7 +644,15 @@ func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.Ag
 			if !ok {
 				fam = rules.Families["other"]
 			}
-			g = &gapAgg{out: contract.AgentGapClass{Class: class, Family: family, Title: fam.Title, Setting: fam.Setting, Examples: []contract.AgentGapExample{}},
+			label := fam.Label
+			if _, arg, ok := strings.Cut(class, ":"); ok {
+				label = strings.ReplaceAll(label, "{arg}", arg)
+			}
+			src := "agent"
+			if strings.HasPrefix(family, "gateway-") || family == "mcp-refused" {
+				src = "gateway"
+			}
+			g = &gapAgg{out: contract.AgentGapClass{Class: class, Family: family, Label: firstString(label, class), Source: src, Title: fam.Title, Setting: fam.Setting, Examples: []contract.AgentGapExample{}},
 				executions: map[string]bool{}, exampled: map[string]bool{}, daily: map[string]int64{}}
 			for i := range g.counts {
 				g.counts[i] = map[string]int64{}
@@ -653,17 +662,27 @@ func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.Ag
 		return g
 	}
 	digests := map[string]bool{}
+	runs := map[string]bool{}
 	for _, x := range rows {
 		if !want(x) {
 			continue
 		}
-		g := agg(x.Class)
+		g, fresh := by[x.Class], by[x.Class] == nil
+		g = agg(x.Class)
+		if fresh {
+			g.out.Source = x.Source // rows come newest first
+		}
 		if x.At.Before(from) {
 			g.out.PreviousCount++
 			continue
 		}
 		digests[x.Rules] = true
 		out.Total++
+		if x.Source == "gateway" {
+			out.Calls++
+		} else {
+			runs[x.ExecutionID] = true
+		}
 		if x.Class == "other" {
 			out.Other++
 		}
@@ -708,6 +727,10 @@ func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.Ag
 			g.out.Finding = ptr(findingOut(f))
 		}
 		g.out.Executions = int64(len(g.executions))
+		fr := rules.Finding
+		if days == fr.Days { // the threshold is defined over the finding window only
+			g.out.AboveThreshold = ptr(g.out.Class != "other" && g.out.Count >= fr.MinCount && g.out.Executions >= fr.MinExecutions)
+		}
 		for d := 0; d < days; d++ {
 			day := from.AddDate(0, 0, d).Format("2006-01-02")
 			g.out.Daily = append(g.out.Daily, contract.AgentGapDay{Day: day, Count: g.daily[day]})
@@ -725,6 +748,9 @@ func agentGapsReplyOf(rules *gapRules, rows []db.AgentGapRowsRow, r *contract.Ag
 		}
 		return a.Class < b.Class
 	})
+	out.Runs = int64(len(runs))
+	fr := rules.Finding
+	out.Threshold = contract.AgentGapThreshold{Days: int64(fr.Days), MinCount: fr.MinCount, MinExecutions: fr.MinExecutions, WatchDays: int64(fr.WatchDays), FixedRatio: fr.FixedRatio}
 	for d := range digests {
 		out.ClassifiedWith = append(out.ClassifiedWith, d)
 	}

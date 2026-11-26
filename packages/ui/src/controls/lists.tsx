@@ -332,6 +332,40 @@ export function GroupControl<G extends string>(p: {
 }
 
 /**
+ * Pick: one value of a short list as a menu chip, led by an icon ("All hosts", "pds18"); the first option is the
+ * whole (no filter). The filter chips of System › Agents (controls/gap-row.md).
+ */
+export function PickMenu(p: { label: string; icon: IconName; value: string; options: readonly (readonly [string, string])[]; onChange: (v: string) => void }) {
+  let wrap: HTMLSpanElement | undefined;
+  const cur = createMemo(() => p.options.find(([v]) => v === p.value)?.[1] ?? p.value);
+  const on = createMemo(() => p.value !== (p.options[0]?.[0] ?? ''));
+  return (
+    <span ref={el => { wrap = el; }} class="pick" data-ui="pick-menu">
+      <Menu container={wrap?.closest<HTMLElement>('.th-dark, .th-light') ?? undefined}>
+        <MenuTrigger class={['pick-b', { on: on() }]} aria-label={`${p.label}: ${cur()}`} data-tip={p.label}>
+          <Icon name={p.icon} />
+          <span>{cur()}</span>
+          <Icon name="chevron-down" />
+        </MenuTrigger>
+        <MenuContent class="menu pick-menu" side="bottom" align="start" aria-label={p.label}>
+          <MenuRadioGroup value={p.value} onValueChange={v => p.onChange(v as string)}>
+            <MenuGroupLabel class="menu-h">{p.label}</MenuGroupLabel>
+            <For each={p.options}>
+              {([v, l]) => (
+                <MenuRadioItem value={v} closeOnSelect render={itemProps => <button {...itemProps} type="button" />}>
+                  <span class="grow">{l}</span>
+                  <Show when={v === p.value}><Icon name="check" /></Show>
+                </MenuRadioItem>
+              )}
+            </For>
+          </MenuRadioGroup>
+        </MenuContent>
+      </Menu>
+    </span>
+  );
+}
+
+/**
  * Sort (OR-35): one chip led by the direction icon, a button that flips the direction in one click (as Group leads with
  * its icon), then the field, which opens the fields and the directions in a short menu. The value is the field, "-" before it for descending.
  * A field may name its directions (Newest first / Oldest first for times, the default).

@@ -29,6 +29,8 @@
   .spark i { width: 3px; background: var(--data-1); border-radius: 1px; }
   .spark i.gap { width: 2px; height: 2px; border-radius: 50%; background: var(--fg-faint); }
   .spark i.alert { background: var(--danger-fg); }
+  .spark i.after { background: var(--success-fg); }
+  .spark i.mark { box-shadow: -3px 0 0 -1px var(--fg-muted); }
 
   .gauge { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-xs); white-space: nowrap; }
   .g-label { color: var(--fg-muted); }
@@ -206,4 +208,47 @@
     .drow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name chip" "detail detail" "fact fact"; }
     .drow-fact { justify-self: start; text-align: start; }
   }
+
+  /* Gap rows (controls/gap-row.md): System › Agents, one class of what agents lack. The name is the row's one link,
+     stretched over the row; the list is the size container, so a narrow pane stacks each row (OR-66). */
+  .gap-rows { list-style: none; margin: 0; padding: 0; container-type: inline-size; }
+  .gaprow {
+    position: relative; display: grid; align-items: center; gap: 0 var(--space-3);
+    grid-template-columns: minmax(0, 1fr) auto minmax(7rem, max-content) 4.5rem;
+    grid-template-areas: "name spark chip fact" "detail spark chip fact";
+    padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line-soft);
+  }
+  .gaprow:has(.gaprow-name:hover) { background: var(--hover); }
+  .gaprow.cur { background: var(--surface-sunken); }
+  .gaprow:has(.gaprow-name:focus-visible) { outline: var(--size-focus-ring) solid var(--accent); outline-offset: calc(-1 * var(--size-focus-ring)); }
+  .gaprow-name { grid-area: name; min-width: 0; color: var(--fg); font-weight: var(--font-weight-medium); text-decoration: none; overflow-wrap: anywhere; }
+  .gaprow-name:focus-visible { outline: none; }
+  .gaprow-name::after { content: ""; position: absolute; inset: 0; }
+  .gaprow [data-tip] { position: relative; z-index: 1; }
+  .gaprow-detail { grid-area: detail; min-width: 0; color: var(--fg-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  .gaprow > .spark { grid-area: spark; }
+  .gaprow > .badge { grid-area: chip; justify-self: end; }
+  .gaprow-fact { grid-area: fact; justify-self: end; color: var(--fg-muted); font-size: var(--font-size-sm); white-space: nowrap; }
+  @container (width < 36rem) {
+    .gaprow { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "name name name" "detail detail detail" "spark chip fact"; gap: var(--space-1) var(--space-2); }
+    .gaprow > .badge { justify-self: start; }
+  }
+
+  /* Step trail: how far a finding got; done steps in the success tone, the current one in fg. */
+  .trail { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); font-size: var(--font-size-sm); color: var(--fg-faint); }
+  .trail li + li::before { content: "·"; margin-inline-end: var(--space-2); color: var(--fg-faint); }
+  .trail li.done { color: var(--success-fg); }
+  .trail li.current { color: var(--fg); font-weight: var(--font-weight-medium); }
+  .trail li.current.t-danger { color: var(--danger-fg); }
+
+  /* Before/after: the class's rate on each side of the change. */
+  .gapcmp { display: grid; gap: var(--space-2); padding: var(--space-4); background: var(--surface-sunken); border-radius: var(--radius-md); }
+  .gapcmp-figs { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2) var(--space-5); }
+  .gapcmp-figs > .spark { margin-inline-start: auto; height: calc(2 * var(--size-chip)); }
+  .gapcmp-fig { display: grid; }
+  .gapcmp-fig b { font-size: var(--font-size-xl); font-weight: var(--font-weight-medium); color: var(--fg); }
+  .gapcmp-fig.t-success b { color: var(--success-fg); }
+  .gapcmp-fig.t-danger b { color: var(--danger-fg); }
+  .gapcmp-fig span { color: var(--fg-muted); font-size: var(--font-size-sm); }
+  .gapcmp p { margin: 0; color: var(--fg-muted); font-size: var(--font-size-sm); }
 }

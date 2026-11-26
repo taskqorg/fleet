@@ -139,6 +139,9 @@ func TestAgentGapsReply(t *testing.T) {
 		t.Fatalf("total %d classes %d", out.Total, len(out.Classes))
 	}
 	jq := out.Classes[0]
+	if out.Runs != 3 || out.Calls != 0 || jq.Label != "jq missing" || jq.Source != "agent" || *jq.AboveThreshold {
+		t.Fatalf("runs %d calls %d label %q source %q above %v", out.Runs, out.Calls, jq.Label, jq.Source, *jq.AboveThreshold)
+	}
 	if jq.Class != "missing-command:jq" || jq.Count != 3 || jq.PreviousCount != 1 || jq.Executions != 2 || len(jq.Examples) != 2 {
 		t.Fatalf("jq: %+v", jq)
 	}
