@@ -672,6 +672,8 @@ type Bot struct {
 	AvatarArtifactID      *string
 	AvatarStillArtifactID *string
 	AvatarGlow            string
+	IdentityColor         string
+	IdentityPattern       string
 }
 
 type BotAutomation struct {

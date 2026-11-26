@@ -1,10 +1,10 @@
 // A bot's avatar in Settings & Memory (controls/avatar.md, board screens/library.bl section 4): the letter, an uploaded
 // file, or one made by the avatar-make pipeline (three candidates, pick one). Agents do the same with bot_avatar_set.
 import { For, Match, Show, Switch, createEffect, createSignal } from 'solid-js';
-import { Avatar, AvatarChoices, Button, Choice, DetailSection, ErrorBanner, FileButton, TextField, type AvatarPicture } from '../../../packages/ui/src/index.ts';
+import { Avatar, AvatarChoices, Button, Choice, DetailSection, ErrorBanner, FileButton, IdentityPicker, TextField, type AvatarPicture } from '../../../packages/ui/src/index.ts';
 import { writeOnce, useAlive, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
-import { botAvatarState, botPicture } from '../bot-view.ts';
+import { botAvatarState, botColor, botPicture } from '../bot-view.ts';
 import { uploadFile } from '../uploads.ts';
 
 type Bot = Ops['bot_get']['reply']['bot'];
@@ -118,11 +118,11 @@ export function BotAvatarField(props: { bot: Bot; onSaved: (bot: Bot) => void })
       <Show when={error()}>{err => <ErrorBanner text={err()} />}</Show>
       <div class="row" style={{ gap: 'var(--space-6)', 'align-items': 'flex-start', 'flex-wrap': 'wrap' }}>
         <div class="stack" style={{ 'align-items': 'center', gap: 'var(--space-3)' }}>
-          <Avatar letter={props.bot.settings.name} tone="success" size="xl" picture={preview()} state={state()} />
+          <Avatar letter={props.bot.settings.name} tone="success" size="xl" picture={preview()} state={state()} color={botColor(props.bot)} />
           <div class="row" style={{ gap: 'var(--space-3)', 'align-items': 'center' }}>
-            <Avatar letter={props.bot.settings.name} tone="success" size="sm" picture={preview()} />
-            <Avatar letter={props.bot.settings.name} tone="success" size="md" picture={preview()} />
-            <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={preview()} />
+            <Avatar letter={props.bot.settings.name} tone="success" size="sm" picture={preview()} color={botColor(props.bot)} />
+            <Avatar letter={props.bot.settings.name} tone="success" size="md" picture={preview()} color={botColor(props.bot)} />
+            <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={preview()} color={botColor(props.bot)} />
           </div>
           <span class="muted type-sm">as lists, tiles, header</span>
         </div>
@@ -205,4 +205,29 @@ function RunWatch(props: { runId: string; projectId: string; onDone: (c: Partial
     },
   );
   return null;
+}
+
+/** The bot's identity colour (OR-72, controls/project-tile.md): Auto (the stored automatic colour) or one of the
+ * eight, solid or hatched; saved at once with bot_identity_set. Agents call the same operation. */
+export function BotIdentityField(props: { bot: Bot; onSaved: (bot: Bot) => void }) {
+  const signal = useAlive();
+  const [error, setError] = createSignal('');
+  const save = async (color: string, pattern: string) => {
+    setError('');
+    try {
+      const rep = await writeOnce('bot_identity_set', { botId: props.bot.id, color, pattern }, () => {}, { signal });
+      if (!signal.aborted) props.onSaved(rep.bot);
+    } catch (e) { if (!signal.aborted) setError(e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <DetailSection title="Colour">
+      <Show when={error()}>{err => <ErrorBanner text={err()} />}</Show>
+      <div class="row" style={{ gap: 'var(--space-4)', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
+        <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={botPicture(props.bot)} color={botColor(props.bot)} />
+        <IdentityPicker code={props.bot.settings.name.slice(0, 1).toUpperCase()} auto={props.bot.autoColor ?? undefined}
+          color={props.bot.color} pattern={props.bot.pattern}
+          onColor={c => void save(c ?? '', props.bot.pattern ?? '')} onPattern={x => void save(props.bot.color ?? '', x ?? '')} />
+      </div>
+    </DetailSection>
+  );
 }

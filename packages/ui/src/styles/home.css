@@ -21,6 +21,10 @@
   .avatar.xl { width: var(--size-avatar-xl); height: var(--size-avatar-xl); font-size: calc(var(--size-avatar-xl) * .42); }
   .avatar { position: relative; }
   .avatar.pic { background: var(--surface-sunken); }
+  /* Identity colour (OR-72): the letter on the bot's colour; a picture keeps its own look inside a ring of it. */
+  .avatar.idc { --tone-fg: var(--id); }
+  .avatar.idc:not(.pic):not(.mark) { background: var(--id); color: var(--bg); }
+  .avatar.idc.pic { box-shadow: 0 0 0 2px var(--id); }
   .avatar.pic > :is(img, video) { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
   /* Activity (owner pick A): the avatar's light. Dimming and the glow animate opacity only (compositor). */
   .avatar[data-state=asleep] { opacity: .55; }

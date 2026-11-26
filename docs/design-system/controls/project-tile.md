@@ -14,8 +14,8 @@
 
 **Do.** Use the tile wherever a project is shown with its name or as a reference. **Don't.** Colour the tile by state, use identity colours for anything but a project's or a bot's identity, or draw a hand-made code chip.
 
-**Used in.** Projects list rows, the Projects Summary, the project head, Setup › About, the project reference (`EntityCode`, kind project). *Target:* bots take the same rule (their letter avatar in the bot's identity colour, a picture avatar with a ring in it, a project PM in its project's colour), and the rail's pinned projects, when the rail pins projects.
+**Used in.** Projects list rows, the Projects Summary, the project head, Setup › About, the project reference (`EntityCode`, kind project). Bots take the same rule through their [avatar](avatar.md): the letter on the bot's identity colour, a picture with a ring in it (`bot_list`/`bot_get` `autoColor`, `color`, `pattern`; `bot_identity_set`). *Target:* a project PM in its project's colour, and the rail's pinned projects, when the rail pins projects.
 
 ## Rules kept here
 
-* **OR-72 Identity colour is not state colour.** A project (and, *Target*, a bot) has an identity colour: one of eight muted hues, chosen in its settings, else derived from its code, with a solid or hatched bar. It sits only on the project's tile (and the bot's avatar), so a trained eye finds a project by colour. It never says anything about state: state keeps its own glyph and tone beside it. This is the one exception to D19's "no hue of its own" (owner, 27 Nov 2026).
+* **OR-72 Identity colour is not state colour.** A project and a bot have an identity colour: one of eight muted hues, chosen in its settings, else derived from its code, with a solid or hatched bar. It sits only on the project's tile (and the bot's avatar), so a trained eye finds a project by colour. It never says anything about state: state keeps its own glyph and tone beside it. This is the one exception to D19's "no hue of its own" (owner, 27 Nov 2026).

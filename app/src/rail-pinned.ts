@@ -11,7 +11,7 @@ import type { SessionRow } from '../../contracts/generated/ops.ts';
 import { DEFAULT_SESSION_SORT } from '../../packages/view-url/view-url.ts';
 import { prefs, savePrefs, scopeIds, prefsRead } from './prefs.ts';
 import { useOp } from './store.ts';
-import { botAvatarState, botPicture } from './bot-view.ts';
+import { botAvatarState, botPicture, botColor } from './bot-view.ts';
 
 /** The person-setting lists the zone reads: the two pin lists and its own order. */
 export const PIN_LISTS = { conversations: 'conversations', bots: 'library', order: 'nav' } as const;
@@ -47,7 +47,7 @@ export function useRailPinned(open: () => boolean, go: (to: string) => void) {
     const st = botAvatarState(b);
     return {
       key, name: b.name, word: botWords[st], state: st, asks: st === 'waiting', at: ms(b.lastRunAt),
-      mark: { letter: b.name, tone: 'success', picture: botPicture(b) },
+      mark: { letter: b.name, tone: 'success', picture: botPicture(b), color: botColor(b) },
       href: b.conversationId ? '/conversations/' + encodeURIComponent(b.conversationId) : '/library/bots/' + encodeURIComponent(b.code || b.id),
     };
   };

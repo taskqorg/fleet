@@ -78,3 +78,37 @@ func TestProjectAutoColourSkipsArchived(t *testing.T) {
 		used[c] = id
 	}
 }
+
+// Requirement: a bot gets its own automatic colour on creation, and bot_identity_set overrides it or returns to
+// automatic (OR-72). Risk: two bots share a colour, or a wrong value is stored.
+func TestBotIdentityColour(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	h := e.ownerHeaders()
+	ids := []string{"11111111-2222-4333-8444-555555555551", "11111111-2222-4333-8444-555555555552"}
+	for i, id := range ids {
+		e.opInto(t, "bot_settings_save", map[string]any{"botId": id, "projectId": "specq", "baseRevision": 0,
+			"settings": map[string]any{"name": fmt.Sprintf("Bot%d", i), "purpose": "ops", "profileId": "pm", "instructions": "x", "soul": "y"}}, h, &map[string]any{})
+	}
+	var list contract.BotListReply
+	e.opInto(t, "bot_list", map[string]any{}, h, &list)
+	auto := map[string]string{}
+	for _, b := range list.Bots {
+		auto[b.Id] = deref(b.AutoColor)
+	}
+	if auto[ids[0]] == "" || auto[ids[0]] == auto[ids[1]] {
+		t.Fatalf("automatic colours: %v", auto)
+	}
+	var set contract.BotIdentitySetReply
+	e.opInto(t, "bot_identity_set", map[string]any{"botId": ids[0], "color": "coral", "pattern": "hatch"}, h, &set)
+	if deref(set.Bot.Color) != "coral" || deref(set.Bot.Pattern) != "hatch" || deref(set.Bot.AutoColor) != auto[ids[0]] {
+		t.Fatalf("set: %+v", set.Bot)
+	}
+	if code, _ := e.callJSON(t, "POST", "/api/ops/bot_identity_set", map[string]any{"botId": ids[0], "color": "#ff0000", "pattern": ""}, h); code != 400 {
+		t.Fatalf("a colour outside the palette: %d", code)
+	}
+	var cleared contract.BotIdentitySetReply
+	e.opInto(t, "bot_identity_set", map[string]any{"botId": ids[0], "color": "", "pattern": ""}, h, &cleared)
+	if cleared.Bot.Color != nil || cleared.Bot.Pattern != nil {
+		t.Fatalf("back to automatic: %+v", cleared.Bot)
+	}
+}

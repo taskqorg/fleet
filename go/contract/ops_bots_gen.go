@@ -154,16 +154,42 @@ func (v *BotGetRequest) Validate() error {
 	return nil
 }
 
+type BotIdentitySetReply struct {
+	Bot BotRecord `json:"bot"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotIdentitySetReply) Validate() error {
+	if err := Check(&v.Bot, "bot"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type BotIdentitySetRequest struct {
+	BotId   string `json:"botId"`
+	Color   string `json:"color"`
+	Pattern string `json:"pattern"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotIdentitySetRequest) Validate() error {
+	return nil
+}
+
 type BotListItem struct {
 	ActiveRunId    *string    `json:"activeRunId"`
+	AutoColor      *string    `json:"autoColor,omitempty"`
 	Avatar         *BotAvatar `json:"avatar,omitempty"`
 	Code           *string    `json:"code,omitempty"`
+	Color          *string    `json:"color,omitempty"`
 	ConversationId *string    `json:"conversationId"`
 	Id             string     `json:"id"`
 	LastRunAt      *string    `json:"lastRunAt"`
 	LastRunState   *string    `json:"lastRunState"`
 	Name           string     `json:"name"`
 	NeedsYou       bool       `json:"needsYou"`
+	Pattern        *string    `json:"pattern,omitempty"`
 	Paused         bool       `json:"paused"`
 	ProjectId      string     `json:"projectId"`
 	Purpose        string     `json:"purpose"`
@@ -266,8 +292,10 @@ func (v *BotProblemDuty) Validate() error {
 
 type BotRecord struct {
 	ActiveRunId    *string     `json:"activeRunId"`
+	AutoColor      *string     `json:"autoColor,omitempty"`
 	Avatar         *BotAvatar  `json:"avatar,omitempty"`
 	Code           *string     `json:"code,omitempty"`
+	Color          *string     `json:"color,omitempty"`
 	ConversationId *string     `json:"conversationId"`
 	Director       string      `json:"director"`
 	Id             string      `json:"id"`
@@ -276,6 +304,7 @@ type BotRecord struct {
 	Memory         string      `json:"memory"`
 	MemoryRevision int64       `json:"memoryRevision"`
 	NeedsYou       bool        `json:"needsYou"`
+	Pattern        *string     `json:"pattern,omitempty"`
 	Paused         bool        `json:"paused"`
 	PausedAt       *string     `json:"pausedAt"`
 	ProjectId      string      `json:"projectId"`
@@ -719,6 +748,7 @@ func init() {
 		"bot_avatar_clear":  {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Clear a bot's avatar: the bot shows its letter again.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
 		"bot_avatar_set":    {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's avatar to a stored image or video artifact of the bot's project: any still or animated picture (PNG, JPEG, WebP, AVIF, GIF, APNG, SVG) or a muted loop (WebM, MP4). stillArtifactId is an optional still frame that lists show in place of an animated file; glow (#RRGGBB) colours the activity light. Make one with the avatar-make pipeline or upload it (artifact_upload_begin).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"glow\":{\"type\":\"string\"},\"stillArtifactId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"artifactId\"],\"type\":\"object\"}")},
 		"bot_get":           {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read the saved settings, scoped memory and runtime status of a bot by id.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_identity_set":  {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's identity colour and pattern (OR-72): color one of rose, violet, sky, teal, lime, sand, coral, slate, or '' for the automatic one; pattern solid, hatch or '' (solid).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"color\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\"}},\"required\":[\"botId\",\"color\",\"pattern\"],\"type\":\"object\"}")},
 		"bot_list":          {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "List bot settings and runtime status visible in granted projects, optionally for one project.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[],\"type\":\"object\"}")},
 		"bot_memory_save":   {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Save a new project-scoped bot memory revision.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"memory\":{\"type\":\"string\"}},\"required\":[\"botId\",\"baseRevision\",\"memory\"],\"type\":\"object\"}")},
 		"bot_pause":         {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Pause or resume a bot's future scheduled and Needs-you wakes.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"paused\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\",\"paused\"],\"type\":\"object\"}")},

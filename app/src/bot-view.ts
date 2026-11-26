@@ -74,6 +74,11 @@ export function botAvatarState(b: Pick<BotListItem, 'paused' | 'activeRunId' | '
   return b.lastRunState === 'failed' ? 'failed' : 'asleep';
 }
 
+/** A bot's identity colour (OR-72): the one set for it, else the stored automatic one. */
+export function botColor(b: Pick<BotListItem, 'color' | 'autoColor'>): string | undefined {
+  return b.color || b.autoColor || undefined;
+}
+
 /** A bot's picture for `Avatar`, read through /api/results; undefined while it shows its letter. */
 export function botPicture(b: Pick<BotListItem, 'avatar'>): AvatarPicture | undefined {
   const a = b.avatar;

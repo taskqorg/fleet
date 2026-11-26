@@ -74,6 +74,17 @@
       "agent": "tool",
       "description": "Clear a bot's avatar: the bot shows its letter again."
     },
+    "bot_identity_set": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404
+      ],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Set a bot's identity colour and pattern (OR-72): color one of rose, violet, sky, teal, lime, sand, coral, slate, or '' for the automatic one; pattern solid, hatch or '' (solid)."
+    },
     "bot_run": {
       "read": false,
       "errors": [
@@ -269,6 +280,18 @@
             "null"
           ],
           "$comment": "the bot's newest conversation without a subject: where Talk to it and person messages go"
+        },
+        "autoColor": {
+          "type": "string",
+          "$comment": "the stored automatic identity colour (OR-72); '' before one is stored"
+        },
+        "color": {
+          "type": "string",
+          "$comment": "the colour set for the bot, overriding autoColor; '' for automatic"
+        },
+        "pattern": {
+          "type": "string",
+          "$comment": "solid or hatch; '' for solid"
         }
       }
     },
@@ -368,6 +391,18 @@
             "null"
           ],
           "$comment": "the bot's newest conversation without a subject: where Talk to it and person messages go"
+        },
+        "autoColor": {
+          "type": "string",
+          "$comment": "the stored automatic identity colour (OR-72); '' before one is stored"
+        },
+        "color": {
+          "type": "string",
+          "$comment": "the colour set for the bot, overriding autoColor; '' for automatic"
+        },
+        "pattern": {
+          "type": "string",
+          "$comment": "solid or hatch; '' for solid"
         }
       }
     },
@@ -1215,6 +1250,38 @@
             "type": "string"
           },
           "$comment": "project ids whose problems this bot owns"
+        }
+      }
+    },
+    "BotIdentitySetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "color",
+        "pattern"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        }
+      }
+    },
+    "BotIdentitySetReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
         }
       }
     }
