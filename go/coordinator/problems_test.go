@@ -198,4 +198,38 @@ func TestProblemLifecycle(t *testing.T) {
 	if err := tx.QueryRow(ctx, "SELECT paused FROM bot WHERE id = 'hal'").Scan(&paused); err != nil || paused {
 		t.Fatalf("bot paused again on probation by the old burst (%v)", err)
 	}
+
+	// Whatever closes a problem withdraws the question it asked: a stale "HAL0 is not working" never stays in Needs you.
+	esc, err := problemRaiseID(q, "direct", Problem{Cause: "problem:asked", Text: "Needs the owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleet := "fleet"
+	qid, err := askQuestionAs(q, questionAsk{Kind: "operator_decision", Text: "Only you can do this", AskedBy: &fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.db().ProblemUpdate(ctx, db.ProblemUpdateParams{ID: esc, Phase: ptr("escalated"), QuestionID: &qid}); err != nil {
+		t.Fatal(err)
+	}
+	if err := problemClose(q, "problem:asked"); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := tx.QueryRow(ctx, "SELECT state::text FROM question WHERE id = $1", qid).Scan(&state); err != nil || state != "withdrawn" {
+		t.Fatalf("question of a closed problem: %s (%v), want withdrawn", state, err)
+	}
+}
+
+// Requirement: a machine identity's change never asks a holder to acknowledge it (OR-71); site-agents' row has no
+// Access common name, only a name that is not an e-mail (live 2026-11-26: Q-ALL-1437..1439 from hosts_update).
+func TestMachineIdentity(t *testing.T) {
+	for _, c := range []struct {
+		p    Person
+		want bool
+	}{{Person{Email: "site-agents"}, true}, {Person{Email: "x@y.z", AccessCommonName: "abc"}, true}, {Person{Email: "x@y.z"}, false}} {
+		if got := c.p.machine(); got != c.want {
+			t.Errorf("%+v: machine %v, want %v", c.p, got, c.want)
+		}
+	}
 }

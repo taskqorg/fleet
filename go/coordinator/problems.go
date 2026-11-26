@@ -154,11 +154,20 @@ func problemsCloseOf(q *Request, of db.ProblemsOpenOfParams) error {
 	return problemsCloseIDs(q, ids, "cleared")
 }
 
+// problemsCloseIDs closes problems; a question a closed problem asked (an escalation, the watchdog's only-you question)
+// is withdrawn with it, whatever closed it (live 2026-11-26: "HAL0 is not working" stayed in Needs you while HAL0 ran).
 func problemsCloseIDs(q *Request, ids []string, reason string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return q.db().ProblemsClose(q.ctx(), db.ProblemsCloseParams{Ids: ids, Reason: reason})
+	asked, err := q.db().ProblemQuestionIDs(q.ctx(), ids)
+	if err != nil {
+		return err
+	}
+	if err := q.db().ProblemsClose(q.ctx(), db.ProblemsCloseParams{Ids: ids, Reason: reason}); err != nil {
+		return err
+	}
+	return questionsWithdraw(q, asked)
 }
 
 // problemsSet: the full current set of the causes matching pattern (a regular expression), one pass of a source that
@@ -683,6 +692,8 @@ func problemsWatch(q *Request) error {
 		cause := fmt.Sprintf(dutyCause, b.ID)
 		reason := ""
 		switch {
+		case b.Paused:
+			// A paused bot is not down: its pause is the owner's, or the breaker's with its own problem.
 		case b.Failing > 0:
 			reason = "its triggers fail"
 		case b.OldestNew.Valid && now.Sub(b.OldestNew.Time) > dutyNewMinutes*time.Minute && (!b.LastRun.Valid || b.LastRun.Time.Before(b.OldestNew.Time)):
@@ -740,11 +751,6 @@ func dutyRecovered(q *Request, cause string) error {
 	}
 	if err != nil {
 		return err
-	}
-	if p.QuestionID != nil {
-		if err := questionsWithdraw(q, []string{*p.QuestionID}); err != nil {
-			return err
-		}
 	}
 	return problemsCloseIDs(q, []string{p.ID}, "cleared")
 }

@@ -226,7 +226,8 @@ func notifyHolder(q *Request, holder, what string) error {
 	}
 	// An agent's change (a machine identity such as Site agents, or an agent run) is in the journal; it never asks the
 	// holder to acknowledge it (OR-71: Needs you holds only what a person alone can give).
-	if q.agent != "" || q.person.AccessCommonName != "" {
+	// Live 2026-11-26: site-agents' row has no Access common name, so that test alone let its hosts_update ask the owner.
+	if q.agent != "" || q.person.machine() {
 		return nil
 	}
 	by := q.person.Email
