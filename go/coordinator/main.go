@@ -549,6 +549,11 @@ func (a *App) readBody(q *Request) error {
 		if err.Error() == "EOF" {
 			return nil
 		}
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			// Not "Invalid JSON": a valid body over the cap is a size the sender can fix (executor outbox_size.go).
+			return fail(413, "Body over 1 MiB")
+		}
 		return fail(400, "Invalid JSON body")
 	}
 	if t := strings.TrimSpace(string(raw)); t != "null" && !strings.HasPrefix(t, "{") { // every route takes an object
