@@ -113,15 +113,19 @@ export function Problems(p: { id?: string; onOpen: (path: string) => void }) {
   );
 }
 
-/** The first sentence of a problem's text: its title. */
+/** A problem's title: its first sentence without a generic lead ("Agents lack something: "), a link or the counts that
+ * follow, at most 90 characters. */
 function firstSentence(text: string): string {
-  const s = /^.*?[.:](\s|$)/.exec(text)?.[0] ?? text;
-  return s.replace(/[.:]\s*$/, '').trim() || text;
+  const body = text.replace(/^Agents lack something:\s*/, '');
+  const s = (/^.*?\.(\s|$)/.exec(body)?.[0] ?? body).replace(/\.\s*$/, '').trim() || body;
+  const short = s.replace(/,\s*\d[\d,]* failures? in .*$/, '').replace(/:?\s*https?:\/\/.*$/, '');
+  return short.length > 90 ? `${short.slice(0, 87)}…` : short;
 }
 
 /** What the problem is about, from its cause: its family and subject in plain words. */
 function subjectOf(p: ProblemRow): string {
-  const rest = p.text.slice(firstSentence(p.text).length).replace(/^[.:]\s*/, '');
+  const body = p.text.replace(/^Agents lack something:\s*/, '');
+  const rest = body.slice(firstSentence(p.text).replace(/…$/, '').length).replace(/^[.,:]\s*/, '');
   return rest.length > 160 ? `${rest.slice(0, 157)}…` : rest;
 }
 

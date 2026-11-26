@@ -641,11 +641,16 @@ func problemsWatch(q *Request) error {
 			continue
 		}
 		text := fmt.Sprintf("%s is not working: %s. %d problems wait for it. A PM can fix it or take the problems duty: tell one on Home.", b.Name, reason, b.Waiting)
-		id, err := problemRaiseID(q, "watchdog", Problem{Cause: cause, Text: text, RefreshText: true, Unowned: true})
-		if err != nil {
-			return err
+		// One down problem while it lasts: an open one only gets the current text, never one more occurrence a minute.
+		p, err := q.db().ProblemOpenGet(q.ctx(), cause)
+		if errors.Is(err, pgx.ErrNoRows) {
+			var id string
+			if id, err = problemRaiseID(q, "watchdog", Problem{Cause: cause, Text: text, Unowned: true}); err == nil {
+				p, err = q.db().ProblemGet(q.ctx(), id)
+			}
+		} else if err == nil {
+			err = q.db().ProblemPresent(q.ctx(), db.ProblemPresentParams{ID: p.ID, Text: &text})
 		}
-		p, err := q.db().ProblemGet(q.ctx(), id)
 		if err != nil {
 			return err
 		}
