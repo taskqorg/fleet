@@ -327,11 +327,13 @@ func problemFind(q *Request, id, cause string) (db.Problem, error) {
 }
 
 func problemOut(q *Request, p db.Problem) contract.ProblemRow {
-	return problemOutNamed(q, p, map[string]*string{})
+	return problemOutNamed(q, p, map[string]*string{}, true)
 }
 
-// problemOutNamed: problemOut with the owners' names read once per call (names: bot id to name, nil when unknown).
-func problemOutNamed(q *Request, p db.Problem, names map[string]*string) contract.ProblemRow {
+// problemOutNamed: problemOut with the owners' names read once per call (names: bot id to name, nil when unknown);
+// conversation: also look up the owner's problem conversation (one problem; a list leaves it out: the session read
+// under its row policies costs most of a second a row on prod).
+func problemOutNamed(q *Request, p db.Problem, names map[string]*string, conversation bool) contract.ProblemRow {
 	out := contract.ProblemRow{Id: p.ID, Code: problemCode(p.Seq), Cause: p.Cause, Source: p.Source, ProjectId: p.ProjectID,
 		Text: p.Text, Data: p.Data, State: contract.ProblemState(p.State), Phase: contract.ProblemPhase(p.Phase),
 		OwnerBotId: p.OwnerBotID, Note: p.Note, Work: p.Work, QuestionId: p.QuestionID, Count: int64(p.Count),
@@ -349,6 +351,9 @@ func problemOutNamed(q *Request, p db.Problem, names map[string]*string) contrac
 			names[*p.OwnerBotID] = name
 		}
 		out.OwnerName = name
+		if !conversation {
+			return out
+		}
 		if id, err := q.db().BotConversationBySubject(q.ctx(), db.BotConversationBySubjectParams{BotID: p.OwnerBotID, Subject: strPtr(problemSubject(p.ID))}); err == nil {
 			out.ConversationId = &id
 		}
@@ -397,7 +402,7 @@ func problemsList(q *Request, r *contract.ProblemsListRequest) (contract.Problem
 	}
 	names := map[string]*string{}
 	for _, p := range rows {
-		out.Problems = append(out.Problems, problemOutNamed(q, p, names))
+		out.Problems = append(out.Problems, problemOutNamed(q, p, names, false))
 	}
 	return out, nil
 }
