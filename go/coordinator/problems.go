@@ -30,12 +30,12 @@ const (
 // Problem is one current cause of a source.
 type Problem struct {
 	Cause, Text, Rule string
-	ProjectID         string // "" for a system cause
-	RefreshText       bool   // Refresh the text while this problem is open.
-	Unowned           bool   // No duty owns it (the watchdog's: the duty bot itself is down).
+	ProjectID         string     // "" for a system cause
+	RefreshText       bool       // Refresh the text while this problem is open.
+	Unowned           bool       // No duty owns it (the watchdog's: the duty bot itself is down).
 	Count             int64      // >0: the source's own tally of occurrences (agent gaps), not one per raise
 	SeenAt            *time.Time // with Count: the last occurrence
-	Data              any    // a struct whose JSON fields join the problem's data: hostId, storeId, executionId, exemplars, value
+	Data              any        // a struct whose JSON fields join the problem's data: hostId, storeId, executionId, exemplars, value
 }
 
 // problemData: the problem's data: cause, source and rule, then the problem's own fields over them.
