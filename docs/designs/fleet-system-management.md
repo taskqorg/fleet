@@ -120,28 +120,28 @@ An **anomaly** is any signal of a fault or a deviation: a telemetry rule finding
 
 | Cause | Source | Fires | Built |
 |---|---|---|---|
-| `host:<id>:{offline,trust,paused,holder}`, `subscription:<id>:{paused,not-taken,not-ready,refused}`, `placement:<host>:<harness>`, `budget:<id>:reached` | dispatch | queued work has no candidate | built as a question |
-| `update:<host>:<version>` | direct: refused or failed update in a poll | at once | built as a question |
-| `key:<fingerprint>:disabled` | direct: a provider refused a pooled key | at once | built as a question |
-| `pins:<kind>:<sha>`, `pins:cli:revert:<harness>@<version>` | pins pass | a pin proposal failed qualification or is reverted | built as a question |
+| `host:<id>:{offline,trust,paused,holder}`, `subscription:<id>:{paused,not-taken,not-ready,refused}`, `placement:<host>:<harness>`, `budget:<id>:reached` | dispatch | queued work has no candidate | built |
+| `update:<host>:<version>` | direct: refused or failed update in a poll | at once | built |
+| `key:<fingerprint>:disabled` | direct: a provider refused a pooled key | at once | built |
+| `pins:<kind>:<sha>`, `pins:cli:revert:<harness>@<version>` | pins pass | a pin proposal failed qualification or is reverted | built |
 | `problem:host:<id>:silent` | rule `absence-host` | no heartbeat 3 min (dispatch's `host:<id>:offline` is about placement, this is about the heartbeat) | stage 1 |
 | `problem:host:<id>:saturated` | rule `host-saturation` | see telemetry | stage 1 |
 | `problem:store:<id>:fill` | rule `store-fill` | free below `free_space_warning` | stage 1 |
 | `problem:execution:<id>:stuck` | rule `stuck` | no activity 30 min | stage 1 |
 | `problem:execution:<id>:orphans` | rule `orphan` | processes alive after end | stage 1 |
-| `problem:resource:failing` | rule `resource-failing` | a resource processor item paused at its maximum retry pause | built as a question |
-| `problem:work:stalled` | rule `work-stalled` | a work kit queue whose selection or failure writes keep failing, at the maximum pause | built as a question |
+| `problem:resource:failing` | rule `resource-failing` | a resource processor item paused at its maximum retry pause | built |
+| `problem:work:stalled` | rule `work-stalled` | a work kit queue whose selection or failure writes keep failing, at the maximum pause | built |
 | `problem:backup:missing` | direct: backup pass | no good dump for 48 h | stage 1 (M6) |
 | `problem:backup:drill-failed` | direct: drill | last drill failed | stage 1 (M6) |
-| `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | built as a question |
-| `problem:bugsink:<issue>` | direct: the Bugsink alert webhook ([error tracking](fleet-error-tracking.md#5-alerts-become-problems)) | a new Bugsink issue, or one that regressed or passed its mute; closes when Bugsink reports it resolved | built as a question |
-| `problem:delivery:<key>:<metric>` | delivery | a stage or job got slower than its baseline | built as a question |
-| `gap:<class>` | agent gaps | a class above the finding threshold | built as a question |
-| `grants:<connection>` | grants | a connection lacks catalogue tools its users call | built as a question |
-| `duty:<bot>:down` | watchdog | a duty bot stopped working (rule 6) | not built |
+| `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | built |
+| `problem:bugsink:<issue>` | direct: the Bugsink alert webhook ([error tracking](fleet-error-tracking.md#5-alerts-become-problems)) | a new Bugsink issue, or one that regressed or passed its mute; closes when Bugsink reports it resolved | built |
+| `problem:delivery:<key>:<metric>` | delivery | a stage or job got slower than its baseline | built |
+| `gap:<class>` | agent gaps | a class above the finding threshold | built |
+| `grants:<connection>` | grants | a connection lacks catalogue tools its users call | built |
+| `duty:<bot>:down` | watchdog | a duty bot stopped working (rule 6) | built |
 | `problem:<rule>:<subject>` | other rules | see telemetry | stage 1 and 2 |
 
-Not built: the `problem` table, its operations, duty, watchdog and System › Problems; every cause above still opens a question with Investigate and Dismiss.
+Not built: `stuck` after `problems.stuckWakes` quiet wakes (a problem turns stuck only after `problems.stuckHours` working); System › Problems reads at most 200 open problems.
 
 All numbers are settings with these defaults: `problems.cleanRuns` 2, `problems.reopenHours` 24, `problems.stuckWakes` 3, `problems.stuckHours` 48, `duty.downWakes` 3, `duty.newMinutes` 30, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false.
 
