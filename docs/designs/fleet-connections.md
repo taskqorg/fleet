@@ -163,6 +163,26 @@ One read shows every subscription login, model API key and service key Fleet has
 *   **`account_delete {accountId, preview?}`** (owner): deletes a subscription nothing names (no host binding, inspection, check or run); otherwise 409 with the reason. An audit row `deleted-account:<id>` stays.
 *   **Providers** added for the owner's keys: `openai` (`list_models`, `create_response`, `generate_image`; a key bills its organization, not a ChatGPT subscription) and `tripo` (`balance`, `task_create`, `task_get`); `meshy` gains `balance`. Credits are read where the provider answers them for the key (Meshy, Tripo); otherwise the owner's limit counts calls.
 
+### 12. Grants drift
+
+A connection gets the provider's catalogue tools when it is created; a tool added to the catalogue later is not granted
+to connections that already exist. On 2026-11-26 the github connection lacked six tools the coordinator reads, and
+those reads went to the keyless public GitHub API, which answered 403 for hours. The grants drift check compares
+grants with uses (`go/coordinator/grants.go`).
+
+*   **Uses.** A tool is needed on a connection when coordinator code calls it there (`gatewayUses`: the code path,
+    the provider and the connection that serves it; `TestGatewayUsesListed` keeps the table in step with the code),
+    when an agent profile lists the connection (every catalogue tool; `project-access` counts for each project access
+    connection), or when a coordinator call on it was refused with `unknown-tool` (the calling file and line).
+*   **`connections_drift`** (architect, agent tool): per connection the granted tools, the catalogue, the needed tools
+    with their users, the missing ones, stale grants the catalogue no longer has, the key policy and pool (active and
+    all keys), and the last audited settings change (field, actor, time, the operation that writes it).
+*   **Problem.** A pass every 2 minutes (`FLEET_GRANTS_TICK_MS`) asks one problem per connection with a missing tool
+    (cause `problem:grant:<connection>`), naming each tool, its users and the fix `connections_set_tools`. It closes
+    after two passes without the gap.
+*   **No silent fallback.** A GitHub read the gateway refuses with `unknown-tool` fails with that cause instead of
+    reading the public API; a refused key (expired, wrong lifetime) still falls back to the public repository.
+
 ## Failure and recovery
 
 - Gateway or PDS18 unavailable: calls fail; agent execution may continue without them. A separate gateway avoids coupling calls to coordinator restarts.

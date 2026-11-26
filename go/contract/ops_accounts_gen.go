@@ -1303,6 +1303,27 @@ func (v *ConnectionsDeleteRequest) Validate() error {
 	return nil
 }
 
+type ConnectionsDriftReply struct {
+	CheckedAt   float64      `json:"checkedAt"`
+	Connections []GrantDrift `json:"connections"`
+	Missing     int64        `json:"missing"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsDriftReply) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	for i := range v.Connections {
+		if err := Check(&v.Connections[i], "connections"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ConnectionsDriftRequest = map[string]json.RawMessage
+
 // ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
 
@@ -1628,6 +1649,102 @@ func (v *ConnectionsTokenRevokeRequest) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsTokenRevokeRequest) Validate() error {
+	return nil
+}
+
+// GrantChange: The latest audited change of a connection's settings.
+type GrantChange struct {
+	Actor      string  `json:"actor"`
+	At         float64 `json:"at"`
+	Field      string  `json:"field"`
+	OnBehalfOf *string `json:"onBehalfOf,omitempty"`
+	Op         string  `json:"op"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GrantChange) Validate() error {
+	return nil
+}
+
+// GrantDrift: One connection in connections_drift.
+type GrantDrift struct {
+	Catalogue  []string          `json:"catalogue"`
+	Granted    []string          `json:"granted"`
+	Holder     string            `json:"holder"`
+	Intake     string            `json:"intake"`
+	KeyPolicy  *GatewayKeyPolicy `json:"keyPolicy,omitempty"`
+	Keys       GrantKeys         `json:"keys"`
+	LastChange *GrantChange      `json:"lastChange,omitempty"`
+	Missing    []GrantUse        `json:"missing"`
+	Name       string            `json:"name"`
+	Needed     []GrantUse        `json:"needed"`
+	Provider   string            `json:"provider"`
+	Stale      []string          `json:"stale"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GrantDrift) Validate() error {
+	if v.Catalogue == nil {
+		return Missing("catalogue")
+	}
+	if v.Granted == nil {
+		return Missing("granted")
+	}
+	if v.KeyPolicy != nil {
+		if err := Check(v.KeyPolicy, "keyPolicy"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Keys, "keys"); err != nil {
+		return err
+	}
+	if v.LastChange != nil {
+		if err := Check(v.LastChange, "lastChange"); err != nil {
+			return err
+		}
+	}
+	if v.Missing == nil {
+		return Missing("missing")
+	}
+	for i := range v.Missing {
+		if err := Check(&v.Missing[i], "missing"); err != nil {
+			return err
+		}
+	}
+	if v.Needed == nil {
+		return Missing("needed")
+	}
+	for i := range v.Needed {
+		if err := Check(&v.Needed[i], "needed"); err != nil {
+			return err
+		}
+	}
+	if v.Stale == nil {
+		return Missing("stale")
+	}
+	return nil
+}
+
+type GrantKeys struct {
+	Active int64 `json:"active"`
+	Total  int64 `json:"total"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GrantKeys) Validate() error {
+	return nil
+}
+
+type GrantUse struct {
+	Tool  string   `json:"tool"`
+	Users []string `json:"users"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GrantUse) Validate() error {
+	if v.Users == nil {
+		return Missing("users")
+	}
 	return nil
 }
 
@@ -2312,6 +2429,7 @@ func init() {
 		"budgets_list":                {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Budgets with their current spend", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_create":          {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "holder: the owner may create a key for another person.", InputSchema: json.RawMessage("{\"$comment\":\"holder: the owner may create a key for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"}},\"required\":[\"name\",\"provider\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_delete":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person (an agent acts with its director's rights). Deletes a connection whose keys are all retired: the connection, its key rows, history and value directory; run tokens drop its name; open key requests for it are withdrawn.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person (not agents). Deletes a connection whose keys are all retired: the connection, its key rows, history and value directory; run tokens drop its name; open key requests for it are withdrawn.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\"],\"type\":\"object\"}")},
+		"connections_drift":           {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Grants drift: per connection the granted tools, the catalogue tools Fleet uses on it and who uses each (coordinator code path or agent profile), missing and stale grants, key policy and pool, and the last settings change. A missing tool is fixed with connections_set_tools.", Changes: []string{"api-connection", "connection-key", "setting-change", "definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_key_add":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"questionId\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"connection\",\"value\"],\"type\":\"object\"}")},
 		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline", InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_key_state":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "state active, draining or retired.", InputSchema: json.RawMessage("{\"$comment\":\"state active, draining or retired.\",\"additionalProperties\":true,\"properties\":{\"keyId\":{\"type\":\"string\"},\"state\":{\"$comment\":\"A key state a holder sets (disabled is Fleet's own).\",\"enum\":[\"active\",\"draining\",\"retired\"],\"type\":\"string\"}},\"required\":[\"keyId\",\"state\"],\"type\":\"object\"}")},

@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -169,6 +170,11 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 		return body, false, err
 	}
 	body, err = githubOnce(cacheKey, ttl, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
+	if errors.Is(err, errNotGranted) {
+		// A grant gap is the connection's settings, not a refused key: the keyless API would hide it behind its 60
+		// reads an hour (403 for hours, 2026-11-26). The call is recorded and problem problem:grant:<connection> names the fix.
+		return nil, true, err
+	}
 	if err != nil && isPublic && ctx.Err() == nil {
 		// A refused key (expired, wrong lifetime for the org) must not blank the public repository.
 		log.Printf("github %s keyed: %v; read public", tool, err)
@@ -388,6 +394,9 @@ func githubGateway(ctx context.Context, a *App, connection, project, tool string
 	}
 	defer release()
 	line := gatewayCall(ctx, token, connection, tool, args, gatewayProviders["github"].Tools[tool].Idempotent)
+	if line.Outcome != contract.CallOutcomeOk && deref(line.ErrorCode) == "unknown-tool" {
+		return nil, fmt.Errorf("github %s: %w: connection %s lacks it (connections_set_tools)", tool, errNotGranted, connection)
+	}
 	if line.Outcome != contract.CallOutcomeOk {
 		return nil, fmt.Errorf("github %s: %s %d", tool, deref(line.ErrorCode), line.Status)
 	}
