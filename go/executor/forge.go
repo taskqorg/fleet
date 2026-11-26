@@ -208,7 +208,9 @@ func forgeCredential(ctx forgeContext, provider, host string) string {
 		if glabDir == "" {
 			glabDir = resolveGlabStore(ctx.Store)
 		}
-		credential = exec.Command("glab", "config", "get", "token", "-h", host)
+		// --host, not -h: glab 1.112 reads -h as --help and prints the usage on stdout with exit 0, which became a token
+		// that the GitLab API refused (2026-11-26: no host reported GitLab publishing, a DAM turn waited unplaced).
+		credential = exec.Command("glab", "config", "get", "token", "--host", host)
 		credential.Env = []string{
 			"PATH=" + os.Getenv("PATH"),
 			"HOME=" + ctx.CredentialHome,
@@ -224,7 +226,11 @@ func forgeCredential(ctx forgeContext, provider, host string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(token))
+	t := strings.TrimSpace(string(token))
+	if strings.ContainsAny(t, " \t\r\n") {
+		return "" // not a token (a usage text or a warning): the CLI falls back to its own config
+	}
+	return t
 }
 
 var ciLogsTool = M{
@@ -1282,18 +1288,18 @@ func verifyCodeReviewEvidence(ctx forgeContext, ref contract.RepoRef, adapter pu
 	defer db.Close()
 	key := ctx.CommandId + ":forge-review:" + newID()
 	req := contract.ForgeReviewRequest{
-		HostId:       ctx.HostId,
-		CommandId:    ctx.CommandId,
-		ExecutionId:  ctx.ExecutionId,
-		AgentToolKey: key,
-		Repo:         ref.Slug,
-		Branch:       ctx.Branch,
-		HeadSha:      headSha,
-		ArtifactId:   artifactID,
-		Description:  desc,
-		GithubActor:  providerActor,
-		Provider:     &ref.Provider,
-		Host:         &ref.Host,
+		HostId:        ctx.HostId,
+		CommandId:     ctx.CommandId,
+		ExecutionId:   ctx.ExecutionId,
+		AgentToolKey:  key,
+		Repo:          ref.Slug,
+		Branch:        ctx.Branch,
+		HeadSha:       headSha,
+		ArtifactId:    artifactID,
+		Description:   desc,
+		GithubActor:   providerActor,
+		Provider:      &ref.Provider,
+		Host:          &ref.Host,
 		ProviderActor: &providerActor,
 	}
 	if reqID != "" {
