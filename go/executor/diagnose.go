@@ -190,7 +190,7 @@ func diagnosis(db *sql.DB) *contract.HostDiagnosis {
 		}
 		return nil
 	}
-	if rs, err := db.Query("SELECT route,body,status,reason,failed_at FROM outbox_failed ORDER BY rowid DESC LIMIT 20"); err == nil {
+	if rs, err := db.Query("SELECT route,body,status,reason,failed_at FROM outbox_failed WHERE failed_at > ? ORDER BY rowid DESC LIMIT 20", nowMs()-24*time.Hour.Milliseconds()); err == nil {
 		for rs.Next() {
 			var f contract.DiagnosisOutboxFailed
 			var body string
