@@ -26,7 +26,7 @@ export function HostDiagnosis(p: { hostId: string; clockOffsetMs: number }) {
     <DetailSection title="Diagnosis" action={<Show when={d()!.reportedAt}>{t => <span class="muted">report <AgeChip t={t()} clockOffsetMs={p.clockOffsetMs} /></span>}</Show>}>
       <p class="host-versions" data-ui="host-diagnosis-facts">
         <Show when={d()!.lastSeenAt}>{t => <span class="hv"><Icon name={d()!.online ? 'circle-check' : 'circle-slash'} /> polled <AgeChip t={t()} clockOffsetMs={p.clockOffsetMs} /></span>}</Show>
-        <Show when={transfers().length}><span class="hv t-attention"><Icon name="circle-alert" /> {transfers().length} {transfers().length === 1 ? 'upload' : 'uploads'} refused today</span></Show>
+        <Show when={transfers().length}><span class="hv t-attention"><Icon name="circle-alert" /> {transfers().length} {transfers().length === 1 ? 'upload' : 'uploads'} failed today</span></Show>
         <Show when={waiting().length}><span class="hv t-attention"><Icon name="hourglass" /> {waiting().length} {waiting().length === 1 ? 'run waits' : 'runs wait'}, skipped here</span></Show>
         <Show when={queued() > 0}><span class="hv">{queued()} rows to send</span></Show>
         <Show when={commands().length}><span class="hv">{commands().length} {commands().length === 1 ? 'command' : 'commands'} not confirmed</span></Show>

@@ -132,8 +132,8 @@ func diagnoseHost(q *Request, host string, wait time.Duration, ask bool) (contra
 		var cands []candidate
 		json.Unmarshal(w.Candidates, &cands)
 		for _, c := range cands {
-			if c.Host == b.Host {
-				reason := firstString(c.Skipped, "not skipped: another candidate ranked first")
+			if c.Host == b.Host && c.Skipped != "" { // an unskipped candidate here waits its turn: no reason to show
+				reason := c.Skipped
 				x.SkippedHere = &reason
 				break
 			}
