@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1062,30 +1063,88 @@ func artifactRenew(q *Request, b *contract.ArtifactLeaseRequest) (any, error) {
 	if err := allowedHost(ctx, a, x, s, b.HostId); err != nil {
 		return nil, err
 	}
-	if err := reverify(ctx, a, x, s, c, b.HostId); err != nil {
+	state, err := reverify(ctx, a, x, s, c, b.HostId)
+	if err != nil {
 		return nil, err
+	}
+	if state != c.State {
+		return contract.ArtifactStateReply{State: state}, nil
 	}
 	return contract.ArtifactStateReply{State: c.State}, lease(ctx, a, x.ID, s.ID, false, true)
 }
 
-// reverify queues the store host's verification again for a committed upload that no open verification covers. The
-// verification carries a presigned GET, so one that waited past its signature (a drain held it) or failed on the host
-// left the copy pending and the uploader renewing forever (2026-11-26: 12 windows uploads to pds18 after the store's
-// verify jobs failed with "Date is too old"). Each renew while none is open queues one with a fresh URL.
-func reverify(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, uploader string) error {
+// maxVerifyFailures bounds reverify: after this many failed verifications of one staging object the copy is rejected.
+const maxVerifyFailures = 5
+
+// reverify queues the store host's verification again for a committed upload that no open verification covers, and
+// answers the state the uploader acts on. The verification carries a presigned GET, so one that waited past its
+// signature (a drain held it) or failed on the host left the copy pending and the uploader renewing forever (2026-11-26:
+// 12 windows uploads to pds18 after the store's verify jobs failed with "Date is too old"). Each renew while none is open
+// queues one with a fresh URL, after a HEAD of the staging object: a staging object gone with its content key present
+// was promoted already (a verified report whose database write failed, 2026-11-26) and the copy is verified now
+// ("stored"); gone without it, the uploader sends the file again ("missing" takes its recovery path, whose reserve opens
+// a new upload session). After maxVerifyFailures failed verifications within the last hour the copy is rejected.
+func reverify(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, uploader string) (string, error) {
 	if c.State != "pending" || c.UploadID != nil || c.StagingKey == nil || uploader == s.HostID {
-		return nil
+		return c.State, nil
 	}
-	open, err := connDB(ctx, a).ArtVerifyQueued(ctx, db.ArtVerifyQueuedParams{HostID: &s.HostID, ArtifactID: x.ID, StoreID: s.ID})
-	if err != nil || open {
-		return err
+	h, err := connDB(ctx, a).ArtVerifyHistory(ctx, db.ArtVerifyHistoryParams{HostID: &s.HostID, ArtifactID: x.ID, StoreID: s.ID})
+	if err != nil || h.Open {
+		return c.State, err
+	}
+	// A store that cannot be read now is checked on the next renew; the verification is queued as before and the lease
+	// holds, so an outage of the store does not fail the upload.
+	if t, err := tunnel(s); err == nil {
+		if size, err := t.Head(s.Bucket, *c.StagingKey); err == nil && size < 0 {
+			done, err := promoted(ctx, a, x, s, t)
+			if err == nil && done {
+				return "stored", nil
+			}
+			if err == nil {
+				return "missing", nil
+			}
+		}
+	}
+	if h.Failed >= maxVerifyFailures {
+		return "failed", reject(ctx, a, x, s, *c.StagingKey, fmt.Sprintf("the store host failed to verify the upload %d times", h.Failed))
 	}
 	v, err := s3For(s, s.LocalEndpoint != nil)
 	if err != nil {
-		return err
+		return c.State, err
 	}
 	verify := contract.ArtifactVerify{ArtifactId: x.ID, StoreId: s.ID, Url: v.Presign("GET", s.Bucket, *c.StagingKey, urlSeconds, nil)}
-	return queueCommand(ctx, a, s.HostID, "artifact-verify", verify.ArtifactId, verify)
+	return c.State, queueCommand(ctx, a, s.HostID, "artifact-verify", verify.ArtifactId, verify)
+}
+
+// promoted: when the artifact's content key holds an object of its size (content keys are written only from verified
+// content), the copy is verified now; false when it does not.
+func promoted(ctx context.Context, a *App, x *Artifact, s *StoreRow, t *S3) (bool, error) {
+	n, err := t.Head(s.Bucket, keyOf(x))
+	if err != nil || n != x.Size {
+		return false, err
+	}
+	if err := copyVerified(ctx, a, x, s); err != nil {
+		return false, err
+	}
+	return true, settleCopy(ctx, a, x)
+}
+
+// copyVerified: the copy is verified and the artifact stored.
+func copyVerified(ctx context.Context, a *App, x *Artifact, s *StoreRow) error {
+	return artWrite(ctx, a, func(d *db.Queries) error {
+		if err := artifactCopyTransition(ctx, d, x.ID, s.ID, artifactCopyEvent{To: "verified"}); err != nil {
+			return err
+		}
+		return d.ArtStoredNow(ctx, x.ID)
+	})
+}
+
+// settleCopy: the artifact's execution re-reads its artifact wait.
+func settleCopy(ctx context.Context, a *App, x *Artifact) error {
+	if x.ExecutionID == nil {
+		return nil
+	}
+	return settleWaiting(ctx, a, *x.ExecutionID)
 }
 
 // reject: the staging object goes, the copy fails with a retry backoff (1 minute doubling, up to the retry window), the
@@ -1220,22 +1279,16 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 		}
 		return nil, err
 	}
+	// The copy is verified before its staging object goes: a failed write keeps the staging object for the next
+	// verification (2026-11-26: deleted first, then the write timed out, and every later verify got NoSuchKey).
+	if err := copyVerified(ctx, a, x, s); err != nil {
+		return nil, err
+	}
 	if err := t.Delete(s.Bucket, staging); err != nil {
-		return nil, err
+		slog.Warn("artifact staging object kept after verification", "artifact", x.ID, "store", s.ID, "key", staging, "err", err)
 	}
-	err = artWrite(ctx, a, func(d *db.Queries) error {
-		if err := artifactCopyTransition(ctx, d, x.ID, s.ID, artifactCopyEvent{To: "verified"}); err != nil {
-			return err
-		}
-		return d.ArtStoredNow(ctx, x.ID)
-	})
-	if err != nil {
+	if err := settleCopy(ctx, a, x); err != nil {
 		return nil, err
-	}
-	if x.ExecutionID != nil {
-		if err := settleWaiting(ctx, a, *x.ExecutionID); err != nil {
-			return nil, err
-		}
 	}
 	return contract.ArtifactStateReply{State: "stored"}, nil
 }
@@ -1651,9 +1704,13 @@ func expireLeases(ctx context.Context, a *App) error {
 		if err != nil {
 			continue
 		}
-		if up := deref(c.UploadID); up != "" && s.Bucket != "" && s.State != "unreachable" {
+		if s.Bucket != "" && s.State != "unreachable" {
 			if t, err := tunnel(s); err == nil {
-				t.AbortMultipartUpload(s.Bucket, deref(c.StagingKey), up)
+				if up := deref(c.UploadID); up != "" {
+					t.AbortMultipartUpload(s.Bucket, deref(c.StagingKey), up)
+				} else if done, err := promoted(ctx, a, x, s, t); err == nil && done {
+					continue // a committed upload whose content was promoted: verified, not failed
+				}
 			}
 		}
 		if err := reject(ctx, a, x, s, deref(c.StagingKey), "upload lease expired"); err != nil {

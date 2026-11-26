@@ -91,6 +91,13 @@ UPDATE artifact_copy SET upload_id=CASE WHEN sqlc.arg(clear_upload)::boolean THE
  lease_expires_at=CASE WHEN sqlc.arg(keep_later)::boolean THEN greatest(lease_expires_at,now()+ sqlc.arg(lease_ms)::bigint * interval '1 millisecond') ELSE now()+ sqlc.arg(lease_ms)::bigint * interval '1 millisecond' END
 WHERE artifact_id= @artifact_id AND store_id= @store_id;
 
+-- name: ArtVerifyHistory :one
+-- The store host's verifications of one copy: one still open, and how many failed within the last hour (the lease).
+SELECT coalesce(bool_or(status IN ('pending','accepted','started')), false)::boolean AS open,
+ count(*) FILTER (WHERE status='failed' AND updated_at > now() - interval '1 hour')::int AS failed
+FROM command WHERE kind='artifact-verify' AND host_id= @host_id
+ AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text;
+
 -- name: ArtVerifyQueued :one
 SELECT EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= @host_id AND status IN ('pending','accepted','started')
  AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text);

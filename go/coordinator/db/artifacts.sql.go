@@ -1347,6 +1347,32 @@ func (q *Queries) ArtVerifiedContent(ctx context.Context, arg ArtVerifiedContent
 	return exists, err
 }
 
+const artVerifyHistory = `-- name: ArtVerifyHistory :one
+SELECT coalesce(bool_or(status IN ('pending','accepted','started')), false)::boolean AS open,
+ count(*) FILTER (WHERE status='failed' AND updated_at > now() - interval '1 hour')::int AS failed
+FROM command WHERE kind='artifact-verify' AND host_id= $1
+ AND payload->'payload'->>'artifactId'= $2::text AND payload->'payload'->>'storeId'= $3::text
+`
+
+type ArtVerifyHistoryParams struct {
+	HostID     *string
+	ArtifactID string
+	StoreID    string
+}
+
+type ArtVerifyHistoryRow struct {
+	Open   bool
+	Failed int32
+}
+
+// The store host's verifications of one copy: one still open, and how many failed within the last hour (the lease).
+func (q *Queries) ArtVerifyHistory(ctx context.Context, arg ArtVerifyHistoryParams) (ArtVerifyHistoryRow, error) {
+	row := q.db.QueryRow(ctx, artVerifyHistory, arg.HostID, arg.ArtifactID, arg.StoreID)
+	var i ArtVerifyHistoryRow
+	err := row.Scan(&i.Open, &i.Failed)
+	return i, err
+}
+
 const artVerifyQueued = `-- name: ArtVerifyQueued :one
 SELECT EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= $1 AND status IN ('pending','accepted','started')
  AND payload->'payload'->>'artifactId'= $2::text AND payload->'payload'->>'storeId'= $3::text)
