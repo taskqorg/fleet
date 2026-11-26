@@ -328,7 +328,9 @@ Go rules:
 
 ## PDS18 database backup
 
-Fleet takes a private PostgreSQL custom-format dump nightly at 03:30 UTC under `/backup/fleet/daily/`. It keeps seven daily and four Sunday dumps and qualifies the first successful run by restoring its archive into an isolated PostgreSQL instance. The coordinator opens `problem:backup:missing` when it finds no completed nightly dump or the newest is older than 26 hours. An unreadable backup directory is reported as unknown. See [system management](docs/designs/fleet-system-management.md#backups).
+Fleet takes a private PostgreSQL custom-format dump nightly at 03:30 UTC under `/backup/fleet/daily/`. It keeps seven daily and four Sunday dumps and qualifies the first successful run by restoring its archive into an isolated PostgreSQL instance.
+
+The coordinator opens `problem:backup:missing` when it finds no completed nightly dump or the newest is older than 26 hours. An unreadable backup directory is reported as unknown. See [system management](docs/designs/fleet-system-management.md#backups).
 
 ## Verification
 
