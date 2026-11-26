@@ -6,7 +6,7 @@ import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
   Ago, Button, DataTable, DetailSection, Empty, ErrorBanner, Fact, Icon, LiveRow, OpenQuestion, PipelineOutline, RowFacts,
-  Skeleton, StateBadge, TabBar, TableRow, day, duration, fileLabel, life, score, states, statesOf, type IconName, type Tone,
+  Skeleton, StateBadge, TabBar, TableRow, day, duration, fileLabel, score, states, statesOf, type IconName, type StateOf, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import type { Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -130,16 +130,9 @@ export function ProjectOverview(props: { projectId: string }) {
           </Show>
           <Show when={v().inWork.length > 0}>
             <DetailSection title="In work" count={v().inWorkTotal} href={facet('tasks')} onOpen={() => go(facet('tasks'))}>
-              <ul class="live-list">
-                <For each={v().inWork}>{t => (
-                  <LiveRow kind="task" state={life('task', t.pauseReason === 'held' ? 'held' : t.state)} title={t.title} code={t.code ?? undefined}
-                    onOpen={() => go(`/tasks/${enc(t.code ?? t.id)}?project=${enc(props.projectId)}`)}
-                    facts={<RowFacts>
-                      <Show when={t.agent ?? t.lastAgent}>{a => <span class="lr-fact muted mono">{a()}</span>}</Show>
-                      <Show when={t.stateAt ?? t.updatedAt}>{at => <Ago t={Date.parse(at())} />}</Show>
-                    </RowFacts>} />
-                )}</For>
-              </ul>
+              <div class="pw-list">
+                <For each={v().inWork}>{t => <TaskLine t={t} projectId={props.projectId} />}</For>
+              </div>
             </DetailSection>
           </Show>
           <Show when={v().pipelines.length > 0}>
@@ -167,12 +160,9 @@ export function ProjectOverview(props: { projectId: string }) {
           </Show>
           <Show when={v().conversations.length > 0}>
             <DetailSection title="Conversations" count={v().conversationsTotal} href={talkHref()} onOpen={() => go(talkHref())}>
-              <ul class="live-list">
-                <For each={v().conversations}>{s => (
-                  <LiveRow kind="event" state={life('session', s.state)} text={s.title ?? s.code ?? 'Untitled conversation'}
-                    at={s.activityAt ? Date.parse(s.activityAt) : (s.createdAt ?? NaN)} onOpen={() => go('/conversations/' + enc(s.code ?? s.id))} />
-                )}</For>
-              </ul>
+              <div class="pw-list">
+                <For each={v().conversations}>{c => <ConversationLine s={c} />}</For>
+              </div>
             </DetailSection>
           </Show>
           <DetailSection title="Delivery" count={v().delivery.length || undefined} href={facet('delivery')} onOpen={() => go(facet('delivery'))}>
@@ -191,6 +181,38 @@ export function ProjectOverview(props: { projectId: string }) {
         </>
       )}</Loaded>
     </article>
+  );
+}
+
+/** A task in work (board P-A1): its state icon, title and code, then the state word with who works on it, and the age. */
+function TaskLine(props: { t: ProjectView['inWork'][number]; projectId: string }) {
+  const state = (): StateOf<'task'> => (props.t.pauseReason === 'held' ? 'held' : props.t.state in states.task ? props.t.state as StateOf<'task'> : 'queued');
+  const who = () => props.t.agent ?? props.t.lastAgent;
+  return (
+    <Go to={`/tasks/${enc(props.t.code ?? props.t.id)}?project=${enc(props.projectId)}`} cls="pw-line">
+      <StateBadge family="task" state={state()} compact />
+      <span class="pw-line-m"><span>{props.t.title}</span><Show when={props.t.code}><span class="muted mono">{props.t.code}</span></Show></span>
+      <RowFacts>
+        <span class="muted mono">{[states.task[state()].label.toLowerCase(), who()].filter(Boolean).join(' · ')}</span>
+        <Show when={props.t.stateAt ?? props.t.updatedAt}>{at => <Ago t={Date.parse(at())} />}</Show>
+      </RowFacts>
+    </Go>
+  );
+}
+
+/** A conversation of the project (board P-A1): state icon, title, the state word and the age of its last activity. */
+function ConversationLine(props: { s: ProjectView['conversations'][number] }) {
+  const state = (): StateOf<'session'> => (props.s.state in states.session ? props.s.state as StateOf<'session'> : 'idle');
+  const at = () => (props.s.activityAt ? Date.parse(props.s.activityAt) : props.s.createdAt ?? NaN);
+  return (
+    <Go to={'/conversations/' + enc(props.s.code ?? props.s.id)} cls="pw-line">
+      <StateBadge family="session" state={state()} compact />
+      <span class="pw-line-m"><span>{props.s.title ?? props.s.code ?? 'Untitled conversation'}</span></span>
+      <RowFacts>
+        <span class="muted mono">{states.session[state()].label.toLowerCase()}</span>
+        <Show when={!Number.isNaN(at())}><Ago t={at()} /></Show>
+      </RowFacts>
+    </Go>
   );
 }
 

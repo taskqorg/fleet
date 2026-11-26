@@ -322,7 +322,6 @@ function ProjectWork(props: {
   return (
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
-        crumb={`project · ${props.p?.code || props.id}`}
         title={title()}
         onClose={props.onClose}
         actions={<Button label="Talk to PM" icon="messages-square" onClick={talk} />}
