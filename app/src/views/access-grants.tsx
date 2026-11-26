@@ -58,13 +58,13 @@ export function HostKey(props: { line?: string; full?: boolean }) {
   </Show>;
 }
 
-const KIND: Record<AccessGrant['kind'], string> = { mysql: 'MySQL', files: 'Files' };
+const KIND: Record<AccessGrant['kind'], string> = { mysql: 'MySQL', postgres: 'PostgreSQL', files: 'Files' };
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
 /** A grant's resource: kind, what it covers (a database's every table, a tables count, a paths count) and its server. */
 export function grantResource(g: AccessGrant): string {
   const t = g.scope.tables ?? [], p = g.scope.paths ?? [];
-  const what = g.kind === 'mysql' ? (t.length === 1 && t[0] === '*' ? g.scope.database ?? 'every table' : plural(t.length, 'table')) : plural(p.length, 'path');
+  const what = g.kind !== 'files' ? (t.length === 1 && t[0] === '*' ? g.scope.database ?? 'every table' : plural(t.length, 'table')) : plural(p.length, 'path');
   return `${KIND[g.kind]} · ${what} · ${g.server}`;
 }
 
@@ -104,7 +104,8 @@ function GrantDetail(props: { g: AccessGrant; onChanged: () => void }) {
   createEffect(() => [after(), g().probe?.at ?? 0] as const, ([before, at]) => { if (before !== null && at > before) { clearTimeout(timer); settle(); } });
   const scope = createMemo(() => {
     const s = g().scope;
-    return g().kind === 'mysql' ? `${s.database ?? '—'}: ${(s.tables ?? []).join(', ')}` : (s.paths ?? []).join(', ');
+    const except = s.exclude?.length ? ` except ${s.exclude.join(', ')}` : '';
+    return g().kind !== 'files' ? `${s.database ?? '—'}: ${(s.tables ?? []).join(', ')}${except}` : (s.paths ?? []).join(', ');
   });
   // Check probes a ready grant again; on a failed one the server provisions it again (access_grant_check).
   const canCheck = () => g().state === 'ready' || g().state === 'failed';

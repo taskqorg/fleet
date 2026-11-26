@@ -374,12 +374,13 @@ func (v *AccessItem) Validate() error {
 type AccessKind string
 
 const (
-	AccessKindMysql AccessKind = "mysql"
-	AccessKindFiles AccessKind = "files"
+	AccessKindMysql    AccessKind = "mysql"
+	AccessKindPostgres AccessKind = "postgres"
+	AccessKindFiles    AccessKind = "files"
 )
 
 // AccessKindValues lists every AccessKind in schema order.
-var AccessKindValues = []AccessKind{AccessKindMysql, AccessKindFiles}
+var AccessKindValues = []AccessKind{AccessKindMysql, AccessKindPostgres, AccessKindFiles}
 
 // Valid: v is one of the schema's values.
 func (v AccessKind) Valid() bool {
@@ -526,9 +527,10 @@ func (v *AccessOnboardRequest) Validate() error {
 	return nil
 }
 
-// AccessScope: mysql: database and tables; files: absolute paths on the server.
+// AccessScope: mysql and postgres: database and tables; files: absolute paths on the server.
 type AccessScope struct {
 	Database *string  `json:"database,omitempty"`
+	Exclude  []string `json:"exclude,omitempty"`
 	Paths    []string `json:"paths,omitempty"`
 	Tables   []string `json:"tables,omitempty"`
 }
@@ -2407,7 +2409,7 @@ func (v *TransportInspectRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"access_check":                {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Checks one access item now, read-only, never starting a login: a connection with one cheap provider call (its reply's reason on failure), a subscription by re-inspecting each host login. id: an access_status item id. The reply is the item as access_status shows it after the check.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
-		"access_grant_ask":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Asks for access to one resource of a project on an access server (docs/designs/fleet-project-access.md): projectId, requestId (the same id reads the grant), server, kind (mysql: scope {database, tables}; files: scope {paths}), level (read; write only when the work needs it), reason. Creates an approval card for the owner that states the exact recipe; once approved Fleet provisions it and probes that read works and, for read, that write fails. Read the state with access_grants; the grant is usable when it is ready.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"mysql\",\"files\"],\"type\":\"string\"},\"level\":{\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"scope\":{\"$comment\":\"mysql: database and tables; files: absolute paths on the server.\",\"additionalProperties\":false,\"properties\":{\"database\":{\"type\":\"string\"},\"paths\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"tables\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"server\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"server\",\"kind\",\"level\",\"scope\",\"reason\"],\"type\":\"object\"}")},
+		"access_grant_ask":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Asks for access to one resource of a project on an access server (docs/designs/fleet-project-access.md): projectId, requestId (the same id reads the grant), server, kind (mysql: scope {database, tables}; files: scope {paths}), level (read; write only when the work needs it), reason. Creates an approval card for the owner that states the exact recipe; once approved Fleet provisions it and probes that read works and, for read, that write fails. Read the state with access_grants; the grant is usable when it is ready.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"mysql\",\"postgres\",\"files\"],\"type\":\"string\"},\"level\":{\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"scope\":{\"$comment\":\"mysql and postgres: database and tables; files: absolute paths on the server.\",\"additionalProperties\":false,\"properties\":{\"database\":{\"type\":\"string\"},\"exclude\":{\"$comment\":\"postgres with tables [\\\"*\\\"]: tables left out of the grant.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"paths\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"tables\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"server\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"server\",\"kind\",\"level\",\"scope\",\"reason\"],\"type\":\"object\"}")},
 		"access_grant_check":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Probes a ready or failed grant again (grant: its id): read must work, write must fail for a read grant. The probe runs in the background; read the result with access_grants.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"grant\":{\"type\":\"string\"}},\"required\":[\"grant\"],\"type\":\"object\"}")},
 		"access_grant_revoke":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Revokes a grant (grant: its id): an asked grant is withdrawn with its card; a provisioned one has its database user, OS user and keys removed on the server and on PDS18, then is revoked.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"grant\":{\"type\":\"string\"}},\"required\":[\"grant\"],\"type\":\"object\"}")},
 		"access_grants":               {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Access servers and the project resource grants the caller sees (projectId optional): state (asked, provisioning, ready, failed, declined, withdrawn, revoking, revoked), level, scope, the recipe it runs, the last probe and error. Never a credential value.", Changes: []string{"access-grant", "access-server"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},

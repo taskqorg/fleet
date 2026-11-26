@@ -21,7 +21,9 @@ const accessGrantAll = "project-access"
 
 func accessProvider(kind string) string { return "project-" + kind }
 
-func isAccessProvider(p string) bool { return p == "project-mysql" || p == "project-files" }
+func isAccessProvider(p string) bool {
+	return p == "project-mysql" || p == "project-postgres" || p == "project-files"
+}
 
 // accessConnName: <project>-<kind>; when another live grant already serves that name, <project>-<server>-<kind>.
 func accessConnName(q *Request, g accessGrant) (string, error) {
@@ -120,7 +122,7 @@ func accessGatewayAccess(q *Request, name string) (*contract.GatewayAccess, erro
 	for _, h := range hops {
 		a.Hops = append(a.Hops, contract.GatewayHop{Address: h.hostPort(), HostKey: h.HostKey})
 	}
-	if g.Kind == "mysql" {
+	if g.Kind == "mysql" || g.Kind == "postgres" {
 		a.DbUser, a.Password, a.Database, a.Tables = new(accessDBUser(g.ProjectID, g.ID)), new(accessPasswordName(g)), g.Scope.Database, g.Scope.Tables
 	}
 	return a, nil
@@ -161,4 +163,21 @@ func accessExpand(q *Request, run mintRun, requested []string) ([]string, error)
 		}
 	}
 	return out, nil
+}
+
+// accessTokenAllowed: a personal connection token may name a project access connection when the person minting it
+// sees every project the connection is open to (the owner's and site-agents' own sessions read a project's database).
+func accessTokenAllowed(q *Request, c apiConnection, run mintRun) bool {
+	if run.Personal == nil || q.person == nil || q.agent != "" || !isAccessProvider(c.Provider) || len(c.Access.Projects) == 0 {
+		return false
+	}
+	for _, p := range c.Access.Projects {
+		if p == "*" {
+			return false
+		}
+		if !mayAccessProjectID(q.person, p) {
+			return false
+		}
+	}
+	return true
 }

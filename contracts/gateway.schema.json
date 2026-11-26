@@ -13,7 +13,7 @@
       "baseUrl": {"type": "string"},
       "keyHeader": {"$comment": "Header that carries the key value as is (Google AI x-goog-api-key); absent: Authorization: Bearer <key>.", "type": "string"},
       "keyPath": {"$comment": "URL path segment prefix that carries the key value instead of a header (Telegram Bot API /bot<key>): the URL is baseUrl + keyPath + key + the tool path, and no key header is sent.", "type": "string"},
-      "transport": {"$comment": "A project access provider the gateway serves itself over SSH instead of HTTP (docs/designs/fleet-project-access.md#how-agents-use-a-grant): mysql runs read queries through the grant's OS user, files reads files over SFTP. The connection's access names the grant.", "$ref": "#/$defs/GatewayTransport"},
+      "transport": {"$comment": "A project access provider the gateway serves itself over SSH instead of HTTP (docs/designs/fleet-project-access.md#how-agents-use-a-grant): mysql and postgres run queries through the grant's OS user, files reads files over SFTP. The connection's access names the grant.", "$ref": "#/$defs/GatewayTransport"},
       "tools": {"type": "object", "additionalProperties": {"$ref": "#/$defs/GatewayTool"}},
       "usage": {"$ref": "#/$defs/GatewayUsageSource"}}},
     "GatewayUsageSource": {"$comment": "Per-key usage report (reconcile): GET path, and the dotted field holding the number.", "type": "object", "required": ["path", "field"], "properties": {"path": {"type": "string"}, "field": {"type": "string"}}},
@@ -46,7 +46,7 @@
       "limits": {"$ref": "#/$defs/GatewayLimits"},
       "keyPolicy": {"$ref": "#/$defs/GatewayKeyPolicy"},
       "access": {"$ref": "#/$defs/GatewayAccess"}}},
-    "GatewayTransport": {"type": "string", "enum": ["mysql", "files"]},
+    "GatewayTransport": {"type": "string", "enum": ["mysql", "postgres", "files"]},
     "GatewayAccess": {"$comment": "The project access grant a transport connection serves: the way to the server (each hop's address and pinned host key; every hop but the last is passed as fleet-jump), the OS user, the credential files relative to the access directory (<FLEET_SECRET_DIR>/access, never values), and the scope.", "type": "object", "required": ["grant", "level", "hops", "user", "key"], "properties": {
       "grant": {"type": "string"},
       "level": {"$ref": "#/$defs/GatewayAccessLevel"},

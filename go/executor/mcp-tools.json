@@ -314,7 +314,7 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "This project's access to its own servers (docs/designs/fleet-project-access.md): the access servers (state, the MySQL database names a check found) and the project's grants with state (asked, provisioning, ready, failed, declined, withdrawn, revoking, revoked), scope, recipe, last probe and, once ready, the connection whose tools read the resource (<project>-mysql: sql_schema, sql_query; <project>-files: files_list, files_get). Never a credential.",
+    "description": "This project's access to its own servers (docs/designs/fleet-project-access.md): the access servers (state, the MySQL and PostgreSQL database names a check found) and the project's grants with state (asked, provisioning, ready, failed, declined, withdrawn, revoking, revoked), scope, recipe, last probe and, once ready, the connection whose tools read the resource (<project>-mysql or <project>-postgres: sql_schema, sql_query; <project>-files: files_list, files_get). Never a credential.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -329,7 +329,7 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Ask the owner for access to one resource of this project on an access server: a MySQL database's tables (kind mysql, scope {database, tables}) or folders (kind files, scope {paths}), level read (write only when the work needs it). The owner gets an approval card with the exact recipe; after Approve Fleet provisions it, probes that reading works and writing is refused, and opens a connection whose tools you get on your next turn. Read the state with access_grants by requestId. Reuse requestId on retry. Ask only for what the task needs.",
+    "description": "Ask the owner for access to one resource of this project on an access server: a MySQL or PostgreSQL database's tables (kind mysql or postgres, scope {database, tables}; postgres may exclude tables from [\"*\"]) or folders (kind files, scope {paths}), level read (write only when the work needs it). The owner gets an approval card with the exact recipe; after Approve Fleet provisions it, probes that reading works and writing is refused, and opens a connection whose tools you get on your next turn. Read the state with access_grants by requestId. Reuse requestId on retry. Ask only for what the task needs.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -355,6 +355,7 @@
           "type": "string",
           "enum": [
             "mysql",
+            "postgres",
             "files"
           ]
         },
@@ -383,9 +384,15 @@
               "items": {
                 "type": "string"
               }
+            },
+            "exclude": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
-          "description": "mysql: database and tables (or [\"*\"]); files: absolute folder paths on the server."
+          "description": "mysql: database and tables (or [\"*\"]); postgres: the same, plus exclude (tables left out of [\"*\"]); files: absolute folder paths on the server."
         },
         "reason": {
           "type": "string",

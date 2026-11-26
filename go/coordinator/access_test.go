@@ -65,6 +65,13 @@ func TestAccessScopeCheck(t *testing.T) {
 		{"files", contract.AccessScope{Paths: []string{"relative"}}, false},
 		{"files", contract.AccessScope{Database: &db, Paths: []string{"/srv"}}, false},
 		{"ssh", contract.AccessScope{}, false},
+		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{star}, Exclude: []string{"host", "run_token"}}, true},
+		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{"task", "session"}}, true},
+		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{"task"}, Exclude: []string{"host"}}, false},
+		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{star}, Exclude: []string{"Host"}}, false},
+		{"postgres", contract.AccessScope{Database: new("fleet"), Tables: []string{"a\"b"}}, false},
+		{"postgres", contract.AccessScope{Database: new("Fleet"), Tables: []string{star}}, false},
+		{"mysql", contract.AccessScope{Database: &db, Tables: []string{star}, Exclude: []string{"x"}}, false},
 	} {
 		if err := accessScopeCheck(c.kind, &c.scope); (err == nil) != c.ok {
 			t.Errorf("%s %+v: err %v, want ok %v", c.kind, c.scope, err, c.ok)
@@ -84,6 +91,47 @@ func TestAccessRecipeText(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("recipe lacks %q:\n%s", want, text)
 		}
+	}
+	g.ProjectID, g.ServerID, g.Kind = "fleet", "pds18", "postgres"
+	g.Scope = contract.AccessScope{Database: new("fleet"), Tables: []string{"*"}, Exclude: []string{"host", "run_token"}}
+	text = strings.Join(accessRecipe(g, ""), "\n")
+	for _, want := range []string{"127.0.0.1:5432", "GRANT SELECT ON every table of fleet.public that exists at provisioning except host, run_token", "read-only by default", "writing is refused"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("postgres recipe lacks %q:\n%s", want, text)
+		}
+	}
+	if got := accessPGTables(g.Scope); got != "*,-host,-run_token" {
+		t.Errorf("pg tables argument %q", got)
+	}
+	// Go's regexp caps nested repeats: the count limit is fleet-provision's own self-test.
+	if m := regexp.MustCompile(`P_PGTABLES='([^']*)'`).FindStringSubmatch(string(fleetProvisionScript)); m == nil || !regexp.MustCompile(strings.ReplaceAll(m[1], "{0,199}", "*")).MatchString(accessPGTables(g.Scope)) {
+		t.Error("fleet-provision refuses the pg tables argument Fleet derives")
+	}
+}
+
+// Requirement: a personal token reaches an access connection only when its minting person sees the connection's
+// project; an agent or a person without the project does not.
+func TestAccessTokenAllowed(t *testing.T) {
+	c := apiConnection{Name: "fleet-postgres", Provider: "project-postgres", Access: connAccess{Projects: []string{"fleet"}}}
+	name := "mac-claude"
+	run := mintRun{Personal: &name}
+	owner := &Person{Email: "o@x", Owner: true}
+	other := &Person{Email: "p@x"}
+	other.Grants = append(other.Grants, struct {
+		Kind string `json:"kind"`
+		ID   string `json:"id"`
+	}{"project", "dam"})
+	if !accessTokenAllowed(&Request{person: owner}, c, run) {
+		t.Error("the owner's personal token was refused")
+	}
+	if accessTokenAllowed(&Request{person: other}, c, run) {
+		t.Error("a person without project fleet got its database")
+	}
+	if accessTokenAllowed(&Request{person: owner, agent: "execution:1"}, c, run) || accessTokenAllowed(&Request{person: owner}, c, mintRun{}) {
+		t.Error("an agent or a run token passed the personal-token rule")
+	}
+	if accessTokenAllowed(&Request{person: owner}, apiConnection{Provider: "tavily", Access: c.Access}, run) {
+		t.Error("the rule reached a non-access connection")
 	}
 }
 
@@ -132,6 +180,13 @@ func fakeSSH(t *testing.T, user ssh.PublicKey) (addr string, hostKey ssh.PublicK
 					switch nc.ChannelType() {
 					case "direct-tcpip":
 						ch, _, _ := nc.Accept()
+						if p := nc.ExtraData(); len(p) > 8 && strings.Contains(string(p), "127.0.0.1") && binary.BigEndian.Uint32(p[4+binary.BigEndian.Uint32(p):]) == 5432 {
+							req := make([]byte, 8) // PostgreSQL: the SSL request, answered N
+							_, _ = io.ReadFull(ch, req)
+							_, _ = ch.Write([]byte("N"))
+							ch.Close()
+							continue
+						}
 						greeting := append([]byte{10}, []byte("8.0.40-fake\x00")...)
 						head := make([]byte, 4)
 						binary.LittleEndian.PutUint32(head, uint32(len(greeting)))
@@ -209,12 +264,18 @@ func TestAccessSSH(t *testing.T) {
 	if v, err := accessProbeForward(c, "127.0.0.1:3306"); err != nil || v != "8.0.40-fake" {
 		t.Fatalf("forward probe: %q %v", v, err)
 	}
+	if err := accessProbePostgres(c, "127.0.0.1:5432"); err != nil {
+		t.Fatalf("postgres probe: %v", err)
+	}
+	if err := accessProbePostgres(c, "127.0.0.1:3306"); err == nil {
+		t.Fatal("a MySQL greeting passed the postgres probe")
+	}
 }
 
 // Requirement: every recipe the provisioner names is one fleet-provision dispatches.
 func TestAccessRecipesKnown(t *testing.T) {
 	script := string(fleetProvisionScript)
-	for _, r := range []string{"version", "os-user", "revoke-os-user", "mysql-user", "revoke-mysql", "probe-mysql", "probe-files", "jump-allow", "jump-deny", "mysql-databases"} {
+	for _, r := range []string{"version", "os-user", "revoke-os-user", "mysql-user", "revoke-mysql", "probe-mysql", "probe-files", "jump-allow", "jump-deny", "mysql-databases", "pg-databases", "pg-user", "probe-pg", "revoke-pg"} {
 		if !strings.Contains(script, "\n\t"+r+") ") {
 			t.Errorf("fleet-provision does not dispatch %s", r)
 		}

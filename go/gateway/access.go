@@ -1,7 +1,7 @@
 // Project access providers (docs/designs/fleet-project-access.md#how-agents-use-a-grant): a connection whose provider
 // names a transport is served here, not over HTTP. The gateway logs in to the project's server as the grant's OS user
 // (through the jump server when there is one, every host key pinned), with the key and password files under the access
-// directory, and answers mysql reads (sql_query, sql_schema) and file reads (files_list, files_get over SFTP). Every
+// directory, and answers mysql and postgres reads (sql_query, sql_schema) and file reads (files_list, files_get over SFTP). Every
 // call's spool line carries what it read (detail): the audit of each query and file.
 package main
 
@@ -25,6 +25,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/crypto/ssh"
 
 	"fleet/contract"
@@ -209,6 +212,41 @@ func (g *gateway) accessDB(name string, l *accessLink, a *contract.GatewayAccess
 	return l.db, nil
 }
 
+// accessPG: the grant's PostgreSQL pool over the login's forwarding (the server's 127.0.0.1:5432).
+func (g *gateway) accessPG(name string, l *accessLink, a *contract.GatewayAccess) (*sql.DB, error) {
+	g.access.mu.Lock()
+	defer g.access.mu.Unlock()
+	if l.db != nil {
+		return l.db, nil
+	}
+	if a.Password == nil || a.DbUser == nil || a.Database == nil {
+		return nil, errors.New("the grant names no database user")
+	}
+	pw, err := os.ReadFile(filepath.Join(g.accessDir(), filepath.Clean("/"+*a.Password)))
+	if err != nil {
+		return nil, errors.New("the grant's database password is missing on the gateway host")
+	}
+	cfg, err := pgx.ParseConfig("postgres://127.0.0.1:5432/?sslmode=disable")
+	if err != nil {
+		return nil, err
+	}
+	cfg.User, cfg.Password, cfg.Database = *a.DbUser, strings.TrimSpace(string(pw)), *a.Database
+	cfg.RuntimeParams["application_name"] = "fleet-gateway " + name
+	cfg.DialFunc = func(ctx context.Context, _, addr string) (net.Conn, error) {
+		g.access.mu.Lock() // the pool dials outside accessPG, so this never runs under the lock
+		cur := g.access.links[name]
+		g.access.mu.Unlock()
+		if cur == nil {
+			return nil, errors.New("no login for " + name)
+		}
+		return cur.client.DialContext(ctx, "tcp", addr)
+	}
+	cfg.LookupFunc = func(context.Context, string) ([]string, error) { return []string{"127.0.0.1"}, nil }
+	l.db = stdlib.OpenDB(*cfg)
+	l.db.SetConnMaxIdleTime(5 * time.Minute)
+	return l.db, nil
+}
+
 // accessArgs: the arguments of a project access tool.
 type accessArgs struct {
 	SQL     string `json:"sql"`
@@ -259,13 +297,20 @@ type sqlReply struct {
 	Note      string   `json:"note,omitempty"`
 }
 
-func (g *gateway) runQuery(ctx context.Context, db *sql.DB, a *contract.GatewayAccess, text string, maxRows int64, cap int64) (sqlReply, error) {
+func (g *gateway) runQuery(ctx context.Context, db *sql.DB, a *contract.GatewayAccess, pg bool, text string, maxRows int64, cap int64) (sqlReply, error) {
 	out := sqlReply{Columns: []string{}, Rows: [][]any{}}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: a.Level == contract.GatewayAccessLevelRead})
 	if err != nil {
 		return out, err
 	}
 	defer tx.Rollback()
+	if dl, ok := ctx.Deadline(); ok && pg {
+		// The server stops the statement when the call's time is up, not only the gateway's wait.
+		ms := max(time.Until(dl).Milliseconds(), 1)
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", ms)); err != nil {
+			return out, err
+		}
+	}
 	rows, err := tx.QueryContext(ctx, text)
 	if err != nil {
 		return out, err
@@ -342,8 +387,13 @@ func (g *gateway) serveAccess(w httpWriter, ctx context.Context, q *request, arg
 		replyCap = providerBytes
 	}
 	switch *q.p.Transport {
-	case contract.GatewayTransportMysql:
-		db, err := g.accessDB(q.connection, l, a)
+	case contract.GatewayTransportMysql, contract.GatewayTransportPostgres:
+		pg := *q.p.Transport == contract.GatewayTransportPostgres
+		open := g.accessDB
+		if pg {
+			open = g.accessPG
+		}
+		db, err := open(q.connection, l, a)
 		if err != nil {
 			return refusal(502, "error", "access-unreachable", err.Error())
 		}
@@ -355,14 +405,18 @@ func (g *gateway) serveAccess(w httpWriter, ctx context.Context, q *request, arg
 			}
 		case "sql_schema":
 			text = "SELECT table_name, column_name, column_type, column_key, is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() ORDER BY table_name, ordinal_position"
+			if pg { // information_schema shows only the columns this role may read
+				text = "SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = current_schema() ORDER BY table_name, ordinal_position"
+			}
 		default:
 			return refusal(404, "error", "unknown-tool", "the connection has no such tool")
 		}
-		out, err := g.runQuery(ctx, db, a, text, in.MaxRows, replyCap-1024)
+		out, err := g.runQuery(ctx, db, a, pg, text, in.MaxRows, replyCap-1024)
 		detail := fmt.Sprintf("sql: %s; rows: %d", text, out.RowCount)
 		if err != nil {
 			var my *mysql.MySQLError
-			if errors.As(err, &my) {
+			var pe *pgconn.PgError
+			if errors.As(err, &my) || errors.As(err, &pe) {
 				return failed("query-refused", err, detail)
 			}
 			g.drop(q.connection, l)

@@ -193,7 +193,7 @@ func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error
 		if err != nil {
 			return mintGrant{}, err
 		}
-		if c != nil && c.Intake == "all" && connAllowedFor(*c, run) && coordinatorOnlyAllowed(name, run) {
+		if c != nil && c.Intake == "all" && (connAllowedFor(*c, run) || accessTokenAllowed(q, *c, run)) && coordinatorOnlyAllowed(name, run) {
 			granted = append(granted, *c)
 		}
 	}

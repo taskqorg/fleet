@@ -84,14 +84,18 @@ func (p accessPlan) run(ctx context.Context) (out accessOutcome) {
 		paths = strings.Join(p.Paths, ",")
 	}
 	password := ""
-	if g.Kind == "mysql" {
+	if g.Kind == "mysql" || g.Kind == "postgres" {
 		if password, err = accessSecret(p.PasswordName); err != nil {
 			return failed(err)
 		}
 	}
 	if p.Op == "revoke" {
-		if g.Kind == "mysql" {
-			if err := run("", "revoke-mysql", p.DBUser); err != nil {
+		if g.Kind == "mysql" || g.Kind == "postgres" {
+			args := []string{"revoke-mysql", p.DBUser}
+			if g.Kind == "postgres" {
+				args = []string{"revoke-pg", p.DBUser, deref(g.Scope.Database)}
+			}
+			if err := run("", args...); err != nil {
 				return failed(err)
 			}
 			if err := accessForget(p.PasswordName); err != nil {
@@ -129,11 +133,21 @@ func (p accessPlan) run(ctx context.Context) (out accessOutcome) {
 			}
 			out.Credential += " " + accessSecretFingerprint(password)
 		}
+		if g.Kind == "postgres" {
+			if err := run(password+"\n", "pg-user", p.DBUser, deref(g.Scope.Database), accessPGTables(g.Scope), g.Level); err != nil {
+				return failed(err)
+			}
+			out.Credential += " " + accessSecretFingerprint(password)
+		}
 	}
 	// Probes: as root for the grant's level, then a login as the OS user over the agents' path.
 	switch g.Kind {
 	case "mysql":
 		if err := run(password+"\n", "probe-mysql", p.DBUser, deref(g.Scope.Database), g.Scope.Tables[0], g.Level); err != nil {
+			return failed(err)
+		}
+	case "postgres":
+		if err := run(password+"\n", "probe-pg", p.DBUser, deref(g.Scope.Database), accessPGTables(g.Scope), g.Level); err != nil {
 			return failed(err)
 		}
 	case "files":
@@ -155,6 +169,11 @@ func (p accessPlan) run(ctx context.Context) (out accessOutcome) {
 			return failed(err)
 		}
 		out.Steps = append(out.Steps, p.OSUser+" login forwards to MySQL "+v)
+	case "postgres":
+		if err := accessProbePostgres(uc, "127.0.0.1:5432"); err != nil {
+			return failed(err)
+		}
+		out.Steps = append(out.Steps, p.OSUser+" login forwards to PostgreSQL")
 	case "files":
 		if err := accessProbeSFTP(uc); err != nil {
 			return failed(err)

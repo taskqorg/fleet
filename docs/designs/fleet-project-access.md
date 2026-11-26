@@ -90,7 +90,7 @@ The owner chose option A (2026-11-26): `fleet-gateway` serves each ready grant a
 Fleet reads its own production PostgreSQL the same way, so no agent and no person runs `ssh pds18 psql` for a read.
 
 - **Server.** `pds18`, the coordinator's own server, is an access server like any other: `access_server_add {id: "pds18", address: "127.0.0.1"}` (the provisioner and the gateway run there, so they log in over the loopback) and the owner's one enrollment as root.
-- **Grant.** Project `fleet`, kind `postgres`, level `read`, scope `{database: "fleet", tables: ["*"], exclude: ["connection_key", "run_token", "host", "telegram_link"]}`: every table but those carrying credential, token or host secret material (key and token fingerprints, run token hashes, host secret hashes, unused Telegram link codes). Secrets themselves live in files under `FLEET_SECRET_DIR`, never in the database. A later table that carries such material is added to `exclude` by a new ask with the same `requestId`.
+- **Grant.** Project `fleet`, kind `postgres`, level `read`, scope `{database: "fleet", tables: ["*"], exclude: ["connection_key", "run_token", "host", "telegram_link"]}`: every table but those carrying credential, token or host secret material (key and token fingerprints, run token hashes, host secret hashes, unused Telegram link codes). Secrets themselves live in files under `FLEET_SECRET_DIR`, never in the database. A later table that carries such material goes to `exclude` through a new grant (a new `requestId`), and the old grant is revoked once the new one is ready.
 - **Connection.** `fleet-postgres`, open to project `fleet`'s runs and to the personal tokens of people who see project `fleet`. Every query is a spool line with its SQL text and row count.
 
 ## Options
