@@ -288,9 +288,9 @@ canvas:
     e4905cfccae802e2 fr comp axes[from[agent,operator]] p(0,0) s(1024,72) f[] st[(d2b9e93eddb314f1,#7C6BF0,w(1),dash(10,5))] rd(16) "Message"
       87c3d86621def5c7 al(v,g(4:$spacing.sm)) variant(from(agent)) p(20,20) s(480,hug:32) f[] "Frame 65"
         ecd8289928953e5d t("Собрал три состояния Home. Главный вопрос — какую карточку оставить: компактную или широкую с прогрессом.",Inter:$font.family,13:$font.size.md,r,align(l),lh(auto,1.23)) mref(ecd8289928953e5d) p(0,0) s(fill,hug:32) ext(480,) f[(b991ce580f2e84ef,tok(fleet.fg,#ECECEC))] "text"
-      430bb01c7af7d4cd al(h,x(e)) variant(from(operator)) p(524,20) s(480,hug:48) f[] "Frame 66"
-        4b694f59a8da5ab7 al(h,pad(8:$spacing.md,12:$spacing.lg,8:$spacing.md,12:$spacing.lg)) mref(4b694f59a8da5ab7) p(160,0) s(hug:320,hug:48) max(320,) f[(abd1addeba3e1f39,tok(fleet.surface-sunken,#1A1A1C))] rd(3:$fleet.radius.lg) "Frame 67"
-          fdae476eff28e381 t("Давай доведём Home: карточки сессий, состояния, телефон.",Inter:$font.family,13:$font.size.md,r,align(l),lh(auto,1.23)) mref(fdae476eff28e381) p(12,8) s(fill,hug:32) ext(296,) f[(ed5a3f11ac6e5836,tok(fleet.fg,#ECECEC))] "text"
+      430bb01c7af7d4cd al(h) variant(from(operator)) p(524,20) s(480,hug:20) f[] "Frame 66"
+        4b694f59a8da5ab7 al(h,pad(2:$spacing.xs,0:$spacing.none,2:$spacing.xs,12:$spacing.lg)) mref(4b694f59a8da5ab7) p(0,0) s(fill,hug:20) max(480,) ext(480,) f[] st[(27ceaf19ac853ce4,tok(fleet.accent,#F2F2F2),w(0:$stroke.width.none,0:$stroke.width.none,0:$stroke.width.none,2:$stroke.width.mid))] rd(0:$spacing.none) "Frame 67"
+          fdae476eff28e381 t("Давай доведём Home: карточки сессий, состояния, телефон.",Inter:$font.family,13:$font.size.md,r,align(l),lh(auto,1.23)) mref(fdae476eff28e381) p(12,2) s(fill,hug:16) ext(468,) f[(ed5a3f11ac6e5836,tok(fleet.fg,#ECECEC))] "text"
     fb79b36433c4f58f fr comp axes[state[folded,open,running,failed]] p(0,96) s(2032,98) f[] st[(7f191d6597337aca,#7C6BF0,w(1),dash(10,5))] rd(16) "Tool line"
       af19a5fde0431613 al(v,g(2:$spacing.xs)) variant(state(folded)) p(20,20) s(480,hug:16) f[] "Frame 68"
         9b18cba5b4c3137b al(h,y(c),g(4:$spacing.sm)) mref(9b18cba5b4c3137b) p(0,0) s(fill,hug:16) ext(480,) f[] "line"
@@ -1210,7 +1210,6 @@ df87466d94415ea9 al(v,g(12:$spacing.lg),pad(16:$spacing.xl)) ds(, theme(dark)) p
             vr(r1) f[(c7557a955d6100f3,tok(fleet.fg-muted,#9A9A9F))]
             vr(r2) f[(c7557a955d6100f3,tok(fleet.fg-muted,#9A9A9F))]
           29d1411680a125c0 t("2m",JetBrains Mono:$font.family.mono,11:$font.size.xs,r,align(l),lh(auto,1.36)) p(14,0) s(hug:13.21,hug:15) f[(a06f298776a166e1,tok(fleet.fg-muted,#9A9A9F))] "Text 99"
-bp:end
 153bb08fb5019896 al(v,g(32:$spacing.3xl),pad(32:$spacing.3xl)) ds(, theme(dark)) p(0,6300) s(1600,hug:622) f[(d2dfeee641f195b8,tok(fleet.bg,#0B0B0C))] "Blocks · Bot avatar"
   9210a92c02464979 t("Bot avatar: letter (default), image or animated; sizes sm 16 · md 24 · lg 40 · xl 96; activity shown by light (owner pick A, 25 Nov)",Inter:$font.family,15:$font.size.lg,sb,align(l),lh(auto,1.2)) p(32,32) s(hug:916.28,hug:18) f[(e22213a7ce797100,tok(fleet.fg,#ECECEC))] "Text 100"
   ae6d44989a4dddf2 al(h,g(24:$spacing.2xl)) p(32,82) s(hug:376,hug:288) f[] "Masters"
@@ -1310,3 +1309,4 @@ bp:end
             e5b625e45b67f0a2 t("HAL0",Inter:$font.family,12:$font.size.sm,m,align(l),lh(auto,1.25)) p(0,0) s(hug:31.98,hug:15) f[(eef1d4720674fee9,tok(fleet.fg,#ECECEC))] "Text 119"
             2ef6a5a0329c7a7f t("paused by you",Inter:$font.family,11:$font.size.xs,r,align(l),lh(auto,1.18)) p(0,15) s(hug:76.44,hug:13) f[(579e9d6044625700,tok(fleet.fg-faint,#77777C))] "Text 120"
         4057c8978cacd52a t("Dimmest (35%), no glow.",Inter:$font.family,11:$font.size.xs,r,align(l),lh(auto,1.18)) p(12,127) s(fill,hug:13) ext(240,) f[(55b067206650bfad,tok(fleet.fg-muted,#9A9A9F))] "Text 121"
+bp:end
