@@ -78,7 +78,7 @@ export function IdentityPicker(p: { code: string; auto?: string; color?: string 
   return (
     <div class="idpick" data-ui="identity-picker">
       <div class="idpick-row" role="radiogroup" aria-label="Colour">
-        <button type="button" role="radio" aria-checked={auto() ? 'true' : 'false'} class={['idpick-sw auto', `id-${identityColor(p.code, p.auto)}`, { on: auto() }]} data-tip="Auto: from the code" onClick={() => p.onColor(null)}>
+        <button type="button" role="radio" aria-checked={auto() ? 'true' : 'false'} class={['idpick-sw auto', `id-${identityColor(p.code, p.auto)}`, { on: auto() }]} data-tip="Auto: the colour Fleet gave it" onClick={() => p.onColor(null)}>
           <span class="idpick-auto">A</span>
         </button>
         <For each={identityColors}>
