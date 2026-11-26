@@ -31,6 +31,16 @@ func (q *Queries) MigrationRecord(ctx context.Context, id string) error {
 	return err
 }
 
+const migrationScope = `-- name: MigrationScope :exec
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true)
+`
+
+// Every migration sees every row: all projects and tombstoned rows (FORCE ROW LEVEL SECURITY applies to the owner too).
+func (q *Queries) MigrationScope(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, migrationScope)
+	return err
+}
+
 const schemaFileHash = `-- name: SchemaFileHash :one
 SELECT sha256 FROM schema_file WHERE name = $1
 `

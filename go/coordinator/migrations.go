@@ -165,6 +165,12 @@ func applyMigrations(ctx context.Context, url string, ms []migration) error {
 			if applied, err := q.MigrationApplied(ctx, m.id); err != nil || applied {
 				return err
 			}
+			// Full visibility, local to this transaction: all projects (fleet.project_ids='*') and tombstoned rows
+			// (fleet.deleted=on). Tables with FORCE ROW LEVEL SECURITY apply their policies to the owner role too, so
+			// without it a data migration's UPDATE or DELETE silently matches no row (20261126T1249Z_unpurge_dam_pages).
+			if err := q.MigrationScope(ctx); err != nil {
+				return err
+			}
 			// Simple protocol: the whole migration runs as one multi-statement query inside the transaction.
 			if _, err := tx.Exec(ctx, m.body, pgx.QueryExecModeSimpleProtocol); err != nil {
 				return err
