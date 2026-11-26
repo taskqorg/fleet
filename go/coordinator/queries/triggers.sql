@@ -88,3 +88,11 @@ SELECT EXISTS (SELECT 1 FROM queued_message WHERE session_id = $1 AND state = 'q
 -- A bot wake of this trigger that did not run (the bot paused): the trigger's log, not a run.
 INSERT INTO trigger_log(trigger_id, request_id, project_id, reason) VALUES (@trigger_id, @request_id, sqlc.narg(project_id), @reason)
 ON CONFLICT (trigger_id, request_id) DO NOTHING;
+
+-- name: TriggerSubjectScope :one
+-- A bot's conversation for one subject (a problem, a question): its bot and subject; a session trigger on it sees
+-- only the tasks it works (bot_task with its session), not the whole project (triggerChanges).
+SELECT coalesce(bot_id, '')::text AS bot_id, coalesce(subject, '')::text AS subject FROM session WHERE id = $1;
+
+-- name: TriggerSubjectTasks :many
+SELECT task_id FROM bot_task WHERE session_id = $1 AND tombstoned_at IS NULL;
