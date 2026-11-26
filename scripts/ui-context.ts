@@ -86,6 +86,18 @@ export function section(text: string, h: string): string {
   return lines.slice(i, j < 0 ? undefined : j).join('\n');
 }
 
+// Committed frames of the given canvases from board/index.json (pnpm run board:index), one line each:
+// `- <id> <name> (<width> px[, <status>])`; the status is left out when the name already states it.
+export type Frame = { id: string; canvas: string; name: string; width: number | null; frameWidth: number | null; status: string | null };
+export function frames(index: { frames: Frame[] } | null, canvases: string[]): string[] {
+  const want = new Set(canvases.map(p => relative(`${ds}/board`, p).replace(/\.bl$/, '')));
+  return (index?.frames ?? []).filter(f => want.has(f.canvas)).map(f => {
+    const w = f.width ?? f.frameWidth, st = f.status && !f.name.includes(f.status) ? f.status : '';
+    const tail = [w ? `${w} px` : '', st].filter(Boolean).join(', ');
+    return `- ${f.id} ${f.name}${tail ? ` (${tail})` : ''}`;
+  });
+}
+
 const GROUPS = ['Canvas', 'Blocks', 'Controls', 'Patterns'] as const;
 const group = (p: string) =>
   p.endsWith('.bl') ? 'Canvas' : p.startsWith(`${ds}/controls/`) ? 'Controls' : p.startsWith(`${ds}/patterns/`) ? 'Patterns' : null;
@@ -96,6 +108,7 @@ export function context(page: string): string {
   const usability = existsSync(join(root, ds, 'principles.md')) ? read(`${ds}/principles.md`) : '';
   const byId = rules(owner, usability), home = homes(owner, usability);
   const text = read(spec);
+  const index = existsSync(join(root, ds, 'board/index.json')) ? JSON.parse(read(`${ds}/board/index.json`)) : null;
   const parts = new Map<string, string[]>();
   const why = new Map<string, Set<string>>(); // rule ID -> the files that cite it
   const cite = (t: string, f: string) => { for (const id of cited(t)) (why.get(id) ?? why.set(id, new Set()).get(id)!).add(f); };
@@ -125,7 +138,15 @@ export function context(page: string): string {
     const ps = parts.get(g);
     if (!ps) continue;
     L.push(`${g}:`, ...ps.map(p => `- ${p}`));
-    if (g === 'Canvas') L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; a visible change is drawn first in ~/Projects/fleet-board and approved by the owner (OR-62, README.md#design-board).');
+    if (g === 'Canvas') {
+      L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; a visible change is drawn first in ~/Projects/fleet-board and approved by the owner (OR-62, README.md#design-board).');
+      const fs = frames(index, ps);
+      if (fs.length) L.push('', 'Frames (board/index.json):', ...fs);
+      L.push('', 'Before you build: frame vs prod data (board frames carry illustrative data):',
+        '- Walk the page on prod as site-agents (AGENTS.md, "Opening the deployed web app").',
+        '- Mark each difference between the frame and prod: code (the UI lacks it), data (the UI is right, prod data differs) or missing field (the model has no such field).',
+        '- Put that list in the pull request description.');
+    }
     L.push('');
   }
   // Data (docs/designs/fleet-data-layer.md): how this page gets its data, so a change keeps it instant.

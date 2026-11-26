@@ -1,7 +1,7 @@
 // scripts/ui-context.ts: rule texts parse from both rule files, and a page's context names its canvas and cited rules.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cited, context, homes, links, rules, section } from '../../scripts/ui-context.ts';
+import { cited, context, frames, homes, links, rules, section } from '../../scripts/ui-context.ts';
 
 test('UC1 rules parse OR table rows and UR leads', () => {
   const m = rules('| **OR-7 No added arrows** | Never add an arrow. |\n', '* **UR-3 One home.** Every screen has one home section.\n');
@@ -47,4 +47,18 @@ test('UC6 every page context starts with the owner principles card', () => {
   const c = context('home');
   assert.ok(c.indexOf('## Principles card') < c.indexOf('Read next:'));
   assert.match(c, /Useful empty pane/);
+});
+
+test('UC8 a page context lists its canvas frames and the frame-vs-prod-data checklist', () => {
+  const idx = { frames: [
+    { id: 'a1', canvas: 'screens/x', name: 'X · 1440 (approved 2026-11-26)', width: 1440, frameWidth: 1440, status: 'approved' },
+    { id: 'b2', canvas: 'screens/x', name: 'X wide', width: null, frameWidth: 3200, status: 'built' },
+    { id: 'c3', canvas: 'screens/y', name: 'Y', width: null, frameWidth: 390, status: null },
+  ] };
+  assert.deepEqual(frames(idx, ['docs/design-system/board/screens/x.bl']),
+    ['- a1 X · 1440 (approved 2026-11-26) (1440 px)', '- b2 X wide (3200 px, built)']);
+  const c = context('projects');
+  assert.match(c, /^Frames \(board\/index\.json\):\n- [0-9a-f]{16} /m);
+  assert.match(c, /code \(the UI lacks it\), data \(.+\) or missing field/);
+  assert.ok(c.indexOf('Frames (') < c.indexOf('Before you build') && c.indexOf('Before you build') < c.indexOf('Rules cited'));
 });
