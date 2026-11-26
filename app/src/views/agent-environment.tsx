@@ -8,7 +8,7 @@ type Row = { key: string; name: string; detail?: string; chip: { text: string; t
 const ok = (text = 'In sync'): Row['chip'] => ({ text, tone: 'success' });
 const names = (xs: string[]) => xs.length <= 2 ? xs.join(' and ') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`;
 const few = (xs: string[]) => xs.length <= 2 ? xs.join(', ') : `${xs[0]} and ${xs.length - 1} more`;
-const who = (actor: string) => actor.includes('@') ? actor.split('@')[0] : 'agent';
+const who = (actor: string) => actor.includes('@') ? actor.split('@')[0] : actor === 'fleet' ? 'Fleet' : 'agent';
 const hostPath = (id: string) => `/hosts/${encodeURIComponent(id)}`;
 
 /** "+6 granted 26 Nov · alex": the connection's last audited change. */
@@ -53,12 +53,13 @@ function hostToolRows(d: SystemChangesReply): Row[] {
   const kind = d.components.find(k => k.kind === 'tool');
   if (!kind) return [];
   return kind.components.map(c => {
-    const off = c.hosts.filter(h => h.state !== 'pinned' && h.state !== 'own');
-    const on = c.hosts.length - off.length;
+    // A host that has not reported (unknown) is neither on the pin nor drifting.
+    const off = c.hosts.filter(h => h.state === 'behind' || h.state === 'installing' || h.state === 'refused' || h.state === 'failing');
+    const known = c.hosts.filter(h => h.state !== 'unknown').length, on = known - off.length;
     return {
       key: c.name, name: c.name, href: off[0] && hostPath(off[0].hostId),
       detail: !kind.enabled ? 'pins off · hosts keep their own'
-        : c.pinned ? `${c.pinned} · ${on === c.hosts.length ? 'pinned on every host' : `on ${on} of ${c.hosts.length} hosts`}` : 'not pinned',
+        : c.pinned ? `${c.pinned} · ${on === known ? 'pinned on every host' : `on ${on} of ${known} hosts`}` : 'not pinned',
       chip: off.length
         ? { text: `${off.some(h => h.state === 'refused' || h.state === 'failing') ? 'Failing' : 'Missing'} on ${names(off.map(h => h.hostId))}`, tone: off.some(h => h.state === 'installing') ? 'running' : 'attention',
           tip: off.map(h => `${h.hostId}: ${h.state}${h.reason ? ` (${h.reason})` : h.observed ? ` (${h.observed})` : ''}`).join(' · ') }
@@ -84,8 +85,12 @@ function profileRows(d: SystemChangesReply): Row[] {
   const synced = Number(d.agentEnvironment.profiles) - drift.length;
   const rows: Row[] = drift.map(x => ({
     key: x.id, name: x.name, href: `/library/agents/${encodeURIComponent(x.id)}`,
-    detail: x.state === 'repository-changed' ? 'the repository changed it under a Fleet edit' : x.publish?.pr ? `on its way to the repository · PR #${x.publish.pr.number}` : 'edited in Fleet',
-    chip: { text: x.state === 'repository-changed' ? 'Conflict' : x.publish ? 'On its way' : 'Edited in Fleet', tone: x.state === 'repository-changed' ? 'attention' : 'neutral' },
+    detail: x.state === 'repository-changed' ? 'the repository changed it under a Fleet edit'
+      : x.state === 'repository-deleted' ? 'the repository removed its file'
+      : x.publish?.pr ? `on its way to the repository · PR #${x.publish.pr.number}` : 'edited in Fleet',
+    chip: x.state === 'repository-changed' ? { text: 'Conflict', tone: 'attention' }
+      : x.state === 'repository-deleted' ? { text: 'Deleted in repository', tone: 'attention' }
+      : { text: x.publish ? 'On its way' : 'Edited in Fleet', tone: 'neutral' },
     fact: x.at ? day(Date.parse(x.at)) : undefined,
   }));
   if (synced > 0) rows.push({ key: 'synced', name: `${synced} profile${synced === 1 ? '' : 's'}`, detail: 'in sync with config/agents', chip: ok() });
