@@ -4,7 +4,7 @@
 
 **Purpose.** A bot with no active run on [Home](../pages/home.md): what it is for, when it was last used, and a way to wake it ([OR-50](../owner-rules.md)).
 
-**Anatomy.** One row tile with a dashed `line` border and `radius-lg`, height `size-row-2`: the avatar ([agent mark](transcript-viewer.md)), the name, under it the purpose and the last use in `fg-muted` (`delivery, rollouts · 6h`, [OR-2](../owner-rules.md)), and a Wake [button](button.md) on the right.
+**Anatomy.** One row tile with a dashed `line` border and `radius-lg`, height `size-row-2`: the avatar ([agent mark](transcript-viewer.md)), the name, under it the purpose and the last use in `fg-muted` (`delivery, rollouts · 6h`, [OR-2](number.md#rules-kept-here)), and a Wake [button](button.md) on the right.
 
 **States.**
 * *Asleep:* as above.
@@ -14,7 +14,7 @@
 **Behaviour.**
 * A click on the tile opens the bot's session view; Wake starts a run and opens nothing.
 * Typing to the bot in the [composer](composer.md#target-picker) also wakes it with its memory.
-* Tiles share one row, as many as fit, then `All N bots ›`, which opens Bots ([OR-30](../owner-rules.md)).
+* Tiles share one row, as many as fit, then `All N bots ›`, which opens Bots ([OR-30](../patterns/infinite-list.md#rules-kept-here)).
 
 **Keyboard.** One focus stop per tile; `Enter` opens; `Tab` moves to Wake.
 

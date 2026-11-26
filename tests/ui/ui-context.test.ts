@@ -1,7 +1,7 @@
 // scripts/ui-context.ts: rule texts parse from both rule files, and a page's context names its canvas and cited rules.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cited, context, links, rules, section } from '../../scripts/ui-context.ts';
+import { cited, context, homes, links, rules, section } from '../../scripts/ui-context.ts';
 
 test('UC1 rules parse OR table rows and UR leads', () => {
   const m = rules('| **OR-7 No added arrows** | Never add an arrow. |\n', '* **UR-3 One home.** Every screen has one home section.\n');
@@ -9,6 +9,17 @@ test('UC1 rules parse OR table rows and UR leads', () => {
   assert.equal(m.get('UR-3'), 'One home. Every screen has one home section.');
   const t = rules('', '| **UR-70.** | An unknown route says so. | Browser: open `/x`. |\n');
   assert.equal(t.get('UR-70'), 'An unknown route says so.');
+});
+
+test('UC7 moved rules parse to their home: a spec, a check or the rule they merged into', () => {
+  const owner = '## Rules kept by a component or a check\n\n| Rules | Fate | Where it lives now |\n|---|---|---|\n' +
+    '| OR-24 Three columns, OR-25 One scroll per column | component | [patterns/app-shell.md](patterns/app-shell.md#rules-kept-here) |\n' +
+    '| OR-7 No added arrows | check | `check-design.mjs` OR-7. The owner\'s words: "Never." |\n| OR-10 System first | merged | into OR-4 in [rules](#rules) |\n';
+  const h = homes(owner, '## Rules kept elsewhere\n\n| UR-11 | merged | into [OR-6](owner-rules.md#rules) |\n');
+  assert.deepEqual(h.get('OR-25'), { name: 'One scroll per column', fate: 'component', where: 'docs/design-system/patterns/app-shell.md#rules-kept-here' });
+  assert.equal(h.get('OR-7')?.where, '`check-design.mjs` OR-7');
+  assert.equal(h.get('OR-10')?.into, 'OR-4');
+  assert.equal(h.get('UR-11')?.into, 'OR-6');
 });
 
 test('UC2 links resolve relative to the file and drop anchors and URLs', () => {

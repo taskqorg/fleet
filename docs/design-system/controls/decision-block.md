@@ -26,7 +26,7 @@
 
 ## Card
 
-`QuestionCard` in `packages/ui` ([OR-53](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), master `Question card`. Demo: [book](../book/index.html#question-card).
+`QuestionCard` in `packages/ui` ([OR-53](#rules-kept-here)). Board: [blocks.bl](../board/blocks.bl), master `Question card`. Demo: [book](../book/index.html#question-card).
 
 The form a question takes on a [session card](session-card.md), in the conversation and in Telegram: the same record in every place.
 
@@ -45,3 +45,14 @@ One open question answered in place, the same way on every screen: Home cards, C
 * **Key request.** A password field with Add key and decline, on every screen ([connections](../../designs/fleet-connections.md)): the value goes to `connections_key_add`, never to `questions_answer`.
 * **Outcome.** Offline, the answer is not sent and the card says so; an unknown outcome says "retrying" while `writeOnce` resends it; a refusal shows its reason under the card. Only a returned write makes the question answered.
 
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-53 Questions are actions.** *Target.* A question from an agent is a card with its choices as buttons and a free-text answer. The answer edits the card in place. The same question shows on the session's card on Home and in Telegram.
+* **UR-24.** Decision shortcuts (for example `a` accept, `r` request rework) work only while the decision has focus and show in the button. *Check:* Browser: focus a decision, press its letter, expect the action; press it elsewhere, expect none.
+* **UR-26.** A question, acceptance or approval shows in the conversation that asks it, on that session's Home card and in Telegram, as views of one record ([OR-53](#rules-kept-here), [OR-40](../patterns/needs-you.md#rules-kept-here)); answering in one place updates the others within one update. *Check:* Browser: answer on Home, open the session, expect the answered card.
+* **UR-27.** A decision shows who it is addressed to, why the work waits and how long it has waited. *Check:* Review.
+* **UR-28.** Picking an offered answer takes one click or one key; a free-text answer is always offered. *Check:* Browser: answer a question with one click.
+* **UR-29.** After an answer the card says "Answered by …" and whether delivery is done or pending; a shown action is not proof that it completed. *Check:* Browser: answer, expect the delivery state on the card.
+* **UR-58.** (merged with OR-53) A question is answered in place on its card; the answer never needs another page ([OR-53](#rules-kept-here)). *Check:* Browser: answer a question; the URL stays the same.

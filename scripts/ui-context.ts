@@ -1,6 +1,7 @@
 // UI context (docs/design-system/README.md, "Context for a UI task"): the minimal reading an agent needs before it
 // designs or builds one page. Reads the page spec, its blocks (the links in its `## Blocks` section), the controls and patterns it and they link, its board canvas,
-// and the text of every rule they cite by ID, after the owner's principles card (OR-<n> in owner-rules.md, UR-<n> in principles.md). Prints Markdown;
+// and the text of every judgment rule they cite by ID, after the owner's principles card (OR-<n> in owner-rules.md, UR-<n> in principles.md);
+// a rule a component spec or a check keeps gets a one-line pointer to its home instead. Prints Markdown;
 // never fails a build. Node standard library only.
 // Usage: node scripts/ui-context.ts <page>   (a page spec name such as home; without one it lists the pages)
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -18,6 +19,29 @@ export function rules(owner: string, usability: string): Map<string, string> {
   // principles.md keeps them as table rows `| **UR-<n>.** | rule | check |`; a bold lead in a bullet also counts.
   for (const [, id, text] of usability.matchAll(/^\| \*\*(UR-\d+)\.?\*\* \| (.+?) \|/gm)) m.set(id, text.trim());
   for (const [, id, rest] of usability.matchAll(/^[ \t]*(?:[*-] )?\*\*(UR-\d+)[ .:]*([^\n|]*)$/gm)) if (!m.has(id)) m.set(id, rest.replace(/\*\*/g, '').trim());
+  return m;
+}
+
+// Rules that left the rule lists, by ID: the rows of the `Rules kept by a component or a check` table in
+// owner-rules.md and the `Rules kept elsewhere` table in principles.md, `| <ids> | <fate> | <where> |`. Each answers
+// its name (owner rules), fate, where it lives (a repository path for a component, the check, or the rule it merged
+// into) and, for a merge, that rule's ID.
+export type Home = { name: string; fate: string; where: string; into?: string };
+export function homes(owner: string, usability: string): Map<string, Home> {
+  const m = new Map<string, Home>();
+  const rows = (text: string, h: string) => {
+    if (!text.split('\n').includes(`## ${h}`)) return [];
+    return [...section(text, h).matchAll(/^\| ((?:OR|UR)-\d+[^|]*) \| (component|check|merged) \| (.+?) \|\s*$/gm)];
+  };
+  for (const [, ids, fate, where] of [...rows(owner, 'Rules kept by a component or a check'), ...rows(usability, 'Rules kept elsewhere')]) {
+    const link = where.match(/^\[[^\]]*\]\(([^)#]+)(#[^)]*)?\)/);
+    const into = where.match(/^into \[?((?:OR|UR)-\d+)/)?.[1];
+    const at = fate === 'component' && link ? `${ds}/${link[1]}${link[2] ?? ''}` : fate === 'merged' ? `merged into ${into}` : where.split('. The owner')[0];
+    for (const part of ids.split(/, (?=(?:OR|UR)-\d)/)) {
+      const [, id, name = ''] = part.match(/^((?:OR|UR)-\d+) ?(.*)$/)!;
+      m.set(id, { name: name.trim(), fate, where: at, ...(into ? { into } : {}) });
+    }
+  }
   return m;
 }
 
@@ -69,7 +93,8 @@ const group = (p: string) =>
 export function context(page: string): string {
   const spec = `${ds}/pages/${page}.md`;
   const owner = read(`${ds}/owner-rules.md`);
-  const byId = rules(owner, existsSync(join(root, ds, 'principles.md')) ? read(`${ds}/principles.md`) : '');
+  const usability = existsSync(join(root, ds, 'principles.md')) ? read(`${ds}/principles.md`) : '';
+  const byId = rules(owner, usability), home = homes(owner, usability);
   const text = read(spec);
   const parts = new Map<string, string[]>();
   const why = new Map<string, Set<string>>(); // rule ID -> the files that cite it
@@ -108,9 +133,21 @@ export function context(page: string): string {
     '- Read the screen through one view operation with useView (contract `view: true`, composed on the server from summaries); add fields to the view, not new reads.',
     '- No `every` timers and no reads on focus or visibility: the change stream rereads what it touches; a hidden tab reads nothing.',
     '- Prove it: `node scripts/page-budget.ts <path>` on the deployed site (open, reload, Alt-Tab, Back) and quote the numbers in the pull request.', '');
+  // A merged rule brings the rule it merged into.
+  for (const [id, fs] of [...why]) { const into = home.get(id)?.into; if (into) for (const f of fs) cite(into, f); }
   const ids = [...why.keys()].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
-  L.push(`Rules cited (${ids.length}):`);
-  for (const id of ids) L.push(`- **${id}** ${byId.get(id) ?? '(no rule with this ID)'} _(${[...why.get(id)!].join(', ')})_`);
+  const judged = ids.filter(id => byId.has(id) || !home.has(id)), kept = ids.filter(id => !byId.has(id) && home.has(id));
+  L.push(`Rules cited, judgment (${judged.length}):`);
+  for (const id of judged) L.push(`- **${id}** ${byId.get(id) ?? '(no rule with this ID)'} _(${[...why.get(id)!].join(', ')})_`);
+  // One line per home: a component spec, a check, or the rules merged into another; a spec already listed above says so.
+  const listed = new Set([...parts.values()].flat().filter(p => !p.includes('#'))); // a block read as one section is not the whole spec
+  const byHome = new Map<string, string[]>();
+  for (const id of kept) {
+    const h = home.get(id)!, key = h.fate === 'merged' ? 'merged' : `${h.fate}: ${h.where}`;
+    (byHome.get(key) ?? byHome.set(key, []).get(key)!).push(h.fate === 'merged' ? `${id} into ${h.into}` : `${id}${h.name ? ` ${h.name}` : ''}`);
+  }
+  L.push('', `Rules cited, kept by a component or a check (${kept.length}); read them there:`);
+  for (const [key, list] of byHome) L.push(`- ${list.join(', ')} → ${key}${listed.has(key.replace(/^component: /, '').split('#')[0]) ? ' (listed above)' : ''}`);
   L.push('', 'Build from `packages/ui` and the book (OR-13); compare the app at 1440 and 390 px with the canvas; `pnpm run check:design` shows the design report.');
   return L.join('\n');
 }

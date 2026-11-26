@@ -34,3 +34,13 @@
 * When a read fails, keep the last confirmed authorized values and offer retry. A new access generation clears the previous generation’s rows, counts, pins and pending responses.
 
 **Server note.** The mockups compute counts and groups on the client. The app gets counts per state from the server for the active filters, so counts stay correct for lists that are only partly loaded.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-11 Infinite scroll.** Collections load continuously with filters. Show a count ("84 of 1,240") and jump to start or end. No pagination unless a decision allows it.
+* **OR-33 Saved views.** Every list uses one shared saved-views control: system presets (Tasks "Running" is every non-terminal state) and personal views. A system preset sets only the state filter; grouping and sort stay. Views are stored on the server per person, and agents read and write them through MCP.
+* **OR-35 Group and sort are shared.** Group and Sort (field and direction) are shared list controls and part of a saved view. Group is a registry icon with a tooltip, not a word. Tasks sort by most recently changed first by default.
+* **OR-37 No hover buttons, facts in the space.** A list row has no buttons that appear on hover; hovering moves and covers nothing. Pin and other row actions are in the row menu (right click, long press, Menu key or Shift+F10). Checkboxes appear only in selection mode (the Select button, Shift-click, `x` or the row menu), as their own column left of the state icon; the action bar then replaces group and sort. Pinned rows are a Pinned group at the top, kept whatever the filter or search, and each shows a pin before its state icon; a click on it unpins. The row's right zone shows live row facts in short form: time since taken into work, number of executions, time in the current state, agent icon, host icon. Row facts are one shared pattern that other lists reuse.
+* **UR-18.** The full filter, grouping and sort live in the URL, so a copied URL reproduces the view. *Check:* Browser: set a filter, open the URL in a new context, compare rows.

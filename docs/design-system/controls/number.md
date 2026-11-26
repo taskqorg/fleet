@@ -27,3 +27,14 @@
 **Do.** Show `—` for unknown. **Don't.** Show `0` or an empty cell for unknown; round an estimate into a measured-looking number.
 
 **Used in.** Projects analytics, Task list and totals, Conversations boundaries/totals, Agents and Pipelines usage, Runners, Execution tree, Quota, Host stores, Laboratory comparison, History.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-2 Compact time.** Write times as `4m`, `2h`, `3d`, `12 Nov`, `12 Nov 2025`. The exact time is on hover, and the long form ("4 minutes ago") is the accessible name. Use the shared live age control from `packages/ui` for relative timestamps.
+* **UR-5.** Numbers in columns use tabular figures and right alignment. *Check:* Browser: computed `font-variant-numeric` of numeric cells is `tabular-nums`.
+* **UR-6.** Every number keeps its basis: measured, estimated or unavailable; an unknown value is never shown as `0`. *Check:* Review the data source of each number; Browser: an unavailable value shows `—` with "unavailable" in its accessible name.
+* **UR-7.** The main view shows the rounded value, and the basis marks (`≈`, `≥`, "partial", the subscription mark) sit in the tooltip and in Details ([OR-59](../owner-rules.md)); until OR-59 is built, an estimate keeps its `≈` prefix and dotted underline. *Check:* Review; Browser: the accessible name of an estimated value contains "estimated".
+* **UR-8.** A partial total says how much is measured ("2 of 3 runs measured") wherever its basis is shown. *Check:* Review.
+* **UR-9.** The three bases differ in more than colour (prefix, style or text). *Check:* Review a greyscale screenshot.

@@ -1,6 +1,6 @@
 # No horizontal scroll
 
-Nothing in Fleet scrolls sideways ([OR-66](../owner-rules.md)): on a Mac trackpad a sideways swipe over a scroller turns into browser Back or Forward. Content reflows to the width it has, at every window width and in every column. Board: [no-hscroll.bl](../board/no-hscroll.bl), approved 2026-11-26. Code: `packages/ui`; check: `tests/ui/hscroll.ts` (the built app in `tests/ui/app.check.ts`, the deployed site in `scripts/hscroll.ts`).
+Nothing in Fleet scrolls sideways ([OR-66](#rules-kept-here)): on a Mac trackpad a sideways swipe over a scroller turns into browser Back or Forward. Content reflows to the width it has, at every window width and in every column. Board: [no-hscroll.bl](../board/no-hscroll.bl), approved 2026-11-26. Code: `packages/ui`; check: `tests/ui/hscroll.ts` (the built app in `tests/ui/app.check.ts`, the deployed site in `scripts/hscroll.ts`).
 
 ## Patterns
 
@@ -22,3 +22,10 @@ One pattern for each kind of wide content; a screen picks the pattern and adds n
 ## Check
 
 `hscrollScan` lists every element that overflows sideways: the page itself, a box with `overflow-x: auto` or `scroll` whose content is wider, and content that sticks out past the viewport. The app check runs it on every route at 1440, 1100, 768 and 390 px and puts each case in the design report, so a new overflow shows on the pull request. `scripts/hscroll.ts` walks the deployed site at the same widths, every section route and the first details it links to.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-66 No horizontal scroll.** Nothing scrolls sideways: not the page, a column, a table, a code block, a chip row or a tab bar, at any window width. A sideways trackpad swipe over a scroller turns into browser Back or Forward. Wide content reflows by its [pattern](../patterns/no-horizontal-scroll.md): a table that does not fit stacks its rows, key-value pairs and long values wrap, code soft-wraps with its line numbers, chips and tabs wrap or fold, a matrix that does not fit becomes a ranked list. `overscroll-behavior-x: none` on the page is a safety net, not the fix.
+* **UR-50.** (merged with OR-66) No page scroll in either direction, and nothing scrolls sideways inside it: code and tables wrap or stack ([OR-66](#rules-kept-here)). *Check:* Browser: `scrollWidth` equals `clientWidth` on the document at 1440 and 390 px.

@@ -19,7 +19,7 @@
 
 **Behaviour.**
 * Bands are ordered: hosts with a problem first, then by busy slots ([Live](../pages/live.md)).
-* The head opens the host in System; slots open their sessions ([OR-26](../owner-rules.md)). In wall mode nothing opens.
+* The head opens the host in System; slots open their sessions ([OR-26](../patterns/app-shell.md#rules-kept-here)). In wall mode nothing opens.
 * Values update in place ([OR-6](../owner-rules.md)); a band that changes order moves after a short highlight, never while the person reads it ([OR-23](../owner-rules.md)).
 * At phone width slots stack and the gauges move under the name.
 

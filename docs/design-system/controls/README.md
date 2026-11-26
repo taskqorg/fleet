@@ -28,6 +28,8 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [step-list](step-list.md) | A pipeline's steps and a run of them; the read-only flow picture |
 | [draft-bar](draft-bar.md) | A definition that differs from its saved revision |
 | [choice](choice.md) | One or several of a few fixed options |
+| [file-picker](file-picker.md) | The files a run reads, as chips shared with the composer |
+| [pipeline-outline](pipeline-outline.md) | How a pipeline works, as a short plain-words list |
 | [transcript-viewer](transcript-viewer.md) | Live transcript with paging and search |
 | [decision-block](decision-block.md) | Decisions inline |
 | [result-viewer](result-viewer.md) | Result viewers |

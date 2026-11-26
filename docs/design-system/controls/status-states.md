@@ -17,3 +17,10 @@
 **Do.** Keep the layout during loading. **Don't.** Show spinners over empty pages or blank tables without explanation.
 
 **Used in.** Every list and panel.
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **UR-34.** The first load keeps the layout and shows skeletons in the real row or card size; later loads keep the old data visible. *Check:* Browser: with a slowed network, layout shift on load is below 0.1.
+* **UR-36.** An error says what failed, keeps the data already shown, offers retry, and marks only the affected area. *Check:* Browser: block one read with a route rule, expect a retry in that area and the rest intact.

@@ -22,3 +22,9 @@
 **Accessibility.** `group` named for its scope ("Tasks by state"). Each capsule is named "Waiting: 230".
 
 **Do.** Keep one order everywhere. **Don't.** Add the state word next to the icon (B1).
+
+## Rules kept here
+
+This spec is the one source of these rules (moved here on 2026-11-26; ids are kept, [owner rules](../owner-rules.md#rules-kept-by-a-component-or-a-check) and [principles](../principles.md#rules-kept-elsewhere) list where every rule lives). An `OR` rule keeps the owner's words.
+
+* **OR-29 Sum first, no zeros.** A counter block starts with the bold total (`Σ 12`), then the breakdown. A zero chip is hidden, and a block whose values are all zero is hidden. A status quick-filter chip with 0 shows only its icon, never `0`.

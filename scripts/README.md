@@ -13,7 +13,7 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 | [docs-report.ts](docs-report.ts) | `kind`, `linkFixOnly`, `anchors`, `links`; CLI `--base <ref>` or `--self-check`. |
 | [ui-context.ts](ui-context.ts) | `rules`, `principles`, `cited`, `refs`, `links`, `section`, `context`; CLI `<page>` prints the minimal reading for one page (spec, canvas, blocks, controls, patterns, cited rule texts, the data-layer rules). |
 | [page-budget.ts](page-budget.ts) | CLI `<path>...`: reads, bytes and settle time of a deployed screen on open, reload, Alt-Tab and Back, as site-agents ([data layer](../docs/designs/fleet-data-layer.md)); a tool, not a gate. |
-| [hscroll.ts](hscroll.ts) | CLI `[path...]`: every sideways overflow of the deployed site at 1440, 1100, 768 and 390 px over the section routes and their first details, as site-agents ([OR-66](../docs/design-system/owner-rules.md)); a tool, not a gate. |
+| [hscroll.ts](hscroll.ts) | CLI `[path...]`: every sideways overflow of the deployed site at 1440, 1100, 768 and 390 px over the section routes and their first details, as site-agents ([OR-66](../docs/design-system/patterns/no-horizontal-scroll.md#rules-kept-here)); a tool, not a gate. |
 | [lab-drift.ts](lab-drift.ts) | `Source`, `Status`, `slug`, `section`, `hash`, `repoDir`, `current`, `check`, `registryDir`, `loadRegistry`, `run`; CLI can report, `--write`, or `--pin` registry sources. |
 | [lab-example-format.ts](lab-example-format.ts) | `ExampleFile`, `Example`, `useCaseIds`, `parseExample`: validated canonical Lab inputs. |
 | [lab-export.ts](lab-export.ts) | `parseExport`, `examplesFromExport`: version-1 project exports to inline examples. |
