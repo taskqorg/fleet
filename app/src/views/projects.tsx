@@ -165,7 +165,7 @@ function Catalogue(props: {
                   const desc = [str(p.raw.description).trim(), str(p.raw.domain).trim()].filter(Boolean).join(' · ');
                   return (
                     <>
-                      <span class="lead"><ProjectTile code={p.code} color={str(p.raw.color)} pattern={str(p.raw.pattern)} /></span>
+                      <span class="lead"><ProjectTile code={p.code} color={str(p.raw.color)} pattern={str(p.raw.pattern)} label={p.code || undefined} /></span>
                       <span class="tt pcat-tt">
                         <a class="title row-link" href={'/projects/' + encodeURIComponent(projectSegment(p.id))} onClick={e => { e.preventDefault(); props.onOpen(p.id); }}>{p.name}</a>
                         <Show when={desc}><span class="pcat-desc">{desc}</span></Show>
@@ -313,7 +313,7 @@ function ProjectWork(props: {
   return (
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
-        lead={<ProjectTile code={props.p?.code ?? ''} color={str(props.p?.raw.color)} pattern={str(props.p?.raw.pattern)} size="lg" />}
+        lead={<ProjectTile code={props.p?.code ?? ''} color={str(props.p?.raw.color)} pattern={str(props.p?.raw.pattern)} size="lg" label={props.p?.code || undefined} />}
         title={title()}
         aside={aside() || undefined}
         onClose={props.onClose}

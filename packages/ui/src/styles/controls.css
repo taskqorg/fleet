@@ -647,5 +647,7 @@
   .idpick-sw.auto { display: grid; place-items: center; background: var(--bg); color: var(--id); font-family: var(--font-mono); font-size: var(--font-size-sm); font-weight: var(--font-weight-bold); }
   .idpick-sw.on { outline: var(--size-focus-ring) solid var(--fg); outline-offset: 2px; }
   .idpick-pat { display: inline-flex; align-items: center; gap: var(--space-2); height: var(--size-control); padding: 0 var(--space-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: none; color: var(--fg-muted); cursor: pointer; font-size: var(--font-size-sm); }
+  /* Forced colours drop backgrounds and gradients; a colour swatch and the tile's bar are the information itself. */
+  @media (forced-colors: active) { .idpick-sw, .ptile::after { forced-color-adjust: none; } }
   .idpick-pat.on { border-color: var(--fg); color: var(--fg); background: var(--selected); }
 }
