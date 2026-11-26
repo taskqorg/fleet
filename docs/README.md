@@ -7,7 +7,7 @@
 | Topic | Target file | Summary | Merges into the target |
 |---|---|---|---|
 | IA & user journeys | [designs/fleet-ia-and-journeys.md](designs/fleet-ia-and-journeys.md) | Closed navigation map, Lab-first evaluation model, Core Journeys `J1`–`J5`, and agentic method. | none |
-| Benchmarks & real-work cases | [benchmarks/llm-code-benchmarks.md](benchmarks/llm-code-benchmarks.md) | Coding benchmark tracks (`llm-code-benchmarks.json`) and Hermes real-work use cases ([real-work-use-cases.md](benchmarks/real-work-use-cases.md)). | none |
+| Benchmarks & real-work cases | [benchmarks/llm-code-benchmarks.md](benchmarks/llm-code-benchmarks.md) | Coding benchmark tracks (`llm-code-benchmarks.json`) and Hermes real-work use cases ([real-work-use-cases.md](benchmarks/real-work-use-cases.md)); DAM use cases ([dam-use-cases.md](benchmarks/dam-use-cases.md)). | none |
 | Lab | [designs/fleet-lab.md](designs/fleet-lab.md) | Experiments over examples, variants, evaluators and budgets, Promote, the `/lab` screen, work analysis. | |
 | Analytics | [designs/fleet-analytics.md](designs/fleet-analytics.md) | `analytics_query` over work records and the price table for estimated money. | none |
 | Asset pipelines | [designs/fleet-asset-pipelines.md](designs/fleet-asset-pipelines.md) | Provider keys into connections, deleting AssetQ, registry statuses, Meshy and image pipelines with Blender, judges, `loop`, character. | |
@@ -20,6 +20,7 @@
 | History | [designs/fleet-history.md](designs/fleet-history.md) | One history for every scope: activity entries written by one trigger function, `history_view` with scope filters, folding and cursors, the History screens. | [design-system/pages/history.md](design-system/pages/history.md) |
 | Connections | [designs/fleet-connections.md](designs/fleet-connections.md) | API key connections, the Fleet gateway, per-run tokens, call methods, file transfer. | [connections.md](connections.md) is a compatibility link; the target holds all rules. |
 | Project resource access | [designs/fleet-project-access.md](designs/fleet-project-access.md) | Access servers, grants of a project's database and files, the owner's one approval, the provisioner and its recipes, probes, revoke. | none |
+| Project apps | [designs/fleet-project-apps.md](designs/fleet-project-apps.md) | A project's own application calls its pipelines: app identity and key, the app route, inputs by reference, callback, limits, attribution by app, API-step pricing. | none |
 | Triggers | [designs/fleet-triggers.md](designs/fleet-triggers.md) | Timed and change wakes of a conversation or a bot: one trigger table, the pass, presets, one message per work item. | none |
 | Telegram channel | [designs/fleet-telegram.md](designs/fleet-telegram.md) | People talk to Fleet sessions from Telegram: the telegram connection, lossless intake, linked people, rooms, work items and the conductor, replies and the outbox. | none |
 | Stack | [designs/fleet-stack.md](designs/fleet-stack.md) | Go for every service and the migration order, delivery order, rule delivery, toolchain (D1-D4), MCP subcommands; split parts: [contracts](designs/fleet-contracts.md), [Go code](designs/fleet-go-code.md), [trial](designs/fleet-stack-trial.md). | none |
