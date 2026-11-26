@@ -118,11 +118,11 @@ export function BotAvatarField(props: { bot: Bot; onSaved: (bot: Bot) => void })
       <Show when={error()}>{err => <ErrorBanner text={err()} />}</Show>
       <div class="row" style={{ gap: 'var(--space-6)', 'align-items': 'flex-start', 'flex-wrap': 'wrap' }}>
         <div class="stack" style={{ 'align-items': 'center', gap: 'var(--space-3)' }}>
-          <Avatar letter={props.bot.settings.name} tone="success" size="xl" picture={preview()} state={state()} />
+          <Avatar letter={props.bot.settings.name} tone="success" size="xl" picture={preview()} state={state()} color={botColor(props.bot)} />
           <div class="row" style={{ gap: 'var(--space-3)', 'align-items': 'center' }}>
-            <Avatar letter={props.bot.settings.name} tone="success" size="sm" picture={preview()} />
-            <Avatar letter={props.bot.settings.name} tone="success" size="md" picture={preview()} />
-            <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={preview()} />
+            <Avatar letter={props.bot.settings.name} tone="success" size="sm" picture={preview()} color={botColor(props.bot)} />
+            <Avatar letter={props.bot.settings.name} tone="success" size="md" picture={preview()} color={botColor(props.bot)} />
+            <Avatar letter={props.bot.settings.name} tone="success" size="lg" picture={preview()} color={botColor(props.bot)} />
           </div>
           <span class="muted type-sm">as lists, tiles, header</span>
         </div>
