@@ -495,13 +495,16 @@ func connReconcileMarkUnknown(ctx context.Context, a *App, reason string) {
 }
 
 // gatewayCall: one in-process call through fleet-gateway (contract.GatewayCall). idempotent is the catalogue tool's
-// flag: an edge 5xx (no gateway call id) on a tool that may not be repeated reads unknown.
+// flag: an edge 5xx (no gateway call id) on a tool that may not be repeated reads unknown. A tool the connection does
+// not grant is recorded for the grants drift problem (grants.go).
 func gatewayCall(ctx context.Context, token, connection, tool string, args any, idempotent bool) contract.CallLine {
 	t := contract.GatewayTarget{URL: gatewayURL(), Token: token, Idempotent: idempotent}
 	if strings.HasPrefix(t.URL, "https://") {
 		t.Header = cfAccessHeaders()
 	}
-	return contract.GatewayCall(ctx, t, connection, tool, jsonBytes(args))
+	line := contract.GatewayCall(ctx, t, connection, tool, jsonBytes(args))
+	grantRefused(connection, tool, line)
+	return line
 }
 
 func cfAccessHeaders() map[string]string {
