@@ -325,6 +325,7 @@ func designStateOwners() []designOwner {
 		{"experiment", "experiment_states.go", []string{"state"}},
 		{"host", "host_states.go", []string{"state"}},
 		{"connection_key", "key_states.go", []string{"state"}},
+		{"agent_gap_finding", "agent_gap_findings.go", []string{"state"}},
 		{"access_grant", "access_states.go", []string{"state"}},
 		{"artifact_copy", "artifact_states.go", []string{"state"}},
 		{"store", "artifact_states.go", []string{"state"}},
@@ -772,6 +773,7 @@ func TestDesignTransitions(t *testing.T) {
 	check("question", questionTransitions, enum(`CREATE TYPE question_state AS ENUM \(([^)]*)\)`), nil, "open")
 	check("experiment", experimentTransitions, enum(`state text NOT NULL DEFAULT 'draft' CHECK \(state IN \(([^)]*)\)\)`), nil, "draft")
 	check("host", hostTransitions, enum(`state text NOT NULL DEFAULT 'active' CHECK \(state IN \(('active', 'removed')\)\)`), func(s string) bool { return s == "removed" }, "active")
+	check("agent gap finding", agentGapFindingTransitions, enum(`CREATE TABLE IF NOT EXISTS agent_gap_finding\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), nil, "open")
 	check("connection key", connectionKeyTransitions, enum(`state text NOT NULL DEFAULT 'active' CHECK \(state IN \(('active', 'disabled', 'retired')\)\)`), nil, "active")
 	check("artifact copy", artifactCopyTransitions, enum(`CREATE TABLE artifact_copy\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "deleted" }, "pending", "copying", "verified")
 	check("store", storeTransitions, enum(`CREATE TABLE store\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "unreachable" }, "reachable", "unreachable")

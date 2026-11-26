@@ -21,6 +21,7 @@
     "gateway-provider-down": {"title": "Provider failed or timed out", "setting": {"kind": "connection", "ref": "connections (provider, timeouts)", "text": "Check the provider's status; consider a timeout or another provider for the tool."}},
     "other": {"title": "Unclassified failure", "setting": {"kind": "rules", "ref": "config/agent-gaps.json", "text": "Add a rule that names the class and its setting."}}
   },
+  "finding": {"$comment": "A class (not other) with at least minCount failures in at least minExecutions agent runs over the last days opens a finding (problem gap:<class>). After its pull request's release runs on every host, the finding compares the class's failures per agent run over watchDays before and after; at most fixedRatio of the before rate is fixed.", "days": 7, "minCount": 10, "minExecutions": 3, "watchDays": 3, "fixedRatio": 0.5},
   "shellTools": "^(commandExecution|command_execution|Bash|bash|shell|run_shell_command|exec_command|local_shell)$",
   "rules": [
     {"source": "agent", "shell": false, "match": "Call error: ", "class": "skip", "why": "a gateway call: counted from its call row"},

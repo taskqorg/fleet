@@ -44,6 +44,13 @@ CREATE POLICY live ON agent_gap AS RESTRICTIVE FOR SELECT TO public USING ((flee
 DROP POLICY IF EXISTS project_scope ON agent_gap;
 CREATE POLICY project_scope ON agent_gap FOR ALL TO public USING (fleet_visible(project_id));
 
+-- agent_gap_finding
+ALTER TABLE agent_gap_finding ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON agent_gap_finding;
+CREATE POLICY live ON agent_gap_finding AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON agent_gap_finding;
+CREATE POLICY project_scope ON agent_gap_finding FOR ALL TO public USING (fleet_visible(project_id));
+
 -- api_connection
 ALTER TABLE api_connection ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON api_connection;

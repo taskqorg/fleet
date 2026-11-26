@@ -494,6 +494,27 @@ type AgentGap struct {
 	TombstonedAt *time.Time
 }
 
+type AgentGapFinding struct {
+	Class        string
+	ProjectID    *string
+	State        string
+	QuestionID   *string
+	SessionID    *string
+	Pr           *int64
+	PrUrl        *string
+	Release      *string
+	ChangeAt     *time.Time
+	BeforeCount  *int32
+	AfterCount   *int32
+	BeforeRuns   *int32
+	AfterRuns    *int32
+	VerdictAt    *time.Time
+	Note         string
+	OpenedAt     time.Time
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
 type AgentGapPass struct {
 	Rules string
 	Days  int32
