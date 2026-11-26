@@ -33,11 +33,11 @@ test('remote verification recovers missing staging from the uploader spool', {ti
   const dir = mkdtempSync(join(tmpdir(), 'fleet-recovery-'));
   let stopCoordinator: (() => Promise<void>) | undefined;
   const stopWorkers: (() => Promise<void>)[] = [];
-  const scenarios = (['missing', 'promoted', 'expired', 'unreachable'] as const).map(mode => ({
+  const scenarios = (['missing', 'promoted', 'expired', 'legacy-slow', 'unreachable'] as const).map(mode => ({
     mode, id: randomUUID(), bytes: Buffer.from('invented ' + mode + ' bytes\0\xff', 'latin1'),
     first: gate(), replacement: gate(), staleProbe: gate(), stage: '', newStage: '', thirdStage: '', uploads: 0, reads: [] as string[],
     holdNextProbe: false, staleProbeStarted: false,
-    denyProbe: mode === 'missing', deniedProbes: 0,
+    denyProbe: mode === 'missing', deniedProbes: 0, streams: 0, streamFinished: false,
   }));
   const s3 = await fakeS3(async (req, res, key, query) => {
     const scenario = scenarios.find(s => key.includes(s.id) || key === finalKey(s.bytes));
@@ -62,7 +62,24 @@ test('remote verification recovers missing staging from the uploader spool', {ti
       }
       return false;
     }
-    if (!query.has('X-Amz-Signature')) return false;
+    if (!query.has('X-Amz-Signature')) {
+      if (mode !== 'legacy-slow' || key !== scenario.stage) return false;
+      scenario.streams++;
+      res.writeHead(200, {'content-length': scenario.bytes.length});
+      if (scenario.streams === 1) {
+        res.write(scenario.bytes.subarray(0, 1));
+        await once(res, 'close');
+        return true;
+      }
+      for (const byte of scenario.bytes) {
+        await delay(65);
+        if (res.destroyed) return true;
+        res.write(Buffer.from([byte]));
+      }
+      scenario.streamFinished = true;
+      res.end();
+      return true;
+    }
     scenario.reads.push(key);
     if (scenario.reads.length > 1) {
       if (mode === 'missing' && scenario.reads.length === 2) {
@@ -76,6 +93,12 @@ test('remote verification recovers missing staging from the uploader spool', {ti
     }
     scenario.stage = key;
     if (mode === 'expired') return storeError(403, 'RequestTimeTooSkewed');
+    if (mode === 'legacy-slow') {
+      // The fixture sends the old wire callback while the verifier's normal GET is held.
+      await scenario.first.wait;
+      res.end(scenario.bytes);
+      return true;
+    }
     if (mode === 'promoted') s3.objects.set(finalKey(scenario.bytes), s3.objects.get(key)!);
     s3.objects.delete(key);
     if (mode === 'missing' || mode === 'unreachable') await scenario.first.wait;
@@ -99,9 +122,9 @@ test('remote verification recovers missing staging from the uploader spool', {ti
   }});
   stopCoordinator = coordinator.stop;
 
-  async function post(path: string, token: string, body: unknown, person?: string) {
+  async function post(path: string, token: string, body: unknown, person?: string, signal = t.signal) {
     const response = await fetch(coordinator.base + path, {
-      method: 'POST', signal: t.signal, headers: {
+      method: 'POST', signal, headers: {
         authorization: 'Bearer ' + token, 'content-type': 'application/json',
         ...(person ? {'x-fleet-person': person} : {}),
       }, body: JSON.stringify(body),
@@ -116,8 +139,8 @@ test('remote verification recovers missing staging from the uploader spool', {ti
     const registered = ok(await post('/api/ops/hosts_register', coordinator.secret, {id}, 'owner@trial.test'));
     const secretFile = join(dir, id + '.secret');
     writeFileSync(secretFile, registered.secret, {mode: 0o600});
-    return {id, secretFile, post: (path: string, body: object) =>
-      post('/api/hosts/' + path, registered.secret, {hostId: id, ...body})};
+    return {id, secretFile, post: (path: string, body: object, signal?: AbortSignal) =>
+      post('/api/hosts/' + path, registered.secret, {hostId: id, ...body}, undefined, signal)};
   }
   const uploader = await host('upload-host'), verifier = await host('verify-host'), alternate = await host('verify-alt');
   const endpoint = 'http://127.0.0.1:' + s3.port;
@@ -194,20 +217,62 @@ test('remote verification recovers missing staging from the uploader spool', {ti
   assert.deepEqual(ok(await verifier.post('artifacts/verified', {
     ...request, stagingKey: missing.stage.slice('/fleet/'.length), sha256: '0'.repeat(64),
   })), {state: 'unknown'}, 'the old digest cannot fail the replacement reservation');
-  assert.deepEqual(ok(await verifier.post('artifacts/verified', {
-    ...request, sha256: '0'.repeat(64),
-  })), {state: 'unknown'}, 'a legacy digest cannot fail the replacement');
+  const queuedLegacyWork = (id: string) => Number(coordinator.sql(
+    `SELECT count(*) FROM artifact_verify_work WHERE artifact_id=${lit(id)}`,
+  ));
+  const copyState = (id: string) => coordinator.sql(
+    `SELECT state FROM artifact_copy WHERE artifact_id=${lit(id)} AND store_id='test-store'`,
+  ).trim();
+  async function checkLegacyDigest(sha256: string) {
+    assert.equal(ok(await verifier.post('artifacts/verified', {...request, sha256})).state, 'verifying');
+    await until(() => queuedLegacyWork(missing.id) === 0 || undefined, 'legacy check settled its work', t.signal);
+    assert.equal(copyState(missing.id), 'copying', 'an old legacy digest cannot settle a replacement with different bytes');
+    assert.equal(s3.objects.has(finalKey(missing.bytes)), false);
+  }
+  await checkLegacyDigest('0'.repeat(64));
   s3.objects.set(missing.newStage, Buffer.from('invented unrelated current bytes'));
-  assert.deepEqual(ok(await verifier.post('artifacts/verified', {
-    ...request, sha256: createHash('sha256').update(missing.bytes).digest('hex'),
-  })), {state: 'unknown'}, 'a legacy digest cannot validate different current bytes');
+  await checkLegacyDigest(createHash('sha256').update(missing.bytes).digest('hex'));
   s3.objects.set(missing.newStage, missing.bytes);
   missing.replacement.release();
   await until(() => missing.thirdStage || undefined, 'the owner can recover a missing replacement too', t.signal);
   assert.notEqual(missing.thirdStage, missing.newStage);
 
   for (const s of scenarios) {
+    if (s.mode === 'legacy-slow') {
+      enqueue(s);
+      await until(() => s.stage || undefined, 'legacy verification staged the object', t.signal);
+      const receipt = {artifactId: s.id, storeId: 'test-store', sha256: createHash('sha256').update(s.bytes).digest('hex')};
+      for (let retry = 0; retry < 2; retry++) {
+        const deadline = AbortSignal.any([t.signal, AbortSignal.timeout(800)]);
+        const accepted = ok(await verifier.post('artifacts/verified', receipt, deadline));
+        assert.equal(accepted.state, 'verifying');
+      }
+      assert.equal(s.streamFinished, false, 'the legacy callback answered before the slow read finished');
+      await until(() => s.streams || undefined, 'background verification opened the object', t.signal);
+      assert.equal(s.streams, 1, 'duplicate callbacks share one read');
+      assert.equal(queuedLegacyWork(s.id), 1);
+      assert.equal(copyState(s.id), 'pending');
+      // Restart with the first read in flight. The replacement process has no HTTP callback to retry.
+      await coordinator.restart();
+    }
     if (s.mode === 'unreachable') {
+      // An older colocated uploader can enter recovery if its accepted verification loses both objects.
+      // Its periodic, storeless lease still renews normally.
+      const local = randomUUID(), localExecution = randomUUID(), hash = 'a'.repeat(64);
+      coordinator.sql(`INSERT INTO execution(id,kind,state,observation,host_id,updated_at,data,seq,definitions)
+        VALUES(${lit(localExecution)},'host_job','running','confirmed',${lit(verifier.id)},now(),'{}',2,'{}');
+        INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,state)
+        VALUES(${lit(local)},'prod',${lit(hash)},1,'application/octet-stream','local-legacy.bin',${lit(localExecution)},'pending');
+        INSERT INTO artifact_copy(artifact_id,store_id,state,staging_key,lease_expires_at)
+        VALUES(${lit(local)},'test-store','pending',${lit('_/prod/.pending/' + local)},now() + interval '1 hour')`);
+      const localCopy = {artifactId: local, storeId: 'test-store'};
+      assert.equal(ok(await verifier.post('artifacts/verified', {...localCopy, sha256: hash})).state, 'verifying');
+      await until(() => queuedLegacyWork(local) === 0 || undefined, 'legacy proof with missing bytes closed', t.signal);
+      assert.equal(ok(await verifier.post('artifacts/renew', {artifactId: local})).state, 'pending');
+      const missingLocal = await verifier.post('artifacts/renew', localCopy);
+      assert.equal(missingLocal.status, 409);
+      assert.equal(missingLocal.body.code, 'no_such_key');
+
       await startExecutor(alternate);
       enqueue(s);
       await until(() => s.stage || undefined, 'initial verifier opened the prior store', t.signal);
@@ -224,7 +289,11 @@ test('remote verification recovers missing staging from the uploader spool', {ti
     assert.deepEqual(JSON.parse(String(row.response)), {artifactId: s.id, state: 'stored'});
     assert.equal(JSON.parse(String(row.body)).recoveries ?? 0, s.mode === 'missing' ? 2 : s.mode === 'unreachable' ? 1 : 0);
     assert.equal(s.uploads, s.mode === 'missing' ? 3 : s.mode === 'unreachable' ? 2 : 1);
-    if (s.mode === 'unreachable') {
+    if (s.mode === 'legacy-slow') {
+      assert.equal(s.streams, 2, 'one resumed read completes the durable verification');
+      assert.equal(s.streamFinished, true);
+      s.first.release();
+    } else if (s.mode === 'unreachable') {
       assert.equal(s.reads.length, 2);
       assert.equal(s.deniedProbes, 0, 'recovery does not probe a store already recorded unreachable');
       assert.ok(s.reads[1].includes('.alternate-store.'), 'the alternate store independently verifies its staging bytes');

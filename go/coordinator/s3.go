@@ -192,7 +192,7 @@ var retryStatus = map[int]bool{429: true, 500: true, 502: true, 503: true, 504: 
 var retryCodes = map[string]bool{"SlowDown": true, "Throttling": true, "ThrottlingException": true, "RequestTimeout": true, "RequestTimeTooSkewed": true}
 
 // once: one attempt; a non-2xx status is an *S3Error, the response body is the caller's to close.
-func (s *S3) once(method, path string, q, headers map[string]string, body []byte) (*http.Response, error) {
+func (s *S3) once(ctx context.Context, method, path string, q, headers map[string]string, body []byte) (*http.Response, error) {
 	date := amzDate(s.now())
 	payload := sha256hex(nil)
 	if body != nil {
@@ -216,7 +216,7 @@ func (s *S3) once(method, path string, q, headers map[string]string, body []byte
 	if qs := s3query(q); qs != "" {
 		u += "?" + qs
 	}
-	req, err := http.NewRequest(method, u, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -265,14 +265,21 @@ func (s *S3) once(method, path string, q, headers map[string]string, body []byte
 }
 
 func (s *S3) send(method, path string, q, headers map[string]string, body []byte) (*http.Response, error) {
+	return s.sendContext(context.Background(), method, path, q, headers, body)
+}
+
+func (s *S3) sendContext(ctx context.Context, method, path string, q, headers map[string]string, body []byte) (*http.Response, error) {
 	return retryCall(3, 100*time.Millisecond, 20*time.Second, func(err error) bool {
+		if ctx.Err() != nil {
+			return false
+		}
 		var se *S3Error
 		if errors.As(err, &se) {
 			return retryStatus[se.Status] || retryCodes[se.Code]
 		}
 		var ne net.Error
 		return errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "connection")
-	}, func() (*http.Response, error) { return s.once(method, path, q, headers, body) })
+	}, func() (*http.Response, error) { return s.once(ctx, method, path, q, headers, body) })
 }
 
 func (s *S3) text(method, path string, q, headers map[string]string, body []byte) (string, error) {
@@ -350,11 +357,15 @@ func (s *S3) Head(bucket, key string) (int64, error) {
 
 // Get streams the object; rng is an inclusive byte range [start, end] or nil.
 func (s *S3) Get(bucket, key string, rng []int64) (io.ReadCloser, error) {
+	return s.get(context.Background(), bucket, key, rng)
+}
+
+func (s *S3) get(ctx context.Context, bucket, key string, rng []int64) (io.ReadCloser, error) {
 	h := map[string]string{"accept-encoding": "identity"}
 	if rng != nil {
 		h["range"] = fmt.Sprintf("bytes=%d-%d", rng[0], rng[1])
 	}
-	res, err := s.send("GET", s.path(bucket, key), nil, h, nil)
+	res, err := s.sendContext(ctx, "GET", s.path(bucket, key), nil, h, nil)
 	if err != nil {
 		return nil, err
 	}

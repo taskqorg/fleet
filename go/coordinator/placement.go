@@ -428,7 +428,7 @@ func placeOne(ctx context.Context, a *App, x *Artifact, copies []db.DispArtifact
 		if err != nil {
 			return queued, deleted, err
 		}
-		staging := stagingOf(x, s.ID)
+		staging := newStagingKey(x, s.ID)
 		upload, err := t.CreateMultipartUpload(s.Bucket, staging, x.MediaType)
 		if err != nil {
 			return queued, deleted, err

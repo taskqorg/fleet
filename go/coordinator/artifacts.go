@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -473,8 +470,8 @@ func projectKey(p *string) string {
 	return *p
 }
 func keyOf(x *Artifact) string { return projectKey(x.ProjectID) + "/" + x.Scope + "/" + x.ContentHash }
-func stagingOf(x *Artifact, storeID string) string {
-	return projectKey(x.ProjectID) + "/" + x.Scope + "/.pending/" + x.ID + "." + storeID
+func newStagingKey(x *Artifact, storeID string) string {
+	return projectKey(x.ProjectID) + "/" + x.Scope + "/.pending/" + x.ID + "." + storeID + "." + newID()
 }
 
 // row: the artifact as artifact_list shows it.
@@ -671,7 +668,7 @@ func reopenPendingCopy(ctx context.Context, a *App, id, executionID, hostID stri
 	if target == nil {
 		return nil, failCode(409, "No reachable store in the project locations", "no_store")
 	}
-	staging := stagingOf(x, target.ID) + "." + newID()
+	staging := newStagingKey(x, target.ID)
 	t, err := tunnel(target)
 	if err != nil {
 		return nil, err
@@ -884,7 +881,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 			return contract.ArtifactReserveReply{ArtifactId: id, State: "stored", StoreId: &at.ID}, nil
 		}
 	}
-	staging := stagingOf(&Artifact{ID: id, ProjectID: e.ProjectID, Scope: scope, ContentHash: hash}, target.ID)
+	staging := newStagingKey(&Artifact{ID: id, ProjectID: e.ProjectID, Scope: scope, ContentHash: hash}, target.ID)
 	c, err := tunnel(target)
 	if err != nil {
 		return nil, err
@@ -1049,7 +1046,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	}
 	// A retried remote commit of a committed copy uses the same recovery fence as lease renewal.
 	if c.awaitingVerification(x) && b.HostId != s.HostID {
-		return contract.ArtifactStateReply{State: "verifying"}, renewCopy(ctx, a, x, s, c, b.HostId)
+		return contract.ArtifactStateReply{State: "verifying"}, renewCopy(ctx, a, x, s, c, b.HostId, false)
 	}
 	parts := make([]S3Part, len(b.Parts))
 	for i, p := range b.Parts {
@@ -1159,15 +1156,26 @@ func artifactRenew(q *Request, b *contract.ArtifactLeaseRequest) (any, error) {
 	if err := allowedHost(ctx, a, x, s, b.HostId); err != nil {
 		return nil, err
 	}
-	return contract.ArtifactStateReply{State: c.State}, renewCopy(ctx, a, x, s, c, b.HostId)
+	return contract.ArtifactStateReply{State: c.State}, renewCopy(ctx, a, x, s, c, b.HostId, deref(b.StoreId) != "")
 }
 
-func renewCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, hostID string) error {
+func renewCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, hostID string, waitingOnStore bool) error {
 	if err := lease(ctx, a, x.ID, s.ID, false, true); err != nil {
 		return err
 	}
-	if !c.awaitingVerification(x) || hostID == s.HostID {
+	if !c.awaitingVerification(x) {
 		return nil
+	}
+	if hostID == s.HostID {
+		// A colocated uploader awaiting an asynchronous verification supplies its store. Its periodic
+		// upload lease does not, so renewing an inline verification never starts a duplicate read.
+		if !waitingOnStore || x.ExecutionID == nil {
+			return nil
+		}
+		e, err := execGet(ctx, a, *x.ExecutionID)
+		if err != nil || e.HostID != hostID {
+			return err
+		}
 	}
 	recovery, err := resumeVerification(ctx, a, x, s, c, hostID)
 	if err != nil {
@@ -1409,36 +1417,34 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 	if c.UploadID != nil || b.StagingKey != nil && deref(b.StagingKey) != deref(c.StagingKey) {
 		return contract.ArtifactStateReply{State: "unknown"}, nil
 	}
-	staging := ""
-	if c.StagingKey != nil {
-		staging = *c.StagingKey
+	if b.StagingKey == nil {
+		if !shaPattern.MatchString(b.Sha256) {
+			return nil, fail(400, "Expected sha256")
+		}
+		return queueLegacyVerification(ctx, a, x, s, c, b.Sha256)
+	}
+	rep, err := finishArtifactVerification(ctx, a, x, s, c, b.Sha256)
+	if isMissingKey(err) {
+		return nil, missingStagingKey()
+	}
+	return rep, err
+}
+
+func finishArtifactVerification(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, digest string) (contract.ArtifactStateReply, error) {
+	var none contract.ArtifactStateReply
+	staging := deref(c.StagingKey)
+	if digest != x.ContentHash {
+		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, staging, "content hash differs from the reserved hash", c)
 	}
 	t, err := tunnel(s)
 	if err != nil {
-		return nil, err
-	}
-	if b.StagingKey == nil {
-		// Older executors send no reservation identity. Only their digest of the actual current bytes
-		// can settle the copy. If staging has already been removed, verify the promoted object.
-		digest, err := legacyVerificationDigest(t, s.Bucket, staging, keyOf(x))
-		if err != nil {
-			return nil, err
-		}
-		if digest != b.Sha256 {
-			return contract.ArtifactStateReply{State: "unknown"}, nil
-		}
-	}
-	if b.Sha256 != x.ContentHash {
-		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, staging, "content hash differs from the reserved hash", c)
+		return none, err
 	}
 	if err := promote(t, s.Bucket, staging, keyOf(x), x.Size); err != nil {
-		if isMissingKey(err) {
-			return nil, missingStagingKey()
-		}
-		return nil, err
+		return none, err
 	}
 	if err := t.Delete(s.Bucket, staging); err != nil {
-		return nil, err
+		return none, err
 	}
 	stored := false
 	err = txCtx(ctx, a, func(tx pgx.Tx) error {
@@ -1456,37 +1462,17 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 		return d.ArtStoredNow(tctx, x.ID)
 	})
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	if !stored {
 		return contract.ArtifactStateReply{State: "unknown"}, nil
 	}
 	if x.ExecutionID != nil {
 		if err := settleWaiting(ctx, a, *x.ExecutionID); err != nil {
-			return nil, err
+			return none, err
 		}
 	}
 	return contract.ArtifactStateReply{State: "stored"}, nil
-}
-
-func legacyVerificationDigest(t *S3, bucket, staging, final string) (string, error) {
-	r, err := t.Get(bucket, staging, nil)
-	var se *S3Error
-	if errors.As(err, &se) && se.Status == 404 && se.Code == "NoSuchKey" {
-		r, err = t.Get(bucket, final, nil)
-		if errors.As(err, &se) && se.Status == 404 && se.Code == "NoSuchKey" {
-			return "", missingStagingKey()
-		}
-	}
-	if err != nil {
-		return "", err
-	}
-	defer r.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, r); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // artifactDeclare: an agent's required declaration (artifact_save required=true), recorded on the execution.

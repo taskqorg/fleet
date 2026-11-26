@@ -99,8 +99,24 @@ FROM command WHERE kind='artifact-verify' AND host_id= @host_id
  AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text;
 
 -- name: ArtVerifyQueued :one
-SELECT EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= @host_id AND status IN ('pending','accepted','started')
- AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text);
+SELECT (EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= @host_id AND status IN ('pending','accepted','started')
+ AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text)
+ OR EXISTS (SELECT 1 FROM artifact_verify_work w JOIN artifact_copy c USING (artifact_id, store_id, staging_key)
+ WHERE w.artifact_id= @artifact_id AND w.store_id= @store_id))::boolean;
+
+-- name: ArtVerifyWorkAdd :execrows
+INSERT INTO artifact_verify_work(id, artifact_id, store_id, staging_key, digest)
+VALUES(@id, @artifact_id, @store_id, @staging_key, @digest) ON CONFLICT(artifact_id, store_id, staging_key, digest) DO NOTHING;
+
+-- name: ArtVerifyWorkDue :many
+SELECT id, attempts FROM artifact_verify_work
+WHERE next_attempt_at <= sqlc.arg(now)::pg_catalog.timestamptz ORDER BY next_attempt_at, id LIMIT sqlc.arg(lim);
+
+-- name: ArtVerifyWorkGet :one
+SELECT artifact_id, store_id, staging_key, digest FROM artifact_verify_work WHERE id=$1;
+
+-- name: ArtVerifyWorkDelete :exec
+DELETE FROM artifact_verify_work WHERE id=$1;
 
 -- name: ArtCopyReject :exec
 -- A failed copy retries after 1 minute doubling, up to the retry window.

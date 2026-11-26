@@ -80,7 +80,7 @@ Own work from task creation to an accepted result:
 - Execution: agent and environment assignment, state and execution history.
 - Questions: retain context with the related work, route to an authorized person or agent and deliver the answer to the relevant execution. Show the addressee and waiting reason; follow [communication rules](docs/system-operations.md#agent-communication).
 - Results: retain accessible materials and checks linked to their task and execution. Projects choose repositories, file or object storage, or external systems as destinations; Fleet need not store every artifact itself.
-- Remote artifact verification preserves the upload owner’s spool until a copy is verified. A committed reservation with no open verifier and confirmed missing staging and destination objects lets its owner retry from the spool. Verify an existing destination first. See the [write protocol](docs/designs/fleet-data-foundation.md#3-artifact-store).
+- Remote artifact verification preserves the upload owner’s spool until a copy is verified. A committed reservation with no open verifier and confirmed missing staging and destination objects lets its owner retry from the spool. Verify an existing destination first. Legacy digest callbacks acknowledge durable verification work before the coordinator rereads the reserved bytes. See the [write protocol](docs/designs/fleet-data-foundation.md#3-artifact-store).
 - Completion: distinguish creation, verification and publication; enforce the task's requirements under project rules.
 
 The queue advances automatically when dependencies, a suitable executor and environment, granted access and resource limits permit. Human decisions or project rules may require a pause.

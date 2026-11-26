@@ -175,7 +175,7 @@ func TestDesignRules(t *testing.T) {
 
 // The S5/S6 checks of the work kit and its queues (DESIGN_RULES.md). designKitAreas: the file-name prefixes of the
 // areas whose item work runs on the kit; an area moving onto the kit adds its prefix.
-var designKitAreas = []string{"resource_", "pipeline_work", "delegation_work", "upload_work", "access_work"}
+var designKitAreas = []string{"resource_", "pipeline_work", "delegation_work", "upload_work", "artifact_verify_work", "access_work"}
 
 func designKitArea(name string) bool {
 	for _, p := range designKitAreas {

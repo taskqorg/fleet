@@ -1374,8 +1374,10 @@ func (q *Queries) ArtVerifyHistory(ctx context.Context, arg ArtVerifyHistoryPara
 }
 
 const artVerifyQueued = `-- name: ArtVerifyQueued :one
-SELECT EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= $1 AND status IN ('pending','accepted','started')
+SELECT (EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= $1 AND status IN ('pending','accepted','started')
  AND payload->'payload'->>'artifactId'= $2::text AND payload->'payload'->>'storeId'= $3::text)
+ OR EXISTS (SELECT 1 FROM artifact_verify_work w JOIN artifact_copy c USING (artifact_id, store_id, staging_key)
+ WHERE w.artifact_id= $2 AND w.store_id= $3))::boolean
 `
 
 type ArtVerifyQueuedParams struct {
@@ -1386,9 +1388,103 @@ type ArtVerifyQueuedParams struct {
 
 func (q *Queries) ArtVerifyQueued(ctx context.Context, arg ArtVerifyQueuedParams) (bool, error) {
 	row := q.db.QueryRow(ctx, artVerifyQueued, arg.HostID, arg.ArtifactID, arg.StoreID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const artVerifyWorkAdd = `-- name: ArtVerifyWorkAdd :execrows
+INSERT INTO artifact_verify_work(id, artifact_id, store_id, staging_key, digest)
+VALUES($1, $2, $3, $4, $5) ON CONFLICT(artifact_id, store_id, staging_key, digest) DO NOTHING
+`
+
+type ArtVerifyWorkAddParams struct {
+	ID         string
+	ArtifactID string
+	StoreID    string
+	StagingKey string
+	Digest     string
+}
+
+func (q *Queries) ArtVerifyWorkAdd(ctx context.Context, arg ArtVerifyWorkAddParams) (int64, error) {
+	result, err := q.db.Exec(ctx, artVerifyWorkAdd,
+		arg.ID,
+		arg.ArtifactID,
+		arg.StoreID,
+		arg.StagingKey,
+		arg.Digest,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const artVerifyWorkDelete = `-- name: ArtVerifyWorkDelete :exec
+DELETE FROM artifact_verify_work WHERE id=$1
+`
+
+func (q *Queries) ArtVerifyWorkDelete(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, artVerifyWorkDelete, id)
+	return err
+}
+
+const artVerifyWorkDue = `-- name: ArtVerifyWorkDue :many
+SELECT id, attempts FROM artifact_verify_work
+WHERE next_attempt_at <= $1::pg_catalog.timestamptz ORDER BY next_attempt_at, id LIMIT $2
+`
+
+type ArtVerifyWorkDueParams struct {
+	Now time.Time
+	Lim int32
+}
+
+type ArtVerifyWorkDueRow struct {
+	ID       string
+	Attempts int32
+}
+
+func (q *Queries) ArtVerifyWorkDue(ctx context.Context, arg ArtVerifyWorkDueParams) ([]ArtVerifyWorkDueRow, error) {
+	rows, err := q.db.Query(ctx, artVerifyWorkDue, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArtVerifyWorkDueRow
+	for rows.Next() {
+		var i ArtVerifyWorkDueRow
+		if err := rows.Scan(&i.ID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const artVerifyWorkGet = `-- name: ArtVerifyWorkGet :one
+SELECT artifact_id, store_id, staging_key, digest FROM artifact_verify_work WHERE id=$1
+`
+
+type ArtVerifyWorkGetRow struct {
+	ArtifactID string
+	StoreID    string
+	StagingKey string
+	Digest     string
+}
+
+func (q *Queries) ArtVerifyWorkGet(ctx context.Context, id string) (ArtVerifyWorkGetRow, error) {
+	row := q.db.QueryRow(ctx, artVerifyWorkGet, id)
+	var i ArtVerifyWorkGetRow
+	err := row.Scan(
+		&i.ArtifactID,
+		&i.StoreID,
+		&i.StagingKey,
+		&i.Digest,
+	)
+	return i, err
 }
 
 const artWorkFacts = `-- name: ArtWorkFacts :many
