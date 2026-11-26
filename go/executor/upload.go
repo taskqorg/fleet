@@ -231,7 +231,7 @@ func (c *transferClient) post(route string, body any) (json.RawMessage, *failure
 			Code string `json:"code"`
 		}
 		_ = json.Unmarshal([]byte(a.text), &problem)
-		return nil, &failure{recoverable: a.status == 409 && problem.Code == "no_such_key", msg: fmt.Sprintf("%d %s", a.status, a.text)}
+		return nil, &failure{recoverable: a.status == 409 && (problem.Code == "no_such_key" || problem.Code == "store_unreachable"), msg: fmt.Sprintf("%d %s", a.status, a.text)}
 	}
 	msg := fmt.Sprintf("%d %s", a.status, a.text)
 	return nil, &failure{recoverable: isRecoverableUploadText(a.text), msg: msg}

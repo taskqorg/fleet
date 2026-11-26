@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -585,10 +588,14 @@ func contains(l []string, s string) bool {
 
 func failCode(code int, msg, c string) error { return &codedError{HTTPError{Code: code, Msg: msg}, c} }
 
-func missingStagingKey() error {
-	return &HTTPError{Code: 409, Msg: "Staging object not found (NoSuchKey)", Extra: struct {
+func uploadRecoveryError(code, message string) error {
+	return &HTTPError{Code: 409, Msg: message, Extra: struct {
 		Code string `json:"code"`
-	}{"no_such_key"}}
+	}{code}}
+}
+
+func missingStagingKey() error {
+	return uploadRecoveryError("no_such_key", "Staging object not found (NoSuchKey)")
 }
 
 type codedError struct {
@@ -639,16 +646,17 @@ func reopenPendingCopy(ctx context.Context, a *App, id, executionID, hostID stri
 	if err != nil {
 		return nil, err
 	}
+	var recovery string
 	if c != nil && c.awaitingVerification(x) {
 		s, err := storeGet(ctx, a, c.StoreID)
 		if err != nil {
 			return nil, err
 		}
-		missing, err := resumeVerification(ctx, a, x, s, c)
+		recovery, err = resumeVerification(ctx, a, x, s, c, hostID)
 		if err != nil {
 			return nil, err
 		}
-		if !missing {
+		if recovery == "" {
 			return nil, fail(503, "Awaiting artifact verification")
 		}
 	}
@@ -694,7 +702,7 @@ func reopenPendingCopy(ctx context.Context, a *App, id, executionID, hostID stri
 			if err != nil {
 				return err
 			}
-			if open {
+			if open || recovery == "store_unreachable" && s.State != "unreachable" {
 				return fail(503, "Awaiting artifact verification")
 			}
 		}
@@ -1161,11 +1169,18 @@ func renewCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow
 	if !c.awaitingVerification(x) || hostID == s.HostID {
 		return nil
 	}
-	missing, err := resumeVerification(ctx, a, x, s, c)
-	if missing && err == nil {
-		return missingStagingKey()
+	recovery, err := resumeVerification(ctx, a, x, s, c, hostID)
+	if err != nil {
+		return err
 	}
-	return err
+	switch recovery {
+	case "no_such_key":
+		return missingStagingKey()
+	case "store_unreachable":
+		// The text also lets older executors enter their existing recovery.
+		return uploadRecoveryError(recovery, "No upload in progress: previous store is unreachable")
+	}
+	return nil
 }
 
 func verificationOpen(ctx context.Context, a *App, artifactID string, s *StoreRow) (bool, error) {
@@ -1201,30 +1216,42 @@ func probeObject(t *S3, bucket, key string) (bool, error) {
 
 // resumeVerification probes without a database lock. Fence the result against re-reservation, promotion,
 // and another verifier at the point where we queue work or tell the owner to recover its upload.
-func resumeVerification(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow) (bool, error) {
+func resumeVerification(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, hostID string) (string, error) {
 	open, err := verificationOpen(ctx, a, x.ID, s)
 	if err != nil || open {
-		return false, err
-	}
-	t, err := tunnel(s)
-	if err != nil {
-		return false, err
+		return "", err
 	}
 	key := *c.StagingKey
-	exists, err := probeObject(t, s.Bucket, key)
-	if err != nil {
-		return false, err
-	}
-	if !exists {
-		key = keyOf(x)
-		exists, err = probeObject(t, s.Bucket, key)
+	recovery := ""
+	if s.State == "unreachable" {
+		target, err := selectStore(ctx, a, artifactLocations(a, x.ProjectID), hostID)
+		if err != nil || target == nil {
+			return "", err
+		}
+		recovery = "store_unreachable"
+	} else {
+		t, err := tunnel(s)
 		if err != nil {
-			return false, err
+			return "", err
+		}
+		exists, err := probeObject(t, s.Bucket, key)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			key = keyOf(x)
+			exists, err = probeObject(t, s.Bucket, key)
+			if err != nil {
+				return "", err
+			}
+		}
+		if !exists {
+			recovery = "no_such_key"
 		}
 	}
-	missing := false
+	result := ""
 	err = txCtx(ctx, a, func(tx pgx.Tx) error {
-		missing = false
+		result = ""
 		tctx := context.WithValue(ctx, txKey{}, tx)
 		fresh, err := copyOf(tctx, a, x.ID, s.ID)
 		if err != nil || !c.sameReservation(fresh) {
@@ -1234,8 +1261,14 @@ func resumeVerification(ctx context.Context, a *App, x *Artifact, s *StoreRow, c
 		if err != nil || open {
 			return err
 		}
-		if !exists {
-			missing = true
+		if recovery == "store_unreachable" {
+			current, err := storeGet(tctx, a, s.ID)
+			if err != nil || current.State != "unreachable" {
+				return err
+			}
+		}
+		if recovery != "" {
+			result = recovery
 			return nil
 		}
 		verify, err := verificationFor(s, x.ID, c, key)
@@ -1244,7 +1277,7 @@ func resumeVerification(ctx context.Context, a *App, x *Artifact, s *StoreRow, c
 		}
 		return queueCommand(tctx, a, s.HostID, "artifact-verify", x.ID, verify)
 	})
-	return missing, err
+	return result, err
 }
 
 // reject: the staging object goes, the copy fails with a retry backoff (1 minute doubling, up to the retry window), the
@@ -1380,12 +1413,23 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 	if c.StagingKey != nil {
 		staging = *c.StagingKey
 	}
-	if b.Sha256 != x.ContentHash {
-		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, staging, "content hash differs from the reserved hash", c)
-	}
 	t, err := tunnel(s)
 	if err != nil {
 		return nil, err
+	}
+	if b.StagingKey == nil {
+		// Older executors send no reservation identity. Only their digest of the actual current bytes
+		// can settle the copy. If staging has already been removed, verify the promoted object.
+		digest, err := legacyVerificationDigest(t, s.Bucket, staging, keyOf(x))
+		if err != nil {
+			return nil, err
+		}
+		if digest != b.Sha256 {
+			return contract.ArtifactStateReply{State: "unknown"}, nil
+		}
+	}
+	if b.Sha256 != x.ContentHash {
+		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, staging, "content hash differs from the reserved hash", c)
 	}
 	if err := promote(t, s.Bucket, staging, keyOf(x), x.Size); err != nil {
 		if isMissingKey(err) {
@@ -1423,6 +1467,26 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 		}
 	}
 	return contract.ArtifactStateReply{State: "stored"}, nil
+}
+
+func legacyVerificationDigest(t *S3, bucket, staging, final string) (string, error) {
+	r, err := t.Get(bucket, staging, nil)
+	var se *S3Error
+	if errors.As(err, &se) && se.Status == 404 && se.Code == "NoSuchKey" {
+		r, err = t.Get(bucket, final, nil)
+		if errors.As(err, &se) && se.Status == 404 && se.Code == "NoSuchKey" {
+			return "", missingStagingKey()
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // artifactDeclare: an agent's required declaration (artifact_save required=true), recorded on the execution.
