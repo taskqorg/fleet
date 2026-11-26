@@ -1,10 +1,10 @@
 package main
 
 // Agent gap findings (docs/designs/fleet-telemetry.md#10-agent-gaps): a class above the finding threshold of
-// config/agent-gaps.json opens a problem (cause gap:<class>, source agent-gaps). Investigate starts a PM conversation
-// with the evidence; agent_gaps_link names the pull request that changes the class's setting; once that release runs
+// config/agent-gaps.json opens a problem (cause gap:<class>, source agent-gaps) for its owner bot, which works it in
+// its problem conversation; agent_gaps_link names the pull request that changes the class's setting; once that release runs
 // on the coordinator and every host (the change point), the finding compares the class's failures per agent run over
-// the same window before and after, and closes as fixed or asks again as still failing.
+// the same window before and after, and closes as fixed or reopens its problem as still failing.
 // agentGapFindingTransition is the only writer of agent_gap_finding.state (S5).
 
 import (
@@ -21,22 +21,19 @@ import (
 
 func init() {
 	op("agent_gaps_link", agentGapsLink)
-	op("agent_gaps_investigate", agentGapsInvestigate)
 }
 
 const gapSource = "agent-gaps"
 
-// gapLock: the findings lock (a problems scope: problem questions are written under it, as the rules pass does).
+// gapLock: the findings lock (a problems scope: problem rows are written under it, as the rules pass does).
 const gapLock = "problems:agent-gaps"
 
 var agentGapFindingTransitions = map[string][]string{
-	"open":          {"investigating", "dismissed", "linked"},
-	"investigating": {"linked", "dismissed"},
-	"linked":        {"watching", "investigating"},
+	"open":          {"linked"},
+	"linked":        {"watching", "linked"},
 	"watching":      {"fixed", "still-failing", "linked"},
-	"still-failing": {"investigating", "linked", "dismissed"},
+	"still-failing": {"linked"},
 	"fixed":         nil,
-	"dismissed":     nil,
 }
 
 // gapFindingRules: the finding section of config/agent-gaps.json.
@@ -80,7 +77,7 @@ func agentGapFindingTransition(q *Request, f gapFinding, to string) (gapFinding,
 	if f.OpenedAt.IsZero() {
 		f.OpenedAt = time.Now()
 	}
-	err := q.db().AgentGapFindingPut(q.ctx(), db.AgentGapFindingPutParams{Class: f.Class, ProjectID: ciProject, State: f.State, QuestionID: f.QuestionID, SessionID: f.SessionID,
+	err := q.db().AgentGapFindingPut(q.ctx(), db.AgentGapFindingPutParams{Class: f.Class, ProjectID: ciProject, State: f.State, ProblemID: f.ProblemID, SessionID: f.SessionID,
 		Pr: f.Pr, PrUrl: f.PrUrl, Release: f.Release, ChangeAt: tsOf(f.ChangeAt), BeforeCount: f.BeforeCount, AfterCount: f.AfterCount,
 		BeforeRuns: f.BeforeRuns, AfterRuns: f.AfterRuns, VerdictAt: tsOf(f.VerdictAt), Note: f.Note, OpenedAt: gapTime(f.OpenedAt)})
 	return f, err
@@ -105,7 +102,7 @@ func agentGapFindingOf(q *Request, class string) (*gapFinding, error) {
 	return nil, nil
 }
 
-// gapProblemText: the question's text, what agents lack and where the fix goes.
+// gapProblemText: the problem's text, what agents lack and where the fix goes.
 func gapProblemText(c contract.AgentGapClass, days int, prefix string) string {
 	hosts := []string{}
 	for _, h := range c.Hosts {
@@ -123,24 +120,18 @@ type gapProblemData struct {
 	Executions []string `json:"executions"`
 }
 
-// askGapProblem asks the finding's question (anew: an earlier question of the cause lets go first) and returns its id.
-func askGapProblem(q *Request, c contract.AgentGapClass, text string) (*string, error) {
-	cause := gapCause(c.Class)
-	if err := problemClose(q, cause); err != nil {
-		return nil, err
-	}
+// gapProblem raises the finding's problem (its text refreshed: a still-failing verdict reopens it with both rates)
+// and returns its id.
+func gapProblem(q *Request, c contract.AgentGapClass, text string) (*string, error) {
 	ex := []string{}
 	for _, e := range c.Examples {
 		ex = append(ex, e.ExecutionId)
 	}
-	if err := problemRaise(q, gapSource, Problem{Cause: cause, Text: text, Rule: "agent-gap", Data: gapProblemData{c.Class, c.Count, ex}}); err != nil {
+	id, err := problemRaiseID(q, gapSource, Problem{Cause: gapCause(c.Class), Text: text, Rule: "agent-gap", RefreshText: true, Data: gapProblemData{c.Class, c.Count, ex}})
+	if err != nil {
 		return nil, err
 	}
-	h, err := problemHeld(q, cause)
-	if err != nil || h == nil {
-		return nil, err
-	}
-	return &h.ID, nil
+	return &id, nil
 }
 
 // agentGapFindingsPass: the finding half of the agent-gaps pass, one transaction.
@@ -188,11 +179,11 @@ func agentGapFindingsPass(q *Request, rules *gapRules, now time.Time) error {
 		} else if held {
 			continue
 		}
-		qid, err := askGapProblem(q, c, gapProblemText(c, fr.Days, prefix))
+		pid, err := gapProblem(q, c, gapProblemText(c, fr.Days, prefix))
 		if err != nil {
 			return err
 		}
-		if _, err := agentGapFindingTransition(q, gapFinding{Class: c.Class, QuestionID: qid, Note: strings.TrimSpace(prefix)}, "open"); err != nil {
+		if _, err := agentGapFindingTransition(q, gapFinding{Class: c.Class, ProblemID: pid, Note: strings.TrimSpace(prefix)}, "open"); err != nil {
 			return err
 		}
 	}
@@ -204,7 +195,7 @@ func agentGapFindingsPass(q *Request, rules *gapRules, now time.Time) error {
 	for _, f := range findings {
 		c, present := classes[f.Class]
 		switch f.State {
-		case "open", "dismissed":
+		case "open":
 			if present && above(c) {
 				continue
 			}
@@ -328,11 +319,11 @@ func gapVerdict(q *Request, rules *gapRules, f gapFinding, c contract.AgentGapCl
 		c = contract.AgentGapClass{Class: f.Class, Title: rules.Families[gapFamilyOf(f.Class)].Title, Setting: rules.Families[gapFamilyOf(f.Class)].Setting, Count: int64(ac), Executions: int64(ar)}
 	}
 	text := fmt.Sprintf("Still failing after #%d (on every host since %s): %d failures in %d runs before, %d in %d runs after. ", deref64(f.Pr), at.Format("2006-01-02 15:04 MST"), bc, br, ac, ar)
-	qid, err := askGapProblem(q, c, text+gapProblemText(c, rules.Finding.Days, ""))
+	pid, err := gapProblem(q, c, text+gapProblemText(c, rules.Finding.Days, ""))
 	if err != nil {
 		return err
 	}
-	f.QuestionID = qid
+	f.ProblemID = pid
 	_, err = agentGapFindingTransition(q, f, "still-failing")
 	return err
 }
@@ -346,142 +337,6 @@ func gapFixed(beforeCount, beforeRuns, afterCount, afterRuns int32, ratio float6
 		return false
 	}
 	return float64(afterCount)/float64(afterRuns) <= ratio*float64(beforeCount)/float64(max(beforeRuns, 1))
-}
-
-// agentGapAnswerAfter (runAnswerAfter): investigate starts the PM conversation, dismiss sets the finding aside. The
-// conversation starts before the findings lock is taken: a start takes project and session locks, which rank below it.
-func agentGapAnswerAfter(q *Request, id string) error {
-	qu, err := q.db().AgentGapQuestion(q.ctx(), id)
-	if err != nil || qu.Source != gapSource || qu.Class == "" {
-		return nil
-	}
-	f, err := agentGapFindingOf(q, qu.Class)
-	if err != nil || f == nil || deref(f.QuestionID) != id || (qu.Answer != "dismiss" && qu.Answer != "investigate") {
-		return err
-	}
-	if qu.Answer == "dismiss" {
-		if err := acquireTxLock(q, gapLock); err != nil {
-			return err
-		}
-		if f, err = agentGapFindingOf(q, qu.Class); err != nil || f == nil || deref(f.QuestionID) != id {
-			return err
-		}
-		_, err := agentGapFindingTransition(q, *f, "dismissed")
-		return err
-	}
-	_, err = investigateGap(q, *f)
-	return err
-}
-
-// investigateGap starts the finding's PM conversation and records it on the finding; a start the coordinator refuses
-// leaves the finding investigating with the reason in its note (agent_gaps_investigate starts it again). The
-// conversation starts before the findings lock is taken: a start takes project and session locks, which rank below it.
-func investigateGap(q *Request, f gapFinding) (gapFinding, error) {
-	sid, startErr := startGapInvestigation(q, f, deref(f.QuestionID))
-	if err := acquireTxLock(q, gapLock); err != nil {
-		return f, err
-	}
-	g, err := agentGapFindingOf(q, f.Class)
-	if err != nil || g == nil {
-		return f, err
-	}
-	if startErr != nil {
-		g.Note = cutRunes("Investigate could not start: "+startErr.Error(), 300)
-	} else {
-		g.SessionID, g.Note = &sid, ""
-	}
-	to := "investigating"
-	if g.State == "linked" {
-		to = g.State
-	}
-	return agentGapFindingTransition(q, *g, to)
-}
-
-func agentGapsInvestigate(q *Request, r *contract.AgentGapsInvestigateRequest) (contract.AgentGapsInvestigateReply, error) {
-	var none contract.AgentGapsInvestigateReply
-	f, err := agentGapFindingOf(q, r.Class)
-	if err != nil {
-		return none, err
-	}
-	if f == nil {
-		return none, errNotFound
-	}
-	if f.SessionID != nil || !slices.Contains([]string{"open", "investigating", "still-failing"}, f.State) {
-		if f.SessionID != nil {
-			return none, fail(409, fmt.Sprintf("finding %s has its conversation already (%s)", f.Class, *f.SessionID))
-		}
-		return none, fail(409, fmt.Sprintf("finding %s is %s", f.Class, f.State))
-	}
-	g, err := investigateGap(q, *f)
-	if err != nil {
-		return none, err
-	}
-	// A refused start answers the finding with the reason in its note (an error would roll the note back).
-	return contract.AgentGapsInvestigateReply{Finding: findingOut(g)}, nil
-}
-
-// startGapInvestigation starts the PM conversation (preset investigate, project fleet) as the person who answered,
-// in a savepoint: a refused start leaves the answer and notes why.
-func startGapInvestigation(q *Request, f gapFinding, questionID string) (string, error) {
-	rules, err := loadGapRules()
-	if err != nil {
-		return "", err
-	}
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	from := today.AddDate(0, 0, -(rules.Finding.Days - 1))
-	rows, err := q.db().AgentGapRows(q.ctx(), db.AgentGapRowsParams{Since: gapTime(from), Until: gapTime(now.Add(time.Minute))})
-	if err != nil {
-		return "", err
-	}
-	reply := agentGapsReplyOf(rules, rows, &contract.AgentGapsRequest{Class: &f.Class}, nil, from, now, rules.Finding.Days)
-	text := gapInvestigationText(f.Class, reply, rules.Finding.Days)
-	r := contract.SessionStartRequest{ProjectId: ptr(ciProject), Preset: ptr("investigate"), RequestId: ptr("agent-gap:" + questionID), Text: &text,
-		Subject: ptr("question:" + questionID)}
-	body := q.body
-	q.body = jsonBytes(r)
-	defer func() { q.body = body }()
-	if err := exec(q, "SAVEPOINT agent_gap_investigate"); err != nil {
-		return "", err
-	}
-	started, err := sessionStart(q, &r)
-	if err != nil {
-		if e := exec(q, "ROLLBACK TO SAVEPOINT agent_gap_investigate"); e != nil {
-			return "", e
-		}
-		return "", err
-	}
-	return started.SessionId, exec(q, "RELEASE SAVEPOINT agent_gap_investigate")
-}
-
-// gapInvestigationText: the PM's first message: the evidence, the setting, and what to hand back.
-func gapInvestigationText(class string, reply contract.AgentGapsReply, days int) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Agent gap finding %s: what agents lack, from Fleet's own telemetry (agent_gaps).\n\n", class)
-	for _, c := range reply.Classes {
-		if c.Class != class {
-			continue
-		}
-		fmt.Fprintf(&b, "%s: %d failures in %d agent runs over %d days (%d the %d days before).\n", c.Title, c.Count, c.Executions, days, c.PreviousCount, days)
-		for _, l := range []struct {
-			name string
-			xs   []contract.AgentGapCount
-		}{{"Hosts", c.Hosts}, {"Harnesses", c.Harnesses}, {"Profiles", c.Profiles}, {"Tools", c.Tools}, {"Projects", c.Projects}} {
-			parts := []string{}
-			for _, x := range l.xs {
-				parts = append(parts, fmt.Sprintf("%s %d", x.Key, x.Count))
-			}
-			fmt.Fprintf(&b, "%s: %s\n", l.name, strings.Join(parts, ", "))
-		}
-		b.WriteString("\nExamples (execution, decisive line):\n")
-		for _, e := range c.Examples {
-			fmt.Fprintf(&b, "- %s %s %s: %s\n", e.ExecutionId, e.At, e.Tool, e.Line)
-		}
-		fmt.Fprintf(&b, "\nThe setting that controls it: %s (%s). %s\n", c.Setting.Ref, c.Setting.Kind, c.Setting.Text)
-	}
-	fmt.Fprintf(&b, "\nFind the cause from these executions (execution_events, telemetry_trace) and the setting. The fix goes into that setting, for every future agent, through a pull request in taskqorg/fleet (delegate the change to a worker). "+
-		"Then call agent_gaps_link {\"class\": %q, \"pr\": <number>}: Fleet watches the class after the release reaches every host and closes the finding as fixed, or asks again. Read agent_gaps {\"class\": %q} for the current numbers.", class, class)
-	return b.String()
 }
 
 func agentGapsLink(q *Request, r *contract.AgentGapsLinkRequest) (contract.AgentGapsLinkReply, error) {
@@ -530,7 +385,7 @@ func findingOut(f gapFinding) contract.AgentGapFinding {
 		}
 		return ptr(int64(*p))
 	}
-	return contract.AgentGapFinding{Class: f.Class, State: contract.AgentGapFindingState(f.State), QuestionId: f.QuestionID, SessionId: f.SessionID, Pr: f.Pr,
+	return contract.AgentGapFinding{Class: f.Class, State: contract.AgentGapFindingState(f.State), ProblemId: f.ProblemID, SessionId: f.SessionID, Pr: f.Pr,
 		PrUrl: f.PrUrl, Release: f.Release, ChangeAt: t(f.ChangeAt), BeforeCount: i(f.BeforeCount), BeforeRuns: i(f.BeforeRuns), AfterCount: i(f.AfterCount),
 		AfterRuns: i(f.AfterRuns), VerdictAt: t(f.VerdictAt), Note: optStr(f.Note), OpenedAt: f.OpenedAt.UTC().Format(time.RFC3339), UpdatedAt: f.UpdatedAt.UTC().Format(time.RFC3339)}
 }

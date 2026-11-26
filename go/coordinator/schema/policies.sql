@@ -399,6 +399,13 @@ CREATE POLICY project_scope ON pipeline_step FOR ALL TO public USING ((EXISTS ( 
    FROM execution e
   WHERE (e.id = pipeline_step.run_id))));
 
+-- problem
+ALTER TABLE problem ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON problem;
+CREATE POLICY live ON problem AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON problem;
+CREATE POLICY project_scope ON problem FOR ALL TO public USING (fleet_visible(project_id));
+
 -- problem_dismissal
 ALTER TABLE problem_dismissal ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON problem_dismissal;

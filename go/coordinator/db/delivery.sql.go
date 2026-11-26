@@ -326,16 +326,16 @@ func (q *Queries) DeliveryPrRetrySave(ctx context.Context, prs []byte) error {
 }
 
 const deliveryProblemRefresh = `-- name: DeliveryProblemRefresh :exec
-UPDATE question SET text = $1, data = data || $2::jsonb WHERE cause = $3 AND state IN ('open', 'answered') AND text <> $1
+UPDATE problem SET text = $1, data = data || $2::jsonb WHERE cause = $3 AND state = 'open' AND text <> $1
 `
 
 type DeliveryProblemRefreshParams struct {
 	Text  string
 	Data  []byte
-	Cause *string
+	Cause string
 }
 
-// A held regression question shows the latest numbers and range, not those of the check that opened it.
+// An open regression problem shows the latest numbers and range, not those of the check that opened it.
 func (q *Queries) DeliveryProblemRefresh(ctx context.Context, arg DeliveryProblemRefreshParams) error {
 	_, err := q.db.Exec(ctx, deliveryProblemRefresh, arg.Text, arg.Data, arg.Cause)
 	return err

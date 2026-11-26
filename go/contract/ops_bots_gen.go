@@ -118,6 +118,21 @@ func (v *BotAvatarSetRequest) Validate() error {
 	return nil
 }
 
+// BotDuty: Which problems the bot owns (docs/designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner). Absent: none.
+type BotDuty struct {
+	Problems *BotProblemDuty `json:"problems,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotDuty) Validate() error {
+	if v.Problems != nil {
+		if err := Check(v.Problems, "problems"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type BotGetReply struct {
 	Bot BotRecord `json:"bot"`
 }
@@ -236,6 +251,16 @@ type BotPauseRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BotPauseRequest) Validate() error {
+	return nil
+}
+
+type BotProblemDuty struct {
+	Projects []string `json:"projects,omitempty"`
+	System   *bool    `json:"system,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BotProblemDuty) Validate() error {
 	return nil
 }
 
@@ -476,15 +501,21 @@ func (v *BotRunsRequest) Validate() error {
 }
 
 type BotSettings struct {
-	Instructions string `json:"instructions"`
-	Name         string `json:"name"`
-	ProfileId    string `json:"profileId"`
-	Purpose      string `json:"purpose"`
-	Soul         string `json:"soul"`
+	Duty         *BotDuty `json:"duty,omitempty"`
+	Instructions string   `json:"instructions"`
+	Name         string   `json:"name"`
+	ProfileId    string   `json:"profileId"`
+	Purpose      string   `json:"purpose"`
+	Soul         string   `json:"soul"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BotSettings) Validate() error {
+	if v.Duty != nil {
+		if err := Check(v.Duty, "duty"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -693,7 +724,7 @@ func init() {
 		"bot_pause":         {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Pause or resume a bot's future scheduled and Needs-you wakes.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"paused\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\",\"paused\"],\"type\":\"object\"}")},
 		"bot_run":           {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Run a bot now in its conversation without a subject (with automationId: the trigger's conversation), pinning settings, memory and project. A busy conversation queues the message as its next turn: the reply then has no run.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
 		"bot_runs":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List bot runs: the agent runs of the bot's conversations, including quiet wakes and queued, failed and unconfirmed work. A trigger wake that never ran is in the trigger's last run (trigger_list), not here.", Changes: []string{"execution", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"cause\":{\"enum\":[\"manual\",\"schedule\",\"needs_you\",\"message\"],\"type\":\"string\"},\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"observation\":{\"enum\":[\"confirmed\",\"unconfirmed\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"quiet\":{\"type\":\"boolean\"},\"state\":{\"enum\":[\"queued\",\"running\",\"waiting\",\"succeeded\",\"failed\",\"cancelled\",\"skipped\"],\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
-		"bot_settings_save": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its conversation without a subject.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"instructions\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"purpose\":{\"type\":\"string\"},\"soul\":{\"type\":\"string\"}},\"required\":[\"name\",\"purpose\",\"profileId\",\"instructions\",\"soul\"],\"type\":\"object\"}},\"required\":[\"botId\",\"projectId\",\"baseRevision\",\"settings\"],\"type\":\"object\"}")},
+		"bot_settings_save": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its conversation without a subject.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"duty\":{\"$comment\":\"Which problems the bot owns (docs/designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner). Absent: none.\",\"additionalProperties\":false,\"properties\":{\"problems\":{\"additionalProperties\":false,\"properties\":{\"projects\":{\"$comment\":\"project ids whose problems this bot owns\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"system\":{\"$comment\":\"owns every problem without a project and those of projects no other bot claims\",\"type\":\"boolean\"}},\"type\":\"object\"}},\"type\":\"object\"},\"instructions\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"purpose\":{\"type\":\"string\"},\"soul\":{\"type\":\"string\"}},\"required\":[\"name\",\"purpose\",\"profileId\",\"instructions\",\"soul\"],\"type\":\"object\"}},\"required\":[\"botId\",\"projectId\",\"baseRevision\",\"settings\"],\"type\":\"object\"}")},
 		"bot_stop":          {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Request cancellation of a bot's active execution through the execution lifecycle and report the observed stop outcome.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
 		"bot_task_link":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Link a Fleet task in the bot's project as a managed task of the bot without attaching the Home conversation.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"executionId\":{\"$comment\":\"the bot run (execution) the link names; default the calling run\",\"type\":\"string\"},\"linkKind\":{\"enum\":[\"created\",\"continued\",\"managed\"],\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"taskId\"],\"type\":\"object\"}")},
 		"bot_tasks":         {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List managed Fleet tasks linked to a bot, keeping each task's own Fleet state and independent history.", Changes: []string{"bot", "task", "execution", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"state\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},

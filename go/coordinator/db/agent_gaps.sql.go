@@ -153,7 +153,7 @@ func (q *Queries) AgentGapFailedEvents(ctx context.Context, executionID string) 
 }
 
 const agentGapFinding = `-- name: AgentGapFinding :one
-SELECT class, state, question_id, session_id, pr, pr_url, release, change_at, before_count, after_count, before_runs, after_runs,
+SELECT class, state, problem_id, session_id, pr, pr_url, release, change_at, before_count, after_count, before_runs, after_runs,
   verdict_at, note, opened_at, updated_at
 FROM agent_gap_finding WHERE class = $1::text
 `
@@ -161,7 +161,7 @@ FROM agent_gap_finding WHERE class = $1::text
 type AgentGapFindingRow struct {
 	Class       string
 	State       string
-	QuestionID  *string
+	ProblemID   *string
 	SessionID   *string
 	Pr          *int64
 	PrUrl       *string
@@ -183,7 +183,7 @@ func (q *Queries) AgentGapFinding(ctx context.Context, class string) (AgentGapFi
 	err := row.Scan(
 		&i.Class,
 		&i.State,
-		&i.QuestionID,
+		&i.ProblemID,
 		&i.SessionID,
 		&i.Pr,
 		&i.PrUrl,
@@ -211,12 +211,12 @@ func (q *Queries) AgentGapFindingDelete(ctx context.Context, class string) error
 }
 
 const agentGapFindingPut = `-- name: AgentGapFindingPut :exec
-INSERT INTO agent_gap_finding(class, project_id, state, question_id, session_id, pr, pr_url, release, change_at, before_count, after_count,
+INSERT INTO agent_gap_finding(class, project_id, state, problem_id, session_id, pr, pr_url, release, change_at, before_count, after_count,
   before_runs, after_runs, verdict_at, note, opened_at, updated_at)
 VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::bigint, $7::text,
   $8::text, $9::timestamptz, $10::int, $11::int,
   $12::int, $13::int, $14::timestamptz, $15::text, $16::timestamptz, now())
-ON CONFLICT (class) DO UPDATE SET state = EXCLUDED.state, question_id = EXCLUDED.question_id, session_id = EXCLUDED.session_id,
+ON CONFLICT (class) DO UPDATE SET state = EXCLUDED.state, problem_id = EXCLUDED.problem_id, session_id = EXCLUDED.session_id,
   pr = EXCLUDED.pr, pr_url = EXCLUDED.pr_url, release = EXCLUDED.release, change_at = EXCLUDED.change_at,
   before_count = EXCLUDED.before_count, after_count = EXCLUDED.after_count, before_runs = EXCLUDED.before_runs,
   after_runs = EXCLUDED.after_runs, verdict_at = EXCLUDED.verdict_at, note = EXCLUDED.note, opened_at = EXCLUDED.opened_at, updated_at = now()
@@ -226,7 +226,7 @@ type AgentGapFindingPutParams struct {
 	Class       string
 	ProjectID   string
 	State       string
-	QuestionID  *string
+	ProblemID   *string
 	SessionID   *string
 	Pr          *int64
 	PrUrl       *string
@@ -248,7 +248,7 @@ func (q *Queries) AgentGapFindingPut(ctx context.Context, arg AgentGapFindingPut
 		arg.Class,
 		arg.ProjectID,
 		arg.State,
-		arg.QuestionID,
+		arg.ProblemID,
 		arg.SessionID,
 		arg.Pr,
 		arg.PrUrl,
@@ -266,7 +266,7 @@ func (q *Queries) AgentGapFindingPut(ctx context.Context, arg AgentGapFindingPut
 }
 
 const agentGapFindings = `-- name: AgentGapFindings :many
-SELECT class, state, question_id, session_id, pr, pr_url, release, change_at, before_count, after_count, before_runs, after_runs,
+SELECT class, state, problem_id, session_id, pr, pr_url, release, change_at, before_count, after_count, before_runs, after_runs,
   verdict_at, note, opened_at, updated_at
 FROM agent_gap_finding ORDER BY class
 `
@@ -274,7 +274,7 @@ FROM agent_gap_finding ORDER BY class
 type AgentGapFindingsRow struct {
 	Class       string
 	State       string
-	QuestionID  *string
+	ProblemID   *string
 	SessionID   *string
 	Pr          *int64
 	PrUrl       *string
@@ -303,7 +303,7 @@ func (q *Queries) AgentGapFindings(ctx context.Context) ([]AgentGapFindingsRow, 
 		if err := rows.Scan(
 			&i.Class,
 			&i.State,
-			&i.QuestionID,
+			&i.ProblemID,
 			&i.SessionID,
 			&i.Pr,
 			&i.PrUrl,
@@ -396,31 +396,6 @@ func (q *Queries) AgentGapPut(ctx context.Context, arg AgentGapPutParams) error 
 		arg.Rules,
 	)
 	return err
-}
-
-const agentGapQuestion = `-- name: AgentGapQuestion :one
-SELECT id, coalesce(answer, '')::text AS answer, coalesce(data->>'source', '')::text AS source, coalesce(data->>'class', '')::text AS class
-FROM question WHERE id = $1::text
-`
-
-type AgentGapQuestionRow struct {
-	ID     string
-	Answer string
-	Source string
-	Class  string
-}
-
-// The answered question an answer hook reads (agentGapAnswerAfter).
-func (q *Queries) AgentGapQuestion(ctx context.Context, id string) (AgentGapQuestionRow, error) {
-	row := q.db.QueryRow(ctx, agentGapQuestion, id)
-	var i AgentGapQuestionRow
-	err := row.Scan(
-		&i.ID,
-		&i.Answer,
-		&i.Source,
-		&i.Class,
-	)
-	return i, err
 }
 
 const agentGapRows = `-- name: AgentGapRows :many

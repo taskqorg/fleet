@@ -1065,7 +1065,7 @@ func taskWhere(f rowFilter, p *[]any, withState bool) ([]string, error) {
 // sqlActiveExec: latest preparing/running execution for task t with its start time, observation, last contact, and stuck problem flag.
 var sqlActiveExec = `(SELECT e.state::text AS active_state,` + sqlJSONTime("e.started_at") + ` AS active_started_at,e.observation::text AS active_observation,` +
 	sqlJSONTime("e.last_seen_at") + ` AS active_last_seen_at,` +
-	`EXISTS (SELECT 1 FROM question q WHERE q.cause='problem:execution:'||e.id||':stuck' AND q.state='open') AS active_stalled ` +
+	`EXISTS (SELECT 1 FROM problem pb WHERE pb.cause='problem:execution:'||e.id||':stuck' AND pb.state='open') AS active_stalled ` +
 	`FROM execution e WHERE e.task_id=t.id AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1)`
 
 // sqlTaskListCols: the columns of taskListDBRow (tasks.go), then its group key g and sort key sk. last_started_at: the

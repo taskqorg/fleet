@@ -1,9 +1,5 @@
 -- Rules pass, Postgres half (rules.go, docs/designs/fleet-telemetry.md §6): the state its rules read.
 
--- name: RulesExecutionDirector :one
--- The director a project cause on an execution goes to.
-SELECT directed_by FROM execution WHERE id=$1;
-
 -- name: RulesStoresDown :many
 -- Observed stores that are full or unreachable (store-fill, absence-store).
 SELECT id,host_id,state,capacity_bytes,free_space_warning_bytes FROM store WHERE observed_at IS NOT NULL AND state IN ('full','unreachable');

@@ -734,7 +734,7 @@ func (q *Queries) DispMarkObservation(ctx context.Context, arg DispMarkObservati
 
 const dispNeedsSweep = `-- name: DispNeedsSweep :one
 SELECT (EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed')
- OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ $1::text)
+ OR EXISTS(SELECT 1 FROM problem WHERE state = 'open' AND cause ~ $1::text)
  OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))
  OR EXISTS(SELECT 1 FROM task t WHERE t.state='queued' AND t.project_id IS NOT NULL AND t.tombstoned_at IS NULL AND t.accepted_at IS NULL
   AND coalesce(t.wait_reason,'') NOT IN ('no worker role','worker start refused')
@@ -744,7 +744,7 @@ SELECT (EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce
   AND NOT EXISTS(SELECT 1 FROM task_dependency d JOIN task b ON b.id=d.depends_on_task_id WHERE d.task_id=t.id AND d.kind='blocks' AND b.state<>'completed')))::boolean
 `
 
-// Open delegations, open stall questions (causes matching the pattern), unfinished executions or a queued task nothing
+// Open delegations, open stall problems (causes matching the pattern), unfinished executions or a queued task nothing
 // has started (one waiting for a worker role is rechecked on the next explicit pass).
 func (q *Queries) DispNeedsSweep(ctx context.Context, pattern string) (bool, error) {
 	row := q.db.QueryRow(ctx, dispNeedsSweep, pattern)

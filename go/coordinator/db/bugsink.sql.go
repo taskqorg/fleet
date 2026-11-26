@@ -26,7 +26,7 @@ func (q *Queries) BugsinkFleetProject(ctx context.Context, name string) (string,
 }
 
 const bugsinkHeldProblems = `-- name: BugsinkHeldProblems :many
-SELECT cause::text AS cause, coalesce(project_id,'')::text AS project FROM question WHERE cause LIKE $1::text || '%' AND state IN ('open','answered') ORDER BY seq
+SELECT cause::text AS cause, coalesce(project_id,'')::text AS project FROM problem WHERE cause LIKE $1::text || '%' AND state = 'open' ORDER BY seq
 `
 
 type BugsinkHeldProblemsRow struct {
@@ -34,7 +34,7 @@ type BugsinkHeldProblemsRow struct {
 	Project string
 }
 
-// The open or answered problems of Bugsink issues, with their project (” for none).
+// The open problems of Bugsink issues, with their project (” for none).
 func (q *Queries) BugsinkHeldProblems(ctx context.Context, prefix string) ([]BugsinkHeldProblemsRow, error) {
 	rows, err := q.db.Query(ctx, bugsinkHeldProblems, prefix)
 	if err != nil {

@@ -98,7 +98,7 @@ func grantsPass(ctx context.Context, a *App) error {
 		if err != nil {
 			return err
 		}
-		held, err := q.db().TaskProblemsOfSource(q.ctx(), "grants")
+		held, err := q.db().ProblemsOpenOfSource(q.ctx(), "grants")
 		quiet = d.Missing == 0 && len(held) == 0
 		return err
 	}); err != nil || quiet {

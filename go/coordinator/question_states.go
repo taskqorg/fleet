@@ -48,9 +48,7 @@ func questionTransition(q *Request, id string, ev questionEvent) (bool, error) {
 	case "answered":
 		err = q.db().QuestionAnswer(q.ctx(), db.QuestionAnswerParams{ID: id, Answer: ev.Answer, AnsweredBy: ev.AnsweredBy, AnsweredAt: ev.AnsweredAt, AnsweredNow: ev.AnsweredNow})
 	case "withdrawn":
-		if err = q.db().QuestionWithdraw(q.ctx(), db.QuestionWithdrawParams{ID: id, Withdrawal: ev.Withdrawal}); err == nil {
-			err = problemsLetGo(q, []string{id})
-		}
+		err = q.db().QuestionWithdraw(q.ctx(), db.QuestionWithdrawParams{ID: id, Withdrawal: ev.Withdrawal})
 	}
 	if err == nil { // an access card's answer moves its grant (access_grants.go)
 		err = accessQuestionEnded(q, id, ev)
@@ -58,7 +56,7 @@ func questionTransition(q *Request, id string, ev questionEvent) (bool, error) {
 	return err == nil, err
 }
 
-// questionsWithdraw withdraws the open questions of ids in one statement; they let go of their causes.
+// questionsWithdraw withdraws the open questions of ids in one statement.
 func questionsWithdraw(q *Request, ids []string) error {
 	if len(ids) == 0 {
 		return nil
@@ -72,5 +70,5 @@ func questionsWithdraw(q *Request, ids []string) error {
 			return err
 		}
 	}
-	return problemsLetGo(q, withdrawn)
+	return nil
 }

@@ -129,6 +129,9 @@ CREATE OR REPLACE TRIGGER session_summary_message_upd AFTER UPDATE ON message RE
 CREATE OR REPLACE TRIGGER price_entry_append_only BEFORE DELETE OR UPDATE ON price_entry FOR EACH ROW EXECUTE FUNCTION fleet_append_only();
 CREATE OR REPLACE TRIGGER price_entry_spend AFTER INSERT ON price_entry FOR EACH ROW EXECUTE FUNCTION execution_spend_on_price();
 
+-- problem
+CREATE OR REPLACE TRIGGER problem_change AFTER INSERT OR DELETE OR UPDATE ON problem FOR EACH ROW EXECUTE FUNCTION fleet_change();
+
 -- problem_dismissal
 CREATE OR REPLACE TRIGGER problem_dismissal_tombstone BEFORE INSERT ON problem_dismissal FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
 

@@ -420,6 +420,6 @@ func connDisable(q *Request, fp string, status, attemptedAt int64) error {
 		return err
 	}
 	publish(q)
-	return problemRaise(q, "", Problem{Cause: "key:" + fp + ":disabled", Options: []any{"seen"},
+	return problemRaise(q, "", Problem{Cause: "key:" + fp + ":disabled",
 		Text: fmt.Sprintf("API key %s of %v was refused by the provider (HTTP %s) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.", fp, k.ConnectionID, st)})
 }

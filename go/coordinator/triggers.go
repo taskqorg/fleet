@@ -30,7 +30,7 @@ func triggerTickMs() int64 { return envMs("FLEET_TRIGGER_TICK_MS", 15000).Millis
 const maxEveryMs = int64(math.MaxInt64 / int64(time.Millisecond))
 
 // triggerKinds: the change kinds a condition may name (the watch table in fleet-pm-agent.md section 5).
-var triggerKinds = []string{"task", "question", "execution", "host", "limits"}
+var triggerKinds = []string{"task", "question", "execution", "host", "limits", "problem"}
 
 func init() {
 	op("trigger_list", triggerList)
@@ -873,6 +873,20 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 		}
 		for _, c := range page {
 			p := deref(c.ProjectID)
+			if c.Kind == "problem" {
+				// A problem wakes only its owner bot, whatever its project (problems without one included); the bot's
+				// own updates are its own (actor) and wake nobody.
+				if target.bot == nil || !slices.Contains(t.IfChanged, "problem") || seen["problem"+c.Id] || (c.Actor != nil && own[*c.Actor]) {
+					continue
+				}
+				seen["problem"+c.Id] = true
+				if part, ok, err := problemChangePart(q, c.Id, target.bot.Id); err != nil {
+					return nil, t.ChangeCursor, t.LimitsSignaled, err
+				} else if ok {
+					parts = append(parts, part)
+				}
+				continue
+			}
 			if !slices.Contains(t.IfChanged, string(c.Kind)) || seen[string(c.Kind)+c.Id] ||
 				(c.Actor != nil && own[*c.Actor]) || (c.SessionId != nil && (children[*c.SessionId] || *c.SessionId == self)) ||
 				(focus != nil && c.Kind != "host" && !slices.Contains(focus, p)) ||

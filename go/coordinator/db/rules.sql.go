@@ -9,20 +9,6 @@ import (
 	"context"
 )
 
-const rulesExecutionDirector = `-- name: RulesExecutionDirector :one
-
-SELECT directed_by FROM execution WHERE id=$1
-`
-
-// Rules pass, Postgres half (rules.go, docs/designs/fleet-telemetry.md §6): the state its rules read.
-// The director a project cause on an execution goes to.
-func (q *Queries) RulesExecutionDirector(ctx context.Context, id string) (*string, error) {
-	row := q.db.QueryRow(ctx, rulesExecutionDirector, id)
-	var directed_by *string
-	err := row.Scan(&directed_by)
-	return directed_by, err
-}
-
 const rulesResourceFailing = `-- name: RulesResourceFailing :many
 SELECT ('execution '||execution_id)::text AS item FROM (SELECT DISTINCT execution_id FROM resource_work WHERE last_error IS NOT NULL AND attempts>=$1::int) w
 UNION ALL SELECT ('build of project '||project_id)::text FROM resource_build WHERE NOT ready AND attempts>=$1::int
@@ -51,6 +37,7 @@ func (q *Queries) RulesResourceFailing(ctx context.Context, attempts int32) ([]s
 }
 
 const rulesStoresDown = `-- name: RulesStoresDown :many
+
 SELECT id,host_id,state,capacity_bytes,free_space_warning_bytes FROM store WHERE observed_at IS NOT NULL AND state IN ('full','unreachable')
 `
 
@@ -62,6 +49,7 @@ type RulesStoresDownRow struct {
 	FreeSpaceWarningBytes *int64
 }
 
+// Rules pass, Postgres half (rules.go, docs/designs/fleet-telemetry.md §6): the state its rules read.
 // Observed stores that are full or unreachable (store-fill, absence-store).
 func (q *Queries) RulesStoresDown(ctx context.Context) ([]RulesStoresDownRow, error) {
 	rows, err := q.db.Query(ctx, rulesStoresDown)

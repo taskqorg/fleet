@@ -1313,9 +1313,9 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 	if err := problemsSync(q, "delivery", ps); err != nil {
 		return contract.DeliveryRegressionsReply{}, err
 	}
-	// A held question shows the latest numbers and range, not those of the check that opened it.
+	// An open problem shows the latest numbers and range, not those of the check that opened it.
 	for _, p := range ps {
-		if err := q.db().DeliveryProblemRefresh(q.ctx(), db.DeliveryProblemRefreshParams{Cause: &p.Cause, Text: p.Text, Data: jsonBytes(p.Data)}); err != nil {
+		if err := q.db().DeliveryProblemRefresh(q.ctx(), db.DeliveryProblemRefreshParams{Cause: p.Cause, Text: p.Text, Data: jsonBytes(p.Data)}); err != nil {
 			return contract.DeliveryRegressionsReply{}, err
 		}
 	}

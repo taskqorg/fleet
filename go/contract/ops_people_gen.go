@@ -417,11 +417,60 @@ func (v *HomeFailure) Validate() error {
 	return nil
 }
 
+type HomeProblemFirst struct {
+	Code string `json:"code"`
+	Text string `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeProblemFirst) Validate() error {
+	return nil
+}
+
+type HomeProblemOwner struct {
+	BotId string `json:"botId"`
+	N     int64  `json:"n"`
+	Name  string `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeProblemOwner) Validate() error {
+	return nil
+}
+
+// HomeProblems: The pulse line's problems (docs/design-system/controls/pulse-line.md).
+type HomeProblems struct {
+	FirstStuck *HomeProblemFirst  `json:"firstStuck,omitempty"`
+	Open       int64              `json:"open"`
+	Owners     []HomeProblemOwner `json:"owners"`
+	Stuck      int64              `json:"stuck"`
+	Unowned    int64              `json:"unowned"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeProblems) Validate() error {
+	if v.FirstStuck != nil {
+		if err := Check(v.FirstStuck, "firstStuck"); err != nil {
+			return err
+		}
+	}
+	if v.Owners == nil {
+		return Missing("owners")
+	}
+	for i := range v.Owners {
+		if err := Check(&v.Owners[i], "owners"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type HomeViewReply struct {
 	Blockers  []HomeBlocker `json:"blockers"`
 	Bots      []BotListItem `json:"bots"`
 	Counts    HomeCounts    `json:"counts"`
 	Failures  []HomeFailure `json:"failures"`
+	Problems  *HomeProblems `json:"problems,omitempty"`
 	Questions []QuestionRow `json:"questions"`
 	Sessions  []SessionRow  `json:"sessions"`
 }
@@ -452,6 +501,11 @@ func (v *HomeViewReply) Validate() error {
 	}
 	for i := range v.Failures {
 		if err := Check(&v.Failures[i], "failures"); err != nil {
+			return err
+		}
+	}
+	if v.Problems != nil {
+		if err := Check(v.Problems, "problems"); err != nil {
 			return err
 		}
 	}
