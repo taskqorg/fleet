@@ -205,6 +205,9 @@ run its connections (§4), whatever the host's own harness settings say.
     holds) and registers one
     `fleet-executor mcp connection <name>` server per connection in the harness's own settings: Claude Code with
     `claude mcp add-json -s user`, Codex with `codex mcp add`, Antigravity in `~/.gemini/antigravity/mcp_config.json`.
+    Fleet's tools are approved as Fleet runs approve them: Codex gets `approval_mode = "approve"` per tool, Antigravity
+    one `permissions.allow` rule `mcp(<server>/*)` per Fleet server in `~/.gemini/antigravity-cli/settings.json`
+    (owner, 2026-11-26: only Fleet's servers; nothing else in its permissions changes).
     Servers it did not register are left alone; a server of a connection the token no longer names is removed. Without
     a spec argument `mcp connection` reads its spec from the gateway at start, so a server never holds stale tools.
     Tool names are the runs' own: `mcp__<connection>__<tool>` (`mcp__fleet-postgres__sql_query`). The command ends

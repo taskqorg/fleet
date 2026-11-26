@@ -16,8 +16,9 @@ func TestLocalAgentAntigravitySettings(t *testing.T) {
 	os.WriteFile(path, []byte(`{"mcpServers":{"brilliant":{"command":"/x/brilliant"},"old":{"command":"/r/fleet-executor","args":["mcp","connection","old"]}},"other":1}`), 0o600)
 	var out bytes.Buffer
 	env := map[string]string{"FLEET_GATEWAY_URL": "https://g", "FLEET_TOKEN_FILE": "/t"}
-	if err := antigravityServers(path, "/r/fleet-executor", env, []string{"fleet-postgres"}, &out); err != nil {
-		t.Fatal(err)
+	removed, err := antigravityServers(path, "/r/fleet-executor", env, []string{"fleet-postgres"}, &out)
+	if err != nil || strings.Join(removed, ",") != "old" {
+		t.Fatalf("removed %v: %v", removed, err)
 	}
 	var doc struct {
 		McpServers map[string]struct {
@@ -37,6 +38,31 @@ func TestLocalAgentAntigravitySettings(t *testing.T) {
 	}
 	if _, stale := doc.McpServers["old"]; stale {
 		t.Fatalf("a Fleet server the token no longer names stayed: %s", b)
+	}
+}
+
+// Requirement: Antigravity's CLI settings gain one allow rule per Fleet server, once, and lose a removed Fleet server's;
+// its other keys and rules stay.
+func TestLocalAgentAntigravityAllow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	os.WriteFile(path, []byte(`{"trustedWorkspaces":["/w"],"permissions":{"allow":["mcp(brilliant/*)","mcp(old/*)"],"deny":["x"]}}`), 0o600)
+	for range 2 {
+		if err := antigravityAllow("antigravity", path, []string{"fleet-postgres", "youtrack"}, []string{"old"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, _ := os.ReadFile(path)
+	var doc struct {
+		Trusted     []string `json:"trustedWorkspaces"`
+		Permissions struct {
+			Allow, Deny []string
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(doc.Permissions.Allow, " ") != "mcp(brilliant/*) mcp(fleet-postgres/*) mcp(youtrack/*)" || len(doc.Trusted) != 1 || len(doc.Permissions.Deny) != 1 {
+		t.Fatalf("settings: %s", b)
 	}
 }
 
