@@ -9,7 +9,7 @@
 * **Step trail:** Found · Investigating · Change · On hosts · Watching · Fixed; done steps carry ✓ in the success tone, the current step is `fg`; Still failing is the danger step; a dismissed finding shows Dismissed.
 * **Before/after:** the failures a day before the change and after it (success), the class's days with the change marked, and one line on what closes it. After the verdict it shows the verdict's counts and runs.
 
-**Layout.** The gap list is the size container. Wide: the name over the detail, then sparkline, badge and time on the right. Narrower than 36 rem: name, detail, then sparkline, badge and time on one line; nothing scrolls sideways ([OR-66](../owner-rules.md)).
+**Layout.** The gap list is the size container. Wide: the name over the detail, then sparkline, badge and time on the right. Narrower than 26 rem: name, detail, then sparkline, badge and time on one line; nothing scrolls sideways ([OR-66](../owner-rules.md)).
 
 **Behaviour.** The whole row opens the class ([OR-26](../owner-rules.md)): the name's link is stretched over the row; the badge's tooltip stays above it. The open class is marked (`aria-current`).
 

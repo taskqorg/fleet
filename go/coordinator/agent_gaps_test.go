@@ -285,3 +285,11 @@ func TestAgentGapWatch(t *testing.T) {
 		}
 	}
 }
+
+// Requirement: the findings lock is a lock scope the store knows. Risk: "unknown advisory lock scope" failed every
+// findings pass and reclassification on prod (2026-11-26) while every unit test passed.
+func TestAgentGapLock(t *testing.T) {
+	if _, err := lockRank(gapLock); err != nil {
+		t.Fatal(err)
+	}
+}

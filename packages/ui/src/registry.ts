@@ -36,6 +36,7 @@ export const workspaces = [
   { id: 'catalogue', label: 'Methods', icon: 'rows-3', section: 'library', nav: false },
   { id: 'changes', label: 'Changes', icon: 'git-pull-request', section: 'library', nav: false },
   { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', section: 'system', nav: false },
+  { id: 'agent-gaps', label: 'Agents', icon: 'bot', section: 'system', nav: false },
   { id: 'runners', label: 'Runners', icon: 'play', section: 'system', nav: false },
   { id: 'keys', label: 'Connections and keys', icon: 'shield', section: 'system', nav: false },
   { id: 'spend', label: 'Spend', icon: 'gauge', section: 'system', nav: false },

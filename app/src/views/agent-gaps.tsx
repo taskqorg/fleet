@@ -106,8 +106,8 @@ export function AgentGaps(p: { id?: string; onOpen: (path: string) => void }) {
 
   const head = (d: AgentGapsReply) => {
     const findings = d.classes.map(c => c.finding?.state).filter(Boolean) as string[];
-    return <Totals items={[
-      { label: `failed runs, ${d.days} days`, m: { value: d.runs, basis: 'measured' }, kind: 'count' },
+    return <Totals compact items={[
+      { label: 'failed runs', m: { value: d.runs, basis: 'measured' }, kind: 'count' },
       { label: 'failed gateway calls', m: { value: d.calls, basis: 'measured' }, kind: 'count' },
       { label: 'findings open', m: { value: findings.filter(s => OPEN_STATES.includes(s)).length, basis: 'measured' }, kind: 'count' },
       { label: 'changes being watched', m: { value: findings.filter(s => WATCH_STATES.includes(s)).length, basis: 'measured' }, kind: 'count' },

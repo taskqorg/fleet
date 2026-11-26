@@ -218,7 +218,7 @@
   .gap-rows { list-style: none; margin: 0; padding: 0; container-type: inline-size; }
   .gaprow {
     position: relative; display: grid; align-items: center; gap: 0 var(--space-3);
-    grid-template-columns: minmax(0, 1fr) auto minmax(7rem, max-content) 4.5rem;
+    grid-template-columns: minmax(0, 1fr) auto max-content 4rem;
     grid-template-areas: "name spark chip fact" "detail spark chip fact";
     padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line-soft);
   }
@@ -233,7 +233,7 @@
   .gaprow > .spark { grid-area: spark; }
   .gaprow > .badge { grid-area: chip; justify-self: end; }
   .gaprow-fact { grid-area: fact; justify-self: end; color: var(--fg-muted); font-size: var(--font-size-sm); white-space: nowrap; }
-  @container (width < 36rem) {
+  @container (width < 26rem) {
     .gaprow { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "name name name" "detail detail detail" "spark chip fact"; gap: var(--space-1) var(--space-2); }
     .gaprow > .badge { justify-self: start; }
   }
