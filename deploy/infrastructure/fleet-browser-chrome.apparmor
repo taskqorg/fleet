@@ -1,0 +1,11 @@
+# Chromium's user-namespace sandbox on PDS18, where Ubuntu blocks unprivileged user namespaces
+# (kernel.apparmor_restrict_unprivileged_userns=1): without it Chromium aborts with "No usable sandbox!". Covers the
+# release-managed Chromium (config/tool-pins.json) and the earlier hand-installed Playwright build. As root:
+# install -m 644 fleet-browser-chrome.apparmor /etc/apparmor.d/fleet-browser-chrome && apparmor_parser -r /etc/apparmor.d/fleet-browser-chrome
+abi <abi/5.0>,
+include <tunables/global>
+
+profile fleet-browser-chrome /{opt/fleet-agent/releases/tools/chromium/*/chrome-headless-shell-linux64/chrome-headless-shell,home/fleet-agent/.local/share/fleet/tools/browser/browsers/chromium-*/chrome-linux64/chrome} flags=(unconfined) {
+  userns,
+  @{exec_path} mr,
+}

@@ -15,16 +15,45 @@
         "entry": "pnpm"
       },
       "gh": {
-        "version": "2.105.0",
-        "url": "https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_linux_amd64.tar.gz",
-        "sha256": "79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f",
-        "entry": "gh_2.105.0_linux_amd64/bin/gh"
+        "version": "2.106.0",
+        "url": "https://github.com/cli/cli/releases/download/v2.106.0/gh_2.106.0_linux_amd64.tar.gz",
+        "sha256": "a476449fa9625413c54a3734eded62e9e480e49f421ff08e7f3b3879c059a033",
+        "entry": "gh_2.106.0_linux_amd64/bin/gh"
       },
       "glab": {
         "version": "1.133.0",
         "url": "https://gitlab.com/gitlab-org/cli/-/releases/v1.133.0/downloads/glab_1.133.0_linux_amd64.tar.gz",
         "sha256": "b17f858b8d700f1607f8ec02fe092a455da6a8dd18dac3eb6ccb09db1befd4bf",
         "entry": "bin/glab"
+      },
+      "jq": {
+        "version": "1.8.2",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64",
+        "sha256": "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f"
+      },
+      "rg": {
+        "version": "16.0.0",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/16.0.0/ripgrep-16.0.0-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "54268ab4643c00a290a29b0086066d64b3f56236dd805ec64629a86f9bd29fd0",
+        "entry": "ripgrep-16.0.0-x86_64-unknown-linux-musl/rg"
+      },
+      "python": {
+        "version": "3.15.2",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261124/cpython-3.15.2%2B20261124-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "sha256": "d94bcba1ca1c63f591fa63109c3eeaacc76ee6796844ac7bdf2ae10715646f05",
+        "entry": "python/bin/python"
+      },
+      "playwright": {
+        "version": "1.65.1",
+        "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.65.1.tgz",
+        "sha512": "86a3e9cfb6e548c3f1595768784d728814b35ec2a254e77693e9230af994cb00f618f3b60ddf477dc5a7abd34dd061db3590c5819f497c116bf97e7f04ba34ab",
+        "entry": "package/cli.js"
+      },
+      "chromium": {
+        "version": "158.0.8127.88",
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/linux64/chrome-headless-shell-linux64.zip",
+        "sha256": "63401333cc587645bfaeea7f0c90958b327d249251e23954a47f30112ca23d5b",
+        "entry": "chrome-headless-shell-linux64/chrome-headless-shell"
       }
     },
     "darwin-arm64": {
@@ -41,16 +70,45 @@
         "entry": "pnpm"
       },
       "gh": {
-        "version": "2.105.0",
-        "url": "https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_macOS_arm64.zip",
-        "sha256": "2a5d03103ae444927383b93d9ffd65579a26e2eb900ce1cf11f55258d5319ded",
-        "entry": "gh_2.105.0_macOS_arm64/bin/gh"
+        "version": "2.106.0",
+        "url": "https://github.com/cli/cli/releases/download/v2.106.0/gh_2.106.0_macOS_arm64.zip",
+        "sha256": "22b2b723dfbc69b6022b1b08604ff51c0db5aa8b6774b4ced1a47b8413a995d6",
+        "entry": "gh_2.106.0_macOS_arm64/bin/gh"
       },
       "glab": {
         "version": "1.133.0",
         "url": "https://gitlab.com/gitlab-org/cli/-/releases/v1.133.0/downloads/glab_1.133.0_darwin_arm64.tar.gz",
         "sha256": "d81ed2620b0d1374e2e0a8bfd90a3ef8945d177667d065a0945b301a1eada3e2",
         "entry": "bin/glab"
+      },
+      "jq": {
+        "version": "1.8.2",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-arm64",
+        "sha256": "2d75340ba57a4b4b4c8708a21c2dc8e958a48aaa8bba13b27f77f6e4c0eca07e"
+      },
+      "rg": {
+        "version": "16.0.0",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/16.0.0/ripgrep-16.0.0-aarch64-apple-darwin.tar.gz",
+        "sha256": "5a145656d5067144001bfce6648767fd3254599aa736f1ffdb7fb907760b8ca1",
+        "entry": "ripgrep-16.0.0-aarch64-apple-darwin/rg"
+      },
+      "python": {
+        "version": "3.15.2",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261124/cpython-3.15.2%2B20261124-aarch64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "2cc8874f034f7a0deff879530020108ebe6d318f5e8c6689673a866ab5fb7fdc",
+        "entry": "python/bin/python"
+      },
+      "playwright": {
+        "version": "1.65.1",
+        "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.65.1.tgz",
+        "sha512": "86a3e9cfb6e548c3f1595768784d728814b35ec2a254e77693e9230af994cb00f618f3b60ddf477dc5a7abd34dd061db3590c5819f497c116bf97e7f04ba34ab",
+        "entry": "package/cli.js"
+      },
+      "chromium": {
+        "version": "158.0.8127.88",
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+        "sha256": "69320f6869c4defbbdac8b8fa83aef65dc63975e83bbd06899b75dbea5c464b3",
+        "entry": "chrome-headless-shell-mac-arm64/chrome-headless-shell"
       }
     }
   }

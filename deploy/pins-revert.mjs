@@ -24,7 +24,7 @@ for (const pr of pulls) {
   if (!pr.merged_at || Date.parse(pr.merged_at) < week || pr.head.repo?.full_name !== repo) continue;
   const status = await api(`commits/${pr.head.sha}/status`);
   for (const s of status.statuses.filter(s => s.context === 'pins-watch' && s.state === 'failure')) {
-    const m = /^revert ([a-z]+) (\d+\.\d+\.\d+):/.exec(s.description ?? '');
+    const m = /^revert ([a-z]+) (\d+\.\d+\.\d+(?:\.\d+)?):/.exec(s.description ?? '');
     if (!m) continue;
     const [, name, version] = m;
     const base = JSON.parse(await api(`contents/${file}?ref=${pr.base.sha}`, 'application/vnd.github.raw+json'));

@@ -417,13 +417,30 @@ func TestManagedToolInstalls(t *testing.T) {
 		tw.Close()
 		gz.Close()
 		payload := buf.Bytes()
-		tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(payload) }))
+		// playwright's --version runs on node: its script finds node's tool only on the PATH of the earlier tools.
+		wrapper := []byte("#!/bin/sh\nexec tool\n")
+		tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/wrapper" {
+				w.Write(wrapper)
+				return
+			}
+			w.Write(payload)
+		}))
 		t.Cleanup(tls.Close)
 		f.u.client = tls.Client()
 		vendorOrigins(t, tls.URL)
 		sum := sha256.Sum256(payload)
+		wrapperSum := sha256.Sum256(wrapper)
 		asset := `{"version":"` + c.version + `","url":"` + tls.URL + `/t.tar.gz","sha256":"` + hex.EncodeToString(sum[:]) + `","entry":"t/bin/tool"}`
-		tools := `{"enabled":true,"targets":{"linux-amd64":{"node":` + asset + `,"pnpm":` + asset + `,"gh":` + asset + `,"glab":` + asset + `}}}`
+		pins := []string{}
+		for _, name := range harnessrelease.Tools.Names {
+			a := asset
+			if name == "playwright" {
+				a = `{"version":"` + c.version + `","url":"` + tls.URL + `/wrapper","sha256":"` + hex.EncodeToString(wrapperSum[:]) + `"}`
+			}
+			pins = append(pins, `"`+name+`":`+a)
+		}
+		tools := `{"enabled":true,"targets":{"linux-amd64":{` + strings.Join(pins, ",") + `}}}`
 		f.release("1.261111.0", 0, []byte(`{"enabled":false}`), []byte(tools))
 		r := f.run("1.261111.0")
 		if r == nil || string(r.State) != c.state {
