@@ -236,7 +236,13 @@ func executable(st fs.FileInfo) bool {
 
 func (u *updater) retainedHarnesses(p *part) (map[string]bool, error) {
 	keep := map[string]bool{}
-	for _, link := range []string{"current", "previous"} {
+	dirs := []string{"current", "previous"}
+	for ver := range activeReleaseLocks(p.dataDir) {
+		if _, err := p.r.Stat(ver); err == nil {
+			dirs = append(dirs, ver)
+		}
+	}
+	for _, link := range dirs {
 		for _, k := range harnessrelease.Kinds {
 			assets, err := k.Read(filepath.Join(p.root, link), u.target)
 			if err != nil {

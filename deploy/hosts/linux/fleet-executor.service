@@ -11,6 +11,7 @@ After=network-online.target
 [Service]
 EnvironmentFile=-%h/.config/fleet/executor.env
 ExecStart=%h/releases/current/fleet-executor
+KillMode=process
 Restart=on-failure
 RestartSec=3
 UMask=0077

@@ -147,6 +147,7 @@ var subcommands = map[string]func(args []string) error{
 	"qualify-mcp":  qualifyMCP,
 	"mcp-guardian": mcpGuardian,
 	"code-shell":   codeShellGuardian,
+	"run-worker":   runWorker,
 	"reproject":    func([]string) error { return reproject() },
 	"selftest":     selftest,
 	"connection":   connectionCLI, // connection call <connection> <tool> [spec file]

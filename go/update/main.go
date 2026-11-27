@@ -164,7 +164,7 @@ func (u *updater) runExecutor() error {
 		return err
 	}
 	defer r.Close()
-	p := &part{r: r, name: "executor", root: root, stage: root, bins: []string{"fleet-executor", "fleet-update"},
+	p := &part{r: r, name: "executor", root: root, stage: root, dataDir: executorDataDir(), selfExec: true, bins: []string{"fleet-executor", "fleet-update"},
 		activity: u.executorActivity(signal), restart: command(restart...), health: u.executorHealth(signal), st: st}
 	var in signalFile
 	if !readJSON(signal, &in) {
@@ -226,7 +226,7 @@ func (u *updater) runPDS18() error {
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},
 		restart: command("systemctl", "--user", "-M", "fleet@", "restart", "fleet", "fleet-gateway", "fleet-access-guard"),
 		health:  u.coordinatorHealth, st: &st.Coordinator}
-	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, bins: []string{"fleet-executor"},
+	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, dataDir: filepath.Dir(filepath.Dir(execSignal)), selfExec: true, bins: []string{"fleet-executor"},
 		activity: u.executorActivity(execSignal), restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
 		health: u.executorHealth(execSignal), st: &st.Executor}
 	// The host's autoUpdate holds its executor only. The coordinator side (coordinator, gateway, guard, UI) serves every

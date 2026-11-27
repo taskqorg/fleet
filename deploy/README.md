@@ -11,8 +11,8 @@ Service files and scripts for running Fleet. Nothing here is applied automatical
 * `infrastructure/`: PDS18 units following tight: the coordinator (`fleet.service`, `fleet.socket`), the gateway and its socket, the Access origin guard (`fleet-access-guard.service` and `.socket`, which runs `fleet-gateway guard`), ClickHouse and Garage Quadlets, Postgres role setup (`fleet-postgres.sql`), backups, the root-owned `fleet-launch@.service` helper, and the Caddy and Cloudflare tunnel candidates. Files ending in `.candidate` are proposed, not installed.
   `fleet-update.service` and `.timer` run `fleet-update pds18` as root every 10 seconds (`AccuracySec=1s`); `fleet-executor-pds18.conf` points the PDS18 executor at its root-owned releases.
 * [`infrastructure/pds18-ci/`](infrastructure/pds18-ci/README.md): isolated trusted-main CI guest provisioning, admission and rollback; separate from production Fleet services.
-* `hosts/linux/`: the executor and `fleet-update` (service and timer) as systemd user units (PDS18 executor, WSL).
-* `hosts/macos/`: launchd agents for the Mac (executor, `fleet-update`, Garage, cloudflared).
+* `hosts/linux/`: the executor (`KillMode=process` so crash/manual unit restarts leave detached `run-worker` processes alive) and `fleet-update` (service and timer) as systemd user units (PDS18 executor, WSL).
+* `hosts/macos/`: launchd agents for the Mac (executor with `AbandonProcessGroup=true`, `fleet-update`, Garage, cloudflared). Existing Linux/WSL and Mac hosts need a one-time unit reload (`systemctl --user daemon-reload && systemctl --user restart fleet-executor`, or `launchctl bootout`/`bootstrap`) to pick up unit changes (`fleet-update` never rewrites static units).
 
 Design: [data foundation](../docs/designs/fleet-data-foundation.md) Phase 0 and §10; [self-update](../docs/designs/fleet-self-update.md).
 

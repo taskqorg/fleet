@@ -22,6 +22,7 @@ import (
 
 	"fleet/contract"
 	"fleet/errtrack"
+	"fleet/harnessrelease"
 )
 
 var shutdown atomic.Bool
@@ -89,6 +90,7 @@ const longPollWait = 25 * time.Second
 const exchangeQuiet = 30 * time.Second
 
 var errHostRemoved = errors.New("host removed")
+var errSelfExec = errors.New("executor self-exec ready")
 
 // The generated envelope owns wire fields. Raw command bodies retain all journal identity fields,
 // including extensions from older coordinators, until the internal command runner is migrated.
@@ -163,6 +165,7 @@ func reproject() error {
 }
 
 func runExecutor() error {
+	baseEnv := captureBaseEnv(harnessrelease.Tools.Env)
 	if err := useManagedTools(); err != nil {
 		return err
 	}
@@ -258,9 +261,12 @@ func runExecutor() error {
 	var failingSince time.Time
 	for {
 		if shutdown.Load() {
+			// Detached run-workers survive SIGTERM/SIGINT and reattach on restart.
 			for _, l := range e.live {
-				l.cleanup()
-				<-l.exited
+				if l.worker == nil {
+					l.cleanup()
+					<-l.exited
+				}
 			}
 			status("done", "")
 			return nil
@@ -269,7 +275,24 @@ func runExecutor() error {
 			status("error", "")
 			return err
 		}
+		if nextExe := selfExecTarget(); nextExe != "" {
+			if e.activity != nil {
+				e.activity.Close()
+				e.activity = nil
+			}
+			baseEnv.restore()
+			_ = odb.Close()
+			_ = db.Close()
+			_ = lock.Close()
+			if err := unix.Exec(nextExe, os.Args, os.Environ()); err != nil {
+				status("error", "")
+				return err
+			}
+		}
 		err := e.exchange()
+		if errors.Is(err, errSelfExec) {
+			continue
+		}
 		var failed tickFailed
 		if errors.As(err, &failed) {
 			status("error", "")
@@ -280,8 +303,12 @@ func runExecutor() error {
 			// Restart=on-failure does not start it again.
 			fmt.Fprintln(os.Stderr, "executor: this host was removed from Fleet; stopping its runs")
 			for _, l := range e.live {
-				l.cleanup()
-				<-l.exited
+				if l.worker != nil {
+					_ = workerStop(l.worker.sock, "")
+				} else {
+					l.cleanup()
+					<-l.exited
+				}
 			}
 			status("done", "")
 			return nil
@@ -484,6 +511,11 @@ func (e *executor) heldPoll() (*pollReply, error) {
 				<-got
 				return nil, tickFailed{err}
 			}
+			if selfExecTarget() != "" {
+				cancel()
+				<-got
+				return nil, errSelfExec
+			}
 		}
 	}
 }
@@ -504,6 +536,9 @@ func (e *executor) tickProcesses() error {
 		if done {
 			if err := e.release(execution); err != nil {
 				return err
+			}
+			if l.worker != nil {
+				removeWorkerDir(e.root, execution)
 			}
 			delete(e.live, execution)
 		}
