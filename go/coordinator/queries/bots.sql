@@ -220,24 +220,44 @@ JOIN task t ON t.id = bt.task_id AND t.tombstoned_at IS NULL
 JOIN task_view v ON v.task_id = t.id
 WHERE bt.bot_id = $1 AND bt.task_id = $2 AND bt.tombstoned_at IS NULL;
 
+-- name: BotTaskListProject :one
+-- Check that the bot and its current revision are visible without reading its run history or settings.
+SELECT b.project_id
+FROM bot b JOIN bot_revision br ON br.bot_id = b.id AND br.revision = b.revision
+WHERE b.id = $1;
+
 -- name: BotTasksList :many
-SELECT bt.bot_id, br.name AS bot_name, bt.task_id, bt.project_id, bt.session_id, bt.execution_id,
-       bt.link_kind, bt.created_by, bt.created_at, bt.seq,
-       t.code AS task_code, t.title,
-       t.state::text AS state, t.wait_reason, t.pause_reason, t.priority,
-       t.accepted_at, t.accepted_by, t.updated_at,
-       v.open_questions, v.execution_count, v.executions_by_state
-FROM bot_task bt
-JOIN bot b ON b.id = bt.bot_id AND b.tombstoned_at IS NULL
-JOIN bot_revision br ON br.bot_id = b.id AND br.revision = b.revision
-JOIN task t ON t.id = bt.task_id AND t.tombstoned_at IS NULL
-JOIN task_view v ON v.task_id = t.id
-WHERE bt.bot_id = @bot_id::text
-  AND bt.tombstoned_at IS NULL
-  AND (sqlc.narg(state)::text IS NULL OR (CASE WHEN t.state = 'paused' AND t.pause_reason = 'held' THEN 'held' ELSE t.state::text END) = sqlc.narg(state))
-  AND (sqlc.narg(after_seq)::bigint IS NULL OR (bt.seq, bt.task_id) < (sqlc.narg(after_seq)::bigint, sqlc.narg(after_task_id)::text))
-ORDER BY bt.seq DESC, bt.task_id DESC
-LIMIT sqlc.arg(lim)::int;
+-- Pick the page before aggregating related rows under the caller's RLS.
+WITH page AS MATERIALIZED (
+  SELECT bt.bot_id, br.name AS bot_name, bt.task_id, bt.project_id, bt.session_id, bt.execution_id,
+         bt.link_kind, bt.created_by, bt.created_at, bt.seq,
+         t.code AS task_code, t.title, t.state::text AS state,
+         t.wait_reason, t.pause_reason, t.priority, t.accepted_at, t.accepted_by, t.updated_at
+  FROM bot_task bt
+  JOIN bot b ON b.id = bt.bot_id AND b.tombstoned_at IS NULL
+  JOIN bot_revision br ON br.bot_id = b.id AND br.revision = b.revision
+  JOIN task t ON t.id = bt.task_id AND t.tombstoned_at IS NULL
+  WHERE bt.bot_id = @bot_id::text
+    AND bt.tombstoned_at IS NULL
+    AND (sqlc.narg(state)::text IS NULL OR (CASE WHEN t.state = 'paused' AND t.pause_reason = 'held' THEN 'held' ELSE t.state::text END) = sqlc.narg(state))
+    AND (sqlc.narg(after_seq)::bigint IS NULL OR (bt.seq, bt.task_id) < (sqlc.narg(after_seq)::bigint, sqlc.narg(after_task_id)::text))
+  ORDER BY bt.seq DESC, bt.task_id DESC
+  LIMIT sqlc.arg(lim)::int
+)
+SELECT p.*,
+       (SELECT count(*) FROM question q WHERE q.task_id = p.task_id AND q.state = 'open')::bigint AS open_questions,
+       x.execution_count, x.executions_by_state
+FROM page p
+CROSS JOIN LATERAL (
+  SELECT coalesce(sum(s.n), 0)::bigint AS execution_count,
+         coalesce(jsonb_object_agg(s.state, s.n), '{}')::jsonb AS executions_by_state
+  FROM (
+    SELECT e.state, count(*) AS n FROM execution e
+    WHERE e.task_id = p.task_id AND e.task_id IS NOT NULL AND e.kind = 'agent_run' AND e.tombstoned_at IS NULL
+    GROUP BY e.state
+  ) s
+) x
+ORDER BY p.seq DESC, p.task_id DESC;
 
 -- name: BotTasksByRunIDs :many
 SELECT execution_id::text AS execution_id, task_id

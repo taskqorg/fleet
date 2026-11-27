@@ -53,4 +53,11 @@ func TestProjectsView(t *testing.T) {
 	if len(by(a.Catalogue)) != 2 || a.WaitingTotal != 1 || len(a.Lines) != 1 || deref(a.Lines[0].ProjectId) != "a" || a.Lines[0].Working != 1 || a.Lines[0].InFlight != 1 {
 		t.Fatalf("focus a: %+v", a)
 	}
+
+	// A conversation can match through its project set and still belong to its checkout project's group.
+	exec(`UPDATE session SET payload = '{"focus":{"projectIds":["a"]}}' WHERE id = 'pv-b1'`)
+	e.opInto(t, "projects_view", map[string]any{"projectIds": []string{"a"}}, e.ownerHeaders(), &a)
+	if got := by(a.Lines); len(got) != 2 || got["a"].Working != 1 || got["b"].Working != 1 || got["b"].InFlight != 0 {
+		t.Fatalf("focus by conversation project set: %+v", a.Lines)
+	}
 }

@@ -294,7 +294,10 @@ var (
 
 // One pass: ingest without GLOBAL, republish when the blocked set changed, revoke tokens of ended or unknown runs.
 func connTickPass(ctx context.Context, a *App) error {
-	if _, err := connIngestPass(ctx, a); err != nil {
+	ingestCtx, ingest := obs.Start(ctx, "connections.ingest", obs.KindInternal)
+	_, err := connIngestPass(ingestCtx, a)
+	ingest.End(err)
+	if err != nil {
 		return err
 	}
 	var blockedJSON string
@@ -316,13 +319,9 @@ func connTickPass(ctx context.Context, a *App) error {
 		if err != nil {
 			return err
 		}
-		for _, id := range open {
-			state, err := q.db().ConnRunState(q.ctx(), id)
-			if err != nil {
-				return err
-			}
-			if state == "" || executionEnds(state) {
-				toRevoke = append(toRevoke, id)
+		for _, run := range open {
+			if run.State == "" || executionEnds(run.State) {
+				toRevoke = append(toRevoke, run.ExecutionID)
 			}
 		}
 		return nil

@@ -13,16 +13,10 @@ import (
 )
 
 const runnerCallGroups = `-- name: RunnerCallGroups :many
-WITH live_from AS (
- SELECT CASE WHEN EXISTS (SELECT 1 FROM runner_call_hour_done d WHERE d.hour = date_trunc('hour', now()) - interval '1 hour')
-  THEN date_trunc('hour', now()) ELSE date_trunc('hour', now() - interval '24 hours') END AS t
-), summed AS (
+WITH summed AS (
  SELECT h.host_id AS host, h.caller, h.currency, h.basis, h.calls, h.failed, false AS running, h.started_min, h.ended_max, h.wall_ms,
   h.value, h.unpriced, h.last_seq, h.session_id, h.task_id, h.parent_execution_id, h.problem, h.problem_seq
- FROM runner_call_hour h, live_from l WHERE h.hour >= date_trunc('hour', now() - interval '24 hours') AND h.hour < l.t
-), pick AS (
- SELECT e.id FROM execution e, live_from l WHERE e.ended_at >= l.t
- UNION SELECT e.id FROM execution e WHERE e.ended_at IS NULL
+ FROM runner_call_hour h WHERE h.hour >= date_trunc('hour', now() - interval '24 hours') AND h.hour < $1::timestamptz
 ), c AS (
  SELECT  e.id, e.seq, coalesce(e.host_id, '')::text AS host,
   coalesce(p.id, e.task_id, 'conn:' || coalesce(e.data->>'connection', ''))::text AS caller,
@@ -34,9 +28,8 @@ WITH live_from AS (
   CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_value END AS value,
   CASE WHEN s.execution_id IS NULL OR s.stale OR s.payload IS NOT NULL THEN 1 ELSE s.cost_unpriced END AS unpriced
  FROM execution e LEFT JOIN execution p ON p.id=e.parent_execution_id
-  LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN execution_spend s ON s.execution_id=e.id
-  JOIN pick ON pick.id = e.id
- WHERE e.kind='tool_run'
+ LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN execution_spend s ON s.execution_id=e.id
+ WHERE (e.ended_at >= $1::timestamptz OR e.ended_at IS NULL) AND e.kind='tool_run'
 ), live AS (
  SELECT c.host, c.caller, c.currency, c.basis, 1::bigint AS calls, (c.state IN ('failed','cancelled'))::int::bigint AS failed,
   c.state IN ('preparing','running','waiting') AS running, c.at AS started_min, c.ended_at AS ended_max, c.wall_ms,
@@ -82,8 +75,8 @@ type RunnerCallGroupsRow struct {
 // task, else the connection. Closed hours come from runner_call_hour (by when the calls ended); the hours the pass has
 // not summed yet, the current hour and active calls are read live from execution. Cost per currency and basis comes
 // from execution_spend, priced once per call; a stale or multi-currency spend row counts as unpriced here.
-func (q *Queries) RunnerCallGroups(ctx context.Context) ([]RunnerCallGroupsRow, error) {
-	rows, err := q.db.Query(ctx, runnerCallGroups)
+func (q *Queries) RunnerCallGroups(ctx context.Context, liveFrom pgtype.Timestamptz) ([]RunnerCallGroupsRow, error) {
+	rows, err := q.db.Query(ctx, runnerCallGroups, liveFrom)
 	if err != nil {
 		return nil, err
 	}
@@ -188,12 +181,30 @@ func (q *Queries) RunnerCallHoursSum(ctx context.Context, arg RunnerCallHoursSum
 	return err
 }
 
+const runnerCallLiveFrom = `-- name: RunnerCallLiveFrom :one
+SELECT (CASE WHEN EXISTS (SELECT 1 FROM runner_call_hour_done d WHERE d.hour = date_trunc('hour', now()) - interval '1 hour')
+ THEN date_trunc('hour', now()) ELSE date_trunc('hour', now() - interval '24 hours') END)::timestamptz
+`
+
+// Resolve the cutoff in the caller's snapshot before planning the live scan. A subquery parameter in the scan
+// otherwise gets one-third selectivity even when all closed hours were summarized.
+func (q *Queries) RunnerCallLiveFrom(ctx context.Context) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, runnerCallLiveFrom)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const runnerRuns = `-- name: RunnerRuns :many
 
-WITH pick AS (
- SELECT e.id FROM execution e WHERE e.started_at > now()-interval '24 hours'
- UNION SELECT e.id FROM execution e WHERE e.ended_at > now()-interval '24 hours'
- UNION SELECT e.id FROM execution e WHERE e.ended_at IS NULL
+WITH pick AS MATERIALIZED (
+ SELECT e.id,e.kind,e.state,e.host_id,e.harness,e.task_id,e.session_id,e.parent_execution_id,e.problem,e.seq,
+  e.ended_at,e.last_seen_at,e.data,e.model,e.account_id,e.started_at
+ FROM execution e
+ WHERE (e.started_at > now()-interval '24 hours' OR e.ended_at > now()-interval '24 hours' OR e.ended_at IS NULL)
+  AND (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
+  AND e.kind NOT IN ('pipeline_run','pipeline_step','tool_run')
+ ORDER BY (e.state IN ('preparing','running','waiting')) DESC,e.seq DESC LIMIT 500
 )
 SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.host_id,e.harness,e.task_id,coalesce((SELECT t.title FROM task t WHERE t.id=e.task_id),'')::text AS title,(SELECT s.title FROM session s WHERE s.id=e.session_id) AS session_title,e.session_id,e.parent_execution_id,e.problem,
  (SELECT count(*) FROM execution a WHERE e.task_id IS NOT NULL AND a.task_id=e.task_id AND a.seq<=e.seq)::bigint AS attempt,
@@ -202,10 +213,8 @@ SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.host_id,e.harness,e.ta
  x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,
  CASE WHEN coalesce(x.billing_basis,'') IN ('','unavailable') AND e.account_id IS NOT NULL THEN coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',e.account_id) m),false) ELSE false END AS is_api_conn,
  x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at
-FROM pick JOIN execution e ON e.id=pick.id LEFT JOIN execution_totals x ON x.execution_id=e.id
-WHERE (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
- AND e.kind NOT IN ('pipeline_run','pipeline_step','tool_run')
-ORDER BY (e.state IN ('preparing','running','waiting')) DESC,e.seq DESC LIMIT 500
+FROM pick e LEFT JOIN execution_totals x ON x.execution_id=e.id
+ORDER BY (e.state IN ('preparing','running','waiting')) DESC,e.seq DESC
 `
 
 type RunnerRunsRow struct {

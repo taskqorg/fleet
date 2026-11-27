@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -20,6 +21,31 @@ import (
 )
 
 var ingestMu sync.Mutex
+
+// spoolPosition tracks a confirmed prefix of a gateway file, which the gateway only appends to.
+type spoolPosition struct {
+	file   os.FileInfo
+	offset int64
+}
+
+func readSpoolTail(path string, resume spoolPosition) ([]byte, spoolPosition, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, spoolPosition{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, spoolPosition{}, err
+	}
+	pos := spoolPosition{file: info}
+	if resume.file != nil && os.SameFile(resume.file, info) && info.Size() >= resume.file.Size() &&
+		(info.Size() != resume.file.Size() || info.ModTime().Equal(resume.file.ModTime())) {
+		pos.offset = resume.offset
+	}
+	tail, err := io.ReadAll(io.NewSectionReader(file, pos.offset, info.Size()-pos.offset))
+	return tail, pos, err
+}
 
 // Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. Each
 // unrecorded line runs in its own transaction locked only by "usageKey:" + key (or NOLOCK when no usageKey), never
@@ -55,10 +81,11 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 		}
 	}
 	sort.Strings(names)
+	previous := a.connSpool
+	a.connSpool = make(map[string]spoolPosition, len(names))
 	for _, f := range names {
-		// ponytail: the whole file is read each pass (one day of lines); keep a read offset if a day's file gets large.
 		path := filepath.Join(dir, f)
-		b, err := os.ReadFile(path)
+		b, pos, err := readSpoolTail(path, previous[path])
 		if err != nil {
 			continue
 		}
@@ -66,6 +93,7 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 		// a last line without its newline is imported or keeps the file.
 		past := f[:10] < yesterday
 		if !past {
+			a.connSpool[path] = pos // leave the prior confirmed offset on a retry
 			b = b[:bytes.LastIndexByte(b, '\n')+1]
 		}
 		// Whole lines of any length (no Scanner token cap, W3-2); a line not imported keeps the file.
@@ -104,6 +132,7 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 				return added, err
 			}
 		}
+		confirmed := unimported == 0
 		for _, l := range parsed {
 			if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil {
 				continue
@@ -114,9 +143,15 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 				if phase == string(contract.CallPhaseCompleted) {
 					continue
 				}
-				if err := a.store.Write(ctx, nil, nil, func(q *Request) error { return connComplete(q, l) }); err != nil {
+				var recorded bool
+				if err := a.store.Write(ctx, nil, nil, func(q *Request) error {
+					var err error
+					recorded, err = connComplete(q, l)
+					return err
+				}); err != nil {
 					return added, err
 				}
+				confirmed = confirmed && recorded
 				changed = append(changed, "call:"+l.CallId)
 				continue
 			}
@@ -141,6 +176,7 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 			}); err != nil {
 				return added, err
 			}
+			confirmed = confirmed && ok
 			if ok {
 				added++
 				changed = append(changed, "call:"+l.CallId)
@@ -150,9 +186,14 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 			log.Printf("spool %s: past day kept, %d line(s) not imported", f, unimported)
 		} else if past {
 			// Keep a newly created empty file (e.g. open(O_CREAT) before write) and any file that grew while imported.
-			if info, err := os.Stat(path); err == nil && info.Size() == int64(len(b)) && (len(parsed) > 0 || time.Since(info.ModTime()) >= time.Minute) {
+			if info, err := os.Stat(path); err == nil && os.SameFile(pos.file, info) && info.Size() == pos.offset+int64(len(b)) &&
+				(len(parsed) > 0 || time.Since(info.ModTime()) >= time.Minute) {
 				os.Remove(path)
 			}
+		} else if confirmed {
+			// All database writes here have committed. Keep the cursor in memory so a restart replays idempotently.
+			pos.offset += int64(len(b))
+			a.connSpool[path] = pos
 		}
 	}
 	return added, nil
@@ -368,7 +409,7 @@ type transferPatch struct {
 
 // connComplete applies a file transfer's completed line (§9) to its started row. A repeated pass leaves the
 // completed row unchanged. If the started line was lost, the completed line is recorded alone.
-func connComplete(q *Request, l contract.CallLine) error {
+func connComplete(q *Request, l contract.CallLine) (recorded bool, err error) {
 	id := "call:" + l.CallId
 	p := problemOf(string(l.Outcome), deref(l.ErrorCode))
 	state, problem := "failed", &p
@@ -383,32 +424,32 @@ func connComplete(q *Request, l contract.CallLine) error {
 	}
 	n, err := q.db().ConnTransferComplete(q.ctx(), db.ConnTransferCompleteParams{ID: id, Ms: ms, Problem: problem, Patch: jsonBytes(patch), Upload: upload})
 	if err != nil {
-		return err
+		return false, err
 	}
 	if n == 1 {
 		if _, err := executionTransition(q, id, executionEvent{To: state, KeepEnd: true, Correct: true}); err != nil {
-			return err
+			return false, err
 		}
 		if upload {
 			// A file upload has no usageOnce. Its usage and key effects are known only after the POST.
 			if err := connAccount(q, id, l, false); err != nil {
-				return err
+				return false, err
 			}
 		}
 		if err := q.db().ConnTransferTotals(q.ctx(), db.ConnTransferTotalsParams{ID: id, Ms: ms}); err != nil {
-			return err
+			return false, err
 		}
 		publish(q)
-		return nil
+		return true, nil
 	}
 	if exists, err := q.db().ConnExecutionExists(q.ctx(), id); err != nil || exists {
-		return err
+		return exists, err
 	}
 	ok, err := connRecord(q, l)
 	if ok {
 		publish(q)
 	}
-	return err
+	return ok, err
 }
 
 func connDisable(q *Request, fp string, status, attemptedAt int64) error {

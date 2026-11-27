@@ -78,6 +78,8 @@ type App struct {
 	hostWake   map[string]*hostWakeEntry
 	heartbeats map[string]*hostHeartbeat
 
+	connSpool map[string]spoolPosition // protected by ingestMu
+
 	stopOnce sync.Once
 	stopCh   chan struct{}
 }

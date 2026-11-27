@@ -72,7 +72,7 @@ func projectsView(q *Request, r *contract.ProjectsViewRequest) (contract.Project
 		}
 	}
 
-	catalogue, err := projectWork(q, rowFilter{})
+	catalogue, lines, err := projectWork(q, focus)
 	if err != nil {
 		return out, err
 	}
@@ -82,10 +82,6 @@ func projectsView(q *Request, r *contract.ProjectsViewRequest) (contract.Project
 		catalogue[p] = c
 	}
 	out.Catalogue = projectCounts(catalogue)
-	lines, err := projectWork(q, focus)
-	if err != nil {
-		return out, err
-	}
 	out.Lines = projectCounts(lines)
 
 	// Pull requests in flight in the focus: publishing_status's items, without the projects' capabilities.
@@ -105,43 +101,40 @@ func projectsView(q *Request, r *contract.ProjectsViewRequest) (contract.Project
 	return out, nil
 }
 
-// projectWork: per project ("" for work outside projects) of the filter, the sessions working (preparing or running)
-// and the tasks in flight, from the lists' own group counts.
-func projectWork(q *Request, f rowFilter) (map[string]contract.ProjectWorkCounts, error) {
-	out := map[string]contract.ProjectWorkCounts{}
-	key := func(g string) string {
-		if g == "~" {
-			return ""
-		}
-		return g
+// projectWork counts catalogue and focused work together, applying the lists' filters before grouping.
+func projectWork(q *Request, f rowFilter) (map[string]contract.ProjectWorkCounts, map[string]contract.ProjectWorkCounts, error) {
+	catalogue := map[string]contract.ProjectWorkCounts{}
+	lines := map[string]contract.ProjectWorkCounts{}
+	type workCount struct {
+		ProjectID *string `db:"project_id"`
+		All       int64   `db:"n"`
+		Focused   int64   `db:"focused"`
 	}
-	sf := f
-	sf.States = []string{"preparing", "running"}
-	o, err := sessionOrderOf(ptr("project"), nil)
+	sql, args := sqlProjectWorkingCounts(f)
+	working, err := typedRows[workCount](q, sql, args)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	_, sg, err := sessionSummary(q, sf, o)
+	for _, r := range working {
+		p := deref(r.ProjectID)
+		c, l := catalogue[p], lines[p]
+		c.Working += r.All
+		l.Working += r.Focused
+		catalogue[p], lines[p] = c, l
+	}
+	sql, args = sqlProjectTaskCounts(f)
+	tasks, err := typedRows[workCount](q, sql, args)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	for _, g := range sg {
-		c := out[key(g.Key)]
-		c.Working += g.Count
-		out[key(g.Key)] = c
+	for _, r := range tasks {
+		p := deref(r.ProjectID)
+		c, l := catalogue[p], lines[p]
+		c.InFlight += r.All
+		l.InFlight += r.Focused
+		catalogue[p], lines[p] = c, l
 	}
-	tf := f
-	tf.States = projectsRunningTasks()
-	_, tg, err := taskSummary(q, tf, ptr("project"), false)
-	if err != nil {
-		return nil, err
-	}
-	for _, g := range tg {
-		c := out[key(g.Key)]
-		c.InFlight += g.Count
-		out[key(g.Key)] = c
-	}
-	return out, nil
+	return catalogue, lines, nil
 }
 
 // projectCounts: the counts of each project with any, ordered by project id (work outside projects last).

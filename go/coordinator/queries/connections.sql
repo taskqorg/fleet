@@ -22,9 +22,15 @@ UPDATE run_token SET revoked_at=to_timestamp(sqlc.arg(at)::float8/1000), updated
  WHERE step AND revoked_at IS NULL AND coalesce(created_at, 'epoch') < to_timestamp(sqlc.arg(started)::float8/1000);
 
 -- name: OpenRunTokenExecutions :many
--- The executions of open run tokens that are neither a step's nor a person's, in token order.
-SELECT execution_id::text FROM run_token WHERE revoked_at IS NULL AND step IS NULL AND personal IS NULL AND execution_id IS NOT NULL
- GROUP BY execution_id ORDER BY min(seq);
+-- The visible run states of open execution tokens, in token order. A missing run has an empty state.
+WITH open AS MATERIALIZED (
+  SELECT execution_id, min(seq) AS first_seq FROM run_token
+  WHERE revoked_at IS NULL AND step IS NULL AND personal IS NULL AND execution_id IS NOT NULL
+  GROUP BY execution_id
+)
+SELECT o.execution_id::text AS execution_id,
+       coalesce((SELECT e.state::text FROM execution e WHERE e.id = o.execution_id AND e.kind IN ('agent_run','host_job')), '')::text AS state
+FROM open o ORDER BY o.first_seq;
 
 -- name: ConnHasActiveKey :one
 -- Whether connection name has an active key.
@@ -93,10 +99,6 @@ UPDATE execution_totals SET wall_ms= @ms::bigint,wall_ms_basis='measured',active
 
 -- name: ConnExecutionExists :one
 SELECT EXISTS (SELECT 1 FROM execution WHERE id=$1);
-
--- name: ConnRunState :one
--- The state of an agent run or host job; '' when there is none.
-SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')),'')::text;
 
 -- name: ConnKeyRecordedSince :one
 -- The cost recorded for a key's calls since a time (ms).

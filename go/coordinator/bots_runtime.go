@@ -12,6 +12,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -810,20 +811,12 @@ func botTaskLinkToContract(botID, botName, taskID, projectID string, sessionID, 
 }
 
 func botTaskRowToContract(r db.BotTasksListRow) contract.BotTaskRecord {
-	var open []json.RawMessage
-	if len(r.OpenQuestions) > 0 {
-		_ = json.Unmarshal(r.OpenQuestions, &open)
-	}
 	byState := map[string]int64{}
 	if len(r.ExecutionsByState) > 0 {
 		_ = json.Unmarshal(r.ExecutionsByState, &byState)
 	}
 	if byState == nil {
 		byState = map[string]int64{}
-	}
-	var execCount int64
-	if r.ExecutionCount != nil {
-		execCount = *r.ExecutionCount
 	}
 	return contract.BotTaskRecord{
 		AcceptedAt:        formatTimePtr(r.AcceptedAt),
@@ -832,11 +825,11 @@ func botTaskRowToContract(r db.BotTasksListRow) contract.BotTaskRecord {
 		BotName:           r.BotName,
 		CreatedAt:         r.CreatedAt.UTC().Format(time.RFC3339Nano),
 		CreatedBy:         r.CreatedBy,
-		ExecutionCount:    execCount,
+		ExecutionCount:    r.ExecutionCount,
 		ExecutionId:       r.ExecutionID,
 		ExecutionsByState: byState,
 		LinkKind:          contract.BotTaskLinkKind(r.LinkKind),
-		OpenQuestions:     int64(len(open)),
+		OpenQuestions:     r.OpenQuestions,
 		PauseReason:       r.PauseReason,
 		Priority:          r.Priority,
 		ProjectId:         r.ProjectID,
@@ -911,11 +904,16 @@ func botTasksOp(q *Request, r *contract.BotTasksRequest) (contract.BotTasksReply
 	if r.BotId == "" {
 		return out, fail(400, "Expected botId")
 	}
-	b, err := readBot(q, r.BotId)
+	botCtx, botRead := obs.Start(q.ctx(), "bot_tasks.resolve", obs.KindInternal)
+	projectID, err := q.db().BotTaskListProject(botCtx, r.BotId)
+	botRead.End(err)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, errNotFound
+	}
 	if err != nil {
 		return out, err
 	}
-	if q.person != nil && !mayAccessProjectID(q.person, b.ProjectId) {
+	if q.person != nil && !mayAccessProjectID(q.person, projectID) {
 		return out, errNotFound
 	}
 	var afterSeq *int64
@@ -942,13 +940,15 @@ func botTasksOp(q *Request, r *contract.BotTasksRequest) (contract.BotTasksReply
 			limit = 200
 		}
 	}
-	rows, err := q.db().BotTasksList(q.ctx(), db.BotTasksListParams{
-		BotID:       b.Id,
+	pageCtx, pageRead := obs.Start(q.ctx(), "bot_tasks.page", obs.KindInternal)
+	rows, err := q.db().BotTasksList(pageCtx, db.BotTasksListParams{
+		BotID:       r.BotId,
 		State:       r.State,
 		AfterSeq:    afterSeq,
 		AfterTaskID: afterTaskID,
 		Lim:         int32(limit + 1),
 	})
+	pageRead.End(err)
 	if err != nil {
 		return out, err
 	}

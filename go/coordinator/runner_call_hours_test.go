@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,8 +22,12 @@ func TestRunnerCallHoursMatchLive(t *testing.T) {
 	}
 	count := func() (calls, failed int64, running bool) {
 		t.Helper()
-		if err := e.ownerStore.Read(e.ctx, nil, func(q *Request) error {
-			gs, err := q.db().RunnerCallGroups(q.ctx())
+		if err := e.appStore.Read(e.ctx, nil, func(q *Request) error {
+			from, err := q.db().RunnerCallLiveFrom(q.ctx())
+			if err != nil {
+				return err
+			}
+			gs, err := q.db().RunnerCallGroups(q.ctx(), from)
 			for _, g := range gs {
 				if g.Host == "h1" && g.Caller == "conn:github" {
 					calls, failed, running = g.Calls, g.Failed, g.Running
@@ -50,4 +55,35 @@ func TestRunnerCallHoursMatchLive(t *testing.T) {
 	if c, _, _ := count(); c != c0 {
 		t.Fatalf("after a second pass: %d calls, want %d", c, c0)
 	}
+
+	t.Run("bounded detail", func(t *testing.T) {
+		if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO execution (id, kind, state, started_at, ended_at) VALUES
+		 ('runner-current', 'agent_run', 'running', now() - interval '2 days', null),
+		 ('runner-old', 'host_job', 'succeeded', now() - interval '2 days', now() - interval '2 days')`); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.appStore.Read(e.ctx, nil, func(q *Request) error {
+			rec := &recordingTx{Tx: q.tx, by: map[string]*recordedStatement{}}
+			sub := *q
+			sub.tx = rec
+			runs, err := sub.db().RunnerRuns(sub.ctx())
+			if err != nil {
+				return err
+			}
+			if len(runs) != 1 || runs[0].ID != "runner-current" {
+				t.Fatalf("recent and active runners: %+v", runs)
+			}
+			stmt := rec.by[rec.order[0]]
+			plan, err := explainOne(q, stmt.sql, stmt.args)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(plan, "CTE pick") || !strings.Contains(plan, "Limit") || strings.Contains(plan, "HashAggregate") {
+				t.Fatalf("runner detail must filter and limit its candidates without deduplicating a union:\n%s", plan)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
