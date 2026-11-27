@@ -442,6 +442,37 @@ func (q *Queries) BotMemoryRevisionInsert(ctx context.Context, arg BotMemoryRevi
 	return err
 }
 
+const botNativeWorkspaceSession = `-- name: BotNativeWorkspaceSession :one
+SELECT coalesce((
+  SELECT e.data->>'sessionId'
+  FROM execution e
+  WHERE e.session_id = $1 AND e.kind = 'agent_run'
+    AND e.started_at IS NOT NULL AND e.tombstoned_at IS NULL
+    AND nullif(e.data->>'sessionId', '') IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM event v
+      WHERE v.execution_id = e.id AND v.type = 'thread.started' AND v.tombstoned_at IS NULL
+        AND v.payload#>>'{data,thread_id}' = $2::text
+    )
+  ORDER BY e.seq DESC
+  LIMIT 1
+), '')::text AS workspace_session_id
+`
+
+type BotNativeWorkspaceSessionParams struct {
+	SessionID *string
+	NativeID  string
+}
+
+// The retained execution snapshot names the session directory used by the host.
+// Migration 117 moved the relational session IDs while leaving the launch snapshot intact.
+func (q *Queries) BotNativeWorkspaceSession(ctx context.Context, arg BotNativeWorkspaceSessionParams) (string, error) {
+	row := q.db.QueryRow(ctx, botNativeWorkspaceSession, arg.SessionID, arg.NativeID)
+	var workspace_session_id string
+	err := row.Scan(&workspace_session_id)
+	return workspace_session_id, err
+}
+
 const botRenameConversations = `-- name: BotRenameConversations :exec
 UPDATE session SET title = $1::text WHERE bot_id = $2::text AND subject IS NULL AND title_by = 'bot' AND tombstoned_at IS NULL
 `

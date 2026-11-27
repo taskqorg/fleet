@@ -167,6 +167,24 @@ WHERE session_id = $1 AND id <> $2 AND tombstoned_at IS NULL AND kind = 'agent_r
 ORDER BY seq DESC
 LIMIT 1;
 
+-- name: BotNativeWorkspaceSession :one
+-- The retained execution snapshot names the session directory used by the host.
+-- Migration 117 moved the relational session IDs while leaving the launch snapshot intact.
+SELECT coalesce((
+  SELECT e.data->>'sessionId'
+  FROM execution e
+  WHERE e.session_id = sqlc.narg(session_id) AND e.kind = 'agent_run'
+    AND e.started_at IS NOT NULL AND e.tombstoned_at IS NULL
+    AND nullif(e.data->>'sessionId', '') IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM event v
+      WHERE v.execution_id = e.id AND v.type = 'thread.started' AND v.tombstoned_at IS NULL
+        AND v.payload#>>'{data,thread_id}' = sqlc.arg(native_id)::text
+    )
+  ORDER BY e.seq DESC
+  LIMIT 1
+), '')::text AS workspace_session_id;
+
 -- name: BotTaskUpsert :exec
 INSERT INTO bot_task(bot_id, task_id, project_id, session_id, execution_id, link_kind, created_by)
 VALUES ($1, $2, $3, sqlc.narg(session_id), sqlc.narg(execution_id), $4, $5)
