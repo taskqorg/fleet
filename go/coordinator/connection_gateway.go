@@ -15,9 +15,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 func init() {
@@ -150,16 +152,23 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 
 var snapshotMu sync.Mutex
 
-func writeSnapshot(ctx context.Context, a *App) error {
+func writeSnapshot(ctx context.Context, a *App) (err error) {
 	if gatewayDir() == "" {
 		return nil
 	}
+	_, wait := telegramPollStage(ctx, "snapshot-wait")
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
+	wait.End(nil)
 	var s contract.GatewaySnapshot
-	if err := a.store.Read(ctx, nil, func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
+	readCtx, read := telegramPollStage(ctx, "snapshot-read")
+	err = a.store.Read(readCtx, nil, func(q *Request) (err error) { s, err = connSnapshot(q); return })
+	read.End(err)
+	if err != nil {
 		return err
 	}
+	_, publication := telegramPollStage(ctx, "snapshot-publication")
+	defer func() { publication.End(err) }()
 	if err := os.MkdirAll(gatewayDir(), 0o750); err != nil {
 		return err
 	}
@@ -498,7 +507,29 @@ func connReconcileMarkUnknown(ctx context.Context, a *App, reason string) {
 // flag: an edge 5xx (no gateway call id) on a tool that may not be repeated reads unknown. A tool the connection does
 // not grant is recorded for the grants drift problem (grants.go).
 func gatewayCall(ctx context.Context, token, connection, tool string, args any, idempotent bool) contract.CallLine {
-	line := contract.GatewayCall(ctx, gatewayTarget(token, idempotent), connection, tool, jsonBytes(args))
+	var span *obs.Span
+	if connection == telegramConn && tool == "get_updates" {
+		_, span = telegramPollStage(ctx, "gateway-call")
+	}
+	target := gatewayTarget(token, idempotent)
+	var admittedAt time.Time
+	if span != nil {
+		target.ObserveAdmission = func(at time.Time) { admittedAt = at }
+	}
+	line := contract.GatewayCall(ctx, target, connection, tool, jsonBytes(args))
+	if span != nil {
+		// The gateway clock supplies the admission timestamp. A missing reply or old gateway leaves it unknown.
+		if admittedAt.IsZero() {
+			span.Set("missing.gateway_admission", "unobserved")
+		} else {
+			span.Set("fleet.gateway_admitted_at", admittedAt.UTC().Format(time.RFC3339Nano))
+		}
+		if line.Outcome != contract.CallOutcomeOk {
+			span.Outcome = obs.Error
+			span.Set("fleet.gateway_outcome", string(line.Outcome))
+		}
+		span.End(nil)
+	}
 	grantRefused(connection, tool, line)
 	return line
 }

@@ -22,6 +22,9 @@ import (
 var gatewayUnknown = map[string]bool{"provider-body": true, "provider-timeout": true, "client-timeout": true, "invalid-response": true}
 var providerCode = regexp.MustCompile(`^provider-\d+$`)
 
+// GatewayAdmissionHeader carries the gateway's Unix millisecond timestamp for an admitted Telegram poll.
+const GatewayAdmissionHeader = "X-Fleet-Gateway-Admitted-Ms"
+
 // GatewayTarget is where and as whom a call goes: the gateway URL, the bearer, extra headers (Cloudflare Access on
 // https) and whether the tool may be repeated (it decides how an answer from the edge, not the gateway, reads).
 type GatewayTarget struct {
@@ -30,6 +33,8 @@ type GatewayTarget struct {
 	Idempotent bool
 	// Stall and Answer override the client waits when longer (a connection's raised stallMs/answerMs); 0 keeps them.
 	Stall, Answer time.Duration
+	// ObserveAdmission optionally observes a gateway-confirmed admission on the response path.
+	ObserveAdmission func(time.Time)
 }
 
 // waits are the client waits for this target: the environment's, raised to the target's when those are longer.
@@ -237,6 +242,11 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, open fu
 	}
 	x.res = res
 	x.dog.answer(stall)
+	if t.ObserveAdmission != nil {
+		if ms, err := strconv.ParseInt(res.Header.Get(GatewayAdmissionHeader), 10, 64); err == nil && ms > 0 {
+			t.ObserveAdmission(time.UnixMilli(ms))
+		}
+	}
 	x.line.CallId, x.line.Status = res.Header.Get("x-fleet-call-id"), int64(res.StatusCode)
 	// A 5xx without the gateway's call id came from the edge (Cloudflare, Caddy): whether the gateway got and sent the
 	// call is open, unless the tool may be repeated or the request never left whole.
