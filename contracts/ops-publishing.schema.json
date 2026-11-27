@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Coordinator operations for unified project publishing (GitHub PR + GitLab MR parity).",
+  "$comment": "Coordinator operations and host CI diagnostics for unified project publishing (GitHub PR + GitLab MR parity).",
   "operations": {
     "publishing_capabilities": {
       "read": true,
@@ -59,6 +59,78 @@
     }
   },
   "$defs": {
+    "PublishingCIWindowSource": {"type": "string", "enum": ["log", "annotation"]},
+    "PublishingCIAnnotationStatus": {"type": "string", "enum": ["complete", "partial", "unavailable"]},
+    "PublishingCIScanStatus": {"type": "string", "enum": ["complete", "scan_limit", "interrupted", "missing", "empty", "denied", "rate_limited", "unavailable", "unsupported_redirect"]},
+    "PublishingCILogsRequest": {
+      "$comment": "Host MCP ci_logs on project-publishing and project-forge. Project, repository and execution branch come from the grant.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["expectedHeadSha", "jobId"],
+      "properties": {
+        "expectedHeadSha": {"type": "string"},
+        "jobId": {"type": "integer", "minimum": 1}
+      }
+    },
+    "PublishingCIWindow": {
+      "$comment": "Half-open byte offsets into decoded excerpt. Log line numbers are one-based in the normalized trace. Annotation lines refer to path.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "startByte", "endByte"],
+      "properties": {
+        "source": {"$ref": "#/$defs/PublishingCIWindowSource"},
+        "startByte": {"type": "integer"},
+        "endByte": {"type": "integer"},
+        "startLine": {"type": "integer"},
+        "endLine": {"type": "integer"},
+        "path": {"type": "string"},
+        "section": {"type": "string"},
+        "partial": {"type": "boolean"}
+      }
+    },
+    "PublishingCIFailedStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "name", "conclusion"],
+      "properties": {
+        "number": {"type": "integer"},
+        "name": {"type": "string"},
+        "conclusion": {"type": "string"}
+      }
+    },
+    "PublishingCILogsReply": {
+      "$comment": "Host MCP reply JSON, at most 16384 bytes. Complete scan means EOF. A tail on an incomplete scan points to the end of the scanned prefix. Omitted windows counts known candidates only. Absent attempt means unknown; GitLab jobId identifies the individual retry.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "host", "repo", "branch", "headSha", "jobId", "jobUrl", "observedAt", "excerpt", "windows", "truncated", "scanStatus", "scannedBytes", "omittedWindows"],
+      "properties": {
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "branch": {"type": "string"},
+        "headSha": {"type": "string"},
+        "jobId": {"type": "integer"},
+        "jobUrl": {"type": "string"},
+        "observedAt": {"type": "string"},
+        "jobName": {"type": "string"},
+        "workflowName": {"type": "string"},
+        "runId": {"type": "integer"},
+        "pipelineId": {"type": "integer"},
+        "attempt": {"type": "integer"},
+        "stage": {"type": "string"},
+        "failureReason": {"type": "string"},
+        "failedSteps": {"type": "array", "items": {"$ref": "#/$defs/PublishingCIFailedStep"}},
+        "omittedFailedSteps": {"type": "integer"},
+        "annotationStatus": {"$ref": "#/$defs/PublishingCIAnnotationStatus"},
+        "excerpt": {"type": "string"},
+        "windows": {"type": "array", "items": {"$ref": "#/$defs/PublishingCIWindow"}},
+        "tail": {"$ref": "#/$defs/PublishingCIWindow"},
+        "truncated": {"type": "boolean"},
+        "scanStatus": {"$ref": "#/$defs/PublishingCIScanStatus"},
+        "scannedBytes": {"type": "integer"},
+        "omittedWindows": {"type": "integer"}
+      }
+    },
     "PublishingProvider": {
       "type": "string",
       "enum": ["github", "gitlab"]
