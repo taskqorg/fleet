@@ -167,6 +167,10 @@ test('an answer continues the finished asking turn once (risk: a stalled task or
   assert.equal(messages[1].text, `Fleet reply to your question ${finished} ("Proceed after this turn?"):\nProceed after the answer.`);
   assert.equal(messages[1].executionId, continuation.id);
   assert.equal(queued.length, 0);
+  const command = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, {
+    platform: 'darwin', capabilities: [], stores: [], problems: [],
+  })), (c: any) => c.kind === 'start' && c.executionId === continuation.id);
+  assert.ok(command?.payload?.text.includes(messages[1].text), 'the host receives the answer in the continuation input');
 });
 
 test('a failed host job retains the cause from its receipt or publishing record', async () => {
