@@ -2,7 +2,7 @@
 
 **Code.** `EntityCode` (the reference, in three forms by its `form` prop), `EntityCardLayer`, `EntityCards` and `linkCodes` in `packages/ui/src/controls/overlays.tsx`; kinds in `registry.ts:entityKinds`; the card read is the operation `entity_card` and the live state of many references the operation `entity_refs` (`go/coordinator/entity_card.go`), which agents call as MCP tools. The app's source is `app/src/entity-cards.ts`. Demo: [book](../book/index.html#entity-card). Board: [entity-references](../board/screens/entity-references.bl).
 
-**Purpose.** Wherever the interface names an object (a task, a question, a conversation, a run, a result, an experiment, a project, a host, an agent, a pipeline, a pull request, a release), it shows a reference to it, never a bare word or id: what kind it is, what state it is in now, its human code. Resting the pointer on it shows that object's card with the details and the way to go to it, like the hover card GitHub shows on `taskqorg/fleet #643`. The state a reference shows is live: when the object changes, every reference to it on the screen changes in place.
+**Purpose.** Wherever the interface names an object (a task, a question, a conversation, a run, a result, an experiment, a project, a host, an agent, a pipeline, a pull request, a release), it shows a reference to it, never a bare word or id: what kind it is, what state it is in now, its human code. Clicking, tapping, or pressing Enter or Space on it shows that object's card with the details and the way to go to it. The state a reference shows is live: when the object changes, every reference to it on the screen changes in place.
 
 ## The reference
 
@@ -32,10 +32,8 @@
 
 ## Behaviour
 
-* **Hover (a fine pointer).** Resting the pointer on the reference for 500 ms shows its card (a *peek*). Moving the pointer into the card keeps it; leaving both the reference and the card for 300 ms hides it. Passing over references on the way somewhere shows nothing (the delay restarts on each one). While one card is shown, moving to another reference shows the other after 150 ms.
-* **Click pins.** A click, Enter or Space on the reference opens its card pinned; a click on a peek pins it; the same again closes it. A pinned card stays until Escape, a click outside, focus moving out of it and the reference, the reference again, or the reference going out of sight. The click never opens the row the reference sits in (OR-26) and never navigates by itself.
-* **Touch (a coarse pointer).** There is no hover: a tap opens the card pinned; a tap outside or on the reference again closes it.
-* **Keyboard focus** alone opens nothing (a peek on focus would cover the list being tabbed through); Enter or Space opens it pinned.
+* **Click, tap, or key only (OR-44, OR-23).** Hover never opens the card and shifts nothing. A click, tap, Enter or Space on the reference opens its card pinned; the same again closes it. It stays open until Escape, a click outside, focus moving out of it and the reference, the reference again, or the reference going out of sight. The click never opens the row the reference sits in (OR-26) and never navigates by itself.
+* **Keyboard focus** alone opens nothing; Enter or Space opens it pinned.
 * One card at a time: showing another closes the first.
 * Placement: under the reference, left-aligned with it; above it when there is no room below; always inside the window with an 8 px edge. It follows its reference when a column scrolls (also a live list keeping its anchor) and is placed again when it grows from the skeleton to the loaded card or the window resizes. It floats over the page and moves nothing (OR-23). A peek never covers the reference it hangs from, so the pointer can always reach the card across a 4 px gap.
 * Loading shows a skeleton of three lines in the body's place; a failed read shows the reason ("Not found, or not visible to you" for an unknown or forbidden entity) with Retry. Open is disabled until the card has a path; the copy of the code works at once. A reference that already has the live state shows its kind, code, state and title at once, before the card's facts load.

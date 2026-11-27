@@ -91,28 +91,12 @@ export const EntityCards = createContext<EntityCardSource | null>(null);
 /** The forms of a reference (entity-card.md "Forms"): code and copy; icon in its state's tone and code (default); icon, code, title and state. */
 export type EntityForm = 'code' | 'chip' | 'full';
 
-// The one shown card (one at a time): which reference, the code it hangs from, whether a key opened it, and whether it is
-// a peek (hover; it hides when the pointer leaves) or pinned (a click, a tap, a key).
-// Peek is its own signal: pinning a peek keeps the same card (the layer is keyed by the shown reference).
+// The one shown card (one at a time): which reference, the code it hangs from, and whether a key opened it.
+// Opens on click, tap, Enter, or Space only (OR-44, OR-23, OR-37).
 type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
 const [shown, setShown] = createSignal<Shown | null>(null, { ownedWrite: true });
-const [peeking, setPeeking] = createSignal(false, { ownedWrite: true });
-const showCard = (s: Shown | null, peek = false) => { clearTimeout(hideTimer); setPeeking(peek); setShown(s); };
-const pin = () => { clearTimeout(hideTimer); setPeeking(false); };
+const showCard = (s: Shown | null) => setShown(s);
 const CARD_ID = 'entity-card';
-/** Hover timings (entity-card.md "Behaviour"): rest to peek, to move to another reference while one shows, grace on leaving. */
-export const PEEK_MS = 500, PEEK_NEXT_MS = 150, PEEK_HIDE_MS = 300;
-let peekTimer: ReturnType<typeof setTimeout> | undefined, hideTimer: ReturnType<typeof setTimeout> | undefined;
-const finePointer = () => typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches;
-/** The pointer left the reference or a peek card: the peek hides after the grace unless the pointer comes back. */
-function leavePeek() {
-  clearTimeout(peekTimer);
-  const s = untrack(shown);
-  if (!s || !untrack(peeking)) return;
-  clearTimeout(hideTimer);
-  hideTimer = setTimeout(() => { if (untrack(shown) === s && untrack(peeking)) showCard(null); }, PEEK_HIDE_MS);
-}
-const keepPeek = () => clearTimeout(hideTimer);
 
 /** The state word and tone of a reference's live state, null for kinds without a state or a state the registry lacks. */
 function stateOf(kind: EntityKind, state: string | null | undefined): { label: string; tone: string; state: string } | null {
@@ -125,8 +109,8 @@ function stateOf(kind: EntityKind, state: string | null | undefined): { label: s
 /** The one formatter of an entity reference (D17, OR-38, OR-44), in three forms (`form`): `code` (the code in mono and
  *  the copy slot), `chip` (the kind icon in its live state's tone and the code; the default) and `full` (icon, code, title
  *  and state badge). A kind without a code shows its kind icon (and the kind's word in `chip`). Its state is live (the
- *  source's registry) and updates in place, tinting briefly (OR-6). Resting the pointer 500 ms shows its card, leaving
- *  hides it, a click, tap, Enter or Space pins it; the click never opens the row (OR-26). The UUID is never shown. */
+ *  source's registry) and updates in place, tinting briefly (OR-6). Click, tap, Enter or Space opens its card (never
+ *  hover); the click never opens the row (OR-26). The UUID is never shown. */
 export function EntityCode(p: {
   code?: string | null; id?: string | null; kind?: EntityKind; cls?: string; label?: boolean; form?: EntityForm;
   /** The title the parent already has (`full`), shown until the live state names it. */ title?: string | null;
@@ -177,23 +161,12 @@ export function EntityCode(p: {
   const toggle = (e: MouseEvent & { currentTarget: HTMLButtonElement }) => {
     e.preventDefault();
     e.stopPropagation();
-    clearTimeout(peekTimer);
     const r = ref();
     if (!r) return;
-    // The open card is read now, not from the last render: a second click before a re-render still closes it; a click on a
-    // peek pins it. A click from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
+    // The open card is read now, not from the last render: a second click before a re-render still closes it.
+    // A click from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
     const cur = untrack(shown);
-    if (cur?.anchor === e.currentTarget && untrack(peeking) && e.detail !== 0) { pin(); return; }
     showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0 });
-  };
-  const enter = (e: PointerEvent & { currentTarget: HTMLButtonElement }) => {
-    if (e.pointerType === 'touch' || !finePointer()) return;
-    const anchor = e.currentTarget, r = ref(), cur = untrack(shown);
-    if (!r) return;
-    if (cur?.anchor === anchor) { keepPeek(); return; }
-    if (cur && !untrack(peeking)) return; // a pinned card stays until it is closed
-    clearTimeout(peekTimer);
-    peekTimer = setTimeout(() => { if (anchor.isConnected && anchor.matches(':hover')) showCard({ ref: r, anchor, keyboard: false }, true); }, cur ? PEEK_NEXT_MS : PEEK_MS);
   };
   const what = () => entityKinds[k()!].label;
   const name = () => `${what()}${code() ? ' ' + code() : ''}${st() ? ', ' + st()!.label.toLowerCase() : ''}${live() === null ? ', not visible' : ''}: show details`;
@@ -241,8 +214,6 @@ export function EntityCode(p: {
             aria-controls={open() ? CARD_ID : undefined}
             aria-label={name()}
             onClick={toggle}
-            onPointerEnter={enter}
-            onPointerLeave={leavePeek}
           >
             {inner()}
           </button>
@@ -354,10 +325,6 @@ function EntityCardDialog(p: { cur: Shown }) {
       {...popoverAttr('manual')}
       class={['ecard', theme()]}
       data-ui="entity-card" role="dialog"
-      data-peek={peeking() ? '' : undefined}
-      onPointerEnter={keepPeek}
-      onPointerLeave={e => { if (e.pointerType !== 'touch') leavePeek(); }}
-      onPointerDown={() => { if (untrack(peeking)) pin(); }}
       aria-label={`${k().label}${p.cur.ref.code ? ' ' + p.cur.ref.code : ''}`}
     >
       <CardBody

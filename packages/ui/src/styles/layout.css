@@ -262,10 +262,11 @@
   @media (pointer: coarse) { .shell-panels { min-inline-size: var(--size-hit-phone); } }
   .shell-search:hover { background: var(--hover); color: var(--fg); }
 
-  .shell-main { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); background: var(--surface); }
+  .shell-main { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); background: var(--bg); }
   .shell-main > * { flex: none; }
   .shell-main:has(> .split-view) { padding: 0; gap: 0; overflow: hidden; }
   .shell-main > .split-view { flex: 1; min-height: 0; }
+  .shell-main:has(> :is(.detail.home, .live)) { padding: 0; gap: 0; }
   .shell-main, .rail, .split-list, .detail, .vl { scrollbar-width: thin; }
 
   /* Resizable dividers */
@@ -416,7 +417,7 @@
     .rail .nav-i a { padding: 0 var(--space-2); position: relative; }
     .rail .nav-count { position: absolute; top: calc(-1 * var(--space-1)); right: calc(-1 * var(--space-1)); padding: 0 var(--space-1); }
     .rail .nav-out, .rail .nav-count.out-only { display: none; }
-    .shell-main:not(:has(> .split-view)) { padding: var(--space-3); }
+    .shell-main:not(:has(> :is(.split-view, .detail.home, .live))) { padding: var(--space-3); }
   }
   @media (max-width: 760px) and (pointer: coarse) {
     .rail, .rail.mini { width: calc(var(--size-hit-phone) + 1px); padding-inline: 0; }
