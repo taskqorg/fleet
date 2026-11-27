@@ -652,14 +652,17 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 var transferRoutes = []string{contract.RouteArtifactsReserve.Path, contract.RouteArtifactsParts.Path, contract.RouteArtifactsCommit.Path, contract.RouteArtifactsVerified.Path, contract.RouteArtifactsGet.Path, contract.RouteArtifactsList.Path, contract.RouteArtifactsRenew.Path}
 
 // leased: the artifact a queued job holds a coordinator lease on, with its store when known.
-func leased(kind, id string, body transferJob) (string, string, bool) {
+func leased(kind string, body transferJob) (string, string, bool) {
+	artifactID := str0(body.ArtifactId)
+	if artifactID == "" {
+		return "", "", false
+	}
 	switch kind {
 	case "upload":
-		return id, "", true
+		// The reservation supplies the artifact ID. Leave the store implicit, as for upload parts.
+		return artifactID, "", true
 	case "verify", "copy":
-		if body.ArtifactId != nil {
-			return *body.ArtifactId, body.StoreId, true
-		}
+		return artifactID, body.StoreId, true
 	}
 	return "", "", false
 }
@@ -684,12 +687,12 @@ func spawnTransfers(journal string, c *transferClient, after afterJob) error {
 	errtrack.Go("transfer.renew", func() {
 		for {
 			time.Sleep(10 * time.Minute)
-			type job struct{ id, kind, body string }
+			type job struct{ kind, body string }
 			var jobs []job
-			if rs, err := db.Query("SELECT id,kind,body FROM transfers WHERE state IN ('queued','running')"); err == nil {
+			if rs, err := db.Query("SELECT kind,body FROM transfers WHERE state IN ('queued','running')"); err == nil {
 				for rs.Next() {
 					var j job
-					if rs.Scan(&j.id, &j.kind, &j.body) == nil {
+					if rs.Scan(&j.kind, &j.body) == nil {
 						jobs = append(jobs, j)
 					}
 				}
@@ -699,7 +702,7 @@ func spawnTransfers(journal string, c *transferClient, after afterJob) error {
 				edgeClearIdle(transferRoutes)
 			}
 			for _, j := range jobs {
-				if a, s, ok := leased(j.kind, j.id, readJob(j.body)); ok {
+				if a, s, ok := leased(j.kind, readJob(j.body)); ok {
 					c.post(contract.RouteArtifactsRenew.Path, contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: a, StoreId: optStr(s)}) // best effort, not a delivery
 				}
 			}

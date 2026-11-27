@@ -14,6 +14,35 @@ import (
 	"testing"
 )
 
+// Requirement: background renewal protects real transfer leases. An upload awaiting a reservation
+// (including after recovery) must not send its journal ID and get an "Unknown artifact" response.
+func TestTransferRenewalUsesReservedArtifact(t *testing.T) {
+	reserved, empty := "reserved-artifact", ""
+	cases := []struct {
+		name, kind      string
+		body            transferJob
+		artifact, store string
+	}{
+		{name: "awaiting reservation", kind: "upload"},
+		{name: "awaiting re-reservation", kind: "upload", body: transferJob{Recoveries: 1}},
+		{name: "empty artifact ID", kind: "upload", body: transferJob{ArtifactId: &empty}},
+		{name: "reserved upload", kind: "upload", body: transferJob{ArtifactId: &reserved, StoreId: "store"}, artifact: reserved},
+		{name: "waiting for verification", kind: "upload", body: transferJob{ArtifactId: &reserved, StoreId: "store", Url: "verifying"}, artifact: reserved},
+		{name: "copy", kind: "copy", body: transferJob{ArtifactId: &reserved, StoreId: "copy-store"}, artifact: reserved, store: "copy-store"},
+		{name: "verify", kind: "verify", body: transferJob{ArtifactId: &reserved, StoreId: "verify-store"}, artifact: reserved, store: "verify-store"},
+		{name: "download", kind: "get", body: transferJob{ArtifactId: &reserved}},
+		{name: "list", kind: "list"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			artifact, store, ok := leased(tc.kind, tc.body)
+			if artifact != tc.artifact || store != tc.store || ok != (tc.artifact != "") {
+				t.Fatalf("renewal = (%q, %q, %t), want (%q, %q, %t)", artifact, store, ok, tc.artifact, tc.store, tc.artifact != "")
+			}
+		})
+	}
+}
+
 // Requirement: a transfer's terminal state and its final receipt commit together (K2-1). Risk: a crash or failed write
 // between them leaves the job done with no receipt, and the coordinator waits forever.
 func TestTransferOutcomeAndReceiptCommitTogether(t *testing.T) {
