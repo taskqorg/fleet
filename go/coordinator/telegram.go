@@ -36,12 +36,21 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 const telegramConn = "telegram"
 
 // telegramLongPoll: how long one getUpdates waits for an update (below the gateway's 30 s request timeout).
 const telegramLongPoll = 20 * time.Second
+
+// telegramPollStage limits shared preparation timings to the existing poll pass.
+func telegramPollStage(ctx context.Context, stage string) (context.Context, *obs.Span) {
+	if parent := obs.From(ctx); parent != nil && parent.Name == "pass.telegram-poll" {
+		return obs.Start(ctx, "telegram.poll."+stage, obs.KindInternal)
+	}
+	return ctx, nil
+}
 
 // telegramSendAttempts: tries of one outbox item that fails before Telegram (gateway, key, tool) before it fails for
 // good, so it does not hold the chat's later items (head-of-line, owner-tester 2026-11-25).
@@ -242,7 +251,9 @@ func tgParse(line contract.CallLine) (tgReply, error) {
 // telegramPoll: one long poll. The offset confirms every update the journal already holds; the new ones are committed
 // before the next poll confirms them.
 func telegramPoll(ctx context.Context, a *App) error {
+	_, readiness := telegramPollStage(ctx, "readiness")
 	ready, err := telegramReady(ctx, a)
+	readiness.End(err)
 	if err != nil || !ready {
 		return err
 	}
@@ -275,10 +286,13 @@ func telegramPoll(ctx context.Context, a *App) error {
 		telegramHealth.Unlock()
 	}
 	var offset int64
-	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
+	_, observation := telegramPollStage(ctx, "offset-read")
+	err = a.store.Read(ctx, nil, func(q *Request) (err error) {
 		offset, err = q.db().TelegramUpdateNext(q.ctx())
 		return err
-	}); err != nil {
+	})
+	observation.End(err)
+	if err != nil {
 		return err
 	}
 	args := tgArgs{Timeout: ptr(int64(telegramLongPoll / time.Second)), AllowedUpdates: []string{"message", "edited_message", "callback_query"}}

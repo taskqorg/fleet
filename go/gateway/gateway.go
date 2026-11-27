@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -410,6 +411,9 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a = refusal(400, "error", "file-expected", "an upload tool takes the file bytes as application/octet-stream with X-Fleet-Args")
 	}
 	if a == nil {
+		if q.connection == "telegram" && q.tool == "get_updates" {
+			w.Header().Set(contract.GatewayAdmissionHeader, strconv.FormatInt(nowMs(), 10))
+		}
 		if a = g.serveJSON(w, r, q, raw, readErr); a == nil {
 			return // a download streamed, with its started and completed spool lines
 		}

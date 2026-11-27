@@ -312,9 +312,11 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 		return "", nil, fmt.Errorf("%s: connection-unavailable", connection)
 	}
 	key := connection + " " + project
+	_, lockWait := telegramPollStage(ctx, "read-token-lock")
 	unlock := readTokLocks.lock(key) // concurrent reads of one key share its mint; other keys never wait
 	defer unlock()
 	readTokMu.Lock()
+	lockWait.End(nil)
 	if t := readToks[key]; t != nil && time.Now().Before(t.until) {
 		t.users++
 		readTokMu.Unlock()
@@ -325,17 +327,22 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	readTokMu.Unlock()
 	exec := connection + "-read:" + newID()
 	var token string
-	if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+	mintCtx, mint := telegramPollStage(ctx, "read-token-mint")
+	err := a.store.Write(mintCtx, nil, []string{GLOBAL}, func(q *Request) error {
 		system := "coordinator"
 		m, err := mintGrantFor(q, mintRun{ExecutionID: &exec, ProjectID: &project, Step: true, SystemActor: &system}, []string{connection})
 		token = deref(m.Token)
 		return err
-	}); err != nil {
+	})
+	if err != nil {
+		mint.End(err)
 		return "", nil, fmt.Errorf("token for %s: %w", connection, err)
 	}
 	if token == "" {
+		mint.End(errConnUnavailable)
 		return "", nil, fmt.Errorf("%s: %w (not granted to %s, or intake closed)", connection, errConnUnavailable, project)
 	}
+	mint.End(nil)
 	// Revoked at its end whatever happens next (its last read's release, else the read-tokens pass; a restart revokes it
 	// too: revokeSteps); its calls are ingested then. The gateway must see the token before the call; a failed snapshot
 	// revokes it at once.
