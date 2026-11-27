@@ -302,6 +302,8 @@ func openStore(ctx context.Context, url string) (*Store, error) {
 		return nil, err
 	}
 	cfg.MaxConns = 16
+	// Check even recently used connections so pgx can discard a dead backend before application SQL starts.
+	cfg.ShouldPing = func(context.Context, pgxpool.ShouldPingParams) bool { return true }
 	// JIT compiles a plan to machine code when its estimated cost is high. Coordinator statements are short indexed
 	// lookups whose estimates can still be large (FORCE RLS filters, LIMIT over big tables): measured on 1m-history data,
 	// the processor's candidate selection ran in 1.2 ms and then spent 124 ms compiling, on every call. Off for every
