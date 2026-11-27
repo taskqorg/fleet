@@ -35,10 +35,10 @@ async function host(id: string) {
 }
 // The coordinator's default host is trial-host (FLEET_HOST_ID in run.ts): its poll claims a queued execution.
 const session = async () => ok(await browser('POST', '/api/ops/session_create', {})).sessionId as string;
-async function started() {
+async function started(taskId?: string) {
   const h = await host('trial-host');
   // Receipt/event transport fixtures use explicit placement; asynchronous dispatch may choose either registered host.
-  const started = ok(await browser('POST', '/api/ops/session_start', {requestId: randomUUID(), text: 'hello', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}));
+  const started = ok(await browser('POST', '/api/ops/session_start', {requestId: randomUUID(), text: 'hello', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host', taskId}));
   const sessionId = started.sessionId;
   const execution = {id: started.executionId};
   const command = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []})), (c: any) => c.executionId === execution.id);
@@ -124,6 +124,49 @@ test('SL6 receipts move the execution forward only; a repeated terminal receipt 
   assert.equal(await state(), 'failed');
   const other = await host('other-host');
   assert.equal((await other('/api/hosts/receipts', {commandId, executionId, status: 'started'})).status, 403, 'another host');
+});
+
+test('an answer continues the finished asking turn once (risk: a stalled task or duplicate turns)', async () => {
+  const op = async (name: string, body: object) => ok(await browser('POST', '/api/ops/' + name, body));
+  const {id: taskId} = await op('task_create', {projectId: 'hello-world', title: 'Question continuation smoke'});
+  const {h, sessionId, executionId, commandId} = await started(taskId);
+  const receipt = async (status: string) => ok(await h('/api/hosts/receipts', {commandId, executionId, status}));
+  await receipt('accepted');
+  await receipt('started');
+
+  const ask = async (text: string) => {
+    const reply = ok(await h('/api/hosts/agent-tools', {
+      hostId: 'trial-host', commandId, executionId, agentToolKey: randomUUID(),
+      request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+        name: 'question_ask', arguments: {projectId: 'hello-world', requestId: randomUUID(), text},
+      }},
+    }));
+    return JSON.parse(reply.result.content[0].text).id as string;
+  };
+  const answer = async (questionId: string, text: string) => {
+    const reply = await op('question_answer', {questionId, answer: text});
+    assert.deepEqual([reply.state, reply.answer], ['answered', text]);
+  };
+  const read = () => op('session_get', {sessionId});
+  await answer(await ask('While the asker is running?'), 'Keep running.');
+  assert.equal((await read()).executions.length, 1);
+
+  const finished = await ask('Proceed after this turn?');
+  const busy = await ask('Proceed if there is already a continuation?');
+  await receipt('completed');
+  assert.equal((await read()).executions[0].state, 'succeeded');
+  assert.equal((await op('task_get', {taskId})).state, 'waiting');
+  await Promise.all([answer(finished, 'Proceed after the answer.'), answer(finished, 'Proceed after the answer.')]);
+  await answer(busy, 'Use the existing turn.');
+
+  const {executions, messages, queued} = await read();
+  assert.equal(executions.length, 2);
+  const continuation = executions.find((e: any) => e.id !== executionId);
+  assert.ok((await op('task_get', {taskId})).executions.some((e: any) => e.id === continuation.id));
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].text, `Fleet reply to your question ${finished} ("Proceed after this turn?"):\nProceed after the answer.`);
+  assert.equal(messages[1].executionId, continuation.id);
+  assert.equal(queued.length, 0);
 });
 
 test('a failed host job retains the cause from its receipt or publishing record', async () => {

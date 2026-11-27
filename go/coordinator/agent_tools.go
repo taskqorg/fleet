@@ -134,8 +134,7 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	}
 	// The answer is the answering person's, by email, as for every other question (not "operator").
 	qu.State, qu.Answer, qu.AnsweredAt, qu.AnsweredBy = "answered", answer, nowMs(), actor(q, "operator")
-	d, err := agentSubmit(q, &contract.MessageSendRequest{SessionId: &qu.SessionID, RequestId: ptr("reply:" + qid),
-		Text: ptr(fmt.Sprintf("Fleet reply to your question %s (\"%s\"):\n%s", qid, qu.Question, answer))}, "")
+	d, err := submitQuestionReply(q, qu.SessionID, qid, qu.Question, answer)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +145,50 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	}
 	err = agentQuestionPut(q, &qu)
 	return recOf(qu), err
+}
+
+func submitQuestionReply(q *Request, sid, qid, question, answer string) (agentSubmitted, error) {
+	return agentSubmit(q, &contract.MessageSendRequest{SessionId: &sid, RequestId: ptr("reply:" + qid),
+		Text: ptr(fmt.Sprintf("Fleet reply to your question %s (\"%s\"):\n%s", qid, question, answer))}, "")
+}
+
+// continueQuestionAsker admits the answer as an ordinary message only when the asking session needs a turn.
+func continueQuestionAsker(q *Request, question db.Question, answer string) error {
+	sid, eid := deref(question.SessionID), deref(question.ExecutionID)
+	if question.Kind != db.QuestionKindOperatorDecision || sid == "" || eid == "" ||
+		deref(question.AskedBy) != "execution:"+eid {
+		return nil
+	}
+	// Use the same lock as message_send and queue promotion so none can admit a turn between this check and submit.
+	if err := acquireTxLock(q, "session:"+sid); err != nil {
+		return err
+	}
+	s, err := sessionMaybe(q, sid)
+	if err != nil || s == nil || s.ArchivedAt != nil {
+		return err
+	}
+	if tid := firstString(s.DeliveryID, s.TaskID, deref(question.TaskID)); tid != "" {
+		state, err := q.db().TaskStateForShare(q.ctx(), tid)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil || !openTask[string(state)] || state == db.TaskStatePaused {
+			return err
+		}
+	}
+	asking, err := executionMaybe(q, eid)
+	if err != nil || asking == nil || asking.SessionID != sid || !asking.terminal() {
+		return err
+	}
+	if active, err := agentActive(q, sid); err != nil || active != nil {
+		return err
+	}
+	steering, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid, State: ptr("steering")})
+	if err != nil || len(steering) != 0 {
+		return err
+	}
+	_, err = submitQuestionReply(q, sid, question.ID, question.Text, answer)
+	return err
 }
 
 type workerDonePayload struct {

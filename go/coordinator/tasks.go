@@ -1012,6 +1012,9 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 	if err := runAnswerAfter(q, id); err != nil {
 		return nil, err
 	}
+	if err := continueQuestionAsker(q, cur, answer); err != nil {
+		return nil, err
+	}
 	if t := deref(cur.TaskID); t != "" {
 		if cur.Kind == db.QuestionKindAcceptance {
 			if answer == "accepted" {
