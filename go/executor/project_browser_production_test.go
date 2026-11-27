@@ -110,6 +110,13 @@ func TestProjectBrowserProductionGrant(t *testing.T) {
 func TestProjectBrowserProductionAdapter(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("TMPDIR", d)
+	// CI's shared tool cache can be group-writable. Provide the private launcher
+	// that production preparation requires while using the installed test Node.
+	node, err := exec.LookPath("node")
+	noErr(t, err)
+	quotedNode := "'" + strings.ReplaceAll(node, "'", "'\\''") + "'"
+	noErr(t, os.WriteFile(filepath.Join(d, "node"), []byte("#!/bin/sh\nexec "+quotedNode+" \"$@\"\n"), 0o700))
+	t.Setenv("PATH", d+string(os.PathListSeparator)+os.Getenv("PATH"))
 	binding := filepath.Join(d, "browser-bindings.json")
 	credential := filepath.Join(d, "authority.env")
 	module := filepath.Join(d, "fixture.cjs")
