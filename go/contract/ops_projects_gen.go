@@ -6,6 +6,158 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+type AgentSiteAccess struct {
+	DefaultTargetId *string             `json:"defaultTargetId,omitempty"`
+	Mode            AgentSiteAccessMode `json:"mode"`
+	Targets         []AgentSiteTarget   `json:"targets,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentSiteAccess) Validate() error {
+	if err := Check(&v.Mode, "mode"); err != nil {
+		return err
+	}
+	for i := range v.Targets {
+		if err := Check(&v.Targets[i], "targets"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AgentSiteAccess) Closed() bool { return true }
+
+type AgentSiteAccessMode string
+
+const (
+	AgentSiteAccessModeWeb        AgentSiteAccessMode = "web"
+	AgentSiteAccessModeNotAWebApp AgentSiteAccessMode = "not_a_web_app"
+)
+
+// AgentSiteAccessModeValues lists every AgentSiteAccessMode in schema order.
+var AgentSiteAccessModeValues = []AgentSiteAccessMode{AgentSiteAccessModeWeb, AgentSiteAccessModeNotAWebApp}
+
+// Valid: v is one of the schema's values.
+func (v AgentSiteAccessMode) Valid() bool {
+	for _, x := range AgentSiteAccessModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AgentSiteAccessScope string
+
+const (
+	AgentSiteAccessScopeVerifyReadOnly AgentSiteAccessScope = "verify_read_only"
+	AgentSiteAccessScopeOperator       AgentSiteAccessScope = "operator"
+)
+
+// AgentSiteAccessScopeValues lists every AgentSiteAccessScope in schema order.
+var AgentSiteAccessScopeValues = []AgentSiteAccessScope{AgentSiteAccessScopeVerifyReadOnly, AgentSiteAccessScopeOperator}
+
+// Valid: v is one of the schema's values.
+func (v AgentSiteAccessScope) Valid() bool {
+	for _, x := range AgentSiteAccessScopeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AgentSiteAuthKind string
+
+const (
+	AgentSiteAuthKindCloudflareAccess   AgentSiteAuthKind = "cloudflare_access"
+	AgentSiteAuthKindVerificationHeader AgentSiteAuthKind = "verification_header"
+	AgentSiteAuthKindNone               AgentSiteAuthKind = "none"
+)
+
+// AgentSiteAuthKindValues lists every AgentSiteAuthKind in schema order.
+var AgentSiteAuthKindValues = []AgentSiteAuthKind{AgentSiteAuthKindCloudflareAccess, AgentSiteAuthKindVerificationHeader, AgentSiteAuthKindNone}
+
+// Valid: v is one of the schema's values.
+func (v AgentSiteAuthKind) Valid() bool {
+	for _, x := range AgentSiteAuthKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AgentSiteProbe struct {
+	ExpectedStatus int64                `json:"expectedStatus"`
+	IdentityField  *string              `json:"identityField,omitempty"`
+	Method         AgentSiteProbeMethod `json:"method"`
+	Path           string               `json:"path"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentSiteProbe) Validate() error {
+	if err := Check(&v.Method, "method"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AgentSiteProbe) Closed() bool { return true }
+
+type AgentSiteProbeMethod string
+
+const (
+	AgentSiteProbeMethodGET  AgentSiteProbeMethod = "GET"
+	AgentSiteProbeMethodHEAD AgentSiteProbeMethod = "HEAD"
+	AgentSiteProbeMethodPOST AgentSiteProbeMethod = "POST"
+)
+
+// AgentSiteProbeMethodValues lists every AgentSiteProbeMethod in schema order.
+var AgentSiteProbeMethodValues = []AgentSiteProbeMethod{AgentSiteProbeMethodGET, AgentSiteProbeMethodHEAD, AgentSiteProbeMethodPOST}
+
+// Valid: v is one of the schema's values.
+func (v AgentSiteProbeMethod) Valid() bool {
+	for _, x := range AgentSiteProbeMethodValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AgentSiteTarget struct {
+	AuthKind         AgentSiteAuthKind    `json:"authKind"`
+	ExpectedIdentity *string              `json:"expectedIdentity,omitempty"`
+	Id               string               `json:"id"`
+	Origin           string               `json:"origin"`
+	Probe            AgentSiteProbe       `json:"probe"`
+	Roles            []string             `json:"roles"`
+	Scope            AgentSiteAccessScope `json:"scope"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentSiteTarget) Validate() error {
+	if err := Check(&v.AuthKind, "authKind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Probe, "probe"); err != nil {
+		return err
+	}
+	if v.Roles == nil {
+		return Missing("roles")
+	}
+	if err := Check(&v.Scope, "scope"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AgentSiteTarget) Closed() bool { return true }
+
 type AppsEdgeSetupReply = AppsEdgeStatusReply
 
 type AppsEdgeSetupRequest struct {
@@ -341,8 +493,8 @@ func (v *ProjectArchiveRequest) Validate() error {
 }
 
 type ProjectBundle struct {
-	ContextFiles []ProjectContextFile       `json:"contextFiles"`
-	Settings     map[string]json.RawMessage `json:"settings"`
+	ContextFiles []ProjectContextFile  `json:"contextFiles"`
+	Settings     ProjectBundleSettings `json:"settings"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -355,14 +507,45 @@ func (v *ProjectBundle) Validate() error {
 			return err
 		}
 	}
-	if v.Settings == nil {
-		return Missing("settings")
+	if err := Check(&v.Settings, "settings"); err != nil {
+		return err
 	}
 	return nil
 }
 
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ProjectBundle) Closed() bool { return true }
+
+type ProjectBundleSettings struct {
+	AgentSiteAccess *AgentSiteAccess `json:"agentSiteAccess,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectBundleSettings) MarshalJSON() ([]byte, error) {
+	type plain ProjectBundleSettings
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectBundleSettings) UnmarshalJSON(b []byte) error {
+	type plain ProjectBundleSettings
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectBundleSettings) Validate() error {
+	if v.AgentSiteAccess != nil {
+		if err := Check(v.AgentSiteAccess, "agentSiteAccess"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 type ProjectContextFile struct {
 	Path string `json:"path"`
@@ -435,9 +618,9 @@ func init() {
 		"project_app_set":               {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full access: changes an active app's pipelines, callback origins or limits (each given field replaces the old one).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"appId\":{\"type\":\"string\"},\"callbackOrigins\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limits\":{\"$comment\":\"Empty or absent: no limit.\",\"additionalProperties\":false,\"properties\":{\"concurrentRuns\":{\"minimum\":1,\"type\":\"integer\"},\"runsPerDay\":{\"minimum\":1,\"type\":\"integer\"},\"spendPerMonth\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"currency\":{\"type\":\"string\"}},\"required\":[\"amount\",\"currency\"],\"type\":\"object\"}},\"type\":\"object\"},\"pipelines\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"appId\"],\"type\":\"object\"}")},
 		"project_apps":                  {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "The project's apps (docs/designs/fleet-project-apps.md): state, pipelines, callback origins, limits, keys (created, last use, taken, retired), last use, and use over 30 days (runs, failed runs, leaf cost). Never a key value.", Changes: []string{"project-app", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_archive":               {Read: false, Long: false, Errors: []int{403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.\",\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
-		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create a project (requestId, id, content)", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
+		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create a project (requestId, id, content)", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"properties\":{\"agentSiteAccess\":{\"properties\":{\"defaultTargetId\":{\"type\":\"string\"},\"mode\":{\"enum\":[\"web\",\"not_a_web_app\"],\"type\":\"string\"},\"targets\":{\"items\":{\"properties\":{\"authKind\":{\"enum\":[\"cloudflare_access\",\"verification_header\",\"none\"],\"type\":\"string\"},\"expectedIdentity\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"origin\":{\"type\":\"string\"},\"probe\":{\"properties\":{\"expectedStatus\":{\"type\":\"integer\"},\"identityField\":{\"type\":\"string\"},\"method\":{\"enum\":[\"GET\",\"HEAD\",\"POST\"],\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"path\",\"method\",\"expectedStatus\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"scope\":{\"enum\":[\"verify_read_only\",\"operator\"],\"type\":\"string\"}},\"required\":[\"id\",\"origin\",\"scope\",\"roles\",\"authKind\",\"probe\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"}},\"required\":[\"mode\"],\"type\":\"object\",\"unevaluatedProperties\":false}},\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
 		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Revoke a project's initial access grants (projectId, baseAccessVersion)", InputSchema: json.RawMessage("{\"properties\":{\"baseAccessVersion\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"baseAccessVersion\"],\"type\":\"object\"}")},
-		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "bound:project", Description: "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved. content.settings carries name and the optional description (one line, at most 160 characters) and domain (a host name such as example.com) that the project head shows, and the identity color (rose, violet, sky, teal, lime, sand, coral, slate) and pattern (solid, hatch) of its tile, absent for automatic; read the current content with project_detail first", InputSchema: json.RawMessage("{\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"projectId\":{\"type\":\"string\"},\"repoSha\":{\"type\":[\"string\",\"null\"]},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"projectId\",\"baseRevision\",\"content\"],\"type\":\"object\"}")},
+		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "bound:project", Description: "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved. content.settings carries name and the optional description (one line, at most 160 characters) and domain (a host name such as example.com) that the project head shows, and the identity color (rose, violet, sky, teal, lime, sand, coral, slate) and pattern (solid, hatch) of its tile, absent for automatic; read the current content with project_detail first", InputSchema: json.RawMessage("{\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"properties\":{\"agentSiteAccess\":{\"properties\":{\"defaultTargetId\":{\"type\":\"string\"},\"mode\":{\"enum\":[\"web\",\"not_a_web_app\"],\"type\":\"string\"},\"targets\":{\"items\":{\"properties\":{\"authKind\":{\"enum\":[\"cloudflare_access\",\"verification_header\",\"none\"],\"type\":\"string\"},\"expectedIdentity\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"origin\":{\"type\":\"string\"},\"probe\":{\"properties\":{\"expectedStatus\":{\"type\":\"integer\"},\"identityField\":{\"type\":\"string\"},\"method\":{\"enum\":[\"GET\",\"HEAD\",\"POST\"],\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"path\",\"method\",\"expectedStatus\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"scope\":{\"enum\":[\"verify_read_only\",\"operator\"],\"type\":\"string\"}},\"required\":[\"id\",\"origin\",\"scope\",\"roles\",\"authKind\",\"probe\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"}},\"required\":[\"mode\"],\"type\":\"object\",\"unevaluatedProperties\":false}},\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"projectId\":{\"type\":\"string\"},\"repoSha\":{\"type\":[\"string\",\"null\"]},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"projectId\",\"baseRevision\",\"content\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

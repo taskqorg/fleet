@@ -261,6 +261,39 @@ func TestProjectBrowserProductionAdapter(t *testing.T) {
 	}
 }
 
+// Managed probes run in a separate world on the exact granted origin. Provider
+// status and identity failures retain a fixed reason without response content.
+func TestProjectBrowserManagedSiteProbe(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("TMPDIR", d)
+	node, err := exec.LookPath("node")
+	noErr(t, err)
+	module := filepath.Join(d, "fixture.cjs")
+	noErr(t, os.WriteFile(module, []byte(browserProductionFixture), 0o700))
+	cfg := M{"module": module, "executable": module, "previewOrigins": []string{"http://127.0.0.1:4173"},
+		"production": M{"origin": damBrowserOrigin, "managed": true}, "timeoutMs": 5000}
+	access := contract.BrowserAccessReply{Managed: new(true), Production: &contract.BrowserProductionAccess{
+		Origin: damBrowserOrigin, Headers: []contract.BrowserSecretHeader{
+			{Name: "X-DAM-Verification-Token", Value: damBrowserToken}, {Name: "X-DAM-Aux", Value: "invented-dam-secondary"},
+		},
+		ReadinessProbe: contract.BrowserProductionProbe{Method: "GET", Path: "/api/ready", Status: new(int64(200)),
+			IdentityField: new("identity"), ExpectedIdentity: new("dam-agents")},
+	}}
+	authority := &browserAuthority{Config: cfg, Node: node, Access: access}
+	for _, tc := range []struct{ flag, want string }{
+		{"", "verified"}, {"badIdentity", "identity_mismatch"}, {"badStatus", "unexpected_status"}, {"authRejected", "auth_rejected"},
+	} {
+		if tc.flag != "" {
+			cfg[tc.flag] = true
+		}
+		got := managedSiteProbeReason(browserProbe(cfg, d, authority))
+		delete(cfg, tc.flag)
+		if got != tc.want {
+			t.Fatalf("probe result %q, want %q", got, tc.want)
+		}
+	}
+}
+
 const browserProductionFixture = `
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -294,7 +327,23 @@ class Socket extends EventEmitter {
   deliver(message) { this.emit('message', {data:JSON.stringify(message)}); }
   send(raw) {
     const {id, sessionId, method, params} = JSON.parse(raw);
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
+      if (method === 'Page.getFrameTree') {
+        this.deliver({id,result:{frameTree:{frame:{id:'fixture-frame'}}}});
+        return;
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        assert.equal(params.frameId,'fixture-frame');
+        this.deliver({id,result:{executionContextId:42}});
+        return;
+      }
+      if (method === 'Runtime.evaluate') {
+        assert.equal(params.contextId,42);
+        setProbeGlobals();
+        const value = await eval(params.expression);
+        this.deliver({id,result:{result:{value}}});
+        return;
+      }
       this.deliver({id, result:{}});
       if (method === 'Target.setAutoAttach' && !sessionId) this.deliver({
         method:'Target.attachedToTarget', params:{sessionId:'fixture',targetInfo:{type:'page',targetId:'page'}}
@@ -380,6 +429,12 @@ const page = {
     ]);
   },
   evaluate: async (fn,args) => {
+    assert.equal(Boolean(cfg.production.managed),false);
+    setProbeGlobals();
+    return fn(args);
+  }
+};
+function setProbeGlobals() {
     global.location = {origin};
     global.fetch = async (url,options) => {
       assert.equal(url.href, origin+(legacy?'/api/ops/me':'/api/ready'));
@@ -388,13 +443,11 @@ const page = {
       assert.equal(options.redirect, legacy?undefined:'error');
       if (legacy) assert.deepEqual(options.body, '{}');
       await authenticated(url.href);
-      const status = cfg.badStatus ? 201 : 200;
+      const status = cfg.authRejected ? 403 : cfg.badStatus ? 201 : 200;
       return {url:url.href, status, ok:true,
         json:async()=>legacy?{email:'site-agents'}:{identity:cfg.badIdentity?'wrong':'dam-agents'}};
     };
-    return fn(args);
-  }
-};
+}
 const context = {pages:()=>[page],cookies:async()=>[{value:cookie}],routeWebSocket:async()=>{},close:async()=>{}};
 module.exports = {chromium:{connectOverCDP:async()=>({contexts:()=>[context]})}};
 `

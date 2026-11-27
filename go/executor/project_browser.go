@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ type browserAuthority struct {
 	Config M                           `json:"config"`
 	Node   string                      `json:"node"`
 	Access contract.BrowserAccessReply `json:"access"`
+	Fence  *siteBrowserFence           `json:"fence,omitempty"`
 }
 
 func browserProject(payload any) string {
@@ -190,6 +192,10 @@ func serveProjectBrowser(arg string) error {
 		}
 		connection.Close()
 		authority := typed[browserAuthority](answer["authority"])
+		if fenced, _ := answer["fenced"].(bool); fenced {
+			authority.Config["checkGeneration"] = true
+			authority.Config["generationCheckMs"] = (30 * time.Second).Milliseconds()
+		}
 		pipe, err := browserPipe(authority.Access)
 		if err != nil {
 			return err
@@ -211,6 +217,10 @@ func serveProjectBrowser(arg string) error {
 	return cmd.Run()
 }
 
+type browserProbeError string
+
+func (e browserProbeError) Error() string { return string(e) }
+
 func browserProbe(config M, home string, authority *browserAuthority) error {
 	cmd := browserCommand(config, home, true)
 	if authority != nil {
@@ -222,29 +232,23 @@ func browserProbe(config M, home string, authority *browserAuthority) error {
 		defer r.Close()
 		cmd.ExtraFiles = []*os.File{r}
 	}
-	if _, err := boundedOutput(cmd, probeWait); err != nil {
+	if out, err := boundedOutput(cmd, probeWait); err != nil {
+		if authority != nil && siteManaged(authority.Access.Managed) {
+			// The trusted adapter emits one fixed reason. Never surface stdout or stderr.
+			switch strings.TrimSpace(string(out)) {
+			case "auth_rejected", "identity_mismatch", "unexpected_status":
+				return browserProbeError(strings.TrimSpace(string(out)))
+			}
+		}
 		return errors.New("browser-check-failed")
 	}
 	return nil
 }
 
 func (e *executor) browserAccess(ctx context.Context, projectID string) (contract.BrowserAccessReply, int) {
-	var access contract.BrowserAccessReply
-	base, err := url.Parse(e.url)
-	if err != nil || (base.Scheme != "https" && !(base.Scheme == "http" && (base.Hostname() == "127.0.0.1" || base.Hostname() == "::1" || base.Hostname() == "localhost"))) {
-		return access, 0
-	}
-	resp, err := postJSONCtx(ctx, outboxClient, e.url+contract.RouteBrowserAccess.Path, e.token, contract.BrowserAccessRequest{ProjectId: projectID})
-	if err != nil {
-		return access, 0
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return access, resp.StatusCode
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, contract.BrowserAccessBytes+1))
-	if err != nil || len(raw) > contract.BrowserAccessBytes || json.Unmarshal(raw, &access) != nil {
-		return contract.BrowserAccessReply{}, 0
+	access, status := requestBrowserAccess(ctx, e.url, e.token, contract.BrowserAccessRequest{ProjectId: projectID})
+	if status != http.StatusOK {
+		return access, status
 	}
 	if access.Production == nil && access.ClientId == "" && access.ClientSecret == "" {
 		return access, http.StatusNoContent
@@ -255,7 +259,43 @@ func (e *executor) browserAccess(ctx context.Context, projectID string) (contrac
 	return access, http.StatusOK
 }
 
+func requestBrowserAccess(ctx context.Context, coordinator, token string, request contract.BrowserAccessRequest) (contract.BrowserAccessReply, int) {
+	var access contract.BrowserAccessReply
+	base, err := url.Parse(coordinator)
+	if err != nil || (base.Scheme != "https" && !(base.Scheme == "http" && (base.Hostname() == "127.0.0.1" || base.Hostname() == "::1" || base.Hostname() == "localhost"))) {
+		return access, 0
+	}
+	resp, err := postJSONCtx(ctx, outboxClient, coordinator+contract.RouteBrowserAccess.Path, token, request)
+	if err != nil {
+		return access, 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return access, resp.StatusCode
+	}
+	if request.ProjectId == "" && siteManaged(request.Managed) {
+		if err := json.NewDecoder(resp.Body).Decode(&access); err != nil {
+			return contract.BrowserAccessReply{}, 0
+		}
+		if access.Production != nil || access.ClientId != "" || access.ClientSecret != "" {
+			return contract.BrowserAccessReply{}, 0
+		}
+		return access, http.StatusOK
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, contract.BrowserAccessBytes+1))
+	if err != nil || len(raw) > contract.BrowserAccessBytes || json.Unmarshal(raw, &access) != nil {
+		return contract.BrowserAccessReply{}, 0
+	}
+	return access, http.StatusOK
+}
+
 func browserAccessOrigin(projectID string, access contract.BrowserAccessReply) (string, error) {
+	if siteManaged(access.Managed) {
+		if projectID != "" && access.ClientId == "" && access.ClientSecret == "" && contract.ValidSiteBrowserProduction(access.Production) {
+			return access.Production.Origin, nil
+		}
+		return "", errors.New("browser-production-authority-unavailable")
+	}
 	if projectID == contract.ProductionBrowserProject {
 		if access.Production == nil && access.ClientId != "" && access.ClientSecret != "" {
 			return contract.ProductionBrowserOrigin, nil
@@ -274,6 +314,9 @@ func newBrowserAuthority(payload any, access contract.BrowserAccessReply) (*brow
 	config, err := browserConfig(payload, origin)
 	if err != nil {
 		return nil, err
+	}
+	if siteManaged(access.Managed) {
+		config["production"] = M{"origin": origin, "managed": true}
 	}
 	executable, err := trustedMCPExecutable(os.Getenv("FLEET_BROWSER_EXECUTABLE"))
 	if err != nil {

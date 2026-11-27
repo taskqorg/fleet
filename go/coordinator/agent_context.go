@@ -700,13 +700,18 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 	if project == nil {
 		return none, fail(404, "Unknown project")
 	}
+	setup, access := readProjectSetup(q, pid, project)
+	out := contract.ProjectReadinessReply{ProjectId: pid, Hosts: []contract.ProjectReadinessHost{}, Setup: &setup, SiteAccess: &access}
+	if valueOr(r.Mode) == contract.ProjectReadinessModeStatus {
+		return out, nil
+	}
 	settings := agentView[struct {
 		Environments []struct {
 			HostID string `json:"hostId"`
 		} `json:"environments"`
 		Roles map[string]json.RawMessage `json:"roles"`
 	}](project)
-	hosts, seen := []contract.ProjectReadinessHost{}, map[string]bool{}
+	seen := map[string]bool{}
 	for _, env := range settings.Environments {
 		hid := env.HostID
 		if seen[hid] {
@@ -716,7 +721,7 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 		if ok, err := knownHost(q, hid); err != nil {
 			return none, err
 		} else if !ok {
-			hosts = append(hosts, contract.ProjectReadinessHost{HostId: hid, Problem: ptr("unregistered host " + hid)})
+			out.Hosts = append(out.Hosts, contract.ProjectReadinessHost{HostId: hid, Problem: ptr("unregistered host " + hid)})
 			continue
 		}
 		// A host job is no conversation: no session. The caller's session may read its result (execution_status).
@@ -748,9 +753,9 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 		if err := commandPut(q, &c); err != nil {
 			return none, err
 		}
-		hosts = append(hosts, contract.ProjectReadinessHost{HostId: hid, ExecutionId: &id})
+		out.Hosts = append(out.Hosts, contract.ProjectReadinessHost{HostId: hid, ExecutionId: &id})
 	}
-	return contract.ProjectReadinessReply{ProjectId: pid, Hosts: hosts}, nil
+	return out, nil
 }
 
 // taskFor: the task exists, and a project session only takes a task of its own project (exact: also a projectless one).
@@ -864,6 +869,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 			{"access", o.Access != "" && (r.Access == nil || string(*r.Access) != o.Access)},
 			{"branch", o.Branch != nil && (r.Branch == nil || *r.Branch != *o.Branch)},
 			{"role", o.Role != "" && deref(r.Role) != o.Role},
+			{"siteTargetId", deref(r.SiteTargetId) != o.SiteTargetID},
 		} {
 			if given[c.key] && c.conflict {
 				return none, fail(409, "requestId already started a session with another "+c.key)
@@ -1004,8 +1010,19 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 			focus = &agentFocus{ProjectIDs: jsonBytes(r.Projects)}
 		}
 	}
+	if given["siteTargetId"] {
+		p := agentView[siteAccessProject](project)
+		if !idPattern.MatchString(deref(r.SiteTargetId)) {
+			return none, fail(400, "Expected site target id")
+		}
+		target, reason := selectSiteTarget(p.Config, p.Roles, role, profileID, access, deref(r.SiteTargetId))
+		if target == nil {
+			return none, fail(409, "Site target unavailable: "+reason)
+		}
+	}
 	s := agentSession{ID: newID(), CreatedAt: nowMs(), AgentConfig: jsonBytes(profile), StartRequest: key, Access: access, Branch: &branch, ProjectID: pid, TaskID: taskID,
-		DirectedBy: directedBy, Role: role, Account: account, Setup: setup, HostID: deref(r.HostId), CreatedBySessionID: deref(r.CallerSessionId), CreatedByExecutionID: deref(r.CallerExecutionId),
+		SiteTargetID: deref(r.SiteTargetId),
+		DirectedBy:   directedBy, Role: role, Account: account, Setup: setup, HostID: deref(r.HostId), CreatedBySessionID: deref(r.CallerSessionId), CreatedByExecutionID: deref(r.CallerExecutionId),
 		Focus: focus}
 	presetID := ""
 	if pre != nil {

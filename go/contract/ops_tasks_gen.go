@@ -814,43 +814,51 @@ func (v *ProjectContextEntry) Validate() error {
 
 // ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules, and optional resource summary.
 type ProjectContextReply struct {
-	ArtifactLocations json.RawMessage            `json:"artifact_locations,omitempty"`
-	ArtifactRules     json.RawMessage            `json:"artifact_rules,omitempty"`
-	Capability        *string                    `json:"capability,omitempty"`
-	Cleanup           json.RawMessage            `json:"cleanup,omitempty"`
-	Color             json.RawMessage            `json:"color,omitempty"`
-	Content           ProjectBundle              `json:"content"`
-	ContentSha        string                     `json:"contentSha"`
-	Context           []ProjectContextEntry      `json:"context"`
-	ContextFiles      json.RawMessage            `json:"contextFiles,omitempty"`
-	ContextSources    json.RawMessage            `json:"contextSources,omitempty"`
-	Description       json.RawMessage            `json:"description,omitempty"`
-	Domain            json.RawMessage            `json:"domain,omitempty"`
-	Environments      json.RawMessage            `json:"environments,omitempty"`
-	Execution         json.RawMessage            `json:"execution,omitempty"`
-	Id                *string                    `json:"id,omitempty"`
-	Identity          json.RawMessage            `json:"identity,omitempty"`
-	InitialAccess     *ProjectInitialAccess      `json:"initialAccess,omitempty"`
-	Integration       json.RawMessage            `json:"integration,omitempty"`
-	Name              *string                    `json:"name,omitempty"`
-	Pattern           json.RawMessage            `json:"pattern,omitempty"`
-	RecommendedMethod *string                    `json:"recommendedMethod,omitempty"`
-	RepoSha           *string                    `json:"repoSha,omitempty"`
-	Repos             json.RawMessage            `json:"repos,omitempty"`
-	Resources         *ResourceSummary           `json:"resources,omitempty"`
-	Revision          int64                      `json:"revision"`
-	Roles             json.RawMessage            `json:"roles,omitempty"`
-	Scripts           json.RawMessage            `json:"scripts,omitempty"`
-	Settings          map[string]json.RawMessage `json:"settings"`
-	SetupStart        *string                    `json:"setupStart,omitempty"`
-	SourceState       *string                    `json:"sourceState,omitempty"`
-	Subscriptions     json.RawMessage            `json:"subscriptions,omitempty"`
-	UnknownKeys       []string                   `json:"unknownKeys"`
-	Worktree          json.RawMessage            `json:"worktree,omitempty"`
+	AgentSiteAccess   *AgentSiteAccess      `json:"agentSiteAccess,omitempty"`
+	ArtifactLocations json.RawMessage       `json:"artifact_locations,omitempty"`
+	ArtifactRules     json.RawMessage       `json:"artifact_rules,omitempty"`
+	Capability        *string               `json:"capability,omitempty"`
+	Cleanup           json.RawMessage       `json:"cleanup,omitempty"`
+	Color             json.RawMessage       `json:"color,omitempty"`
+	Content           ProjectBundle         `json:"content"`
+	ContentSha        string                `json:"contentSha"`
+	Context           []ProjectContextEntry `json:"context"`
+	ContextFiles      json.RawMessage       `json:"contextFiles,omitempty"`
+	ContextSources    json.RawMessage       `json:"contextSources,omitempty"`
+	Description       json.RawMessage       `json:"description,omitempty"`
+	Domain            json.RawMessage       `json:"domain,omitempty"`
+	Environments      json.RawMessage       `json:"environments,omitempty"`
+	Execution         json.RawMessage       `json:"execution,omitempty"`
+	Id                *string               `json:"id,omitempty"`
+	Identity          json.RawMessage       `json:"identity,omitempty"`
+	InitialAccess     *ProjectInitialAccess `json:"initialAccess,omitempty"`
+	Integration       json.RawMessage       `json:"integration,omitempty"`
+	Name              *string               `json:"name,omitempty"`
+	Pattern           json.RawMessage       `json:"pattern,omitempty"`
+	RecommendedMethod *string               `json:"recommendedMethod,omitempty"`
+	RepoSha           *string               `json:"repoSha,omitempty"`
+	Repos             json.RawMessage       `json:"repos,omitempty"`
+	Resources         *ResourceSummary      `json:"resources,omitempty"`
+	Revision          int64                 `json:"revision"`
+	Roles             json.RawMessage       `json:"roles,omitempty"`
+	Scripts           json.RawMessage       `json:"scripts,omitempty"`
+	Settings          ProjectBundleSettings `json:"settings"`
+	Setup             *ProjectSetup         `json:"setup,omitempty"`
+	SetupStart        *string               `json:"setupStart,omitempty"`
+	SiteAccess        *ProjectSiteAccess    `json:"siteAccess,omitempty"`
+	SourceState       *string               `json:"sourceState,omitempty"`
+	Subscriptions     json.RawMessage       `json:"subscriptions,omitempty"`
+	UnknownKeys       []string              `json:"unknownKeys"`
+	Worktree          json.RawMessage       `json:"worktree,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectContextReply) Validate() error {
+	if v.AgentSiteAccess != nil {
+		if err := Check(v.AgentSiteAccess, "agentSiteAccess"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.Content, "content"); err != nil {
 		return err
 	}
@@ -872,8 +880,18 @@ func (v *ProjectContextReply) Validate() error {
 			return err
 		}
 	}
-	if v.Settings == nil {
-		return Missing("settings")
+	if err := Check(&v.Settings, "settings"); err != nil {
+		return err
+	}
+	if v.Setup != nil {
+		if err := Check(v.Setup, "setup"); err != nil {
+			return err
+		}
+	}
+	if v.SiteAccess != nil {
+		if err := Check(v.SiteAccess, "siteAccess"); err != nil {
+			return err
+		}
 	}
 	if v.UnknownKeys == nil {
 		return Missing("unknownKeys")
@@ -929,17 +947,19 @@ func (v *ProjectDecision) Validate() error {
 }
 
 type ProjectDetailReply struct {
-	Content       ProjectBundle              `json:"content"`
-	ContentSha    string                     `json:"contentSha"`
-	Context       []ProjectContextEntry      `json:"context"`
-	Id            string                     `json:"id"`
-	InitialAccess *ProjectInitialAccess      `json:"initialAccess,omitempty"`
-	Name          string                     `json:"name"`
-	RepoSha       *string                    `json:"repoSha,omitempty"`
-	Revision      int64                      `json:"revision"`
-	Settings      map[string]json.RawMessage `json:"settings"`
-	SourceState   *string                    `json:"sourceState,omitempty"`
-	UnknownKeys   []string                   `json:"unknownKeys"`
+	Content       ProjectBundle         `json:"content"`
+	ContentSha    string                `json:"contentSha"`
+	Context       []ProjectContextEntry `json:"context"`
+	Id            string                `json:"id"`
+	InitialAccess *ProjectInitialAccess `json:"initialAccess,omitempty"`
+	Name          string                `json:"name"`
+	RepoSha       *string               `json:"repoSha,omitempty"`
+	Revision      int64                 `json:"revision"`
+	Settings      ProjectBundleSettings `json:"settings"`
+	Setup         *ProjectSetup         `json:"setup,omitempty"`
+	SiteAccess    *ProjectSiteAccess    `json:"siteAccess,omitempty"`
+	SourceState   *string               `json:"sourceState,omitempty"`
+	UnknownKeys   []string              `json:"unknownKeys"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -960,8 +980,18 @@ func (v *ProjectDetailReply) Validate() error {
 			return err
 		}
 	}
-	if v.Settings == nil {
-		return Missing("settings")
+	if err := Check(&v.Settings, "settings"); err != nil {
+		return err
+	}
+	if v.Setup != nil {
+		if err := Check(v.Setup, "setup"); err != nil {
+			return err
+		}
+	}
+	if v.SiteAccess != nil {
+		if err := Check(v.SiteAccess, "siteAccess"); err != nil {
+			return err
+		}
 	}
 	if v.UnknownKeys == nil {
 		return Missing("unknownKeys")
@@ -1214,9 +1244,31 @@ func (v *ProjectReadinessHost) Validate() error {
 	return nil
 }
 
+type ProjectReadinessMode string
+
+const (
+	ProjectReadinessModeCheck  ProjectReadinessMode = "check"
+	ProjectReadinessModeStatus ProjectReadinessMode = "status"
+)
+
+// ProjectReadinessModeValues lists every ProjectReadinessMode in schema order.
+var ProjectReadinessModeValues = []ProjectReadinessMode{ProjectReadinessModeCheck, ProjectReadinessModeStatus}
+
+// Valid: v is one of the schema's values.
+func (v ProjectReadinessMode) Valid() bool {
+	for _, x := range ProjectReadinessModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ProjectReadinessReply struct {
-	Hosts     []ProjectReadinessHost `json:"hosts"`
-	ProjectId string                 `json:"projectId"`
+	Hosts      []ProjectReadinessHost `json:"hosts"`
+	ProjectId  string                 `json:"projectId"`
+	Setup      *ProjectSetup          `json:"setup,omitempty"`
+	SiteAccess *ProjectSiteAccess     `json:"siteAccess,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1229,12 +1281,23 @@ func (v *ProjectReadinessReply) Validate() error {
 			return err
 		}
 	}
+	if v.Setup != nil {
+		if err := Check(v.Setup, "setup"); err != nil {
+			return err
+		}
+	}
+	if v.SiteAccess != nil {
+		if err := Check(v.SiteAccess, "siteAccess"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 type ProjectReadinessRequest struct {
-	CallerSessionId *string `json:"callerSessionId,omitempty"`
-	ProjectId       *string `json:"projectId,omitempty"`
+	CallerSessionId *string               `json:"callerSessionId,omitempty"`
+	Mode            *ProjectReadinessMode `json:"mode,omitempty"`
+	ProjectId       *string               `json:"projectId,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -1256,6 +1319,11 @@ func (v *ProjectReadinessRequest) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectReadinessRequest) Validate() error {
+	if v.Mode != nil {
+		if err := Check(v.Mode, "mode"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1308,6 +1376,215 @@ func (v *ProjectResourcesRequest) Validate() error {
 	return nil
 }
 
+type ProjectSetup struct {
+	Checks []ProjectSetupCheck `json:"checks"`
+	State  ProjectSetupState   `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectSetup) Validate() error {
+	if v.Checks == nil {
+		return Missing("checks")
+	}
+	for i := range v.Checks {
+		if err := Check(&v.Checks[i], "checks"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProjectSetupCheck struct {
+	Kind       ProjectSetupCheckKind  `json:"kind"`
+	NextAction *string                `json:"nextAction"`
+	ObservedAt *int64                 `json:"observedAt"`
+	ReasonCode string                 `json:"reasonCode"`
+	State      ProjectSetupCheckState `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectSetupCheck) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProjectSetupCheckKind string
+
+const (
+	ProjectSetupCheckKindGitForge        ProjectSetupCheckKind = "git_forge"
+	ProjectSetupCheckKindConnections     ProjectSetupCheckKind = "connections"
+	ProjectSetupCheckKindCiPublishing    ProjectSetupCheckKind = "ci_publishing"
+	ProjectSetupCheckKindAgentSiteAccess ProjectSetupCheckKind = "agent_site_access"
+	ProjectSetupCheckKindPm              ProjectSetupCheckKind = "pm"
+)
+
+// ProjectSetupCheckKindValues lists every ProjectSetupCheckKind in schema order.
+var ProjectSetupCheckKindValues = []ProjectSetupCheckKind{ProjectSetupCheckKindGitForge, ProjectSetupCheckKindConnections, ProjectSetupCheckKindCiPublishing, ProjectSetupCheckKindAgentSiteAccess, ProjectSetupCheckKindPm}
+
+// Valid: v is one of the schema's values.
+func (v ProjectSetupCheckKind) Valid() bool {
+	for _, x := range ProjectSetupCheckKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProjectSetupCheckState string
+
+const (
+	ProjectSetupCheckStateReady         ProjectSetupCheckState = "ready"
+	ProjectSetupCheckStateMissing       ProjectSetupCheckState = "missing"
+	ProjectSetupCheckStateChecking      ProjectSetupCheckState = "checking"
+	ProjectSetupCheckStateBlocked       ProjectSetupCheckState = "blocked"
+	ProjectSetupCheckStateUnknown       ProjectSetupCheckState = "unknown"
+	ProjectSetupCheckStateNotApplicable ProjectSetupCheckState = "not_applicable"
+)
+
+// ProjectSetupCheckStateValues lists every ProjectSetupCheckState in schema order.
+var ProjectSetupCheckStateValues = []ProjectSetupCheckState{ProjectSetupCheckStateReady, ProjectSetupCheckStateMissing, ProjectSetupCheckStateChecking, ProjectSetupCheckStateBlocked, ProjectSetupCheckStateUnknown, ProjectSetupCheckStateNotApplicable}
+
+// Valid: v is one of the schema's values.
+func (v ProjectSetupCheckState) Valid() bool {
+	for _, x := range ProjectSetupCheckStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProjectSetupState string
+
+const (
+	ProjectSetupStateReady         ProjectSetupState = "ready"
+	ProjectSetupStateAttention     ProjectSetupState = "attention"
+	ProjectSetupStateChecking      ProjectSetupState = "checking"
+	ProjectSetupStateUnknown       ProjectSetupState = "unknown"
+	ProjectSetupStateNotApplicable ProjectSetupState = "not_applicable"
+)
+
+// ProjectSetupStateValues lists every ProjectSetupState in schema order.
+var ProjectSetupStateValues = []ProjectSetupState{ProjectSetupStateReady, ProjectSetupStateAttention, ProjectSetupStateChecking, ProjectSetupStateUnknown, ProjectSetupStateNotApplicable}
+
+// Valid: v is one of the schema's values.
+func (v ProjectSetupState) Valid() bool {
+	for _, x := range ProjectSetupStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProjectSiteAccess struct {
+	ForCaller *ProjectSiteAccessCaller  `json:"forCaller,omitempty"`
+	Mode      *AgentSiteAccessMode      `json:"mode,omitempty"`
+	Targets   []ProjectSiteAccessTarget `json:"targets"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectSiteAccess) Validate() error {
+	if v.ForCaller != nil {
+		if err := Check(v.ForCaller, "forCaller"); err != nil {
+			return err
+		}
+	}
+	if v.Mode != nil {
+		if err := Check(v.Mode, "mode"); err != nil {
+			return err
+		}
+	}
+	if v.Targets == nil {
+		return Missing("targets")
+	}
+	for i := range v.Targets {
+		if err := Check(&v.Targets[i], "targets"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectSiteAccessAvailability string
+
+const (
+	ProjectSiteAccessAvailabilityAvailable     ProjectSiteAccessAvailability = "available"
+	ProjectSiteAccessAvailabilityUnavailable   ProjectSiteAccessAvailability = "unavailable"
+	ProjectSiteAccessAvailabilityUnknown       ProjectSiteAccessAvailability = "unknown"
+	ProjectSiteAccessAvailabilityNotApplicable ProjectSiteAccessAvailability = "not_applicable"
+)
+
+// ProjectSiteAccessAvailabilityValues lists every ProjectSiteAccessAvailability in schema order.
+var ProjectSiteAccessAvailabilityValues = []ProjectSiteAccessAvailability{ProjectSiteAccessAvailabilityAvailable, ProjectSiteAccessAvailabilityUnavailable, ProjectSiteAccessAvailabilityUnknown, ProjectSiteAccessAvailabilityNotApplicable}
+
+// Valid: v is one of the schema's values.
+func (v ProjectSiteAccessAvailability) Valid() bool {
+	for _, x := range ProjectSiteAccessAvailabilityValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ProjectSiteAccessCaller struct {
+	Availability ProjectSiteAccessAvailability `json:"availability"`
+	NextAction   *string                       `json:"nextAction"`
+	ReasonCode   string                        `json:"reasonCode"`
+	Role         *string                       `json:"role,omitempty"`
+	TargetId     *string                       `json:"targetId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectSiteAccessCaller) Validate() error {
+	if err := Check(&v.Availability, "availability"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProjectSiteAccessTarget struct {
+	AuthKind         AgentSiteAuthKind      `json:"authKind"`
+	CheckedAt        *int64                 `json:"checkedAt"`
+	ExpectedIdentity *string                `json:"expectedIdentity"`
+	ExpiresAt        *int64                 `json:"expiresAt"`
+	NextAction       *string                `json:"nextAction"`
+	ObservedIdentity *string                `json:"observedIdentity"`
+	Origin           string                 `json:"origin"`
+	ReasonCode       string                 `json:"reasonCode"`
+	Roles            []string               `json:"roles"`
+	Scope            AgentSiteAccessScope   `json:"scope"`
+	State            ProjectSetupCheckState `json:"state"`
+	TargetId         string                 `json:"targetId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectSiteAccessTarget) Validate() error {
+	if err := Check(&v.AuthKind, "authKind"); err != nil {
+		return err
+	}
+	if v.Roles == nil {
+		return Missing("roles")
+	}
+	if err := Check(&v.Scope, "scope"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ProjectViewReply struct {
 	Conversations      []SessionRow           `json:"conversations"`
 	ConversationsTotal int64                  `json:"conversationsTotal"`
@@ -1323,6 +1600,8 @@ type ProjectViewReply struct {
 	Pm                 *SessionRow            `json:"pm,omitempty"`
 	Results            []ArtifactRow          `json:"results"`
 	ResultsTotal       int64                  `json:"resultsTotal"`
+	Setup              *ProjectSetup          `json:"setup,omitempty"`
+	SiteAccess         *ProjectSiteAccess     `json:"siteAccess,omitempty"`
 	Waiting            []QuestionRow          `json:"waiting"`
 	WaitingTotal       int64                  `json:"waitingTotal"`
 }
@@ -1382,6 +1661,16 @@ func (v *ProjectViewReply) Validate() error {
 			return err
 		}
 	}
+	if v.Setup != nil {
+		if err := Check(v.Setup, "setup"); err != nil {
+			return err
+		}
+	}
+	if v.SiteAccess != nil {
+		if err := Check(v.SiteAccess, "siteAccess"); err != nil {
+			return err
+		}
+	}
 	if v.Waiting == nil {
 		return Missing("waiting")
 	}
@@ -1415,11 +1704,12 @@ func (v *ProjectWorkCounts) Validate() error {
 }
 
 type ProjectsViewReply struct {
-	Catalogue    []ProjectWorkCounts `json:"catalogue"`
-	Delivery     []DeliveryItem      `json:"delivery"`
-	Lines        []ProjectWorkCounts `json:"lines"`
-	Waiting      []QuestionRow       `json:"waiting"`
-	WaitingTotal int64               `json:"waitingTotal"`
+	Catalogue    []ProjectWorkCounts          `json:"catalogue"`
+	Delivery     []DeliveryItem               `json:"delivery"`
+	Lines        []ProjectWorkCounts          `json:"lines"`
+	Setup        map[string]ProjectSetupState `json:"setup,omitempty"`
+	Waiting      []QuestionRow                `json:"waiting"`
+	WaitingTotal int64                        `json:"waitingTotal"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2962,15 +3252,15 @@ func init() {
 		"problem_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot (or the owner) sets a problem's phase, note or linked work, or closes it as fixed or as a duplicate of another problem.", InputSchema: json.RawMessage("{\"properties\":{\"close\":{\"enum\":[\"fixed\",\"duplicate\"],\"type\":\"string\"},\"duplicateOf\":{\"$comment\":\"with close duplicate: the other problem's id or code\",\"type\":\"string\"},\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"note\":{\"type\":\"string\"},\"phase\":{\"enum\":[\"working\",\"review\",\"watching\",\"stuck\"],\"type\":\"string\"},\"work\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"problems_list":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Problems (anomalies with a bot owner), newest first; open by default.", Changes: []string{"problem"}, InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"$comment\":\"the code of the last row of the previous page\",\"type\":\"string\"},\"limit\":{\"$comment\":\"1 to 200, default 50\",\"type\":\"integer\"},\"ownerBotId\":{\"type\":\"string\"},\"phase\":{\"enum\":[\"new\",\"working\",\"review\",\"watching\",\"stuck\",\"escalated\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"state\":{\"enum\":[\"open\",\"closed\",\"all\"],\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"project_code_set":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.", InputSchema: json.RawMessage("{\"$comment\":\"2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"code\"],\"type\":\"object\"}")},
-		"project_context":         {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "bound:project", Description: "A project's definition, settings and context (projectId)", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
-		"project_detail":          {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a project definition and revision independently of resource statistics; requires projectId", Changes: []string{"definition", "task", "execution", "resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"project_context":         {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "bound:project", Description: "A project's definition, settings and context (projectId)", Changes: []string{"definition", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"project_detail":          {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a project definition and revision independently of resource statistics; requires projectId", Changes: []string{"definition", "task", "execution", "resource_summary", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_list":            {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Projects you can reach with their codes", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"project_pipeline_view":   {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One pipeline as a project uses it, in one read (the pipeline page, docs/design-system/pages/projects.md): what it does (description, input, output), its steps as the plain-text outline, its catalogue method and whether it is the one in use, the comparison on the project's sample (every variant of the pipelines its experiments ran for the same job, best first, 90 days) the project's experiments that ran it, newest first, and who ran it over 30 days outside Lab (each app, then agents and people: runs, failed runs, leaf cost).", View: true, Changes: []string{"definition", "experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"pipelineId\"],\"type\":\"object\"}")},
-		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Read project setup and agent site access with mode status, or queue environment checks by default and read their results with execution_status", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"mode\":{\"enum\":[\"check\",\"status\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"project_resource_items":  {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a bounded prepared tools/costs/prices window with an epoch-bound cursor or surviving anchor; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"anchor\":{\"enum\":[\"start\",\"end\"],\"type\":\"string\"},\"around\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"atOrAfter\",\"atOrBefore\"],\"type\":\"string\"},\"key\":{\"oneOf\":[{\"$comment\":\"Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"tool\"},\"name\":{\"type\":\"string\"}},\"required\":[\"kind\",\"name\",\"connection\"],\"type\":\"object\"},{\"$comment\":\"tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.\",\"additionalProperties\":false,\"properties\":{\"encoded\":{\"type\":\"string\"},\"kind\":{\"const\":\"tool-position\"}},\"required\":[\"kind\",\"encoded\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"cost\"}},\"required\":[\"kind\",\"currency\",\"basis\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"price\"},\"observedAt\":{\"type\":\"integer\"},\"priceId\":{\"type\":\"string\"}},\"required\":[\"kind\",\"priceId\",\"observedAt\"],\"type\":\"object\"}]}},\"required\":[\"key\",\"direction\"],\"type\":\"object\"},\"category\":{\"enum\":[\"tools\",\"costs\",\"prices\"],\"type\":\"string\"},\"cursor\":{\"type\":\"string\"},\"group\":{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"currency\",\"basis\"],\"type\":\"object\"},\"knownVersion\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"category\"],\"type\":\"object\"}")},
 		"project_resources":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read prepared project resource figures/version and current progress; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"knownVersion\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
-		"project_view":            {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One project's Overview in one read (docs/design-system/pages/projects.md): its open questions and the Lab decisions waiting for you (finished experiments without a decision, each variant with its score, trials, failures, median time and cost), tasks in flight, the pipelines it uses grouped by job (catalogue methods in use or scoped to it and the pipelines its Lab experiments ran, each with its best result on the project's sample), the latest results and conversations, and delivery (pull requests in flight, merged count, the last merge). Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "experiment", "artifact", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
-		"projects_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The Projects screen in one read: each visible project's open questions, sessions working and tasks in flight (the catalogue, every project), and the summary over the focus (projectIds or excludeProjectIds, '-' is work outside projects): the open questions waiting for you (the first 3 and how many), each project's sessions working and tasks in flight, and the pull requests in flight. Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"$comment\":\"The summary leaves these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"The summary's focus: only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
+		"project_view":            {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One project's Overview in one read (docs/design-system/pages/projects.md): its open questions and the Lab decisions waiting for you (finished experiments without a decision, each variant with its score, trials, failures, median time and cost), tasks in flight, the pipelines it uses grouped by job (catalogue methods in use or scoped to it and the pipelines its Lab experiments ran, each with its best result on the project's sample), the latest results and conversations, and delivery (pull requests in flight, merged count, the last merge). Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "experiment", "artifact", "delivery:delivery-state:", "definition", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"projects_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The Projects screen in one read: each visible project's open questions, sessions working and tasks in flight (the catalogue, every project), and the summary over the focus (projectIds or excludeProjectIds, '-' is work outside projects): the open questions waiting for you (the first 3 and how many), each project's sessions working and tasks in flight, and the pull requests in flight. Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "delivery:delivery-state:", "definition", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"$comment\":\"The summary leaves these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"The summary's focus: only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"question_answer":         {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Answers a project question, or any other question by id.", InputSchema: json.RawMessage("{\"$comment\":\"Answers a project question, or any other question by id.\",\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
 		"question_ask":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Ask a project question (projectId, requestId, text); read its answer with question_history. Report persistent CI or delivery access and diagnostic blockers with publishing_report_blocker", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"text\"],\"type\":\"object\"}")},
 		"question_history":        {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "tool", Description: "Questions asked in a project (projectId) with their answers", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},

@@ -35,7 +35,7 @@
       "type": "object",
       "unevaluatedProperties": false,
       "required": ["projectId"],
-      "properties": {"projectId": {"type": "string"}, "hostId": {"type": "string"}}
+      "properties": {"projectId": {"type": "string"}, "hostId": {"type": "string"}, "managed": {"type": "boolean"}, "targetId": {"type": "string"}, "executionId": {"type": "string"}, "generation": {"type": "string"}}
     },
     "BrowserAccessReply": {
       "type": "object",
@@ -43,9 +43,16 @@
       "properties": {
         "clientId": {"type": "string"},
         "clientSecret": {"type": "string"},
-        "production": {"$ref": "#/$defs/BrowserProductionAccess"}
+        "production": {"$ref": "#/$defs/BrowserProductionAccess"},
+        "managed": {"type": "boolean"},
+        "generation": {"type": "string"},
+        "issuedAt": {"type": "integer"},
+        "targetId": {"type": "string"},
+        "targets": {"type": "array", "items": {"$ref": "#/$defs/BrowserTargetRef"}}
       }
     },
+    "BrowserTargetRef": {"type": "object", "properties": {"projectId": {"type": "string"}, "targetId": {"type": "string"}}, "required": ["projectId", "targetId"], "additionalProperties": false},
+    "BrowserTargetObservation": {"type": "object", "properties": {"projectId": {"type": "string"}, "targetId": {"type": "string"}, "generation": {"type": "string"}, "startedAt": {"type": "integer"}, "checkedAt": {"type": "integer"}, "reasonCode": {"type": "string"}, "executionId": {"type": "string"}}, "required": ["projectId", "targetId", "generation", "startedAt", "checkedAt", "reasonCode"], "additionalProperties": false},
     "BrowserProductionAccess": {
       "type": "object",
       "required": ["origin", "headers", "readinessProbe"],
@@ -402,6 +409,7 @@
             "$ref": "#/$defs/EdgeProblem"
           }
         },
+        "browserTargets": {"type": "array", "items": {"$ref": "#/$defs/BrowserTargetObservation"}},
         "browserProductionReady": {
           "$comment": "Absent before a fresh production readiness observation. False when unready or ungranted; problems gives the reason for an unready grant.",
           "type": "boolean"
@@ -799,7 +807,7 @@
     "Capability": {
       "$comment": "A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.",
       "type": "string",
-      "enum": ["codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1", "attachments", "publishing-ci-rerun-v1"]
+      "enum": ["codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1", "attachments", "publishing-ci-rerun-v1", "agent-site-access-v1"]
     },
     "Receipt": {
       "$comment": "Execution status receipt; delegation and account envelopes have their own generated types.",
@@ -1226,6 +1234,7 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "agentSiteAccess": {"$ref": "ops-projects.schema.json#/$defs/AgentSiteAccess"},
         "contextSources": {
           "$comment": "immutable repository-rule references, validated by contract.ContextSources; absent or null: none",
           "type": "array",

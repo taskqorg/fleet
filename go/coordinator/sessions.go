@@ -320,6 +320,7 @@ type sessionPayload struct {
 	AgentConfig          json.RawMessage        `json:"agentConfig,omitempty"`
 	StartRequest         string                 `json:"startRequest,omitempty"`
 	Role                 string                 `json:"role,omitempty"`
+	SiteTargetID         string                 `json:"siteTargetId,omitempty"`
 	Preset               string                 `json:"preset,omitempty"`
 	Starter              string                 `json:"starter,omitempty"`
 	Account              string                 `json:"account,omitempty"`
@@ -512,6 +513,7 @@ func sessionPut(q *Request, s *agentSession) error {
 		AgentConfig:          s.AgentConfig,
 		StartRequest:         s.StartRequest,
 		Role:                 s.Role,
+		SiteTargetID:         s.SiteTargetID,
 		Preset:               s.Preset,
 		Starter:              s.Starter,
 		Account:              s.Account,

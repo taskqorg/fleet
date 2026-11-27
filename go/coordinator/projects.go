@@ -24,6 +24,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/errtrack"
 	"fleet/mcpserve"
 )
 
@@ -133,7 +134,7 @@ var settingsDefaults = func() map[string]json.RawMessage {
 	return d
 }()
 
-var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors", "presets", "data", "risks", "approvals"}
+var settingsOrder = []string{"agentSiteAccess", "contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors", "presets", "data", "risks", "approvals"}
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "host", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
 var settingEnums = map[string][]string{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}, "data": {"public", "internal", "personal"}}
 
@@ -232,10 +233,18 @@ func projectSettings(p any) (rawObject, []string, error) {
 		d := settingsDefaults[k]
 		v, present := in[k]
 		if !present {
+			if k == "agentSiteAccess" {
+				continue
+			}
 			out[k] = d
 			continue
 		}
 		switch {
+		case k == "agentSiteAccess":
+			if _, err := parseAgentSiteAccess(v, recOf(in["roles"])); err != nil {
+				return nil, nil, err
+			}
+			out[k] = v
 		case k == "contextSources":
 			if _, err := contract.ContextSources(rawAny(v)); err != nil {
 				return nil, nil, fail(400, "Invalid contextSources: "+err.Error())
@@ -669,11 +678,14 @@ func init() {
 		if err != nil {
 			return contract.ProjectContextReply{}, err
 		}
-		res, err := projectResources(q, r.ProjectId)
+		attachProjectSetup(q, r.ProjectId, p)
+		res, err := optionalContextResources(q, r.ProjectId)
 		if err != nil {
 			return contract.ProjectContextReply{}, err
 		}
-		p["resources"] = jsonBytes(res)
+		if res != nil {
+			p["resources"] = jsonBytes(res)
+		}
 		return replyAs[contract.ProjectContextReply](p, nil)
 	})
 	op("catalogue", func(q *Request, r *contract.CatalogueRequest) (contract.CatalogueReply, error) {
@@ -969,6 +981,23 @@ func takeTaskFrom(q *Request, taskID, taker string, from any) error {
 	return takeTask(q, taskID, taker, f)
 }
 
+// The legacy resource summary is optional. Isolate its history query so that a
+// resource failure leaves the configuration and readiness snapshot readable.
+func optionalContextResources(q *Request, projectID string) (*contract.ResourceSummary, error) {
+	if err := exec(q, "SAVEPOINT project_context_resources"); err != nil {
+		return nil, err
+	}
+	res, err := projectResources(q, projectID)
+	if err != nil {
+		if rollbackErr := exec(q, "ROLLBACK TO SAVEPOINT project_context_resources"); rollbackErr != nil {
+			return nil, errors.Join(err, rollbackErr)
+		}
+		errtrack.Capture(err, map[string]string{"op": "project_context", "block": "resources"})
+		return nil, exec(q, "RELEASE SAVEPOINT project_context_resources")
+	}
+	return &res, exec(q, "RELEASE SAVEPOINT project_context_resources")
+}
+
 // projectSettingsByID: project_context(projectId).settings; error when unknown.
 func projectSettingsByID(q *Request, id string) (rawObject, error) {
 	p, err := projectContext(q, id)
@@ -1074,9 +1103,10 @@ func projectDetail(q *Request, r *contract.ProjectDetailRequest) (contract.Proje
 	if err != nil {
 		return contract.ProjectDetailReply{}, err
 	}
+	attachProjectSetup(q, r.ProjectId, p)
 	// Only this explicit shape reaches the new reader; legacy flattened settings stay legacy.
 	rec, out := recOf(p), pipelineRule{}
-	for _, k := range []string{"id", "name", "content", "settings", "unknownKeys", "context", "revision", "contentSha", "repoSha", "sourceState", "initialAccess"} {
+	for _, k := range []string{"id", "name", "content", "settings", "unknownKeys", "context", "revision", "contentSha", "repoSha", "sourceState", "initialAccess", "siteAccess", "setup"} {
 		if v, ok := rec[k]; ok {
 			out[k] = v
 		}

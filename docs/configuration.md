@@ -188,6 +188,34 @@ For end-to-end `coding-worker` PR/MR publication without stalling at draft:
 
 Configuration isolation shares the executor UID; it is not protection against hostile code running as that user. The host grants and project selection constrain the supplied tool. They do not turn the shared host into an OS security boundary.
 
+### Agent Site Access configuration
+
+Set `settings.agentSiteAccess.mode` to `web` or `not_a_web_app` in the project definition. A web target declares
+`id`, `origin`, `scope`, `roles`, `authKind`, and `probe`. Authenticated targets also set `expectedIdentity`
+and `probe.identityField`. The probe has an exact `expectedStatus` and an absolute path on its origin. The
+owner approves POST only for a read-only endpoint. A run can select an eligible `siteTargetId` at
+`session_start`. Without an explicit selection, Fleet uses an eligible `defaultTargetId`, or the only
+eligible target. A read-only run can select only `verify_read_only`.
+
+For an approved target, the owner saves `<projectId>.<targetId>.grant.json` with mode `0600` in the existing
+private `$FLEET_SECRET_DIR/project-browser` directory. Set `target` to the approved target object and
+`profiles` to the approved role-to-profile bindings. Set `generation` to a fresh random value of at least
+32 characters. Set `siteReadOnly` to true only when an app-side principal or policy enforces the read-only
+scope. Optional `expiresAt` is Unix milliseconds. An authenticated grant maps header names to environment
+variable names in `headers` and names the private credential file in `accessFile`, as above.
+`cloudflare_access` uses the two Cloudflare Access client headers and `verification_header` one provider
+header. A `none` grant uses neither field. Only owner-held executors in the declared environments receive
+the approved grant over the authenticated host channel.
+
+Install the managed grant and verify its declared target on eligible hosts. Before cutover, finish existing
+legacy browser runs and remove the legacy production bindings on those hosts. Keep the owner-created
+`<projectId>.managed` marker in the private coordinator directory through revocation and later project
+edits. This retires legacy production access independently of the editable project settings. Leave loopback
+preview bindings in place. During mixed-version rollout, old executors do ordinary work without the
+browser tool for managed projects. Managed browser use checks the current grant before each production
+request and closes the context when the grant becomes invalid. Rotation changes the grant generation.
+Use `project_readiness` to recheck, or `project_readiness {mode: "status"}` to inspect stored evidence.
+
 ### Project environment
 
 A project whose toolchain the hosts do not carry (PHP, Composer, a database) declares it once in `execution.environment`; no host installs a stack per project. The executor gives such a launch the `project-env` MCP server, which runs a rootless Podman pod outside the agent's native sandbox (the sandbox has no user namespaces, so Podman cannot start from the agent's shell):

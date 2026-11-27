@@ -141,10 +141,7 @@
         "contextFiles"
       ],
       "properties": {
-        "settings": {
-          "type": "object",
-          "additionalProperties": true
-        },
+        "settings": {"$ref": "#/$defs/ProjectBundleSettings"},
         "contextFiles": {
           "type": "array",
           "items": {
@@ -154,6 +151,14 @@
       },
       "additionalProperties": false
     },
+    "ProjectBundleSettings": {"type": "object", "additionalProperties": true, "properties": {"agentSiteAccess": {"$ref": "#/$defs/AgentSiteAccess"}}},
+    "AgentSiteAccessMode": {"type": "string", "enum": ["web", "not_a_web_app"]},
+    "AgentSiteAccessScope": {"type": "string", "enum": ["verify_read_only", "operator"]},
+    "AgentSiteAuthKind": {"type": "string", "enum": ["cloudflare_access", "verification_header", "none"]},
+    "AgentSiteProbeMethod": {"type": "string", "enum": ["GET", "HEAD", "POST"]},
+    "AgentSiteProbe": {"type": "object", "properties": {"path": {"type": "string"}, "method": {"$ref": "#/$defs/AgentSiteProbeMethod"}, "expectedStatus": {"type": "integer"}, "identityField": {"type": "string"}}, "required": ["path", "method", "expectedStatus"], "unevaluatedProperties": false},
+    "AgentSiteTarget": {"type": "object", "properties": {"id": {"type": "string"}, "origin": {"type": "string"}, "scope": {"$ref": "#/$defs/AgentSiteAccessScope"}, "roles": {"type": "array", "items": {"type": "string"}}, "authKind": {"$ref": "#/$defs/AgentSiteAuthKind"}, "expectedIdentity": {"type": "string"}, "probe": {"$ref": "#/$defs/AgentSiteProbe"}}, "required": ["id", "origin", "scope", "roles", "authKind", "probe"], "unevaluatedProperties": false},
+    "AgentSiteAccess": {"type": "object", "properties": {"mode": {"$ref": "#/$defs/AgentSiteAccessMode"}, "targets": {"type": "array", "items": {"$ref": "#/$defs/AgentSiteTarget"}}, "defaultTargetId": {"type": "string"}}, "required": ["mode"], "unevaluatedProperties": false},
     "ProjectContextFile": {"unevaluatedProperties": false, 
       "type": "object",
       "required": [

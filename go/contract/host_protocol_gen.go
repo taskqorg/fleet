@@ -581,7 +581,12 @@ func (v *BaseUpdatedCommand) Validate() error {
 type BrowserAccessReply struct {
 	ClientId     string                   `json:"clientId"`
 	ClientSecret string                   `json:"clientSecret"`
+	Generation   *string                  `json:"generation,omitempty"`
+	IssuedAt     *int64                   `json:"issuedAt,omitempty"`
+	Managed      *bool                    `json:"managed,omitempty"`
 	Production   *BrowserProductionAccess `json:"production,omitempty"`
+	TargetId     *string                  `json:"targetId,omitempty"`
+	Targets      []BrowserTargetRef       `json:"targets,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -591,12 +596,21 @@ func (v *BrowserAccessReply) Validate() error {
 			return err
 		}
 	}
+	for i := range v.Targets {
+		if err := Check(&v.Targets[i], "targets"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 type BrowserAccessRequest struct {
-	HostId    *string `json:"hostId,omitempty"`
-	ProjectId string  `json:"projectId"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Generation  *string `json:"generation,omitempty"`
+	HostId      *string `json:"hostId,omitempty"`
+	Managed     *bool   `json:"managed,omitempty"`
+	ProjectId   string  `json:"projectId"`
+	TargetId    *string `json:"targetId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -652,6 +666,31 @@ func (v *BrowserSecretHeader) Validate() error {
 	return nil
 }
 
+type BrowserTargetObservation struct {
+	CheckedAt   int64   `json:"checkedAt"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Generation  string  `json:"generation"`
+	ProjectId   string  `json:"projectId"`
+	ReasonCode  string  `json:"reasonCode"`
+	StartedAt   int64   `json:"startedAt"`
+	TargetId    string  `json:"targetId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BrowserTargetObservation) Validate() error {
+	return nil
+}
+
+type BrowserTargetRef struct {
+	ProjectId string `json:"projectId"`
+	TargetId  string `json:"targetId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BrowserTargetRef) Validate() error {
+	return nil
+}
+
 // Capability: A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.
 type Capability string
 
@@ -668,10 +707,11 @@ const (
 	CapabilityStartAccessV1       Capability = "start-access-v1"
 	CapabilityAttachments         Capability = "attachments"
 	CapabilityPublishingCiRerunV1 Capability = "publishing-ci-rerun-v1"
+	CapabilityAgentSiteAccessV1   Capability = "agent-site-access-v1"
 )
 
 // CapabilityValues lists every Capability in schema order.
-var CapabilityValues = []Capability{CapabilityCodex, CapabilityGpt61Sol, CapabilityLow, CapabilityStaticOutput, CapabilitySteer, CapabilityNativeFork, CapabilityArtifactStore, CapabilityScript, CapabilityWorkspaceKeyV1, CapabilityStartAccessV1, CapabilityAttachments, CapabilityPublishingCiRerunV1}
+var CapabilityValues = []Capability{CapabilityCodex, CapabilityGpt61Sol, CapabilityLow, CapabilityStaticOutput, CapabilitySteer, CapabilityNativeFork, CapabilityArtifactStore, CapabilityScript, CapabilityWorkspaceKeyV1, CapabilityStartAccessV1, CapabilityAttachments, CapabilityPublishingCiRerunV1, CapabilityAgentSiteAccessV1}
 
 // Valid: v is one of the schema's values.
 func (v Capability) Valid() bool {
@@ -2093,30 +2133,36 @@ func (v *PollReply) Validate() error {
 }
 
 type PollRequest struct {
-	ActiveExecutions       []string         `json:"activeExecutions"`
-	BrowserProductionReady *bool            `json:"browserProductionReady,omitempty"`
-	Capabilities           []string         `json:"capabilities"`
-	Diagnosis              *HostDiagnosis   `json:"diagnosis,omitempty"`
-	Drain                  *DrainReport     `json:"drain,omitempty"`
-	ForgeLogins            []ForgeLogin     `json:"forgeLogins,omitempty"`
-	GitConnections         []string         `json:"gitConnections"`
-	HarnessVersions        []HarnessVersion `json:"harnessVersions,omitempty"`
-	HostId                 string           `json:"hostId"`
-	Load                   *HostLoad        `json:"load,omitempty"`
-	Platform               Platform         `json:"platform"`
-	Problems               []EdgeProblem    `json:"problems"`
-	ProjectRoots           []string         `json:"projectRoots"`
-	Stores                 []StoreReport    `json:"stores"`
-	ToolVersions           []ToolVersion    `json:"toolVersions,omitempty"`
-	Update                 *UpdateResult    `json:"update,omitempty"`
-	UtcOffsetMinutes       *int64           `json:"utcOffsetMinutes,omitempty"`
-	Version                *string          `json:"version,omitempty"`
+	ActiveExecutions       []string                   `json:"activeExecutions"`
+	BrowserProductionReady *bool                      `json:"browserProductionReady,omitempty"`
+	BrowserTargets         []BrowserTargetObservation `json:"browserTargets,omitempty"`
+	Capabilities           []string                   `json:"capabilities"`
+	Diagnosis              *HostDiagnosis             `json:"diagnosis,omitempty"`
+	Drain                  *DrainReport               `json:"drain,omitempty"`
+	ForgeLogins            []ForgeLogin               `json:"forgeLogins,omitempty"`
+	GitConnections         []string                   `json:"gitConnections"`
+	HarnessVersions        []HarnessVersion           `json:"harnessVersions,omitempty"`
+	HostId                 string                     `json:"hostId"`
+	Load                   *HostLoad                  `json:"load,omitempty"`
+	Platform               Platform                   `json:"platform"`
+	Problems               []EdgeProblem              `json:"problems"`
+	ProjectRoots           []string                   `json:"projectRoots"`
+	Stores                 []StoreReport              `json:"stores"`
+	ToolVersions           []ToolVersion              `json:"toolVersions,omitempty"`
+	Update                 *UpdateResult              `json:"update,omitempty"`
+	UtcOffsetMinutes       *int64                     `json:"utcOffsetMinutes,omitempty"`
+	Version                *string                    `json:"version,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PollRequest) Validate() error {
 	if v.ActiveExecutions == nil {
 		return Missing("activeExecutions")
+	}
+	for i := range v.BrowserTargets {
+		if err := Check(&v.BrowserTargets[i], "browserTargets"); err != nil {
+			return err
+		}
 	}
 	if v.Capabilities == nil {
 		return Missing("capabilities")
@@ -2276,18 +2322,19 @@ func (v *ProjectCleanup) Validate() error {
 
 // ProjectContext: The project a command carries as payload.project: the project's frozen settings (docs/configuration.md, coordinator projectSettings) plus profileIds. The payload types keep it an open object; the executor decodes it as this type once per command.
 type ProjectContext struct {
-	Cleanup        *ProjectCleanup      `json:"cleanup,omitempty"`
-	ContextSources []json.RawMessage    `json:"contextSources,omitempty"`
-	Environments   []ProjectEnvironment `json:"environments,omitempty"`
-	Execution      *ProjectExecution    `json:"execution,omitempty"`
-	Identity       *ProjectIdentity     `json:"identity,omitempty"`
-	Integration    *ProjectIntegration  `json:"integration,omitempty"`
-	ProfileIds     map[string]string    `json:"profileIds,omitempty"`
-	Repos          []ProjectRepo        `json:"repos,omitempty"`
-	Roles          map[string]string    `json:"roles,omitempty"`
-	Scripts        *ProjectScripts      `json:"scripts,omitempty"`
-	SetupStart     *string              `json:"setupStart,omitempty"`
-	Worktree       *ProjectWorktree     `json:"worktree,omitempty"`
+	AgentSiteAccess *AgentSiteAccess     `json:"agentSiteAccess,omitempty"`
+	Cleanup         *ProjectCleanup      `json:"cleanup,omitempty"`
+	ContextSources  []json.RawMessage    `json:"contextSources,omitempty"`
+	Environments    []ProjectEnvironment `json:"environments,omitempty"`
+	Execution       *ProjectExecution    `json:"execution,omitempty"`
+	Identity        *ProjectIdentity     `json:"identity,omitempty"`
+	Integration     *ProjectIntegration  `json:"integration,omitempty"`
+	ProfileIds      map[string]string    `json:"profileIds,omitempty"`
+	Repos           []ProjectRepo        `json:"repos,omitempty"`
+	Roles           map[string]string    `json:"roles,omitempty"`
+	Scripts         *ProjectScripts      `json:"scripts,omitempty"`
+	SetupStart      *string              `json:"setupStart,omitempty"`
+	Worktree        *ProjectWorktree     `json:"worktree,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -2309,6 +2356,11 @@ func (v *ProjectContext) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectContext) Validate() error {
+	if v.AgentSiteAccess != nil {
+		if err := Check(v.AgentSiteAccess, "agentSiteAccess"); err != nil {
+			return err
+		}
+	}
 	if v.Cleanup != nil {
 		if err := Check(v.Cleanup, "cleanup"); err != nil {
 			return err

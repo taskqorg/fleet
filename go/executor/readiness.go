@@ -312,6 +312,13 @@ func (e *executor) readiness(payload any, registry string, forbidden ...[]string
 			failed := ""
 			var err error
 			if tool == "browser" {
+				if project.AgentSiteAccess != nil {
+					if !browserRuntime() {
+						failed = "coding-tool-unready: browser-runtime-unready"
+					}
+					checks = append(checks, check("tool:"+tool, name, failed))
+					continue
+				}
 				_, _, err = e.prepareBrowser(payload, home)
 				if err != nil {
 					failed = "coding-tool-unready: " + err.Error()

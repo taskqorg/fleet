@@ -397,7 +397,7 @@ function ProjectSetup(props: { projectId: string; name: string; raw?: Record<str
   const [editing, setEditing] = createSignal(false);
   const doc = useOp('project_context', () => ({ projectId: props.projectId }));
   const view = useProjectView(() => props.projectId);
-  const settings = createMemo(() => (isRec(doc.data?.settings) ? doc.data.settings : {}));
+  const settings = createMemo<Record<string, unknown>>(() => (isRec(doc.data?.settings) ? doc.data.settings : {}));
   const ready = createMemo(() => (props.raw ? readiness(props.raw) : null));
   const about = createMemo(() => {
     const files = Array.isArray(doc.data?.context) ? doc.data.context : [];
@@ -538,8 +538,8 @@ function ProjectSettingsDiff(props: { reply: ProjectDetailData | null; name: str
   const computed = createMemo(() => {
     const reply = props.reply;
     if (!reply) return { diffs: [] as DiffField[], inherited: [] as DiffField[], unknownKeys: [] as string[] };
-    const resolved = isRec(reply.settings) ? reply.settings : {};
-    const authored = isRec(reply.content?.settings) ? reply.content.settings : {};
+    const resolved: Record<string, unknown> = isRec(reply.settings) ? reply.settings : {};
+    const authored: Record<string, unknown> = isRec(reply.content?.settings) ? reply.content.settings : {};
     const get = (k: string, sub?: string): unknown => {
       const top = k in resolved ? resolved[k] : authored[k];
       if (!sub) return top;

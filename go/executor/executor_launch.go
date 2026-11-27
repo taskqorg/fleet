@@ -119,6 +119,9 @@ func (e *executor) run(c M) error {
 	case contract.CommandKindReadiness:
 		data := e.readiness(payload, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
 		ok := data.Ok
+		req, _ := contractOf[contract.ProjectPayload](payload)
+		project, _ := projectContext(req.Project)
+		e.recheckProjectSites(payload, project.AgentSiteAccess)
 		if err := e.event(cmd, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err
 		}
@@ -392,7 +395,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	for _, tool := range requirements.Tools {
 		var err error
 		if tool == "browser" {
-			browserCfg, browserAccess, err = e.prepareBrowser(p, commandHome(cmd))
+			browserCfg, browserAccess, err = e.prepareExecutionBrowser(p, execution, commandHome(cmd), project.AgentSiteAccess != nil)
 			if err != nil {
 				return fail(1, "coding-tool-unready: browser ("+err.Error()+")")
 			}

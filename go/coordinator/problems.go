@@ -320,7 +320,8 @@ func problemsAdopt(q *Request, botID string, d *contract.BotDuty) error {
 func init() {
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "problems-watch", envMs("FLEET_PROBLEMS_WATCH_TICK_MS", 60_000), func(ctx context.Context) error {
-			return a.store.Write(ctx, nil, []string{"problems:watch"}, problemsWatch)
+			watchErr := a.store.Write(ctx, nil, []string{"problems:watch"}, problemsWatch)
+			return errors.Join(watchErr, a.reconcileProjectSiteProblems(ctx))
 		})
 	})
 	op("problems_list", problemsList)

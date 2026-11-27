@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
+const net = require('node:net');
 const cfg = JSON.parse(process.argv[1]);
 const {chromium} = require(cfg.module);
 let browser, context, page, launched;
@@ -32,7 +33,7 @@ function readAuthority(grant) {
   readinessProbe = legacyFleet
     ? {path:'/api/ops/me',method:'POST',identityField:'email',expectedIdentity:'site-agents'}
     : access.production.readinessProbe;
-  if (!headers.length || !readinessProbe) throw Error('browser authority unavailable');
+  if ((!grant.managed && !headers.length) || !readinessProbe) throw Error('browser authority unavailable');
   for (const {name,value} of headers) {
     if (typeof value !== 'string' || !value || /[\u0000-\u001f\u007f]/.test(value)) throw Error('browser authority unavailable');
     authority.set(name.toLowerCase(), {name,value});
@@ -58,12 +59,40 @@ function requestOrigin(url) {
   } catch {}
 }
 function permitted(url) { return allowed.has(requestOrigin(url)); }
-let control, primaryTarget, profileDir, initialResolve, initialReject, closing, nextCommand = 0;
+let control, primaryTarget, primarySession, profileDir, initialResolve, initialReject, closing, nextCommand = 0;
 let usedProduction = false;
+let productionContext = false;
+let generationCheck, generationTimer;
+
+function ownerGeneration() {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(process.env.FLEET_MCP_OWNER);
+    let response = '';
+    socket.setTimeout(timeout, () => socket.destroy(Error('browser authority check timed out')));
+    socket.on('connect', () => socket.write(JSON.stringify({
+      action:'browser-generation', generation:process.env.FLEET_MCP_GENERATION
+    })+'\n'));
+    socket.on('data', chunk => { response += chunk; });
+    socket.on('error', reject);
+    socket.on('close', () => {
+      try { resolve(JSON.parse(response).registered === true); }
+      catch { resolve(false); }
+    });
+  });
+}
+async function requireGeneration() {
+  if(!cfg.checkGeneration)return;
+  generationCheck ??= ownerGeneration().catch(()=>false).finally(()=>{ generationCheck=undefined; });
+  if(!await generationCheck) {
+    failClosed();
+    throw Error('browser authority changed');
+  }
+}
 const pending = new Map();
 async function close() {
   if(closing)return closing;
   closing=(async()=>{
+    clearInterval(generationTimer);
     const owned=context, child=launched, directory=profileDir, socket=control;
     browser=context=page=launched=profileDir=undefined;
     for(const {reject} of pending.values())reject(Error('browser-closed'));
@@ -103,8 +132,9 @@ async function paused(sessionId,event) {
   if(closing)return; // Leave requests paused until the owned browser exits.
   const request=event.request;
   const origin = requestOrigin(request.url);
-  if(!allowed.has(origin)) return targetSend(sessionId,'Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});
   const production = origin === cfg.production?.origin;
+  if(!allowed.has(origin) || (cfg.production?.managed && production !== productionContext))
+    return targetSend(sessionId,'Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});
   const privateHeaders = [...authority.values()];
   const containsAuthority = (name,value) => privateHeaders.some(secret => name.includes(secret.value) || String(value).includes(secret.value));
   if(event.responseStatusCode || event.responseErrorReason) {
@@ -126,6 +156,8 @@ async function paused(sessionId,event) {
     })
     .map(([name,value])=>({name,value:String(value)}));
   if(production) {
+    await requireGeneration();
+    if(closing)return;
     usedProduction = true;
     requestHeaders.push(...privateHeaders);
   }
@@ -139,6 +171,7 @@ async function attached(event) {
   if(targetInfo.type==='page') {
     if(primaryTarget) {await targetSend(null,'Target.closeTarget',{targetId:targetInfo.targetId});return;}
     primaryTarget=targetInfo.targetId;
+    primarySession=sessionId;
   }
   // Children (including out-of-process frames/workers) must be intercepted before resuming.
   await targetSend(sessionId,'Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
@@ -163,9 +196,17 @@ function failClosed() {
   launched?.kill('SIGKILL');
   close().catch(()=>{});
 }
-async function open() {
+async function open(production = false) {
+  if(closing)await closing;
+  if(browser && cfg.production?.managed && production !== productionContext)await close();
   if(browser)return;
-  primaryTarget=undefined;
+  productionContext=production;
+  if(production && cfg.checkGeneration) {
+    await requireGeneration();
+    // Revoke an idle open context as well as one sending requests.
+    generationTimer=setInterval(()=>{requireGeneration().catch(()=>{});},cfg.generationCheckMs);
+  }
+  primaryTarget=primarySession=undefined;
   usedProduction=false;
   profileDir=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'fleet-browser-'));
   const owned=Boolean(process.env.FLEET_MCP_GENERATION);
@@ -302,10 +343,12 @@ async function call(req) {
   const {name,arguments:a={}}=req.params;
   if(!tools.some(t=>t.name===name)) throw Error('unknown tool');
   if(name==='close') { await close(); return {content:[{type:'text',text:'Browser closed'}]}; }
+  if(productionContext && browser)await requireGeneration();
   if(name==='emulate') return emulate(a);
   if(name==='screenshot') return screenshot(page,a);
   if(name==='navigate' && !permitted(a.url)) throw Error('origin denied');
-  await open();
+  const production = name === 'navigate' ? requestOrigin(a.url) === cfg.production?.origin : productionContext;
+  await open(production);
   for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
   const current = page;
   if(name!=='navigate') requireScopedPage(current);
@@ -319,35 +362,62 @@ async function call(req) {
   requireScopedPage(current);
   const title = await current.title();
   const body = await current.locator('body').innerText();
+  if(production)await requireGeneration();
   for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
   requireScopedPage(current);
   return {content:[{type:'text',text:redactedJSON({result:evaluated,url:current.url(),title,text:body})}]};
 }
+async function probeInPage({origin, readinessProbe, legacyFleet, reportReason}) {
+  const outcome = reason => reportReason ? reason : reason === 'verified';
+  if (location.origin !== origin) return outcome('probe_failed');
+  const {path,method,status,identityField,expectedIdentity} = readinessProbe;
+  const url = new URL(path, origin);
+  if (url.origin !== origin) return outcome('probe_failed');
+  const options = legacyFleet ? {method} : {method,mode:'same-origin',redirect:'error',cache:'no-store'};
+  if (method === 'POST') {
+    options.headers = {'Content-Type':'application/json'};
+    options.body = '{}';
+  }
+  const response = await fetch(url, options);
+  if (new URL(response.url).origin !== origin) return outcome('probe_failed');
+  if (identityField && (response.status === 401 || response.status === 403)) return outcome('auth_rejected');
+  if (status ? response.status !== status : !response.ok) return outcome('unexpected_status');
+  if (!identityField) return outcome('verified');
+  const body = await response.json().catch(()=>null);
+  const matched = body !== null && typeof body === 'object' && !Array.isArray(body) &&
+    Object.hasOwn(body,identityField) && body[identityField] === expectedIdentity;
+  return outcome(matched ? 'verified' : 'identity_mismatch');
+}
 async function checkProduction(grant) {
   await page.goto(grant.origin,{waitUntil:'domcontentloaded'});
   if (requestOrigin(page.url()) !== grant.origin) throw Error('browser production origin denied');
-  const ready = await page.evaluate(async ({origin, readinessProbe, legacyFleet}) => {
-    if (location.origin !== origin) return false;
-    const {path,method,status,identityField,expectedIdentity} = readinessProbe;
-    const url = new URL(path, origin);
-    if (url.origin !== origin) return false;
-    const options = legacyFleet ? {method} : {method,mode:'same-origin',redirect:'error',cache:'no-store'};
-    if (method === 'POST') {
-      options.headers = {'Content-Type':'application/json'};
-      options.body = '{}';
+  const args={origin:grant.origin,readinessProbe,legacyFleet,reportReason:grant.managed};
+  let result;
+  if(grant.managed) {
+    // Use the browser's fetch from a world with its own builtins. Site scripts cannot replace the
+    // probe's fetch, tune credentials, or supply a fabricated identity through the page's JS state.
+    const {frameTree} = await targetSend(primarySession,'Page.getFrameTree');
+    const {executionContextId} = await targetSend(primarySession,'Page.createIsolatedWorld',{
+      frameId:frameTree.frame.id,worldName:'fleet-site-access'
+    });
+    const evaluated = await targetSend(primarySession,'Runtime.evaluate',{
+      expression:'('+probeInPage.toString()+')('+JSON.stringify(args)+')',
+      contextId:executionContextId,awaitPromise:true,returnByValue:true
+    });
+    result = evaluated.exceptionDetails ? 'probe_failed' : evaluated.result?.value;
+  } else {
+    result = await page.evaluate(probeInPage,args);
+  }
+  if (result !== (grant.managed ? 'verified' : true)) {
+    if (grant.managed && ['auth_rejected','identity_mismatch','unexpected_status'].includes(result)) {
+      process.stdout.write(result+'\n');
     }
-    const response = await fetch(url, options);
-    if (new URL(response.url).origin !== origin || (status ? response.status !== status : !response.ok)) return false;
-    if (!identityField) return true;
-    const body = await response.json();
-    return body !== null && typeof body === 'object' && !Array.isArray(body) &&
-      Object.hasOwn(body,identityField) && body[identityField] === expectedIdentity;
-  }, {origin:grant.origin,readinessProbe,legacyFleet});
-  if (ready !== true) throw Error('browser production unready');
+    throw Error('browser production unready');
+  }
 }
 (async()=>{
  if(cfg.production)readAuthority(cfg.production);
- if(process.argv[2]==='check') {try {await open();await page.setContent('<title>Fleet readiness</title>');if(await page.title()!=='Fleet readiness')throw Error();
+ if(process.argv[2]==='check') {try {await open(Boolean(cfg.production));await page.setContent('<title>Fleet readiness</title>');if(await page.title()!=='Fleet readiness')throw Error();
     if(cfg.production)await bounded(checkProduction(cfg.production));
   } finally{await close();}return;}
  const input=readline.createInterface({input:process.stdin});
