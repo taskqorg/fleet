@@ -1,74 +1,82 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+	"time"
 
 	"fleet/contract"
 )
 
 const (
 	ciLogLimit      = 16 * 1024
+	ciLogScanLimit  = 8 * 1024 * 1024
 	ciMetadataLimit = 256 * 1024
 )
 
-type ciLogsArgs struct {
-	ExpectedHeadSha string `json:"expectedHeadSha"`
-	JobID           int64  `json:"jobId"`
-}
+type ciGet func(target string, authenticated bool) (*http.Response, error)
 
 type ciJob struct {
-	ID         int64  `json:"id"`
-	RunID      int64  `json:"run_id"`
-	RunURL     string `json:"run_url"`
-	HeadSHA    string `json:"head_sha"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
-	Commit     struct {
+	ID            int64                             `json:"id"`
+	Name          string                            `json:"name"`
+	RunID         int64                             `json:"run_id"`
+	RunURL        string                            `json:"run_url"`
+	RunAttempt    int64                             `json:"run_attempt"`
+	WorkflowName  string                            `json:"workflow_name"`
+	CheckRunURL   string                            `json:"check_run_url"`
+	HeadSHA       string                            `json:"head_sha"`
+	HeadBranch    string                            `json:"head_branch"`
+	Status        string                            `json:"status"`
+	Conclusion    string                            `json:"conclusion"`
+	Steps         []contract.PublishingCIFailedStep `json:"steps"`
+	Ref           string                            `json:"ref"`
+	Tag           bool                              `json:"tag"`
+	Stage         string                            `json:"stage"`
+	FailureReason string                            `json:"failure_reason"`
+	Commit        struct {
 		ID string `json:"id"`
 	} `json:"commit"`
+	Pipeline struct {
+		ID  int64  `json:"id"`
+		SHA string `json:"sha"`
+	} `json:"pipeline"`
 }
-
-type ciLogExcerpt struct {
-	Excerpt   string `json:"excerpt"`
-	Truncated bool   `json:"truncated"`
-}
-
-var errCILogsUnavailable = errors.New("CI job log unavailable")
 
 func ciLogsCall(arguments any, ctx forgeContext) (any, error) {
 	keys, _ := jClone(arguments).(M)
-	args := typed[ciLogsArgs](keys)
-	if len(keys) != 2 || args.JobID <= 0 || !validForgeHex40(args.ExpectedHeadSha) {
+	args := typed[contract.PublishingCILogsRequest](keys)
+	if len(keys) != 2 || args.JobId <= 0 || !validForgeHex40(args.ExpectedHeadSha) {
 		return nil, errors.New("ci_logs requires a positive jobId and a full 40-character lowercase expectedHeadSha")
+	}
+	if ctx.SkipWorktreeHead || ctx.Branch == "" || ctx.Branch != ctx.SessionBranch || ctx.Branch == "main" || ctx.Branch == strings.TrimPrefix(ctx.Base, "refs/heads/") {
+		return nil, errors.New("ci_logs requires a granted execution branch")
 	}
 	ref, _, err := validatePublishingContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if ctx.Branch == "" {
-		return nil, errors.New("ci_logs requires a granted execution branch")
-	}
 	token := forgeCredential(ctx, ref.Provider, ref.Host)
 	if token == "" {
 		return nil, errors.New("forge-credential-unavailable")
 	}
-	excerpt, err := readCILogs(ref, ctx.Branch, args, token, httpClient(probeWait).Do)
+	reply, err := readCILogs(ref, ctx.Branch, args, token, httpClient(probeWait).Do)
 	if err != nil {
 		return nil, err
 	}
-	return mcpText(excerpt, &no), nil
+	return mcpText(reply, &no), nil
 }
 
-func readCILogs(ref contract.RepoRef, branch string, args ciLogsArgs, token string, do func(*http.Request) (*http.Response, error)) (ciLogExcerpt, error) {
+func readCILogs(ref contract.RepoRef, branch string, args contract.PublishingCILogsRequest, token string, do func(*http.Request) (*http.Response, error)) (contract.PublishingCILogsReply, error) {
+	var reply contract.PublishingCILogsReply
 	base := "https://" + ref.Host + "/api/v3/repos/" + ref.Slug
 	jobPath, branchPath, suffix := "/actions/jobs/", "/branches/", "/logs"
-	if ref.Provider == "gitlab" {
+	gitlab := ref.Provider == "gitlab"
+	if gitlab {
 		base = "https://" + ref.Host + "/api/v4/projects/" + url.PathEscape(ref.Slug)
 		jobPath, branchPath, suffix = "/jobs/", "/repository/branches/", "/trace"
 	} else if ref.Host == "github.com" {
@@ -76,139 +84,253 @@ func readCILogs(ref contract.RepoRef, branch string, args ciLogsArgs, token stri
 	} else if strings.HasSuffix(ref.Host, ".ghe.com") {
 		base = "https://api." + ref.Host + "/repos/" + ref.Slug
 	}
-
 	get := func(target string, authenticated bool) (*http.Response, error) {
 		req, err := http.NewRequest(http.MethodGet, target, nil)
 		if err != nil {
-			return nil, errCILogsUnavailable
+			return nil, err
 		}
 		if authenticated {
-			if ref.Provider == "gitlab" {
+			if gitlab {
 				req.Header.Set("Private-Token", token)
 			} else {
 				req.Header.Set("Authorization", "Bearer "+token)
 				req.Header.Set("Accept", "application/vnd.github+json")
 			}
 		}
-		resp, err := do(req)
-		if err != nil {
-			return nil, errCILogsUnavailable
-		}
-		return resp, nil
-	}
-	metadata := func(target string) ([]byte, error) {
-		resp, err := get(target, true)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, errors.New("CI job metadata unavailable")
-		}
-		b, err := io.ReadAll(io.LimitReader(resp.Body, ciMetadataLimit+1))
-		if err != nil || len(b) > ciMetadataLimit {
-			return nil, errors.New("CI job metadata unavailable")
-		}
-		return b, nil
+		return do(req)
 	}
 
-	jobURL := base + jobPath + strconv.FormatInt(args.JobID, 10)
-	raw, err := metadata(jobURL)
-	if err != nil {
-		return ciLogExcerpt{}, err
+	jobID := strconv.FormatInt(args.JobId, 10)
+	jobURL := base + jobPath + jobID
+	var job ciJob
+	if _, ok := ciMetadata(get, jobURL, &job); !ok || job.ID != args.JobId {
+		return reply, errors.New("CI job identity could not be verified")
 	}
-	job := typedRaw[ciJob](raw)
-	if job.ID != args.JobID {
-		return ciLogExcerpt{}, errors.New("CI job identity could not be verified")
-	}
-	if ref.Provider == "gitlab" {
-		// Both GitLab job endpoints are project-scoped and metadata redirects are refused.
-		if job.Commit.ID != args.ExpectedHeadSha || job.Status != "failed" {
-			return ciLogExcerpt{}, errors.New("CI job must have failed on expectedHeadSha")
+	runID := strconv.FormatInt(job.RunID, 10)
+	if gitlab {
+		// GitLab scopes the job and trace endpoints to the project.
+		if job.Commit.ID != args.ExpectedHeadSha || (job.Pipeline.SHA != "" && job.Pipeline.SHA != args.ExpectedHeadSha) ||
+			job.Ref != branch || job.Tag || job.Status != "failed" {
+			return reply, errors.New("CI job must have failed on the granted branch and expectedHeadSha")
 		}
 	} else {
-		runURL := base + "/actions/runs/" + strconv.FormatInt(job.RunID, 10)
+		runURL := base + "/actions/runs/" + runID
 		if job.RunID <= 0 || !strings.EqualFold(job.RunURL, runURL) {
-			return ciLogExcerpt{}, errors.New("CI job does not belong to the granted repository")
+			return reply, errors.New("CI job does not belong to the granted repository")
 		}
-		if job.HeadSHA != args.ExpectedHeadSha || job.Status != "completed" || job.Conclusion != "failure" {
-			return ciLogExcerpt{}, errors.New("CI job must have failed on expectedHeadSha")
+		if job.HeadSHA != args.ExpectedHeadSha || (job.HeadBranch != "" && job.HeadBranch != branch) ||
+			job.Status != "completed" || job.Conclusion != "failure" {
+			return reply, errors.New("CI job must have failed on the granted branch and expectedHeadSha")
+		}
+		var run struct {
+			ID             int64  `json:"id"`
+			HeadSHA        string `json:"head_sha"`
+			HeadBranch     string `json:"head_branch"`
+			HeadRepository *struct {
+				FullName string `json:"full_name"`
+			} `json:"head_repository"`
+		}
+		if _, ok := ciMetadata(get, runURL, &run); !ok || run.ID != job.RunID ||
+			run.HeadSHA != args.ExpectedHeadSha || run.HeadBranch != branch || run.HeadRepository == nil ||
+			!strings.EqualFold(run.HeadRepository.FullName, ref.Slug) {
+			return reply, errors.New("CI workflow source could not be verified for the granted repository, branch and head")
 		}
 	}
 
-	raw, err = metadata(base + branchPath + url.PathEscape(branch))
-	if err != nil {
-		return ciLogExcerpt{}, err
-	}
-	head := typedRaw[struct {
+	var head struct {
 		Name   string `json:"name"`
 		Commit struct {
 			ID  string `json:"id"`
 			SHA string `json:"sha"`
 		} `json:"commit"`
-	}](raw)
+	}
+	_, headOK := ciMetadata(get, base+branchPath+url.PathEscape(branch), &head)
 	headSHA := head.Commit.SHA
-	if ref.Provider == "gitlab" {
+	if gitlab {
 		headSHA = head.Commit.ID
 	}
-	if head.Name != branch || headSHA != args.ExpectedHeadSha {
-		return ciLogExcerpt{}, errors.New("execution branch head changed; inspect status before reading CI logs")
+	if !headOK || head.Name != branch || headSHA != args.ExpectedHeadSha {
+		return reply, errors.New("execution branch head could not be verified; inspect status before reading CI logs")
 	}
 
-	resp, err := get(jobURL+suffix, true)
-	if err != nil {
-		return ciLogExcerpt{}, err
+	repoURL := "https://" + ref.Host + "/" + ref.Slug
+	reply = contract.PublishingCILogsReply{
+		Provider: contract.PublishingProvider(ref.Provider), Host: ref.Host, Repo: ref.Slug, Branch: branch,
+		HeadSha: headSHA, JobId: job.ID, ObservedAt: time.Now().UTC().Format(time.RFC3339),
+		JobName: ciMetadataText(job.Name, token),
+		Windows: []contract.PublishingCIWindow{},
 	}
-	if ref.Provider == "github" && resp.StatusCode == http.StatusFound {
-		// The authenticated API grants one signed download. The fresh GET carries no API credential.
-		location, err := url.Parse(resp.Header.Get("Location"))
-		resp.Body.Close()
-		if err != nil || location.Scheme != "https" || location.Hostname() == "" || location.User != nil {
-			return ciLogExcerpt{}, errCILogsUnavailable
+	if gitlab {
+		reply.JobUrl = repoURL + "/-/jobs/" + jobID
+		reply.PipelineId = ciPositive(job.Pipeline.ID)
+		reply.Stage = ciMetadataText(job.Stage, token)
+		reply.FailureReason = ciMetadataText(job.FailureReason, token)
+	} else {
+		reply.JobUrl = repoURL + "/actions/runs/" + runID + "/job/" + jobID
+		reply.RunId = &job.RunID
+		reply.Attempt = ciPositive(job.RunAttempt)
+		reply.WorkflowName = ciMetadataText(job.WorkflowName, token)
+		var omitted int64
+		for _, step := range job.Steps {
+			if step.Conclusion != "failure" {
+				continue
+			}
+			if len(reply.FailedSteps) == 12 {
+				omitted++
+				continue
+			}
+			step.Name = ciClipPrefix(sanitizeCIText(step.Name, token, false), 160)
+			reply.FailedSteps = append(reply.FailedSteps, step)
 		}
-		resp, err = get(location.String(), false)
-		if err != nil {
-			return ciLogExcerpt{}, err
-		}
+		reply.OmittedFailedSteps = ciPositive(omitted)
+	}
+
+	raw, status := downloadCITrace(get, jobURL+suffix, ref)
+	reply.ScanStatus, reply.ScannedBytes = status, int64(len(raw))
+	complete := status == contract.PublishingCIScanStatusComplete
+	text := sanitizeCIText(string(raw), token, !complete)
+	windows, omitted, tail := selectCITrace(text, gitlab)
+	if !gitlab && (!complete || !hasCIPrimaryWindow(windows)) {
+		annotations, status := readCIAnnotations(get, base, job.CheckRunURL, token)
+		reply.AnnotationStatus = &status
+		windows = append(windows, annotations...)
+	}
+	if !complete {
+		tail.Partial = &yes
+	}
+	fillCIExcerpt(&reply, windows, omitted, tail, len(text) <= ciTailLimit)
+	// Never return a credential even if a pathological value matches a fixed field or sanitized output.
+	if encoded := enc(reply); len(encoded) > ciLogLimit || (token != "" && strings.Contains(encoded, token)) {
+		return contract.PublishingCILogsReply{}, errors.New("CI diagnostics could not be returned safely")
+	}
+	return reply, nil
+}
+
+// ciMetadata decodes exactly one bounded response from a caller-constructed URL.
+func ciMetadata(get ciGet, target string, dest any) (more bool, ok bool) {
+	resp, err := get(target, true)
+	if err != nil {
+		return false, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ciLogExcerpt{}, errCILogsUnavailable
+		return false, false
 	}
-	raw, err = io.ReadAll(io.LimitReader(resp.Body, ciLogLimit+1))
-	if err != nil {
-		return ciLogExcerpt{}, errCILogsUnavailable
-	}
-	return redactCIExcerpt(raw, token), nil
+	body, err := io.ReadAll(io.LimitReader(resp.Body, ciMetadataLimit+1))
+	return strings.Contains(resp.Header.Get("Link"), `rel="next"`),
+		err == nil && len(body) <= ciMetadataLimit && json.Unmarshal(body, dest) == nil
 }
 
-func redactCIExcerpt(raw []byte, token string) ciLogExcerpt {
-	truncated := len(raw) > ciLogLimit
-	if truncated {
-		raw = raw[:ciLogLimit]
+func ciPositive(n int64) *int64 {
+	if n <= 0 {
+		return nil
 	}
-	parts := strings.Split(strings.ToValidUTF8(string(raw), ""), token)
-	if truncated {
-		// Only the text after the last full match can contain a split credential.
-		tail := parts[len(parts)-1]
-		for n := min(len(tail), len(token)-1); n > 0; n-- {
-			if strings.HasSuffix(tail, token[:n]) {
-				parts[len(parts)-1] = tail[:len(tail)-n] + "[REDACTED]"
-				break
-			}
+	return &n
+}
+
+func readCIAnnotations(get ciGet, base, checkURL, token string) ([]ciWindow, contract.PublishingCIAnnotationStatus) {
+	prefix := base + "/check-runs/"
+	if len(checkURL) <= len(prefix) || !strings.EqualFold(checkURL[:len(prefix)], prefix) {
+		return nil, contract.PublishingCIAnnotationStatusUnavailable
+	}
+	id, err := strconv.ParseInt(checkURL[len(prefix):], 10, 64)
+	if err != nil || id <= 0 {
+		return nil, contract.PublishingCIAnnotationStatusUnavailable
+	}
+	var entries []struct {
+		Path  string `json:"path"`
+		Start int64  `json:"start_line"`
+		End   int64  `json:"end_line"`
+		Level string `json:"annotation_level"`
+		Text  string `json:"message"`
+	}
+	more, ok := ciMetadata(get, prefix+strconv.FormatInt(id, 10)+"/annotations?per_page=30", &entries)
+	if !ok {
+		return nil, contract.PublishingCIAnnotationStatusUnavailable
+	}
+	status := contract.PublishingCIAnnotationStatusComplete
+	if more {
+		status = contract.PublishingCIAnnotationStatusPartial
+	}
+	var windows []ciWindow
+	for _, entry := range entries {
+		if entry.Level != "failure" {
+			continue
+		}
+		text := sanitizeCIText(entry.Text, token, false)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		window := ciWindow{
+			PublishingCIWindow: contract.PublishingCIWindow{
+				Source: contract.PublishingCIWindowSourceAnnotation, StartLine: ciPositive(entry.Start),
+				EndLine: ciPositive(entry.End), Path: ciMetadataText(entry.Path, token),
+			},
+			text: ciClipPrefix(text, ciWindowLimit), priority: 2,
+		}
+		if len(window.text) != len(text) {
+			window.Partial = &yes
+		}
+		windows = append(windows, window)
+	}
+	return windows, status
+}
+
+func downloadCITrace(get ciGet, target string, ref contract.RepoRef) ([]byte, contract.PublishingCIScanStatus) {
+	resp, err := get(target, true)
+	if err != nil {
+		return nil, contract.PublishingCIScanStatusUnavailable
+	}
+	if ref.Provider == "github" && resp.StatusCode == http.StatusFound {
+		// One signed storage hop, with no API headers. The shared HTTP client refuses subsequent redirects.
+		location, err := url.Parse(resp.Header.Get("Location"))
+		resp.Body.Close()
+		if err != nil || !ciSignedDownloadAllowed(location, ref.Host) {
+			return nil, contract.PublishingCIScanStatusUnsupportedRedirect
+		}
+		resp, err = get(location.String(), false)
+		if err != nil {
+			return nil, contract.PublishingCIScanStatusUnavailable
 		}
 	}
-	excerpt := strings.Join(parts, "[REDACTED]")
-	if strings.Contains(excerpt, token) {
-		// A credential can itself match text created by the replacement.
-		return ciLogExcerpt{Truncated: true}
-	}
-	if len(excerpt) > ciLogLimit {
-		end := ciLogLimit
-		for !utf8.RuneStart(excerpt[end]) {
-			end--
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, ciLogScanLimit+1))
+		switch {
+		case len(raw) > ciLogScanLimit:
+			return raw[:ciLogScanLimit], contract.PublishingCIScanStatusScanLimit
+		case err != nil:
+			return raw, contract.PublishingCIScanStatusInterrupted
+		case len(raw) == 0:
+			return nil, contract.PublishingCIScanStatusEmpty
+		default:
+			return raw, contract.PublishingCIScanStatusComplete
 		}
-		excerpt, truncated = excerpt[:end], true
+	case http.StatusNotFound, http.StatusGone:
+		return nil, contract.PublishingCIScanStatusMissing
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, contract.PublishingCIScanStatusDenied
+	case http.StatusTooManyRequests:
+		return nil, contract.PublishingCIScanStatusRateLimited
 	}
-	return ciLogExcerpt{Excerpt: excerpt, Truncated: truncated}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, contract.PublishingCIScanStatusUnsupportedRedirect
+	}
+	return nil, contract.PublishingCIScanStatusUnavailable
+}
+
+func ciSignedDownloadAllowed(location *url.URL, forgeHost string) bool {
+	if location.Scheme != "https" || location.User != nil || location.Fragment != "" ||
+		(location.Port() != "" && location.Port() != "443") {
+		return false
+	}
+	host := strings.ToLower(location.Hostname())
+	if host == forgeHost {
+		return true // Enterprise Server may deliver the download from its own origin.
+	}
+	return (forgeHost == "github.com" || strings.HasSuffix(forgeHost, ".ghe.com")) &&
+		(strings.HasSuffix(host, ".actions.githubusercontent.com") ||
+			(strings.HasPrefix(host, "productionresultssa") && strings.Count(host, ".") == 4 &&
+				strings.HasSuffix(host, ".blob.core.windows.net")))
 }

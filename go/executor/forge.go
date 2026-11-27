@@ -235,7 +235,7 @@ func forgeCredential(ctx forgeContext, provider, host string) string {
 
 var ciLogsTool = M{
 	"name":        "ci_logs",
-	"description": "Read a bounded, credential-redacted excerpt from a failed CI job on the granted execution branch's live head.",
+	"description": "Read failed-job metadata, credential-redacted error windows, and the tail for a CI job on the granted execution branch's live head. The reply reports scan completeness and omitted evidence.",
 	"inputSchema": M{
 		"type":                 "object",
 		"additionalProperties": false,

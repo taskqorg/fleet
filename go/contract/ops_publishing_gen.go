@@ -27,6 +27,182 @@ func (v MergeMethod) Valid() bool {
 	return false
 }
 
+type PublishingCIAnnotationStatus string
+
+const (
+	PublishingCIAnnotationStatusComplete    PublishingCIAnnotationStatus = "complete"
+	PublishingCIAnnotationStatusPartial     PublishingCIAnnotationStatus = "partial"
+	PublishingCIAnnotationStatusUnavailable PublishingCIAnnotationStatus = "unavailable"
+)
+
+// PublishingCIAnnotationStatusValues lists every PublishingCIAnnotationStatus in schema order.
+var PublishingCIAnnotationStatusValues = []PublishingCIAnnotationStatus{PublishingCIAnnotationStatusComplete, PublishingCIAnnotationStatusPartial, PublishingCIAnnotationStatusUnavailable}
+
+// Valid: v is one of the schema's values.
+func (v PublishingCIAnnotationStatus) Valid() bool {
+	for _, x := range PublishingCIAnnotationStatusValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PublishingCIFailedStep struct {
+	Conclusion string `json:"conclusion"`
+	Name       string `json:"name"`
+	Number     int64  `json:"number"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCIFailedStep) Validate() error {
+	return nil
+}
+
+// PublishingCILogsReply: Host MCP reply JSON, at most 16384 bytes. Complete scan means EOF. A tail on an incomplete scan points to the end of the scanned prefix. Omitted windows counts known candidates only. Absent attempt means unknown; GitLab jobId identifies the individual retry.
+type PublishingCILogsReply struct {
+	AnnotationStatus   *PublishingCIAnnotationStatus `json:"annotationStatus,omitempty"`
+	Attempt            *int64                        `json:"attempt,omitempty"`
+	Branch             string                        `json:"branch"`
+	Excerpt            string                        `json:"excerpt"`
+	FailedSteps        []PublishingCIFailedStep      `json:"failedSteps,omitempty"`
+	FailureReason      *string                       `json:"failureReason,omitempty"`
+	HeadSha            string                        `json:"headSha"`
+	Host               string                        `json:"host"`
+	JobId              int64                         `json:"jobId"`
+	JobName            *string                       `json:"jobName,omitempty"`
+	JobUrl             string                        `json:"jobUrl"`
+	ObservedAt         string                        `json:"observedAt"`
+	OmittedFailedSteps *int64                        `json:"omittedFailedSteps,omitempty"`
+	OmittedWindows     int64                         `json:"omittedWindows"`
+	PipelineId         *int64                        `json:"pipelineId,omitempty"`
+	Provider           PublishingProvider            `json:"provider"`
+	Repo               string                        `json:"repo"`
+	RunId              *int64                        `json:"runId,omitempty"`
+	ScanStatus         PublishingCIScanStatus        `json:"scanStatus"`
+	ScannedBytes       int64                         `json:"scannedBytes"`
+	Stage              *string                       `json:"stage,omitempty"`
+	Tail               *PublishingCIWindow           `json:"tail,omitempty"`
+	Truncated          bool                          `json:"truncated"`
+	Windows            []PublishingCIWindow          `json:"windows"`
+	WorkflowName       *string                       `json:"workflowName,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCILogsReply) Validate() error {
+	if v.AnnotationStatus != nil {
+		if err := Check(v.AnnotationStatus, "annotationStatus"); err != nil {
+			return err
+		}
+	}
+	for i := range v.FailedSteps {
+		if err := Check(&v.FailedSteps[i], "failedSteps"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Provider, "provider"); err != nil {
+		return err
+	}
+	if err := Check(&v.ScanStatus, "scanStatus"); err != nil {
+		return err
+	}
+	if v.Tail != nil {
+		if err := Check(v.Tail, "tail"); err != nil {
+			return err
+		}
+	}
+	if v.Windows == nil {
+		return Missing("windows")
+	}
+	for i := range v.Windows {
+		if err := Check(&v.Windows[i], "windows"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PublishingCILogsRequest: Host MCP ci_logs on project-publishing and project-forge. Project, repository and execution branch come from the grant.
+type PublishingCILogsRequest struct {
+	ExpectedHeadSha string `json:"expectedHeadSha"`
+	JobId           int64  `json:"jobId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCILogsRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*PublishingCILogsRequest) Closed() bool { return true }
+
+type PublishingCIScanStatus string
+
+const (
+	PublishingCIScanStatusComplete            PublishingCIScanStatus = "complete"
+	PublishingCIScanStatusScanLimit           PublishingCIScanStatus = "scan_limit"
+	PublishingCIScanStatusInterrupted         PublishingCIScanStatus = "interrupted"
+	PublishingCIScanStatusMissing             PublishingCIScanStatus = "missing"
+	PublishingCIScanStatusEmpty               PublishingCIScanStatus = "empty"
+	PublishingCIScanStatusDenied              PublishingCIScanStatus = "denied"
+	PublishingCIScanStatusRateLimited         PublishingCIScanStatus = "rate_limited"
+	PublishingCIScanStatusUnavailable         PublishingCIScanStatus = "unavailable"
+	PublishingCIScanStatusUnsupportedRedirect PublishingCIScanStatus = "unsupported_redirect"
+)
+
+// PublishingCIScanStatusValues lists every PublishingCIScanStatus in schema order.
+var PublishingCIScanStatusValues = []PublishingCIScanStatus{PublishingCIScanStatusComplete, PublishingCIScanStatusScanLimit, PublishingCIScanStatusInterrupted, PublishingCIScanStatusMissing, PublishingCIScanStatusEmpty, PublishingCIScanStatusDenied, PublishingCIScanStatusRateLimited, PublishingCIScanStatusUnavailable, PublishingCIScanStatusUnsupportedRedirect}
+
+// Valid: v is one of the schema's values.
+func (v PublishingCIScanStatus) Valid() bool {
+	for _, x := range PublishingCIScanStatusValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// PublishingCIWindow: Half-open byte offsets into decoded excerpt. Log line numbers are one-based in the normalized trace. Annotation lines refer to path.
+type PublishingCIWindow struct {
+	EndByte   int64                    `json:"endByte"`
+	EndLine   *int64                   `json:"endLine,omitempty"`
+	Partial   *bool                    `json:"partial,omitempty"`
+	Path      *string                  `json:"path,omitempty"`
+	Section   *string                  `json:"section,omitempty"`
+	Source    PublishingCIWindowSource `json:"source"`
+	StartByte int64                    `json:"startByte"`
+	StartLine *int64                   `json:"startLine,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCIWindow) Validate() error {
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type PublishingCIWindowSource string
+
+const (
+	PublishingCIWindowSourceLog        PublishingCIWindowSource = "log"
+	PublishingCIWindowSourceAnnotation PublishingCIWindowSource = "annotation"
+)
+
+// PublishingCIWindowSourceValues lists every PublishingCIWindowSource in schema order.
+var PublishingCIWindowSourceValues = []PublishingCIWindowSource{PublishingCIWindowSourceLog, PublishingCIWindowSourceAnnotation}
+
+// Valid: v is one of the schema's values.
+func (v PublishingCIWindowSource) Valid() bool {
+	for _, x := range PublishingCIWindowSourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type PublishingCancelMergeRequestReply struct {
 	AlreadyInactive bool               `json:"alreadyInactive"`
 	Branch          string             `json:"branch"`
