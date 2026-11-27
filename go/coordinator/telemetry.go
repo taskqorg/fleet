@@ -422,7 +422,31 @@ func chTime(s string) string {
 func telemetryTrace(q *Request, r *contract.TelemetryTraceRequest) (contract.TelemetryTraceReply, error) {
 	out := contract.TelemetryTraceReply{Spans: []contract.Span{}}
 	traceID := deref(r.TraceId)
-	if deref(r.ExecutionId) != "" {
+	if w := r.DeliveryWindow; w != nil {
+		if r.TraceId != nil || r.ExecutionId != nil {
+			return out, fail(400, "Specify traceId, executionId, or deliveryWindow")
+		}
+		if w.FromMs <= 0 || w.BeforeMs <= w.FromMs {
+			return out, fail(400, "deliveryWindow requires 0 < fromMs < beforeMs")
+		}
+		// Delivery is system telemetry and uses the same full-access boundary
+		// as a direct trace read. Do not expose even a trace ID outside it.
+		if spanStore == nil || !fullAccess(q.person) {
+			return out, nil
+		}
+		var matches []struct{ TraceID string }
+		if err := spanStore.Query(q.ctx(), `SELECT trace_id AS TraceID FROM span
+		WHERE service = 'coordinator' AND name = 'pass.delivery' AND kind = 'pass' AND project_id IS NULL
+		AND start >= fromUnixTimestamp64Milli({from:Int64}) AND start < fromUnixTimestamp64Milli({before:Int64})
+		ORDER BY duration_ns DESC, start DESC, trace_id DESC LIMIT 1`,
+			map[string]string{"from": strconv.FormatInt(w.FromMs, 10), "before": strconv.FormatInt(w.BeforeMs, 10)}, &matches); err != nil {
+			return out, fail(503, "Span store: "+err.Error())
+		}
+		if len(matches) == 0 {
+			return out, nil
+		}
+		traceID = matches[0].TraceID
+	} else if deref(r.ExecutionId) != "" {
 		if traceID != "" {
 			return out, fail(400, "Specify traceId or executionId, not both")
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,11 +14,11 @@ import (
 func TestGithubOnce(t *testing.T) {
 	run := time.Now().String() // keys of this run only: the cache is global
 	release := make(chan struct{})
-	go githubOnce("test slow"+run, time.Minute, func() ([]byte, error) { <-release; return nil, nil }, func(error) bool { return true })
+	go githubOnce(context.Background(), "test slow"+run, time.Minute, func() ([]byte, error) { <-release; return nil, nil }, func(error) bool { return true })
 	time.Sleep(20 * time.Millisecond)
 	done := make(chan struct{})
 	go func() {
-		githubOnce("test other"+run, time.Minute, func() ([]byte, error) { return []byte("x"), nil }, func(error) bool { return true })
+		githubOnce(context.Background(), "test other"+run, time.Minute, func() ([]byte, error) { return []byte("x"), nil }, func(error) bool { return true })
 		close(done)
 	}()
 	select {
@@ -32,7 +33,7 @@ func TestGithubOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			githubOnce("test same"+run, time.Minute, func() ([]byte, error) { calls.Add(1); time.Sleep(20 * time.Millisecond); return nil, nil }, func(error) bool { return true })
+			githubOnce(context.Background(), "test same"+run, time.Minute, func() ([]byte, error) { calls.Add(1); time.Sleep(20 * time.Millisecond); return nil, nil }, func(error) bool { return true })
 		}()
 	}
 	wg.Wait()

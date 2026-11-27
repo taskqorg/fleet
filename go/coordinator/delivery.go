@@ -28,6 +28,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 // deliveryState: the last pass, per repository (lower-case owner/name). A repository listed by several projects is read
@@ -214,7 +215,17 @@ type ghRepo struct {
 	releases     []ghRelease
 }
 
+// deliverySpan traces only the periodic delivery pass and its descendants. The
+// shared forge and Store paths also serve other passes and interactive calls.
+func deliverySpan(ctx context.Context, stage string) (context.Context, *obs.Span) {
+	if parent := obs.From(ctx); parent != nil && (parent.Name == "pass.delivery" || strings.HasPrefix(parent.Name, "delivery.")) {
+		return obs.Start(ctx, "delivery."+stage, obs.KindInternal)
+	}
+	return ctx, nil
+}
+
 func deliveryPass(ctx context.Context, a *App) error {
+	preflightCtx, preflight := deliverySpan(ctx, "preflight")
 	// The UI the site serves, read once per pass like the host versions; noted first, so a failed read below still keeps
 	// the minute's sighting (a UI-only release's UI on site).
 	ui := uiServed()
@@ -233,7 +244,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	keyed := false // any repository read with a key
 	var versions []string
 	var recordedUI []ghRelease
-	err := a.store.Read(ctx, nil, func(q *Request) error {
+	err := a.store.Read(preflightCtx, nil, func(q *Request) error {
 		ids, err := projectIDs(q)
 		if err != nil {
 			return err
@@ -295,13 +306,14 @@ func deliveryPass(ctx context.Context, a *App) error {
 		return err
 	})
 	if err != nil {
+		preflight.End(err)
 		return err
 	}
 	// The UI-only releases the delivery history recorded (it reads 100 releases a pass): GitHub's release list is not by
 	// date, and a ui-* tag sorts among older native ones, past the 30 the releases read returns (#626). Extra evidence
 	// only, in its own transaction: a failed read leaves the pass as it was.
 	if byKey[strings.ToLower(githubPublicRepo)] != nil {
-		if rerr := a.store.Read(ctx, nil, func(q *Request) error {
+		if rerr := a.store.Read(preflightCtx, nil, func(q *Request) error {
 			recordedUI = nil // a retried transaction starts over
 			rs, err := q.db().DeliveryUIReleasePayloads(q.ctx())
 			for _, r := range rs {
@@ -314,6 +326,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}); rerr != nil {
 			recordedUI = nil
 			log.Printf("delivery: recorded UI releases unread: %v", rerr)
+			err = rerr
 		}
 	}
 	now := time.Now().UTC()
@@ -326,7 +339,10 @@ func deliveryPass(ctx context.Context, a *App) error {
 		deliveryKeylessAt = now
 	}
 	deliveryMu.Unlock()
+	preflight.End(err)
 	repos, counts, failed := map[string]*deliveryRepo{}, map[string]map[string]int64{}, 0
+	repoCtx, repositories := deliverySpan(ctx, "repositories")
+	var repoErr error
 	for _, key := range targets {
 		t := byKey[key]
 		if t.provider == "gitlab" {
@@ -345,7 +361,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 				{"releases", &gl.releases},
 			} {
 				var body []byte
-				if body, err = gitlabRead(ctx, a, t.projects[0], t.host, t.owner, t.repoConn, r.tool, map[string]string{"project_id": projParam}); err == nil {
+				if body, err = gitlabRead(repoCtx, a, t.projects[0], t.host, t.owner, t.repoConn, r.tool, map[string]string{"project_id": projParam}); err == nil {
 					err = json.Unmarshal(body, r.into)
 				}
 				if err != nil {
@@ -354,6 +370,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			}
 			if err != nil {
 				failed++
+				repoErr = err
 				r := &deliveryRepo{projects: t.projects, problem: t.slug + ": " + err.Error()}
 				if p := prev.repos[key]; p != nil {
 					r.items, r.landing, r.delivered = p.items, p.landing, p.delivered
@@ -390,7 +407,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}{{"pulls_open", &g.open}, {"pulls_closed", &g.closed}, {"runs_in_progress", &active}, {"runs_queued", &queued}, {"releases", &g.releases}} {
 			var body []byte
 			// The read is made for the first project listing the repository (its token's access check).
-			if body, _, err = githubRead(ctx, a, t.projects[0], r.tool, map[string]string{"owner": t.owner, "repo": t.repo}); err == nil {
+			if body, _, err = githubRead(repoCtx, a, t.projects[0], r.tool, map[string]string{"owner": t.owner, "repo": t.repo}); err == nil {
 				err = json.Unmarshal(body, r.into)
 			}
 			if err != nil {
@@ -400,6 +417,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		name := t.owner + "/" + t.repo
 		if err != nil {
 			failed++
+			repoErr = err
 			// The last good items of this repository stand; it records no sample this pass (a gap, not a dip).
 			r := &deliveryRepo{projects: t.projects, problem: name + ": " + err.Error()}
 			if p := prev.repos[key]; p != nil {
@@ -411,7 +429,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		// Failed checks: the latest finished pull_request runs, through the key only (never the keyless budget) and not
 		// required: a connection that does not grant runs_completed_pr leaves failed checks unseen, not the repository.
 		if keyedRepo[key] {
-			if body, ferr := githubReadKeyed(ctx, a, t.projects[0], "runs_completed_pr", map[string]string{"owner": t.owner, "repo": t.repo}); ferr == nil {
+			if body, ferr := githubReadKeyed(repoCtx, a, t.projects[0], "runs_completed_pr", map[string]string{"owner": t.owner, "repo": t.repo}); ferr == nil {
 				if uerr := json.Unmarshal(body, &finished); uerr != nil {
 					log.Printf("delivery %s: failed checks unreadable: %v", name, uerr)
 				}
@@ -419,7 +437,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 				log.Printf("delivery %s: failed checks unread: %v", name, ferr)
 			}
 			// Removed from the merge queue: the latest finished merge_group runs, the same way (runs_completed_mq).
-			if body, ferr := githubReadKeyed(ctx, a, t.projects[0], "runs_completed_mq", map[string]string{"owner": t.owner, "repo": t.repo}); ferr == nil {
+			if body, ferr := githubReadKeyed(repoCtx, a, t.projects[0], "runs_completed_mq", map[string]string{"owner": t.owner, "repo": t.repo}); ferr == nil {
 				if uerr := json.Unmarshal(body, &queueDone); uerr != nil {
 					log.Printf("delivery %s: failed queue checks unreadable: %v", name, uerr)
 				}
@@ -430,13 +448,17 @@ func deliveryPass(ctx context.Context, a *App) error {
 		g.runs, g.finished, g.queueDone = append(active.Runs, queued.Runs...), finished.Runs, queueDone.Runs
 		if strings.EqualFold(name, githubPublicRepo) {
 			g.releases = withReleases(g.releases, recordedUI)
-			if err := pinsPass(ctx, a, g.open); err != nil {
-				log.Printf("pins proposal question: %v", err)
+			pinsCtx, pins := deliverySpan(repoCtx, "pins")
+			pinsErr := pinsPass(pinsCtx, a, g.open)
+			if pinsErr != nil {
+				log.Printf("pins proposal question: %v", pinsErr)
 			}
-			if err := pinsWatchPass(ctx, a, g.closed); err != nil {
-				log.Printf("pins watch: %v", err)
+			if watchErr := pinsWatchPass(pinsCtx, a, g.closed); watchErr != nil {
+				log.Printf("pins watch: %v", watchErr)
+				pinsErr = watchErr
 			}
-			pinsViewPass(ctx, a, g.open, g.closed)
+			pinsViewPass(pinsCtx, a, g.open, g.closed)
+			pins.End(pinsErr)
 		}
 		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
 		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged}
@@ -449,7 +471,10 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 		counts[t.projects[0]+" "+name] = c
 	}
-	samples, err := deliverySamples(ctx, a, counts, now)
+	repositories.End(repoErr)
+	samplesCtx, samplesSpan := deliverySpan(ctx, "samples")
+	samples, err := deliverySamples(samplesCtx, a, counts, now)
+	samplesSpan.End(err)
 	if err != nil {
 		log.Printf("delivery samples: %v", err)
 	}
@@ -484,19 +509,25 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 	}
 	if len(changed) > 0 {
-		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		notifyCtx, notify := deliverySpan(ctx, "change-notification")
+		err := a.store.Write(notifyCtx, nil, []string{GLOBAL}, func(q *Request) error {
 			for id := range changed {
 				if err := q.db().DeliveryStatePut(q.ctx(), db.DeliveryStatePutParams{ID: "delivery-state:" + id, ProjectID: id, RefreshedAt: next.refreshedAt}); err != nil {
 					return err
 				}
 			}
 			return nil
-		}); err != nil {
+		})
+		notify.End(err)
+		if err != nil {
 			log.Printf("delivery state: %v", err)
 		}
 	}
 	// Every pass: a restart then answers this pass with its real age (one row, no change event, no lock).
-	if err := a.store.Write(ctx, nil, nil, func(q *Request) error { return deliverySave(q, next) }); err != nil {
+	snapshotCtx, snapshot := deliverySpan(ctx, "snapshot")
+	err = a.store.Write(snapshotCtx, nil, nil, func(q *Request) error { return deliverySave(q, next) })
+	snapshot.End(err)
+	if err != nil {
 		log.Printf("delivery snapshot: %v", err)
 	}
 	var delivered []deliveryMergedPR
@@ -508,7 +539,10 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 	}
 	if len(delivered) > 0 {
-		if err := reconcileDeliveredTasks(ctx, a, delivered); err != nil {
+		reconcileCtx, reconcile := deliverySpan(ctx, "task-reconcile")
+		err := reconcileDeliveredTasks(reconcileCtx, a, delivered)
+		reconcile.End(err)
+		if err != nil {
 			log.Printf("delivery task reconcile: %v", err)
 		}
 	}

@@ -6,6 +6,8 @@
 
 The component groups its implementation by domain: projects, tasks, sessions and executions; versioned definitions and pipelines; hosts, accounts, connections and limits; artifacts and S3 storage; Lab evaluation; delivery, telemetry and watch passes. Typed public contracts live in the sibling [`../contract`](../contract) package.
 
+For a delivery completion gap, call `telemetry_trace` with `deliveryWindow: {fromMs, beforeMs}` in Unix milliseconds. A caller with full access gets the longest retained, completed `pass.delivery` trace whose start falls in that half-open window. The periodic pass records preflight, repository collection, samples, change notification, snapshot and task reconciliation as applicable. Forge read spans distinguish the cache lock, token preparation and outbound request. `delivery.db-begin` covers connection acquisition through PostgreSQL BEGIN. `delivery.db` includes transaction work and settlement, with the existing GLOBAL and DISPATCH lock waits nested inside it.
+
 Architecture standard: [docs/designs/fleet-standard.md](../../docs/designs/fleet-standard.md); rules checked by [design_rules_test.go](design_rules_test.go) ([DESIGN_RULES.md](DESIGN_RULES.md)).
 
 ## Interface

@@ -390,7 +390,17 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []s
 	if !write && s.readPool != nil {
 		pool = s.readPool
 	}
+	ctx, deliveryDB := deliverySpan(ctx, "db")
+	_, begin := deliverySpan(ctx, "db-begin")
+	// BeginTxFunc enters its callback only after the pool returns a connection
+	// and PostgreSQL acknowledges BEGIN.
+	if pool == s.readPool {
+		begin.Set("fleet.pool", "read")
+	} else {
+		begin.Set("fleet.pool", "write")
+	}
 	err := pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
+		begin.End(nil)
 		t = tx
 		txLockStates.Store(tx, &txLockState{write: write, held: map[string]bool{}})
 		q := db.New(tx)
@@ -425,6 +435,8 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []s
 		}
 		return fn(tx)
 	})
+	begin.End(err)
+	deliveryDB.End(err)
 	if t != nil {
 		txLockStates.Delete(t)
 	}
