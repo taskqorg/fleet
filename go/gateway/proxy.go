@@ -612,6 +612,9 @@ func (g *gateway) serveJSON(w http.ResponseWriter, r *http.Request, q *request, 
 	if q.p.Transport != nil {
 		return g.serveAccess(w, r.Context(), q, args, r.Header.Get("Accept"))
 	}
+	if _, supplied := args["skip"]; !supplied && q.c.Provider == "youtrack" && q.tool == "issues_search" {
+		args["skip"] = json.RawMessage(`0`)
+	}
 	if t.UsageOnce != nil {
 		var v string
 		json.Unmarshal(args[*t.UsageOnce], &v)

@@ -1310,8 +1310,14 @@ const providersJSON = `
     "unit": "requests",
     "idempotent": true,
     "headers": {"Accept": "application/json"},
-    "description": "Up to 50 issues matching a YouTrack query, from skip. Query examples: 'project: CBZ #Unresolved', 'updated: Today', 'PAH-12', free text. When reading several pages, end the query with 'sort by: created asc' so issues do not move between pages; then read skip \"50\", \"100\" and so on.",
-    "inputSchema": {"type": "object", "required": ["query", "skip"], "properties": {"query": {"type": "string", "description": "YouTrack search query"}, "skip": {"type": "string", "description": "issues to skip, \"0\" for the first page"}}},
+    "description": "Search YouTrack for up to 50 issues per page. Omit skip on the first page. For multiple pages, keep the same query and sort (for example 'sort by: created asc'), then use skip 50, 100 and so on. Queries can use a project filter, an issue ID or free text. To filter and sort by resolution date, use '{resolved date}: {this month} sort by: {resolved date} desc'. Use 'tag: {tag name}' with a tag known in the target project and visible to this account. If YouTrack rejects the tag as unknown, keep the project and other filters, drop the tag filter and search for issue keywords instead, for example 'project: FLT docs-order'.",
+    "inputSchema": {"type": "object", "required": ["query"], "properties": {
+      "query": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\x00-\\x1f]+$", "description": "YouTrack search query"},
+      "skip": {"description": "Issues to skip. Omit for 0. Use an integer from 0 to 999999 or a string of 1 to 6 decimal digits.", "default": 0, "anyOf": [
+        {"type": "integer", "minimum": 0, "maximum": 999999},
+        {"type": "string", "pattern": "^[0-9]{1,6}$"}
+      ]}
+    }},
     "pathPatterns": {"query": "^[^\\x00-\\x1f]{1,500}$", "skip": "^[0-9]{1,6}$"}
    },
    "issue_get": {
