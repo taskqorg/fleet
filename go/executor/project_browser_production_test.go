@@ -15,16 +15,15 @@ import (
 )
 
 const (
-	damBrowserOrigin = "https://revilio.com"
+	damBrowserOrigin = "https://dam.invalid"
 	damBrowserToken  = `invented-dam-"token\fixture`
 )
 
 func damBrowserGrant(credential string) M {
 	return M{
 		"origin": damBrowserOrigin, "accessFile": credential,
-		"headers": M{"X-DAM-Verification-Token": "DAM_VERIFICATION_TOKEN", "X-DAM-Aux": "DAM_AUX_TOKEN"},
-		"readinessProbe": M{"path": "/api/ready", "method": "GET", "status": 200,
-			"identityField": "identity", "expectedIdentity": "dam-agents"},
+		"headers":        M{"X-DAM-Verification-Token": "DAM_VERIFICATION_TOKEN", "X-DAM-Aux": "DAM_AUX_TOKEN"},
+		"readinessProbe": M{"path": "/site/verification", "method": "GET", "status": 200},
 	}
 }
 
@@ -104,9 +103,9 @@ func TestProjectBrowserProductionGrant(t *testing.T) {
 	}
 }
 
-// Requirement: production readiness and the MCP browser share the same origin fence and
-// redaction. Risk: redirect hops or reflected secrets escape the adapter. The fixture drives
-// the adapter's CDP request handler and runs the real in-page probe with simulated responses.
+// Requirement: generic readiness is independent of page navigation and CSP.
+// The fixture exercises request options, status and identity checks, and verifies
+// legacy Fleet readiness plus MCP origin fencing and redaction.
 func TestProjectBrowserProductionAdapter(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("TMPDIR", d)
@@ -183,7 +182,7 @@ func TestProjectBrowserProductionAdapter(t *testing.T) {
 			c = command(false)
 			input := []string{
 				enc(M{"id": 1, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": damBrowserOrigin}}}),
-				enc(M{"id": 2, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": "https://revilio.com.evil.invalid"}}}),
+				enc(M{"id": 2, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": damBrowserOrigin + ".evil.invalid"}}}),
 				enc(M{"id": 3, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": damBrowserOrigin + "/protocol-loss"}}}),
 			}
 			c.Stdin = strings.NewReader(strings.Join(input, "\n"))
@@ -209,17 +208,32 @@ func TestProjectBrowserProductionAdapter(t *testing.T) {
 				t.Fatal("origin denial, fail-closed transport loss, or MCP secret redaction failed")
 			}
 
-			cfg["badIdentity"] = true
-			c = command(true)
-			if out, err := c.CombinedOutput(); err == nil || len(out) != 0 {
-				t.Fatalf("mismatched readiness identity = %v, output length = %d", err, len(out))
+			original := access.Production.ReadinessProbe
+			code := func(value int64) *int64 { return &value }
+			identity := func(value string) *string { return &value }
+			for _, tc := range []struct {
+				name  string
+				probe contract.BrowserProductionProbe
+				ready bool
+			}{
+				{"wrong status on text", contract.BrowserProductionProbe{Path: "/site/verification", Method: "GET", Status: code(201)}, false},
+				{"exact status outside 2xx", contract.BrowserProductionProbe{Path: "/health", Method: "HEAD", Status: code(403)}, true},
+				{"identity only", contract.BrowserProductionProbe{Path: "/api/ready", Method: "POST", IdentityField: identity("identity"), ExpectedIdentity: identity("dam-agents")}, true},
+				{"identity alone requires 2xx", contract.BrowserProductionProbe{Path: "/api/forbidden", Method: "POST", IdentityField: identity("identity"), ExpectedIdentity: identity("dam-agents")}, false},
+				{"identity rejects auth failure", contract.BrowserProductionProbe{Path: "/api/forbidden", Method: "POST", Status: code(403), IdentityField: identity("identity"), ExpectedIdentity: identity("dam-agents")}, false},
+				{"identity and status", contract.BrowserProductionProbe{Path: "/api/ready", Method: "POST", Status: code(201), IdentityField: identity("identity"), ExpectedIdentity: identity("dam-agents")}, true},
+				{"wrong identity", contract.BrowserProductionProbe{Path: "/api/ready", Method: "POST", Status: code(201), IdentityField: identity("identity"), ExpectedIdentity: identity("wrong")}, false},
+				{"redirect", contract.BrowserProductionProbe{Path: "/redirect", Method: "GET", Status: code(302)}, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					access.Production.ReadinessProbe = tc.probe
+					out, err := command(true).CombinedOutput()
+					if (err == nil) != tc.ready || len(out) != 0 {
+						t.Fatalf("readiness = %v, output length = %d, want ready = %v", err, len(out), tc.ready)
+					}
+				})
 			}
-			delete(cfg, "badIdentity")
-			cfg["badStatus"] = true
-			c = command(true)
-			if out, err := c.CombinedOutput(); err == nil || len(out) != 0 {
-				t.Fatalf("mismatched readiness status = %v, output length = %d", err, len(out))
-			}
+			access.Production.ReadinessProbe = original
 
 			// Credential rotation is verified again on each preparation.
 			rotated := filepath.Join(d, "rotated.env")
@@ -349,6 +363,7 @@ if (cfg.revokeAfterProductionNavigation) {
     return connection;
   };
 }
+let visitedHome = false;
 let requestID = 0;
 const intercepted = new Map();
 class Socket extends EventEmitter {
@@ -392,6 +407,37 @@ class Socket extends EventEmitter {
   }
 }
 global.WebSocket = Socket;
+if (!legacy && !cfg.production.managed) global.fetch = async (url, options) => {
+  assert.equal(visitedHome, false, 'generic readiness does not visit the home page');
+  assert.equal(url.origin, origin);
+  assert.equal(options.redirect, 'error');
+  assert.equal(options.cache, 'no-store');
+  const headers = Object.fromEntries(new Headers(options.headers));
+  if (url.pathname === '/api/ready' || url.pathname === '/api/forbidden') {
+    assert.equal(options.method, 'POST');
+    assert.equal(options.body, '{}');
+    assert.equal(headers['content-type'], 'application/json');
+    delete headers['content-type'];
+  } else {
+    assert.equal(options.method, url.pathname === '/health' ? 'HEAD' : 'GET');
+    assert.equal(options.body, undefined);
+  }
+  assert.deepEqual(headers, expected);
+  switch (url.pathname) {
+    case '/site/verification':
+      return {url:url.href, status:200, ok:true, body:new Response('dam-agents').body};
+    case '/health':
+      return {url:url.href, status:403, ok:false, body:null};
+    case '/api/ready':
+      return {url:url.href, status:201, ok:true, json:async()=>({identity:'dam-agents'}), body:null};
+    case '/api/forbidden':
+      return {url:url.href, status:403, ok:false, json:async()=>({identity:'dam-agents'}), body:null};
+    case '/redirect':
+      throw new TypeError('redirect disallowed');
+    default:
+      assert.fail('unexpected readiness path');
+  }
+};
 async function request(url, headers={}, redirectedRequestId) {
   const requestId = String(++requestID);
   const response = new Promise(resolve => intercepted.set(requestId, resolve));
@@ -448,7 +494,13 @@ const page = {
     const requestId = await authenticated(url, legacy
       ? {'cf-access-CLIENT-id':'stale'}
       : {'x-DAM-verification-token':'stale'});
-    if (process.argv[2] === 'check') return;
+    if (process.argv[2] === 'check') {
+      visitedHome = true;
+      if (!legacy && !cfg.production.managed) {
+        return {status:()=>403, headers:()=>({'content-security-policy':"connect-src 'none'"})};
+      }
+      return;
+    }
     const denied = [origin.replace('https:', 'http:'), origin+':444', origin+'.evil.invalid', 'blob:'+origin+'/fixture'];
     for (const target of denied) {
       const hop = await request(target, expected, requestId);
@@ -478,6 +530,7 @@ const page = {
     ]);
   },
   evaluate: async (fn,args) => {
+    assert.ok(legacy, "the generic fixture home page has connect-src 'none'");
     assert.equal(Boolean(cfg.production.managed),false);
     setProbeGlobals();
     return fn(args);
