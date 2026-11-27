@@ -8,8 +8,8 @@ import (
 	"fleet/contract"
 )
 
-// A confirmed prefix generates no work on the next pass. A partial append and a call whose token is
-// missing are retried, and replacing a file starts verification from its first byte.
+// Confirmed lines generate no work on later passes, even after a malformed line or a missing token.
+// Partial appends are retried and replacing the file starts verification from its first byte.
 func TestConnectionSpoolResumesConfirmedPrefix(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	dir := t.TempDir()
@@ -43,29 +43,37 @@ func TestConnectionSpoolResumesConfirmedPrefix(t *testing.T) {
 			t.Fatalf("append: %v, close: %v", err, closeErr)
 		}
 	}
-	check := func(wantAdded int, wantOffset int) {
+	check := func(wantAdded, wantEnd, wantRetries int) {
 		t.Helper()
 		added, err := connIngestPass(e.ctx, e.app)
-		if pos := e.app.connSpool[path]; err != nil || added != wantAdded || pos.offset != int64(wantOffset) {
-			t.Fatalf("ingest: added=%d offset=%d error=%v; want %d, %d", added, pos.offset, err, wantAdded, wantOffset)
+		if pos := e.app.connSpool[path]; err != nil || added != wantAdded || pos.end != int64(wantEnd) || len(pos.retry) != wantRetries {
+			t.Fatalf("ingest: added=%d end=%d retries=%d error=%v, want %d, %d, %d", added, pos.end, len(pos.retry), err, wantAdded, wantEnd, wantRetries)
 		}
 	}
-	write(first + second[:5])
-	check(1, len(first))
-	check(0, len(first))
-	appendTail(second[5:])
-	check(0, len(first))
+	bad := "broken\n"
+	write(first + bad + second[:5])
+	check(1, len(first)+len(bad), 1)
+	check(0, len(first)+len(bad), 1)
+	third := line("spool-3", "invented-first")
+	appendTail(second[5:] + third)
+	complete := len(first) + len(bad) + len(second) + len(third)
+	check(1, complete, 2)
+	lines, _, err := readSpoolLines(path, e.app.connSpool[path], false)
+	if err != nil || len(lines) != 2 || string(lines[0].body)+"\n" != bad || string(lines[1].body)+"\n" != second {
+		t.Fatalf("read only unconfirmed lines; got %d lines, error %v", len(lines), err)
+	}
+
 	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO run_token(id, project_id) VALUES ('run-token:invented-second', 'a')`); err != nil {
 		t.Fatal(err)
 	}
-	check(1, len(first)+len(second))
+	check(1, complete, 1)
 	replacement := path + ".new"
-	third := line("spool-3", "invented-first")
-	if err := os.WriteFile(replacement, []byte(first+second+third), 0o600); err != nil {
+	fourth := line("spool-4", "invented-first")
+	if err := os.WriteFile(replacement, []byte(first+second+third+fourth), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(replacement, path); err != nil {
 		t.Fatal(err)
 	}
-	check(1, len(first)+len(second)+len(third))
+	check(1, complete-len(bad)+len(fourth), 0)
 }

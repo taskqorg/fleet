@@ -22,13 +22,25 @@ import (
 
 var ingestMu sync.Mutex
 
-// spoolPosition tracks a confirmed prefix of a gateway file, which the gateway only appends to.
+// spoolPosition tracks the bytes already examined on the gateway's append-only file. Retry ranges
+// point to unconfirmed lines in that prefix so one bad line never makes us read the rest again.
 type spoolPosition struct {
-	file   os.FileInfo
-	offset int64
+	file  os.FileInfo
+	end   int64
+	retry []spoolRange
 }
 
-func readSpoolTail(path string, resume spoolPosition) ([]byte, spoolPosition, error) {
+type spoolRange struct {
+	offset int64
+	length int
+}
+
+type spoolLine struct {
+	span spoolRange
+	body []byte
+}
+
+func readSpoolLines(path string, resume spoolPosition, past bool) ([]spoolLine, spoolPosition, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, spoolPosition{}, err
@@ -39,12 +51,32 @@ func readSpoolTail(path string, resume spoolPosition) ([]byte, spoolPosition, er
 		return nil, spoolPosition{}, err
 	}
 	pos := spoolPosition{file: info}
+	var lines []spoolLine
 	if resume.file != nil && os.SameFile(resume.file, info) && info.Size() >= resume.file.Size() &&
 		(info.Size() != resume.file.Size() || info.ModTime().Equal(resume.file.ModTime())) {
-		pos.offset = resume.offset
+		pos.end = resume.end
+		for _, span := range resume.retry {
+			body := make([]byte, span.length)
+			if _, err := file.ReadAt(body, span.offset); err != nil {
+				return nil, spoolPosition{}, err
+			}
+			lines = append(lines, spoolLine{span: span, body: body})
+		}
 	}
-	tail, err := io.ReadAll(io.NewSectionReader(file, pos.offset, info.Size()-pos.offset))
-	return tail, pos, err
+	tail, err := io.ReadAll(io.NewSectionReader(file, pos.end, info.Size()-pos.end))
+	if err != nil {
+		return nil, spoolPosition{}, err
+	}
+	if !past {
+		tail = tail[:bytes.LastIndexByte(tail, '\n')+1] // the gateway can still be writing its last line
+	}
+	for len(tail) > 0 {
+		body, next, _ := bytes.Cut(tail, []byte{'\n'})
+		lines = append(lines, spoolLine{span: spoolRange{offset: pos.end, length: len(body)}, body: body})
+		pos.end += int64(len(tail) - len(next))
+		tail = next
+	}
+	return lines, pos, nil
 }
 
 // Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. Each
@@ -85,36 +117,38 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 	a.connSpool = make(map[string]spoolPosition, len(names))
 	for _, f := range names {
 		path := filepath.Join(dir, f)
-		b, pos, err := readSpoolTail(path, previous[path])
+		past := f[:10] < yesterday
+		// Retry from the previous checkpoint on a transaction failure. A past file's final line may lack a newline.
+		a.connSpool[path] = previous[path]
+		lines, pos, err := readSpoolLines(path, previous[path], past)
 		if err != nil {
 			continue
 		}
-		// Only complete lines while the gateway may still write the day (today, yesterday); a past day is read whole, so
-		// a last line without its newline is imported or keeps the file.
-		past := f[:10] < yesterday
-		if !past {
-			a.connSpool[path] = pos // leave the prior confirmed offset on a retry
-			b = b[:bytes.LastIndexByte(b, '\n')+1]
-		}
-		// Whole lines of any length (no Scanner token cap, W3-2); a line not imported keeps the file.
 		unimported := 0
-		var parsed []contract.CallLine
+		parsedAny := false
+		type parsedLine struct {
+			call contract.CallLine
+			span spoolRange
+		}
+		var parsed []parsedLine
 		var callIDs []string
-		for _, line := range bytes.Split(b, []byte{'\n'}) {
-			if len(bytes.TrimSpace(line)) == 0 {
+		for _, line := range lines {
+			if len(bytes.TrimSpace(line.body)) == 0 {
 				continue
 			}
 			var l contract.CallLine
-			if err := json.Unmarshal(line, &l); err != nil {
-				// Kept in the file; a line here means the gateway and the contract disagree.
+			if err := json.Unmarshal(line.body, &l); err != nil {
 				log.Printf("spool %s: line not imported: %v", f, err)
 				unimported++
+				pos.retry = append(pos.retry, line.span)
 				continue
 			}
-			parsed = append(parsed, l)
-			if l.CallId != "" && l.TokenSha256 != nil && l.ExecutionId != nil {
-				callIDs = append(callIDs, "call:"+l.CallId)
+			parsedAny = true
+			if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil {
+				continue
 			}
+			parsed = append(parsed, parsedLine{call: l, span: line.span})
+			callIDs = append(callIDs, "call:"+l.CallId)
 		}
 		// Rows already recorded, with their transfer phase ("" for a one-line call).
 		existing := map[string]string{}
@@ -132,11 +166,8 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 				return added, err
 			}
 		}
-		confirmed := unimported == 0
-		for _, l := range parsed {
-			if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil {
-				continue
-			}
+		for _, line := range parsed {
+			l := line.call
 			phase, recorded := existing["call:"+l.CallId]
 			if l.Phase != nil && *l.Phase == contract.CallPhaseCompleted {
 				// A transfer's completion line updates its started row, also one this pass just inserted from the same file.
@@ -151,7 +182,9 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 				}); err != nil {
 					return added, err
 				}
-				confirmed = confirmed && recorded
+				if !recorded {
+					pos.retry = append(pos.retry, line.span)
+				}
 				changed = append(changed, "call:"+l.CallId)
 				continue
 			}
@@ -176,8 +209,9 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 			}); err != nil {
 				return added, err
 			}
-			confirmed = confirmed && ok
-			if ok {
+			if !ok {
+				pos.retry = append(pos.retry, line.span)
+			} else {
 				added++
 				changed = append(changed, "call:"+l.CallId)
 			}
@@ -185,14 +219,18 @@ func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 		if past && unimported > 0 {
 			log.Printf("spool %s: past day kept, %d line(s) not imported", f, unimported)
 		} else if past {
-			// Keep a newly created empty file (e.g. open(O_CREAT) before write) and any file that grew while imported.
-			if info, err := os.Stat(path); err == nil && os.SameFile(pos.file, info) && info.Size() == pos.offset+int64(len(b)) &&
-				(len(parsed) > 0 || time.Since(info.ModTime()) >= time.Minute) {
-				os.Remove(path)
+			// Keep a newly created empty file and any file that changed during ingest.
+			if info, err := os.Stat(path); err == nil && os.SameFile(pos.file, info) && info.Size() == pos.end &&
+				info.ModTime().Equal(pos.file.ModTime()) && (parsedAny || time.Since(info.ModTime()) >= time.Minute) {
+				if err := os.Remove(path); err == nil {
+					delete(a.connSpool, path)
+					continue
+				}
 			}
-		} else if confirmed {
-			// All database writes here have committed. Keep the cursor in memory so a restart replays idempotently.
-			pos.offset += int64(len(b))
+		}
+		if !past {
+			// Publish the in-memory checkpoint only after all writes. Past files may end in unterminated lines.
+			sort.Slice(pos.retry, func(i, j int) bool { return pos.retry[i].offset < pos.retry[j].offset })
 			a.connSpool[path] = pos
 		}
 	}
