@@ -366,7 +366,18 @@ func checkBotDispatchCompatibility(q *Request, e *dispatchExecution, liveSession
 		profileChanged = last.Harness != "" && d.Harness != "" && last.Harness != d.Harness
 		accountChanged = last.AccountBinding != effectiveAccount
 	}
-	if !projectChanged && !hostChanged && !workspaceChanged && !profileChanged && !accountChanged {
+	workspaceSessionChanged := false
+	if liveSession.row.Subject != nil {
+		workspaceSession, err := q.db().BotNativeWorkspaceSession(q.ctx(), db.BotNativeWorkspaceSessionParams{
+			SessionID: &liveSession.ID,
+			NativeID:  deref(liveSession.NativeSessionID),
+		})
+		if err != nil {
+			return err
+		}
+		workspaceSessionChanged = workspaceSession != "" && workspaceSession != liveSession.ID
+	}
+	if !projectChanged && !hostChanged && !workspaceChanged && !workspaceSessionChanged && !profileChanged && !accountChanged {
 		return nil
 	}
 	turns, err := transcriptForProject(q, liveSession.ID, pid)
@@ -389,6 +400,8 @@ func checkBotDispatchCompatibility(q *Request, e *dispatchExecution, liveSession
 		source = "profile change"
 	case accountChanged:
 		source = "account change"
+	case workspaceSessionChanged:
+		source = "conversation workspace change"
 	case workspaceChanged:
 		source = "workspace change"
 	}
@@ -398,6 +411,10 @@ func checkBotDispatchCompatibility(q *Request, e *dispatchExecution, liveSession
 	}
 	liveSession.NativeSessionID = nil
 	delete(liveSession.rest, "nativeSessionId")
+	if workspaceSessionChanged {
+		liveSession.ForkNativeSessionID = ""
+		delete(liveSession.rest, "forkNativeSessionId")
+	}
 	if projectChanged {
 		delete(liveSession.rest, "nativeSessions")
 	}
