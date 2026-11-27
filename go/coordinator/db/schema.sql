@@ -1734,6 +1734,77 @@ CREATE TABLE worker_done (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE youtrack_binding (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "bot_id" text NOT NULL,
+  "instance" text NOT NULL,
+  "remote_project_id" text NOT NULL,
+  "remote_project_key" text NOT NULL,
+  "issue_ids" text[] NOT NULL,
+  "bot_user_id" text NOT NULL,
+  "reviewer_user_id" text NOT NULL,
+  "reviewer_person" text NOT NULL,
+  "token_sha256" text NOT NULL,
+  "started_ms" bigint NOT NULL,
+  "cursor_ms" bigint NOT NULL,
+  "revision" integer NOT NULL,
+  "disconnected" boolean NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE youtrack_comment_work (
+  "id" text NOT NULL,
+  "binding_id" text NOT NULL,
+  "issue_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "milestone" text NOT NULL,
+  "kind" text NOT NULL,
+  "comment_id" text,
+  "provider_created_ms" bigint,
+  "sent_at" timestamp with time zone,
+  "confirmed_at" timestamp with time zone,
+  "skip_reason" text,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE youtrack_inbox (
+  "id" text NOT NULL,
+  "binding_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "issue_id" text NOT NULL,
+  "signal" text NOT NULL,
+  "revision_ms" bigint NOT NULL,
+  "binding_revision" integer NOT NULL,
+  "event_ref" text NOT NULL,
+  "disposition" text,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE youtrack_receipt (
+  "binding_id" text NOT NULL,
+  "issue_id" text NOT NULL,
+  "remote_event" text NOT NULL,
+  "project_id" text NOT NULL,
+  "observed_ms" bigint NOT NULL,
+  "woke" boolean NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE youtrack_task (
+  "instance" text NOT NULL,
+  "issue_id" text NOT NULL,
+  "binding_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "task_id" text,
+  "decision_ms" bigint NOT NULL,
+  "assignment_ms" bigint NOT NULL,
+  "assignment_authorized" boolean NOT NULL,
+  "issue_updated_ms" bigint NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE FUNCTION fleet_conn_meta_all() RETURNS TABLE(id text, provider text) LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_conversation_state(sid text) RETURNS TABLE(state text) LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql AS $$ SELECT NULL $$;

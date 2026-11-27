@@ -2251,3 +2251,79 @@ type WorkerDone struct {
 	UpdatedAt    time.Time
 	TombstonedAt *time.Time
 }
+
+type YoutrackBinding struct {
+	ID               string
+	ProjectID        string
+	BotID            string
+	Instance         string
+	RemoteProjectID  string
+	RemoteProjectKey string
+	IssueIds         []string
+	BotUserID        string
+	ReviewerUserID   string
+	ReviewerPerson   string
+	TokenSha256      string
+	StartedMs        int64
+	CursorMs         int64
+	Revision         int32
+	Disconnected     bool
+	TombstonedAt     *time.Time
+}
+
+type YoutrackCommentWork struct {
+	ID                string
+	BindingID         string
+	IssueID           string
+	ProjectID         string
+	Milestone         string
+	Kind              string
+	CommentID         *string
+	ProviderCreatedMs *int64
+	SentAt            *time.Time
+	ConfirmedAt       *time.Time
+	SkipReason        *string
+	Attempts          int32
+	NextAttemptAt     time.Time
+	LastError         *string
+	TombstonedAt      *time.Time
+}
+
+type YoutrackInbox struct {
+	ID              string
+	BindingID       string
+	ProjectID       string
+	IssueID         string
+	Signal          string
+	RevisionMs      int64
+	BindingRevision int32
+	EventRef        string
+	Disposition     *string
+	Attempts        int32
+	NextAttemptAt   time.Time
+	LastError       *string
+	TombstonedAt    *time.Time
+}
+
+type YoutrackReceipt struct {
+	BindingID    string
+	IssueID      string
+	RemoteEvent  string
+	ProjectID    string
+	ObservedMs   int64
+	Woke         bool
+	TombstonedAt *time.Time
+}
+
+type YoutrackTask struct {
+	Instance             string
+	IssueID              string
+	BindingID            string
+	ProjectID            string
+	TaskID               *string
+	DecisionMs           int64
+	AssignmentMs         int64
+	AssignmentAuthorized bool
+	IssueUpdatedMs       int64
+	TombstonedAt         *time.Time
+}

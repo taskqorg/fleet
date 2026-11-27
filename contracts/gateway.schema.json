@@ -25,6 +25,8 @@
       "inject": {"$comment": "Body fields the gateway adds to every call (Tavily include_usage).", "type": "object", "additionalProperties": true},
       "headers": {"$comment": "Fixed request headers, e.g. a provider's opt-in flag.", "type": "object", "additionalProperties": {"type": "string"}},
       "textReply": {"$comment": "The tool answers text (Bugsink's Markdown stacktrace): a 2xx reply that is not JSON reaches the caller as {\"text\": ...}.", "type": "boolean"},
+      "serviceActor": {"type": "string", "$comment": "Service identity permitted to invoke the coordinator tool."},
+      "coordinatorRequires": {"type": "string", "$comment": "Callable only with a project-scoped coordinator token when the named tool is granted. Never advertised to connection clients."},
       "forbiddenIsCall": {"$comment": "A 403 from this tool refuses the call, not the key (a YouTrack write the account may not do); it is not recorded as a key problem. Reads leave it unset, so a key that lost access still shows.", "type": "boolean"},
       "pathPatterns": {"$comment": "Pattern per {field} of path; a value that does not match is refused before a key is attached. A field without a pattern takes letters, digits, - and _. A value after the path's ? is query-escaped.", "type": "object", "additionalProperties": {"type": "string"}},
       "adoptMatch": {"$comment": "Primary submitted identity field required for uncertain job adoption; absent returned input stays unknown.", "type": "string"},
@@ -92,6 +94,7 @@
       "directedBy": {"type": "string"},
       "projectId": {"type": "string"},
       "experimentId": {"type": "string"},
+      "systemActor": {"type": "string", "$comment": "Service identity on tokens minted by the coordinator."},
       "fileDownloads": {"$comment": "Connections whose minted tool spec includes a file download tool.", "type": "array", "items": {"type": "string"}}}},
     "CallOutcome": {"type": "string", "enum": ["ok", "error", "unknown"]},
     "CallLine": {"$comment": "One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output. A file tool's line carries transfer. A download writes two lines with one callId: phase started (outcome unknown, download-unfinished) before the bytes stream and phase completed after it; ingest updates the started row from the completed line. A resumable upload also writes a started intent and a completed outcome with one callId. A line without phase is a one-line call.", "type": "object", "required": ["callId", "connection", "tool", "status", "outcome", "startedAt", "ms"], "properties": {

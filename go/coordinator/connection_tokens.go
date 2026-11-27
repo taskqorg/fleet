@@ -272,7 +272,7 @@ func mintSpecs(q *Request, run mintRun, requested []string) (mintedSpecs, error)
 		spec := connSpec{Name: c.Name, Instructions: orNull(p.Rest["instructions"]), Tools: []toolSpec{}}
 		for _, t := range c.Tools {
 			tool, ok := p.Tools[t]
-			if !ok {
+			if !ok || tool.CoordinatorRequires != nil {
 				continue
 			}
 			spec.Tools = append(spec.Tools, toolSpec{Name: t, Description: orNull(tool.Rest["description"]), InputSchema: orNull(tool.Rest["inputSchema"]),

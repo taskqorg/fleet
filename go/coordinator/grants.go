@@ -40,6 +40,7 @@ var gatewayUses = []gatewayUse{
 	{"gitlab", "", "Delivery (go/coordinator/delivery.go)", []string{"mrs_open", "mrs_merged", "pipelines_running", "pipelines_pending", "pipelines_failed", "releases"}},
 	{"github-pins", pinsWriteConn, "Pin publishing (go/coordinator/pins_publish.go, pins_watch.go)", []string{"status_create"}},
 	{"bugsink", bugsinkConn, "Bugsink resolution (go/coordinator/bugsink.go)", []string{"issue_get"}},
+	{"youtrack", youtrackConnection, "YouTrack handoff (go/coordinator/youtrack_setup.go)", []string{"projects", "issue_get", "issue_comments", "comment_add"}},
 	{"google-ai", titleConnection, "Session titles (go/coordinator/session_titles.go)", []string{titleTool}},
 	{"telegram", telegramConn, "Telegram channel (go/coordinator/telegram.go, telegram_commands.go)", []string{"get_me", "get_updates", "send_message", "send_rich_message", "send_rich_message_draft", "edit_message_text", "send_chat_action", "set_message_reaction", "answer_callback_query", "set_my_commands"}},
 }
@@ -56,6 +57,9 @@ type grantKey struct{ conn, tool string }
 func grantRefused(conn, tool string, line contract.CallLine) {
 	if line.Outcome == contract.CallOutcomeOk || deref(line.ErrorCode) != "unknown-tool" {
 		return
+	}
+	if conn == youtrackConnection {
+		tool = firstString(deref(gatewayProviders[youtrackConnection].Tools[tool].CoordinatorRequires), tool)
 	}
 	if _, ok := grantsSeen.Load(grantKey{conn, tool}); ok {
 		return

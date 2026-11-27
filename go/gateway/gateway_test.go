@@ -687,8 +687,10 @@ func TestYouTrackCatalogue(t *testing.T) {
 	yt := catalogue["youtrack"]
 	yt["baseUrl"] = server.URL
 	tools := []string{}
-	for name := range yt["tools"].(map[string]any) {
-		tools = append(tools, name)
+	for name, spec := range yt["tools"].(map[string]any) {
+		if spec.(map[string]any)["coordinatorRequires"] == nil {
+			tools = append(tools, name)
+		}
 	}
 	gw := newFixture(t, server.URL, "invented-youtrack-key")
 	os.MkdirAll(filepath.Join(gw.dir, "keys/youtrack"), 0o700)
@@ -857,6 +859,32 @@ func TestYouTrackCatalogue(t *testing.T) {
 	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/attachment_get", "Bearer "+testToken, `{"issue":"TGT-12","attachment":"../x"}`); status != 400 {
 		t.Fatalf("attachment id pattern: %d", status)
 	}
+
+	// The service projection requires both the dedicated service identity and the underlying project tool grant.
+	handoffPath := "/v1/call/youtrack/handoff_issue"
+	handoffBody := `{"issue":"2-31"}`
+	status, _, _ := gw.raw("POST", handoffPath, "Bearer "+testToken, handoffBody)
+	expect(t, status, 404, "a normal agent cannot call the handoff projection")
+	service := map[string]any{"sha256": sha(testToken), "executionId": "youtrack-read:test", "projectId": "fleet",
+		"systemActor": "coordinator", "connections": []string{"youtrack"}}
+	snap["tokens"] = []map[string]any{service}
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+	status, _, _ = gw.raw("POST", handoffPath, "Bearer "+testToken, handoffBody)
+	expect(t, status, 404, "ordinary coordinator tokens cannot use handoff tools")
+	service["systemActor"] = "youtrack-handoff"
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+	status, _, _ = gw.raw("POST", handoffPath, "Bearer "+testToken, handoffBody)
+	expect(t, status, 200, "the project handoff service can read a minimal issue projection")
+	expect(t, (<-got).path, "/api/issues/2-31", "handoff reads by immutable ID")
+	tools = slices.DeleteFunc(tools, func(n string) bool { return n == "issue_get" })
+	snap["connections"].(map[string]any)["youtrack"].(map[string]any)["tools"] = tools
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+	status, _, _ = gw.raw("POST", handoffPath, "Bearer "+testToken, handoffBody)
+	expect(t, status, 404, "revoked issue_get denies the minimal projection")
+
 }
 
 // Requirement: old executors and tokens retain attachment URLs during the file-client rollout.
@@ -1697,7 +1725,7 @@ func TestGitLabMutationToolsCatalogue(t *testing.T) {
 				"blocked":  []string{},
 			},
 		},
-		"tokens":          []map[string]any{{"sha256": sha(testToken), "executionId": "ex-1", "projectId": "dam", "connections": []string{"gradus-gitlab"}}},
+		"tokens":           []map[string]any{{"sha256": sha(testToken), "executionId": "ex-1", "projectId": "dam", "connections": []string{"gradus-gitlab"}}},
 		"usageTokenSha256": sha("usage-token"),
 	})
 

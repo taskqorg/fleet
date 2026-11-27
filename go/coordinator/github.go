@@ -316,10 +316,14 @@ func readTokensEnd(ctx context.Context, a *App) error {
 // readTokenFor: the read token of connection for project and its release, which the caller calls once its gateway
 // calls are done. A token ended (readTokenTTL) and released by its last read is revoked then (readTokWake).
 func readTokenFor(ctx context.Context, a *App, connection, project string) (string, func(), error) {
+	return readTokenForActor(ctx, a, connection, project, "coordinator")
+}
+
+func readTokenForActor(ctx context.Context, a *App, connection, project, system string) (string, func(), error) {
 	if !connName.MatchString(connection) {
 		return "", nil, fmt.Errorf("%s: connection-unavailable", connection)
 	}
-	key := connection + " " + project
+	key := connection + " " + project + " " + system
 	_, lockWait := telegramPollStage(ctx, "read-token-lock")
 	unlock := readTokLocks.lock(key) // concurrent reads of one key share its mint; other keys never wait
 	defer unlock()
@@ -337,7 +341,6 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	var token string
 	mintCtx, mint := telegramPollStage(ctx, "read-token-mint")
 	err := a.store.Write(mintCtx, nil, []string{GLOBAL}, func(q *Request) error {
-		system := "coordinator"
 		m, err := mintGrantFor(q, mintRun{ExecutionID: &exec, ProjectID: &project, Step: true, SystemActor: &system}, []string{connection})
 		token = deref(m.Token)
 		return err

@@ -585,6 +585,9 @@ func botRunOp(q *Request, r *contract.BotRunRequest) (contract.BotRunReply, erro
 		if err != nil {
 			return out, err
 		}
+		if saved.PresetID == youtrackPreset {
+			return out, fail(409, "YouTrack triggers run only for verified YouTrack activity")
+		}
 		if dedupKey != "" {
 			dedupKey = "trigger:" + saved.ID + ":" + dedupKey
 		}

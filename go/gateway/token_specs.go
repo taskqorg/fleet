@@ -54,7 +54,7 @@ func (g *gateway) serveTokenSpecs(w http.ResponseWriter, r *http.Request) {
 		spec := connectionSpec{Name: name, Instructions: p.Rest["instructions"], Tools: []toolSpec{}}
 		for _, tn := range c.Tools {
 			tl, ok := p.Tools[tn]
-			if !ok {
+			if !ok || tl.CoordinatorRequires != nil {
 				continue
 			}
 			ts := toolSpec{Name: tn, Description: tl.Rest["description"], InputSchema: tl.Rest["inputSchema"], Idempotent: tl.Idempotent}

@@ -1,6 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "operations": {
+    "youtrack_project_connect": {
+      "read": false,
+      "long": true,
+      "errors": [400,403,404,409,503],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Connect YouTrack project. Preview or apply with a stable bindingId. Supply the immutable YouTrack project ID and exactly one selector (issueIds, issueKeys or wholeProject: true), a YouTrack reviewer ID or login mapped to their Fleet person, and the SHA-256 of a high-entropy webhook bearer configured in YouTrack. Reuse botId or provision the project's PM bot at bindingId. Applying the same setup is idempotent. Use baseRevision for credential rotation, reviewer or selector changes, or reconnection. existingTasks can adopt an explicitly selected managed Fleet task for an issue. Optionally pause an explicitly named polling trigger at its expected revision."
+    },
+    "youtrack_project_disconnect": {
+      "read": false, "errors": [400,404,409], "auth": "owner", "agent": "tool",
+      "description": "Disconnect the YouTrack webhook and reconciliation at baseRevision. Retain correlated tasks. Reconnect or rotate through youtrack_project_connect with the latest revision."
+    },
+    "youtrack_comment_sync": {
+      "read": false,
+      "errors": [400,403,404,409],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Queue a zero-PII YouTrack comment for a correlated Fleet task's open question or current result offer. milestoneId is the Fleet question or acceptance question ID. Replaying the same milestone reuses its durable write and reports the last confirmed outcome. recheck: true expedites the safe readback of an unknown write."
+    },
     "bot_list": {
       "read": true,
       "errors": [
@@ -160,6 +179,54 @@
     }
   },
   "$defs": {
+    "YoutrackProjectConnectRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bindingId", "projectId", "youtrackProjectId", "reviewerPerson", "webhookTokenSha256", "zeroPii"],
+      "properties": {
+        "bindingId": {"type": "string"}, "projectId": {"type": "string"}, "baseRevision": {"type": "integer"},
+        "youtrackProjectId": {"type": "string"}, "botId": {"type": "string"},
+        "wholeProject": {"type": "boolean"}, "issueIds": {"type": "array", "items": {"type": "string"}},
+        "issueKeys": {"type": "array", "items": {"type": "string"}},
+        "existingTasks": {"type": "array", "items": {"$ref": "#/$defs/YoutrackExistingTask"}},
+        "reviewerLogin": {"type": "string"}, "reviewerUserId": {"type": "string"}, "reviewerPerson": {"type": "string"},
+        "webhookTokenSha256": {"type": "string"}, "zeroPii": {"type": "boolean"},
+        "preview": {"type": "boolean"},
+        "pollingTriggerId": {"type": "string"}, "pollingTriggerRevision": {"type": "integer"}
+      }
+    },
+    "YoutrackExistingTask": {
+      "type": "object", "additionalProperties": false, "required": ["issue", "task"],
+      "properties": {"issue": {"type": "string"}, "task": {"type": "string"}}
+    },
+    "YoutrackProjectConnectReply": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bindingId", "projectId", "botId", "triggerId", "youtrackProjectId", "issueIds", "wholeProject", "reviewerUserId", "reviewerPerson", "zeroPii", "webhookPath", "applied", "revision"],
+      "properties": {
+        "bindingId": {"type": "string"}, "projectId": {"type": "string"}, "botId": {"type": "string"}, "triggerId": {"type": "string"},
+        "youtrackProjectId": {"type": "string"}, "issueIds": {"type": "array", "items": {"type": "string"}}, "wholeProject": {"type": "boolean"},
+        "reviewerUserId": {"type": "string"}, "reviewerPerson": {"type": "string"}, "zeroPii": {"type": "boolean"},
+        "existingTasks": {"type": "array", "items": {"$ref": "#/$defs/YoutrackExistingTask"}},
+        "youtrackProjectKey": {"type": "string"}, "connection": {"type": "string"},
+        "webhookPath": {"type": "string"}, "revision": {"type": "integer"}, "applied": {"type": "boolean"}, "pollingTriggerId": {"type": "string"}
+      }
+    },
+    "YoutrackProjectDisconnectRequest": {
+      "type": "object", "additionalProperties": false, "required": ["bindingId", "baseRevision"],
+      "properties": {"bindingId": {"type": "string"}, "baseRevision": {"type": "integer"}}
+    },
+    "YoutrackProjectDisconnectReply": {
+      "type": "object", "additionalProperties": false, "required": ["revision"],
+      "properties": {"revision": {"type": "integer"}}
+    },
+    "YoutrackCommentSyncRequest": {
+      "type": "object", "additionalProperties": false, "required": ["taskId", "milestoneId"],
+      "properties": {"taskId": {"type": "string"}, "milestoneId": {"type": "string"}, "recheck": {"type": "boolean"}}
+    },
+    "YoutrackCommentState": {"type": "string", "enum": ["queued", "unknown", "confirmed", "skipped"]},
+    "YoutrackCommentSyncReply": {
+      "type": "object", "additionalProperties": false, "required": ["state"],
+      "properties": {"state": {"$ref": "#/$defs/YoutrackCommentState"}, "commentId": {"type": "string"}, "lastError": {"type": "string"}}
+    },
     "BotSettings": {
       "type": "object",
       "additionalProperties": false,

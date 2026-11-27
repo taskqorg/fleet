@@ -731,3 +731,38 @@ DROP POLICY IF EXISTS live ON worker_done;
 CREATE POLICY live ON worker_done AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
 DROP POLICY IF EXISTS project_scope ON worker_done;
 CREATE POLICY project_scope ON worker_done FOR ALL TO public USING (fleet_visible(project_id));
+
+-- youtrack_binding
+ALTER TABLE youtrack_binding ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON youtrack_binding;
+CREATE POLICY live ON youtrack_binding AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))))));
+DROP POLICY IF EXISTS project_scope ON youtrack_binding;
+CREATE POLICY project_scope ON youtrack_binding FOR ALL TO public USING (fleet_visible(project_id)) WITH CHECK (fleet_visible(project_id));
+
+-- youtrack_comment_work
+ALTER TABLE youtrack_comment_work ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON youtrack_comment_work;
+CREATE POLICY live ON youtrack_comment_work AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))))));
+DROP POLICY IF EXISTS project_scope ON youtrack_comment_work;
+CREATE POLICY project_scope ON youtrack_comment_work FOR ALL TO public USING (fleet_visible(project_id)) WITH CHECK (fleet_visible(project_id));
+
+-- youtrack_inbox
+ALTER TABLE youtrack_inbox ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON youtrack_inbox;
+CREATE POLICY live ON youtrack_inbox AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))))));
+DROP POLICY IF EXISTS project_scope ON youtrack_inbox;
+CREATE POLICY project_scope ON youtrack_inbox FOR ALL TO public USING (fleet_visible(project_id)) WITH CHECK (fleet_visible(project_id));
+
+-- youtrack_receipt
+ALTER TABLE youtrack_receipt ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON youtrack_receipt;
+CREATE POLICY live ON youtrack_receipt AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))))));
+DROP POLICY IF EXISTS project_scope ON youtrack_receipt;
+CREATE POLICY project_scope ON youtrack_receipt FOR ALL TO public USING (fleet_visible(project_id)) WITH CHECK (fleet_visible(project_id));
+
+-- youtrack_task
+ALTER TABLE youtrack_task ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON youtrack_task;
+CREATE POLICY live ON youtrack_task AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))))));
+DROP POLICY IF EXISTS project_scope ON youtrack_task;
+CREATE POLICY project_scope ON youtrack_task FOR ALL TO public USING (fleet_visible(project_id)) WITH CHECK (fleet_visible(project_id));

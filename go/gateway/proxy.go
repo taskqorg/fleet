@@ -593,7 +593,13 @@ func (g *gateway) resolve(q *request) {
 		}
 	}
 	q.t, q.offered = q.p.Tools[q.tool]
-	q.offered = q.offered && known && contains(c.Tools, q.tool)
+	if q.t.CoordinatorRequires != nil {
+		q.offered = q.offered && known && q.run != nil && q.run.SystemActor != nil && q.t.ServiceActor != nil &&
+			*q.run.SystemActor == *q.t.ServiceActor && q.run.ProjectId != "" && q.run.DirectedBy == "" &&
+			contains(c.Tools, *q.t.CoordinatorRequires)
+	} else {
+		q.offered = q.offered && known && contains(c.Tools, q.tool)
+	}
 }
 
 // admit refuses a call its token, grant, tool, intake or budget does not allow; nil admits it.
