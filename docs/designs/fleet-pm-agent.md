@@ -199,7 +199,7 @@ Only signals Fleet already records, as reachable through the kinds above: open `
 
 ### 7. Questions to people
 
-The PM asks people through the `question` table (agent `ask` opens an `agent_question` and puts the PM's own task in `waiting`). Agent `ask`/`reply` stays for PM-to-worker talk.
+A fresh `ask` opens an `agent_question`. An open blocking question puts its linked task in `waiting`. Fleet routes a task’s question to its managing bot when the question comes from outside that bot. To answer a visible question within delegated authority, use the [agent communication routes](../system-operations.md#answering-questions).
 
 ### 8. Fleet management and people
 
