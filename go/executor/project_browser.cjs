@@ -128,8 +128,27 @@ const tools = [
   {name:'read',description:'Read current page title, URL and rendered body text; no network inspection.',inputSchema:{type:'object',properties:{},additionalProperties:false}},
   {name:'click',description:'Click a unique Playwright locator selector on the current page.',inputSchema:{type:'object',properties:{selector:{type:'string'}},required:['selector'],additionalProperties:false}},
   {name:'fill',description:'Fill a unique input locator on the current page.',inputSchema:{type:'object',properties:{selector:{type:'string'},value:{type:'string'}},required:['selector','value'],additionalProperties:false}},
+  {name:'press',description:'Send a trusted Playwright key or chord such as Escape, ArrowDown, Space, Enter or Shift+Tab. Optionally focus a unique locator first.',inputSchema:{type:'object',properties:{key:{type:'string'},selector:{type:'string'}},required:['key'],additionalProperties:false}},
+  {name:'drag',description:'Perform a trusted pointer drag from a unique source locator to a unique target locator. Optional steps interpolate pointer movement (default 10).',inputSchema:{type:'object',properties:{source:{type:'string'},target:{type:'string'},steps:{type:'integer',minimum:1}},required:['source','target'],additionalProperties:false}},
   {name:'close',description:'Close the owned browser and clean its temporary profile.',inputSchema:{type:'object',properties:{},additionalProperties:false}}
 ];
+function requireScopedPage(current) {
+  if (!current || current !== page || !permitted(current.url())) throw Error('page outside scope');
+}
+async function press(current, {key, selector}) {
+  if (typeof key !== 'string' || !key || (selector !== undefined && (typeof selector !== 'string' || !selector))) throw Error('invalid press arguments');
+  if (selector !== undefined) await current.locator(selector).focus({timeout});
+  requireScopedPage(current);
+  await current.keyboard.press(key);
+}
+async function drag(current, {source, target, steps = 10}) {
+  if (typeof source !== 'string' || !source || typeof target !== 'string' || !target || !Number.isSafeInteger(steps) || steps < 1) throw Error('invalid drag arguments');
+  const destination = current.locator(target);
+  // Resolve a unique visible destination before pressing the mouse button.
+  await destination.waitFor({state:'visible',timeout});
+  requireScopedPage(current);
+  await current.locator(source).dragTo(destination,{steps,timeout});
+}
 async function call(req) {
   if(req.method==='initialize') return {protocolVersion:req.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'project-browser',version:'1'},instructions:'Use these tools for browser checks. Shell Chromium is unsupported in the native sandbox. Granted origins: '+[...allowed].join(', ')};
   if(req.method==='tools/list') return {tools};
@@ -140,14 +159,21 @@ async function call(req) {
   if(name==='navigate' && !permitted(a.url)) throw Error('origin denied');
   await open();
   for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
+  const current = page;
+  if(name!=='navigate') requireScopedPage(current);
   let evaluated;
-  if(name==='navigate') await page.goto(a.url,{waitUntil:'domcontentloaded'});
-  else if(name==='evaluate') {if(!permitted(page.url()))throw Error('page outside scope');evaluated=await page.evaluate(a.expression);}
-  else if(name==='click') await page.locator(a.selector).click();
-  else if(name==='fill') await page.locator(a.selector).fill(a.value);
-  if(!permitted(page.url())) throw Error('page outside scope');
+  if(name==='navigate') await current.goto(a.url,{waitUntil:'domcontentloaded'});
+  else if(name==='evaluate') evaluated=await current.evaluate(a.expression);
+  else if(name==='click') await current.locator(a.selector).click();
+  else if(name==='fill') await current.locator(a.selector).fill(a.value);
+  else if(name==='press') await press(current,a);
+  else if(name==='drag') await drag(current,a);
+  requireScopedPage(current);
   for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
-  return {content:[{type:'text',text:safe(JSON.stringify({result:evaluated,url:page.url(),title:await page.title(),text:await page.locator('body').innerText()}))}]};
+  const title = await current.title();
+  const body = await current.locator('body').innerText();
+  requireScopedPage(current);
+  return {content:[{type:'text',text:safe(JSON.stringify({result:evaluated,url:current.url(),title,text:body}))}]};
 }
 (async()=>{
  if(process.argv[2]==='check') {try {await open();await page.setContent('<title>Fleet readiness</title>');if(await page.title()!=='Fleet readiness')throw Error();
