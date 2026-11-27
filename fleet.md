@@ -166,8 +166,15 @@ Fleet models repository change publication through one shared **Publishing** con
   Provider attempts and failed-job IDs stay in the journal. Readback follows the immutable run if the PR moves or closes and checks the required jobs in the replacement attempt.
   Read `ci_recovery` without contacting the provider. On a second red result or unconfirmed outcome, Fleet submits the evidence to the worker's session when the task still allows work.
   Merge-group runs use [clean re-entry](docs/designs/fleet-delivery-pipeline.md#3-flaky-tests).
-- **CI and delivery blockers.** Workers report persistent publishing access, diagnostic or provider blockers through `publishing_report_blocker`. Fleet binds the report to the calling execution and routes one open Problem per delivery target and cause to the configured Problems duty. Recovery readback that stays unconfirmed goes to the duty as well. Known code and test failures return to the worker.
-  Only the Problem's duty bot may request an owner decision, with the affected delivery, evidence, authority needed, options, consequences and recommendation. The same question appears in the task, bot conversation, Needs you and authorized private Telegram. A confirmed head or run change, closure, resolution or relevant grant change withdraws the question. One answer returns to the bot's ordinary conversation queue under current authority. An answer does not grant credentials, run CI, or bypass publishing policy.
+- **CI and delivery blockers.** Workers report persistent publishing access, diagnostic or provider blockers
+  through `publishing_report_blocker`. Fleet binds the report to the calling execution and routes one open
+  Problem per delivery target and cause to the configured Problems duty. Recovery readback that stays
+  unconfirmed goes to the duty as well. Known code and test failures return to the worker.
+  Only the Problem's duty bot may request an owner decision, with the affected delivery, evidence, authority
+  needed, options, consequences and recommendation. The same question appears in the task, bot conversation,
+  Needs you and authorized private Telegram. A confirmed head or run change, closure, resolution or relevant
+  grant change withdraws the question. One answer returns to the bot's ordinary conversation queue under current
+  authority. An answer does not grant credentials, run CI, or bypass publishing policy.
 - **Policy and fencing:** mutations carry `requestId`, preserve `sourceExecutionId` provenance, fence against moved heads via `expectedHeadSha`, and enforce project review, CI and merge policy without admin bypass.
 - **Rebased task branches:** `project-forge publish_draft` defaults to a regular push. An explicit force-with-lease names the expected remote commit and may update only the active session's granted `fleet/*` branch. The base branch and `main` are excluded.
 
