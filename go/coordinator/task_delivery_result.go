@@ -351,6 +351,38 @@ func deliveredTaskDecision(q *Request, t db.Task, e *agentExecution, reason stri
 	return askTaskRecovery(q, t, e.ID, e.SessionID, reason, "delivery")
 }
 
+// earlierDeliveryOffer checks the explicitly offered result against the current,
+// verified delivery. Callers check delivery and live evidence before using it.
+func earlierDeliveryOffer(q *Request, t db.Task, pr deliveryMergedPR) (bool, error) {
+	offers, err := q.db().TaskOpenAcceptances(q.ctx(), &t.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, offer := range offers {
+		var data questionData
+		if json.Unmarshal(offer.Data, &data) != nil || !data.EarlierResult {
+			continue
+		}
+		if !deliveryRepositoryAllowed(deliveryPolicyForProject(q, deref(t.ProjectID)), pr) ||
+			data.Delivery != nil && !sameDeliveryRef(data.Delivery, &pr) {
+			return false, fail(409, "The selected delivery no longer matches the verified result")
+		}
+		pending, err := q.db().TaskHasPendingWork(q.ctx(), &t.ID)
+		if err != nil {
+			return false, err
+		}
+		selected, err := acceptanceResult(q, t.ID, true, pending, false)
+		if err != nil {
+			return false, err
+		}
+		if selected.id != deref(offer.ExecutionID) || !selected.matches(data.ArtifactIds) {
+			return false, fail(409, "The offer no longer matches the eligible result")
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR) (bool, error) {
 	t, err := taskLoad(q, taskID)
 	if err != nil {
@@ -359,12 +391,25 @@ func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR) (bool
 	if t.AcceptedAt != nil || t.State == db.TaskStateCompleted {
 		return true, nil
 	}
+	// An explicit offer stays with its selected execution and waits for its answer.
+	offered, offerErr := earlierDeliveryOffer(q, t, pr)
+	var conflict *HTTPError
+	if offerErr != nil && (!errors.As(offerErr, &conflict) || conflict.Code != 409) {
+		return false, offerErr
+	}
+	if offered {
+		_, err := settleTask(q, taskID, "")
+		return true, err
+	}
 	pending, err := q.db().TaskHasPendingWork(q.ctx(), &taskID)
 	if err != nil {
 		return false, err
 	}
 	selected, err := eligibleTaskResult(q, taskID, false, pending, false, &pr)
 	if err != nil {
+		if offerErr != nil && errors.As(err, &conflict) && conflict.Code == 409 {
+			return false, offerErr
+		}
 		return false, err
 	}
 	rejected, err := deliveryRejectedEarlier(q, taskID, selected.id, pr)

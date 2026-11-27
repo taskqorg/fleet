@@ -100,6 +100,8 @@ For an ordinary agent result, an explicit acceptance request can also offer a co
 
 Required artifacts must be stored for that execution and the acceptance identifies the retained artifacts it offers. Active or queued continuation supersedes a pending acceptance. An operator may explicitly select an eligible earlier result after work ends, or supply an external result for a task without a Fleet execution.
 
+Delivery reconciliation preserves an open, explicitly selected earlier-result offer while its execution, artifacts and required delivery evidence remain eligible. The offer still requires an explicit answer.
+
 An acceptance offer shows a short outcome and available verification from the offered result, with references to its task, selected artifacts and observed pull request and release. Missing evidence stays unknown.
 
 An operator may reject an open offer after its result loses eligibility. The rejection applies to the offered result.

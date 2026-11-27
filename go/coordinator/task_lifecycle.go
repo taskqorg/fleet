@@ -754,6 +754,15 @@ func withdrawResolvedTaskRecovery(q *Request, t db.Task, proof db.TaskDeliveryRe
 				}
 				continue
 			}
+			offered, err := earlierDeliveryOffer(q, t, pr)
+			var conflict *HTTPError
+			if err != nil && (!errors.As(err, &conflict) || conflict.Code != 409) {
+				return err
+			}
+			if offered {
+				resolved = append(resolved, decision.ID)
+				continue
+			}
 			selected, err := acceptanceResult(q, t.ID, false, false, !deliverySuppliesResult(t, pr))
 			if err != nil {
 				var conflict *HTTPError
