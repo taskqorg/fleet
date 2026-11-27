@@ -16,7 +16,7 @@ finish   --from STEP [--merge FROM] reads step STEP's answer (an agent's output.
          three providers), takes the JSON object out of its text, normalizes it to the result shape and writes
          output.json. --merge FROM keeps FROM's documents that STEP did not return (the two-step pipeline).
 
-Result shape: {documents: [{file, type, side, front, id_number, same_person_as, alias, legal_name, dob, site, signature, readable}],
+Result shape: {documents: [{file, type, side, front, id_number, same_person_as, scene_frame_match, scene_frame_evidence, alias, legal_name, dob, site, signature, readable}],
                model: {legal_name, aliases, name_variants, people, duplicates, unreadable}}; finish groups the
                documents by name and date of birth (people) and sets name_variants when there are two or more groups,
                whatever the answer says; the summary tells different people (different dates of birth) from name
@@ -26,6 +26,8 @@ import argparse, base64, json, os, pathlib, re, subprocess, sys, tempfile, unico
 
 TYPES = ('id_card', 'passport', 'selfie_with_id', 'model_release', '2257_form', 'other')
 IDS = ('id_card', 'passport', 'selfie_with_id')
+PHOTO_IDS = ('id_card', 'passport')
+FRAME_MATCHES = ('match', 'mismatch', 'unresolved')
 IMAGES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
 DOCS = set(IMAGES) | {'.pdf'}  # a PDF is read as one JPEG per page (pdf_pages)
 MAX_PAGES = 12  # pages of one PDF given to the reader; a longer PDF is read up to here and says so
@@ -51,6 +53,8 @@ From each document extract exactly what is written on it, null when the document
 - front: for the back side of an ID, the file of its front side when it is among the files, else null;
 - id_number: the identity document's number as written (ID card, passport or driving licence number), on the ID itself and on a 2257 form or release that records the performer's ID number; null when none is shown or it is empty;
 - same_person_as: for a selfie_with_id, the file of the ID card or passport among the files whose photo shows the same face as the person in the selfie (or whose ID is the one held in the selfie), else null; compare the faces only within these files, never with anything else;
+- scene_frame_match: when scene frame images are provided, for an id_card (with a face photo) or passport, "match" if the ID photo's face clearly matches a performer in at least one scene frame, "mismatch" only if the scene frames clearly show the performer(s) and none matches the ID photo, or "unresolved" if the ID photo or scene frames are blurry, obscured, too small, or ambiguous (never guess); null when no scene frames are provided or the document has no face photo (such as an ID back side or non-ID document); compare faces only visually within these files, never use external face services or output face vectors;
+- scene_frame_evidence: when scene_frame_match is "match" or "mismatch", the list of scene frame filenames supporting that judgment, else [];
 - site: the website or producing company a release or 2257 form names (prefer the website domain when both are shown); always null for identity documents and selfies, which name no site;
 - signature: true when the model's signature is present, false when the model's signature line is empty, null when the document has no signature place for the model (selfies, other files). For identity documents, the holder's signature counts.
 Do not fill a field of one document from another document.
@@ -63,12 +67,14 @@ Then, for the model as a whole:
 - unreadable: the files you could not read.
 
 Answer with only one JSON object, no prose:
-{{"documents": [{{"file": "...", "type": "...", "side": null, "front": null, "id_number": null, "same_person_as": null, "alias": null, "legal_name": null, "dob": null, "site": null, "signature": null, "readable": true}}],
+{{"documents": [{{"file": "...", "type": "...", "side": null, "front": null, "id_number": null, "same_person_as": null, "scene_frame_match": null, "scene_frame_evidence": [], "alias": null, "legal_name": null, "dob": null, "site": null, "signature": null, "readable": true}}],
  "model": {{"legal_name": "...", "aliases": [], "name_variants": false, "duplicates": [], "unreadable": []}}}}
 {extra}"""
 SECOND = """
 A first pass classified the files as follows; you get only the identity documents. Extract their fields and decide
 the model-level fields for these files: {classes}"""
+FRAMES_NOTE = """
+Scene frame images from the shoot (for visual comparison against ID photos only; do NOT include these in `documents`): {frames}."""
 
 
 def inp(): return pathlib.Path(os.environ['FLEET_INPUT_DIR'])
@@ -78,10 +84,12 @@ def write_output(value): (out() / 'output.json').write_text(json.dumps(value, en
 
 def files():
     root = inp() / 'example'
-    found = sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in DOCS) if root.is_dir() else []
+    all_files = sorted(p for p in root.rglob('*') if p.is_file()) if root.is_dir() else []
+    found = [p for p in all_files if p.relative_to(root).parts[0] != 'frames' and p.suffix.lower() in DOCS]
+    frames = [p for p in all_files if p.relative_to(root).parts[0] == 'frames' and p.suffix.lower() in IMAGES]
     if not found:
         sys.exit('the example has no image or PDF files')
-    return root, found
+    return root, found, frames
 
 
 def jpeg(src, dst, side):
@@ -283,7 +291,8 @@ def person_names(documents, groups):
     return out_
 
 
-def normalize(raw, names):
+def normalize(raw, names, frame_names=()):
+    frame_set = set(frame_names)
     docs = {}
     for d in raw.get('documents') or []:
         if not isinstance(d, dict):
@@ -297,8 +306,23 @@ def normalize(raw, names):
         front = pathlib.PurePath(str(d.get('front') or '')).name if side == 'back' else ''
         same = pathlib.PurePath(str(d.get('same_person_as') or '')).name if t == 'selfie_with_id' else ''
         idn = re.sub(r'[^0-9A-Za-z]', '', str(d.get('id_number') or '')).upper() if t in ('id_card', 'passport', '2257_form', 'model_release') else ''
+        sfm, ev = None, []
+        if t in PHOTO_IDS and frame_set:
+            sfm_raw = d.get('scene_frame_match')
+            cand = sfm_raw.strip().lower() if isinstance(sfm_raw, str) else None
+            if cand in FRAME_MATCHES:
+                sfm = cand
+            elif side != 'back':
+                sfm = 'unresolved'
+            raw_ev = d.get('scene_frame_evidence') if isinstance(d.get('scene_frame_evidence'), list) else []
+            ev = sorted({pathlib.PurePath(str(x)).name for x in raw_ev if pathlib.PurePath(str(x)).name in frame_set})
+            if sfm in ('match', 'mismatch') and not ev:
+                sfm = 'unresolved'
+            if sfm not in ('match', 'mismatch'):
+                ev = []
         docs[f] = {'file': f, 'type': t, 'side': side, 'front': front if front in names and front != f else None,
                    'id_number': idn or None, 'same_person_as': same if same in names and same != f else None,
+                   'scene_frame_match': sfm, 'scene_frame_evidence': ev,
                    'alias': d.get('alias') or None, 'legal_name': d.get('legal_name') or None,
                    'dob': norm_date(d.get('dob')), 'site': None if t in IDS else (d.get('site') or None),
                    'signature': sig if isinstance(sig, bool) else None, 'readable': d.get('readable') is not False}
@@ -324,7 +348,7 @@ def normalize(raw, names):
 
 
 def request(args):
-    root, paths = files()
+    root, paths, frame_paths = files()
     extra = ''
     if args.only:
         first = json.loads((inp() / args.only / 'output.json').read_text())
@@ -332,34 +356,41 @@ def request(args):
         paths = [p for p in paths if classes.get(p.name) in IDS] or paths
         extra = SECOND.format(classes=json.dumps(classes))
     names = [str(p.relative_to(root)) for p in paths]
-    prompt = PROMPT.format(files=', '.join(names), extra=extra)
+    frame_names = [p.name for p in frame_paths]
+    if frame_names:
+        extra += FRAMES_NOTE.format(frames=', '.join(frame_names))
+    prompt_text = PROMPT.format(files=', '.join(names), extra=extra)
     with tempfile.TemporaryDirectory() as t:
         parts = expanded(root, paths, pathlib.Path(t) / 'pages')
-        flat = [(n if len(imgs) == 1 else '%s page %d%s' % (n, i + 1, note), img) for n, imgs, note in parts for i, img in enumerate(imgs)]
+        flat = [(('File ' + (n if len(imgs) == 1 else '%s page %d%s' % (n, i + 1, note)) + ':'), img)
+                for n, imgs, note in parts for i, img in enumerate(imgs)]
+        for fp in frame_paths:
+            flat.append(('Scene frame ' + fp.name + ':', fp))
         imgs = scaled([img for _, img in flat])
     labels = [l for l, _ in flat]
     if args.provider == 'anthropic':
-        content = [{'type': 'text', 'text': prompt}]
+        content = [{'type': 'text', 'text': prompt_text}]
         for n, (media, b) in zip(labels, imgs):
-            content += [{'type': 'text', 'text': 'File ' + n + ':'}, {'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': b}}]
+            content += [{'type': 'text', 'text': n}, {'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': b}}]
         body = {'max_tokens': 4000, 'messages': [{'role': 'user', 'content': content}]}
     elif args.provider == 'openai':
-        content = [{'type': 'input_text', 'text': prompt}]
+        content = [{'type': 'input_text', 'text': prompt_text}]
         for n, (media, b) in zip(labels, imgs):
-            content += [{'type': 'input_text', 'text': 'File ' + n + ':'}, {'type': 'input_image', 'image_url': 'data:%s;base64,%s' % (media, b)}]
+            content += [{'type': 'input_text', 'text': n}, {'type': 'input_image', 'image_url': 'data:%s;base64,%s' % (media, b)}]
         body = {'input': [{'role': 'user', 'content': content}], 'max_output_tokens': 16000, 'reasoning': {'effort': 'low'}}
     else:
-        parts_ = [{'text': prompt}]
+        parts_ = [{'text': prompt_text}]
         for n, (media, b) in zip(labels, imgs):
-            parts_ += [{'text': 'File ' + n + ':'}, {'inlineData': {'mimeType': media, 'data': b}}]
+            parts_ += [{'text': n}, {'inlineData': {'mimeType': media, 'data': b}}]
         body = {'contents': [{'role': 'user', 'parts': parts_}],
                 'generationConfig': {'responseMimeType': 'application/json'}}
-    write_output({'files': names, 'body': body})
+    write_output({'files': names, 'frames': frame_names, 'body': body})
 
 
 def prompt(args):
-    root, paths = files()
+    root, paths, frame_paths = files()
     names = [str(p.relative_to(root)) for p in paths]
+    frame_names = [p.name for p in frame_paths]
     agent = ('The files are in $FLEET_INPUT_DIR/example/. Look at every image yourself (open each file with your image '
              'viewing tool); do not run OCR programs or send the files anywhere. Write the JSON object to '
              '$FLEET_OUTPUT_DIR/output.json and stop.\n\n')
@@ -368,15 +399,22 @@ def prompt(args):
         lines = ['%s: %s%s' % (n, ', '.join('$FLEET_INPUT_DIR/prompt/pages/' + i.name for i in imgs), note) for n, imgs, note in pdfs]
         agent += ('PDF files are given as JPEG images of their pages, in order; read every page and answer once per PDF with '
                   'its original file name:\n' + '\n'.join(lines) + '\n\n')
-    write_output({'files': names, 'prompt': agent + PROMPT.format(files=', '.join(names), extra='')})
+    extra = ''
+    if frame_paths:
+        frame_locs = ', '.join('$FLEET_INPUT_DIR/example/' + str(p.relative_to(root)) for p in frame_paths)
+        agent += ('Scene frame images (open these for visual face comparison against ID photos only; do NOT include them in `documents`):\n'
+                  + frame_locs + '\n\n')
+        extra = FRAMES_NOTE.format(frames=', '.join(frame_names))
+    write_output({'files': names, 'frames': frame_names, 'prompt': agent + PROMPT.format(files=', '.join(names), extra=extra)})
 
 
 def finish(args):
-    root, paths = files()
+    root, paths, frame_paths = files()
     names = {str(p.relative_to(root)) for p in paths}
-    result = normalize(answer_of(args.step), names)
+    frame_names = {p.name for p in frame_paths}
+    result = normalize(answer_of(args.step), names, frame_names)
     if args.merge:
-        first = normalize(answer_of(args.merge), names)
+        first = normalize(answer_of(args.merge), names, frame_names)
         have = {d['file'] for d in result['documents']}
         result['documents'] = sorted(result['documents'] + [d for d in first['documents'] if d['file'] not in have], key=lambda d: d['file'])
         fm, m = first['model'], result['model']
