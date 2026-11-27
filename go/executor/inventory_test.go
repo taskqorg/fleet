@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 // Requirement: docs/designs/fleet-host-cleanup.md#10-worktree-lifecycle-for-every-run-kind: a run's stored outputs
@@ -34,8 +38,9 @@ func TestTeardownDropsStoredOutput(t *testing.T) {
 		os.WriteFile(filepath.Join(w, "output", "result.json"), []byte("{}"), 0o600)
 		return dir
 	}
-	kept := add("kept")
-	if r := teardownWith(kept, "kept", top, proj(M{}), teardownOptions{}); r.Removed || str0(r.Reason) != "uncommitted" {
+	const id = "00000000-0000-4000-8000-000000000001" // invented session ID
+	kept := add(id)
+	if r := teardownWith(kept, id, top, proj(M{}), teardownOptions{}); r.Removed || str0(r.Reason) != "uncommitted" {
 		t.Fatal("output must keep the worktree without outputsStored", r)
 	}
 	stored := add("stored")
@@ -47,8 +52,71 @@ func TestTeardownDropsStoredOutput(t *testing.T) {
 	if len(entries) != 2 || *disk.SessionsWorktreeCount != 2 || !entries[0].output {
 		t.Fatal("inventory", len(entries), *disk.SessionsWorktreeCount)
 	}
-	if c := teardownUnknown(filepath.Join(unknown, "worktree"), "unknown"); c.dirs != 1 || exists(filepath.Join(unknown, "worktree")) {
-		t.Fatal("unknown session's worktree stayed", c)
+	db, err := openJournal(filepath.Join(root, "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	worktree := filepath.Join(kept, "worktree")
+	if err := os.WriteFile(filepath.Join(worktree, "dirty"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const brokenID = "00000000-0000-4000-8000-000000000002"
+	broken := filepath.Join(root, "legacy", brokenID, "workspaces", "fixture", "worktree")
+	if err := os.MkdirAll(broken, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, ".git"), []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries = append(entries, inventoryEntry{id: brokenID, root: filepath.Join(root, "legacy"), legacy: true, worktrees: []string{broken}})
+	e := &executor{db: db}
+	a := answer{kind: answerOK, value: json.RawMessage(`{"keep":1,"teardown":[],"unknown":["unknown","00000000-0000-4000-8000-000000000001","00000000-0000-4000-8000-000000000002"],"inventoryAt":456}`)}
+	report, c := e.reconcileInventory(123, entries, a)
+	if err := report.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if report.Response != contract.InventoryResponseReceived || report.StartedAt != 123 || report.InventoryAt == nil || *report.InventoryAt != 456 {
+		t.Fatalf("uncorrelated report: %+v", report)
+	}
+	if c.dirs != 1 || exists(filepath.Join(unknown, "worktree")) || !exists(worktree) {
+		t.Fatal("unexpected removal", c)
+	}
+	if len(report.Candidates) != 3 {
+		t.Fatalf("candidates: %+v", report.Candidates)
+	}
+	protected, removed := report.Candidates[0], report.Candidates[1]
+	if removed.Outcome != contract.InventoryOutcomeRemoved || removed.SessionId != nil || removed.Root != contract.InventoryRootEffective ||
+		protected.Outcome != contract.InventoryOutcomeUncommitted || str0(protected.SessionId) != id || protected.Root != contract.InventoryRootEffective ||
+		protected.Layout != contract.InventoryLayoutDirect {
+		t.Fatalf("outcomes: %+v", report.Candidates)
+	}
+	if got := report.Candidates[2]; got.Outcome != contract.InventoryOutcomeGitCommonDirError ||
+		got.Layout != contract.InventoryLayoutWorkspace || got.Root != contract.InventoryRootLegacy || str0(got.SessionId) != brokenID {
+		t.Fatalf("broken workspace: %+v", got)
+	}
+}
+
+// Failed scheduled exchanges expose a class even when no candidate can be evaluated.
+func TestInventoryResponseFailure(t *testing.T) {
+	e := &executor{}
+	const rawDetail = "/fixture/private/path"
+	for _, tc := range []struct {
+		answer answer
+		want   contract.InventoryResponse
+	}{
+		{answer{kind: answerRetry, text: rawDetail}, contract.InventoryResponseResponseFailed},
+		{answer{kind: answerEdge, status: 200, text: rawDetail}, contract.InventoryResponseDecodeFailed},
+		{answer{kind: answerOK, value: json.RawMessage(`{"unknown":false}`)}, contract.InventoryResponseDecodeFailed},
+		{answer{kind: answerOK, value: json.RawMessage(`null`)}, contract.InventoryResponseDecodeFailed},
+	} {
+		report, c := e.reconcileInventory(123, nil, tc.answer)
+		if report.Response != tc.want || report.InventoryAt != nil || len(report.Candidates) != 0 || c.dirs != 0 {
+			t.Fatalf("failed inventory: %+v, %+v", report, c)
+		}
+		if b, err := json.Marshal(report); err != nil || strings.Contains(string(b), rawDetail) {
+			t.Fatal("failed inventory must expose only classified fields")
+		}
 	}
 }
 

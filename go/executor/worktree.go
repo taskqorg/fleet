@@ -438,6 +438,11 @@ type teardownOptions struct {
 }
 
 func teardownWith(dir, session, top string, project contract.ProjectContext, opt teardownOptions) contract.Teardown {
+	out, _ := teardownWithOutcome(dir, session, top, project, opt)
+	return out
+}
+
+func teardownWithOutcome(dir, session, top string, project contract.ProjectContext, opt teardownOptions) (contract.Teardown, contract.InventoryOutcome) {
 	deleteBranch, detached := opt.deleteBranch, opt.detached
 	keep := keepReasons(project)
 	if opt.ignoreUncommitted {
@@ -459,7 +464,7 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 		removeStale(w)
 	}
 	if !exists(filepath.Join(w, ".git")) {
-		return refusedTeardown("no-worktree")
+		return refusedTeardown("no-worktree"), contract.InventoryOutcomeNoWorktree
 	}
 	out := contract.Teardown{}
 	if project.Scripts != nil && project.Scripts.Teardown != nil {
@@ -467,7 +472,7 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 		out.Teardown = &t
 		if !t.Ok && keep["teardown-failed"] {
 			out.Reason = new("teardown-failed")
-			return out
+			return out, contract.InventoryOutcomeTeardownFailed
 		}
 	}
 	// Fleet-made links are excluded from the dirty check and removed before `worktree remove`.
@@ -488,7 +493,10 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 	o, err := hardenedGit(args...).Output()
 	if keep["uncommitted"] && (err != nil || len(o) > 0) {
 		out.Reason = new("uncommitted")
-		return out
+		if err != nil {
+			return out, contract.InventoryOutcomeGitStatusError
+		}
+		return out, contract.InventoryOutcomeUncommitted
 	}
 	// Delivered work (deleteBranch: the task was accepted) is not unpushed even when its squash-merged remote branch
 	// was deleted and pruned; uncommitted changes still keep the worktree.
@@ -504,7 +512,10 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 		ahead, err := hardenedGit(not...).Output()
 		if err != nil || len(strings.TrimSpace(string(ahead))) > 0 {
 			out.Reason = new("unpushed")
-			return out
+			if err != nil {
+				return out, contract.InventoryOutcomeGitReachabilityError
+			}
+			return out, contract.InventoryOutcomeUnpushed
 		}
 	}
 	for _, r := range links {
@@ -515,10 +526,10 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 	out.Removed = removed
 	if !removed {
 		out.Reason = new("worktree-remove-failed")
-		return out
+		return out, contract.InventoryOutcomeWorktreeRemoveFailed
 	}
 	if detached { // no session branch was ever made: nothing to delete or report
-		return out
+		return out, contract.InventoryOutcomeRemoved
 	}
 	flag := "-d"
 	if deleteBranch {
@@ -526,7 +537,7 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 	}
 	deleted := hardenedGit("-C", top, "branch", flag, sessionBranch(project, session)).Run() == nil
 	out.BranchDeleted = &deleted
-	return out
+	return out, contract.InventoryOutcomeRemoved
 }
 
 // sessionBranch: <prefix>/<session>, the branch a session with a branch works on.

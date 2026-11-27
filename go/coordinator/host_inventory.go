@@ -79,7 +79,8 @@ func hostInventory(q *Request, b *contract.HostInventoryRequest) (contract.HostI
 	}); err != nil {
 		return out, err
 	}
-	summary := inventorySummary{HostDiskReading: contract.HostDiskReading{At: float64(nowMs()), Projects: []contract.HostDiskProject{}}}
+	at := nowMs()
+	summary := inventorySummary{HostDiskReading: contract.HostDiskReading{At: float64(at), Projects: []contract.HostDiskProject{}}}
 	if b.Disk != nil {
 		summary.Disk = *b.Disk
 	}
@@ -108,6 +109,7 @@ func hostInventory(q *Request, b *contract.HostInventoryRequest) (contract.HostI
 			out.Keep++
 		}
 	}
+	var saved int64
 	err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
 		var prev inventorySummary
 		if r, err := q.db().HostObservationOf(q.ctx(), host); err == nil {
@@ -168,8 +170,13 @@ func hostInventory(q *Request, b *contract.HostInventoryRequest) (contract.HostI
 			}
 			return 0
 		})
-		return q.db().HostInventorySet(q.ctx(), db.HostInventorySetParams{ID: host, Inventory: jsonBytes(summary)})
+		n, err := q.db().HostInventorySet(q.ctx(), db.HostInventorySetParams{ID: host, Inventory: jsonBytes(summary)})
+		saved = n
+		return err
 	})
+	if err == nil && saved > 0 {
+		out.InventoryAt = &at
+	}
 	return out, err
 }
 
