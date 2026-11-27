@@ -22,7 +22,7 @@
 - Archive extraction permits only local regular-file and directory entries. Installed files become read-only, and release links are changed through temporary symlinks ([update.go: `unpack`, `install`, `relink`](update.go)).
 - A release must become healthy after restart; after three unhealthy starts the updater restores `previous`, records the refusal, and retains the pre-deploy database dump where applicable ([update.go: `settle`, `pruneDumps`](update.go)).
 - After installing a coordinator or UI release and before its restart, the app's source maps go to Bugsink when `/etc/fleet/bugsink/` holds `ci-token` and `ingest-url` (PDS18); a failed upload is only a warning ([sourcemaps.go: `uploadSourcemaps`](sourcemaps.go), [error tracking](../../docs/designs/fleet-error-tracking.md#6-source-maps)).
-- Cached release metadata is returned only after validation. UI state remains independent from native rollout state ([update.go: `getCached`](update.go), [ui.go: `cycleUI`](ui.go)).
+- Cached release metadata is returned only after validation. UI state remains independent from native rollout state, and both UI and native coordinator releases pool hashed `assets/*` into the UI root with 7-day mtime pruning ([update.go: `getCached`](update.go), [ui.go: `cycleUI`, `poolUIAssets`](ui.go)).
 - HTTP clients come from [`httpClient`](httpclient.go). [`design_rules_test.go`](design_rules_test.go) (`TestDesignRules`) enforces S10 AST rules across non-test, non-generated `go/update/*.go` files against `designUpdateOwned`: `U-MAP` forbids `map[string]any`/`map[string]interface{}`, `U-GO` forbids bare `go` statements outside `errtrack.Go`, and `U-HTTP` keeps `http.Client` construction in its documented owner.
 
 ## Side effects

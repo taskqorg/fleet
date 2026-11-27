@@ -54,22 +54,32 @@ export async function restore(key: string): Promise<Stored | undefined> {
   return e === epoch && o === owner && v && typeof v === 'object' && 'data' in v ? v : undefined;
 }
 
-const timers = new Map<string, ReturnType<typeof setTimeout>>();
+const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; write: () => Promise<void> }>();
 /** Keep the newest answer of key for the current owner (written after a second of quiet, so bursts write once). */
 export function persist(key: string, data: unknown) {
   const o = owner, e = epoch; if (o === null) return;
-  clearTimeout(timers.get(key));
-  timers.set(key, setTimeout(() => {
-    timers.delete(key);
-    if (e !== epoch || o !== owner) return;
-    void run('readwrite', s => s.put({ data, at: Date.now() } satisfies Stored, o + '\u0000' + key));
-  }, WRITE_DELAY_MS));
+  const prev = pending.get(key);
+  if (prev) clearTimeout(prev.timer);
+  const write = () => {
+    pending.delete(key);
+    if (e !== epoch || o !== owner) return Promise.resolve();
+    return run('readwrite', s => s.put({ data, at: Date.now() } satisfies Stored, o + '\u0000' + key)).then(() => {});
+  };
+  pending.set(key, { timer: setTimeout(() => { void write(); }, WRITE_DELAY_MS), write });
+}
+
+/** Flush any debounced mirror writes before the page reloads. */
+export async function flushPersist(): Promise<void> {
+  const entries = [...pending.values()];
+  pending.clear();
+  for (const entry of entries) clearTimeout(entry.timer);
+  await Promise.all(entries.map(entry => entry.write()));
 }
 
 /** Drop every stored answer and pending write (sign-out, another person, changed grants). */
 export function purge(): Promise<void> {
   epoch++;
-  for (const t of timers.values()) clearTimeout(t); timers.clear();
+  for (const entry of pending.values()) clearTimeout(entry.timer); pending.clear();
   return run('readwrite', s => s.clear()).then(() => {});
 }
 

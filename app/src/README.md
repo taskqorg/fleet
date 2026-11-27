@@ -46,7 +46,7 @@
 - `api.ts` sends same-origin `POST /api/ops/:name` requests; `feed.ts` opens `EventSource('/api/stream…')` and polls `changes_since` after repeated failures.
 - `persist.ts` reads and writes the IndexedDB database `fleet-data` and the `localStorage` key `fleet-data-owner`.
 - `offline.ts` clears in-memory stores on access invalidation; `prefs.ts` writes person settings through coordinator operations.
-- `main.tsx` registers `/sw.js`, changes browser history, and can redirect to Cloudflare Access logout.
+- `main.tsx` updates any legacy `/sw.js` registration to its self-unregistering cleanup stub, changes browser history, and can redirect to Cloudflare Access logout.
 
 ## Verification
 

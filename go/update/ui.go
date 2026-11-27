@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // validateUI binds a UI tree to the exact backend qualified by its release job.
@@ -172,8 +173,40 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 	if err := chmodTree(func(fn fs.WalkDirFunc) error { return filepath.WalkDir(dir, fn) }, os.Chmod); err != nil {
 		return err
 	}
-	assets := filepath.Join(dir, "assets")
-	entries, err := os.ReadDir(assets)
+	if err := poolUIAssets(r, root, filepath.Join(dir, "assets"), u.now()); err != nil {
+		return err
+	}
+	if err := u.install(p, candidate, dir); err != nil {
+		return err
+	}
+	u.uploadSourcemaps(filepath.Join(root, candidate, p.app), candidate)
+	st.Last, err = u.settleUI(r, p, candidate, true)
+	if err != nil {
+		return err
+	}
+	if st.Last.State == "ok" {
+		pruneUIAssets(r, root, activeUIAssetDirs(root, pdsCoordinatorReleases), uiAssetMaxAge, u.now())
+	}
+	return writeJSON(stateFile, st, 0600)
+}
+
+const uiAssetMaxAge = 7 * 24 * time.Hour
+
+func activeUIAssetDirs(uiRoot, coordRoot string) []string {
+	var dirs []string
+	for _, link := range []string{"current", "previous"} {
+		dirs = append(dirs, filepath.Join(uiRoot, link, "assets"))
+		if coordRoot != "" {
+			dirs = append(dirs, filepath.Join(coordRoot, link, "dist", "app", "assets"))
+		}
+	}
+	return dirs
+}
+
+// poolUIAssets copies hashed UI assets from srcAssets into <uiRoot>/assets, rejecting byte collisions and
+// refreshing mtime on unchanged entries so 7-day GC retains active shared assets.
+func poolUIAssets(r *os.Root, uiRoot, srcAssets string, now time.Time) error {
+	entries, err := os.ReadDir(srcAssets)
 	if err != nil {
 		return err
 	}
@@ -187,7 +220,7 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 		if !entry.Type().IsRegular() {
 			return fmt.Errorf("UI asset is not regular: %s", entry.Name())
 		}
-		b, err := os.ReadFile(filepath.Join(assets, entry.Name()))
+		b, err := os.ReadFile(filepath.Join(srcAssets, entry.Name()))
 		if err != nil {
 			return err
 		}
@@ -200,6 +233,7 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 			if err := r.Chmod(name, 0444); err != nil {
 				return err
 			}
+			_ = os.Chtimes(filepath.Join(uiRoot, name), now, now)
 			continue
 		}
 		if !os.IsNotExist(err) {
@@ -212,15 +246,59 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 			return err
 		}
 	}
-	if err := u.install(p, candidate, dir); err != nil {
+	return nil
+}
+
+// pruneUIAssets removes pooled assets older than maxAge that are not referenced by any active current/previous release.
+func pruneUIAssets(r *os.Root, uiRoot string, activeDirs []string, maxAge time.Duration, now time.Time) {
+	keep := map[string]bool{}
+	for _, dir := range activeDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.Type().IsRegular() {
+				keep[e.Name()] = true
+			}
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(uiRoot, "assets"))
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() || keep[e.Name()] {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || now.Sub(info.ModTime()) <= maxAge {
+			continue
+		}
+		_ = r.Remove(filepath.Join("assets", e.Name()))
+	}
+}
+
+func poolNativeUIAssets(uiRoot, srcAssets, coordRoot string, now time.Time) error {
+	if _, err := os.Stat(srcAssets); os.IsNotExist(err) {
+		return nil
+	}
+	if err := os.MkdirAll(uiRoot, 0755); err != nil {
 		return err
 	}
-	u.uploadSourcemaps(filepath.Join(root, candidate, p.app), candidate)
-	st.Last, err = u.settleUI(r, p, candidate, true)
+	if err := os.Chmod(uiRoot, 0755); err != nil {
+		return err
+	}
+	r, err := openReleases(uiRoot)
 	if err != nil {
 		return err
 	}
-	return writeJSON(stateFile, st, 0600)
+	defer r.Close()
+	if err := poolUIAssets(r, uiRoot, srcAssets, now); err != nil {
+		return err
+	}
+	pruneUIAssets(r, uiRoot, activeUIAssetDirs(uiRoot, coordRoot), uiAssetMaxAge, now)
+	return nil
 }
 
 func (u *updater) settleUI(r *os.Root, p *part, ver string, restart bool) (*Result, error) {

@@ -37,6 +37,8 @@ function retry() {
 // changed grants fence and validate anew. Without a handler (tests) it fences, as at start.
 let resyncHandler: (() => void) | null = null;
 export function setResyncHandler(fn: (() => void) | null) { resyncHandler = fn; }
+let uiHashHandler: ((hash: string) => void) | null = null;
+export function setUIHashHandler(fn: ((hash: string) => void) | null) { uiHashHandler = fn; }
 function resync() {
   if (resyncHandler && access.peek().state === 'open') { source?.close(); source = null; clearTimeout(timer); feedState.value = 'connecting'; resyncHandler(); return; }
   invalidateAccess('feed resync'); void ensureAccessGeneration('feed resync').catch(retry);
@@ -79,7 +81,12 @@ function connect(generation: number) {
   source?.close();
   const es = new EventSource('/api/stream' + (cursor === null ? '' : '?cursor=' + cursor)); source = es;
   const current = () => source === es && isAccessCurrent(generation);
-  es.addEventListener('ready', () => { if (current()) { failures = 0; feedState.value = 'live'; } });
+  es.addEventListener('ready', e => {
+    if (!current()) return;
+    failures = 0; feedState.value = 'live';
+    const sc = JSON.parse((e as MessageEvent).data) as StreamCursor;
+    if (sc.uiHash) uiHashHandler?.(sc.uiHash);
+  });
   es.addEventListener('resync', () => { if (current()) resync(); });
   es.onmessage = e => { if (current()) { const c = JSON.parse(e.data) as Change; deliver(c, generation); cursor = c.seq; } };
   es.onerror = () => { if (!current()) return; es.close(); failures++; feedState.value = failures >= 3 ? 'polling' : 'connecting'; reconnect(generation); };
@@ -112,7 +119,9 @@ export function startFeed(_from: number | null = null) {
       signal.addEventListener('abort', abort, { once: true });
       es.addEventListener('ready', e => {
         if (!current() || settled) return;
-        const c = (JSON.parse((e as MessageEvent).data) as StreamCursor).cursor;
+        const sc = JSON.parse((e as MessageEvent).data) as StreamCursor;
+        const c = sc.cursor;
+        if (sc.uiHash) uiHashHandler?.(sc.uiHash);
         settled = true;
         resolve({ cursor: c, dispose, activate: () => {
           if (!current()) throw Error('Baseline superseded');

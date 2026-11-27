@@ -1,13 +1,12 @@
-// The service worker caches only the app's own routes (review fix 10); test sites and other paths are never cached.
+// The service worker is a self-unregistering cleanup stub that clears legacy precaches without intercepting fetches.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 
-test('service worker app-route pattern', { skip: !existsSync('dist/app/sw.js') && 'run pnpm run build first' }, () => {
+test('service worker cleanup stub', { skip: !existsSync('dist/app/sw.js') && 'run pnpm run build first' }, () => {
   const sw = readFileSync('dist/app/sw.js', 'utf8');
-  const m = sw.match(/const app=(\/.*\/)\.test/)!;
-  const re = new RegExp(m[1].slice(1, -1));
-  for (const p of ['/home', '/overview', '/tasks', '/tasks/abc', '/conversations/x', '/hosts/mac', '/lab', '/lab/e1', '/projects/tasks/12', '/projects/FLT/tasks/T-FLT-42', '/system/hosts/mac']) assert.ok(re.test(p), p);
-  for (const p of ['/laboratory', '/test-sites/a/b.html', '/api/ops/me', '/home/a/b/c/d', '/']) assert.ok(!re.test(p), p);
-  assert.ok(!sw.includes("put('/home'"), 'navigations are cached under their own path');
+  assert.ok(sw.includes('skipWaiting'), 'activates immediately');
+  assert.ok(sw.includes('caches.delete'), 'clears legacy fleet caches');
+  assert.ok(sw.includes('registration.unregister'), 'unregisters itself');
+  assert.ok(!sw.includes('addAll') && !sw.includes("'fetch'"), 'does not precache or intercept fetches');
 });

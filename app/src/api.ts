@@ -34,9 +34,9 @@ export function accessControlOp<K extends 'me' | 'boot' | 'changes_since'>(name:
   if ((name === 'changes_since' || name === 'boot') && Object.keys(body).length) throw new Error('Access baseline must have no cursor or options');
   return request(name, body, opts.signal, () => { if (opts.signal?.aborted) throw new AccessChanged(); });
 }
-let inFlight = 0;
-/** Operation requests sent and not yet answered; the app update waits for them (version.ts). A keepalive request outlives the page anyway. */
-export const requestsInFlight = () => inFlight;
+let inFlight = 0, activeWriteOnce = 0;
+/** Operation requests sent and not yet answered, including active writeOnce retry loops; the app update waits for them (version.ts). A keepalive request outlives the page anyway. */
+export const requestsInFlight = () => inFlight + activeWriteOnce;
 async function request<K extends OpName>(name: K, body: unknown, signal: AbortSignal | undefined, fence: () => void, path = '/api/ops/' + name, keepalive = false): Promise<Ops[K]['reply']> {
   if (keepalive) return send<Ops[K]['reply']>(body, signal, fence, path, true);
   inFlight++;
@@ -74,11 +74,16 @@ export const unknownOutcome = (e: unknown) => e instanceof OpError && (e.message
 // ponytail: fixed wait and no attempt cap; the caller ends it with the signal.
 export async function writeOnce<K extends OpName>(name: K, body: Ops[K]['request'], onUnknown: () => void, opts: { signal?: AbortSignal; wait?: number } = {}): Promise<Ops[K]['reply']> {
   const generation = accessGeneration();
-  for (;;) {
-    if (generation !== accessGeneration()) throw new AccessChanged();
-    if (opts.signal?.aborted) throw new OpError('aborted', 0);
-    try { return await op(name, body, { signal: opts.signal }); }
-    catch (e) { if (!unknownOutcome(e)) throw e; onUnknown(); await new Promise(r => setTimeout(r, opts.wait ?? 1000)); }
+  activeWriteOnce++;
+  try {
+    for (;;) {
+      if (generation !== accessGeneration()) throw new AccessChanged();
+      if (opts.signal?.aborted) throw new OpError('aborted', 0);
+      try { return await op(name, body, { signal: opts.signal }); }
+      catch (e) { if (!unknownOutcome(e)) throw e; onUnknown(); await new Promise(r => setTimeout(r, opts.wait ?? 1000)); }
+    }
+  } finally {
+    activeWriteOnce--;
   }
 }
 

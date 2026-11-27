@@ -4,9 +4,11 @@
 // named in the page this tab loaded against the ones in a fresh copy of the page. It does not depend on service worker
 // events, so it gives the same answer on every check, and after an update the reloaded tab matches the site.
 import { cell } from './signal.ts';
-import type { Tone, VersionInfo, VersionRow } from '../../packages/ui/src/index.ts';
+import { hasUnpersistedDrafts, type Tone, type VersionInfo, type VersionRow } from '../../packages/ui/src/index.ts';
 import { op, requestsInFlight, type Ops } from './api.ts';
 import { access, accessGeneration, isAccessCurrent, onAccessInvalidated, onAccessOpen } from './access.ts';
+import { flushPersist } from './persist.ts';
+import { hasReadyAttachments, uploadsInFlight } from './uploads.ts';
 import { navigate } from './router.ts';
 
 type Versions = Ops['system_versions']['reply'];
@@ -41,16 +43,20 @@ async function servedAssets(): Promise<string | null> {
   } catch { return null; }
 }
 
-export async function checkUpdate() {
-  const read = ++updateRead, generation = accessGeneration(), mine = own(), served = await servedAssets();
-  if (!isAccessCurrent(generation) || read !== updateRead) return;
-  updateChecked.value = !!mine && !!served;
-  if (!mine || !served) return;
+/** Probe whether the coordinator is reachable and authenticated without following Access login redirects. */
+export async function probeSiteRelease(): Promise<boolean> {
+  try {
+    const r = await fetch('/ui-release.json', { cache: 'no-store', credentials: 'same-origin', redirect: 'manual' });
+    return r.type !== 'opaqueredirect' && r.ok;
+  } catch { return false; }
+}
+
+function offerUpdate(mine: string, ready: boolean) {
   const was = updateReady.value;
-  updateReady.value = served !== mine;
-  // A newly served app: read its version now, so the strip names it.
-  if (updateReady.value && !was) void loadVersions();
-  if (!updateReady.value) return;
+  updateReady.value = ready;
+  if (!ready) { clearHiddenReload(); return; }
+  if (ready && !was && !document.hidden) void loadVersions();
+  if (document.visibilityState === 'hidden') { scheduleHiddenReload(); return; }
   // Newly offered to a person looking at the tab: the full count shows first. A tab the person is away from waits for
   // their return (countdown).
   if (!was && !away()) lastActive = Date.now();
@@ -61,39 +67,90 @@ export async function checkUpdate() {
   countdown();
 }
 
+export async function checkUpdate() {
+  const read = ++updateRead, generation = accessGeneration(), mine = own(), served = await servedAssets();
+  if (!isAccessCurrent(generation) || read !== updateRead) return;
+  updateChecked.value = !!mine && !!served;
+  if (!mine || !served) return;
+  offerUpdate(mine, served !== mine);
+}
+
+/** Called from the SSE ready event with the server's live UI signature (detects updates even in hidden tabs). */
+export function notifyServerUIHash(hash: string) {
+  const mine = own();
+  if (!mine || !hash) return;
+  updateChecked.value = true;
+  offerUpdate(mine, hash !== mine);
+}
+
 /*
- * The idle update (nav-rail.md, Update; board screens/shell). While a new app is ready, the tab reloads into it after
- * IDLE_MS with no activity: a pointer move, key, wheel, touch or focus change in this tab sets the one timestamp
- * back (passive listeners, written at most every ACTIVE_STEP). A tab the person is away from (hidden, or its window
- * without focus) never reloads: it waits for the person to come back, then updates at once when their last action was
- * IDLE_MS or more ago, and otherwise counts down the rest. Coming back is not activity. One 1 s timer runs only while a new app is ready. Work is never lost: input a person typed and did not send,
- * an open modal dialog, or a request still in flight hold the count (holding was chosen over restoring drafts after the
- * reload: it cannot lose what a page did not save). The reload keeps the route (location.reload) and the scroll of the
- * page's scroll areas.
+ * The idle and hidden-tab update (nav-rail.md, Update; board screens/shell). While a new app is ready, a visible focused
+ * tab reloads after IDLE_MS with no activity: a pointer move, key, wheel, touch or focus change sets the one timestamp
+ * back (passive listeners, written at most every ACTIVE_STEP). A visible-but-unfocused tab waits for focus return
+ * (so a page open on a second monitor is never yanked while read). A clean hidden tab flushes view state and reloads
+ * silently in the background after 15-30 s random jitter. Work is never lost: unsaved input (including <select>,
+ * checkboxes, unpersisted drafts, and in-memory attachment chips), an open modal dialog, active uploads, or requests
+ * and writeOnce retries still in flight hold the reload. The reload keeps the route (location.reload) and scroll.
  */
 export type UpdateHold = 'draft' | 'dialog' | 'save';
 export const IDLE_MS = 30_000;
-const ACTIVE_STEP = 250, RELOADED_KEY = 'fleet-update:reloaded', SCROLL_KEY = 'fleet-update:scroll';
-let lastActive = Date.now(), timer: ReturnType<typeof setInterval> | undefined, left = false;
+const ACTIVE_STEP = 250, HIDDEN_MIN_MS = 15_000, HIDDEN_JITTER_MS = 15_000, RELOADED_KEY = 'fleet-update:reloaded', SCROLL_KEY = 'fleet-update:scroll';
+let lastActive = Date.now(), timer: ReturnType<typeof setInterval> | undefined, hiddenTimer: ReturnType<typeof setTimeout> | undefined, left = false;
+let beforeReload: (() => void) | null = null;
+export function setBeforeReload(fn: (() => void) | null) { beforeReload = fn; }
 /** The person is away: the tab is hidden or its window has no focus. */
 // A wall display (/live?wall, a TV nobody clicks) is away only while hidden.
 const away = () => document.visibilityState !== 'visible' || (!document.hasFocus() && !new URLSearchParams(location.search).has('wall'));
 
 /**
- * Fields a person typed into, with the value they had before the first keystroke: a field whose value differs and is not
- * empty is a draft (a composer emptied by its send is not). Search and filter fields hold no work, so they are not kept.
+ * Fields a person typed into or toggled, with the value they had before the first interaction: a field whose value
+ * differs and is not empty (or whose checked state changed) is a draft. Search and filter fields hold no work.
  */
 const edited = new Map<HTMLElement, string>();
-const valueOf = (el: HTMLElement) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? el.value : el.isContentEditable ? el.textContent ?? '' : '';
+const isField = (el: EventTarget | null): el is HTMLElement =>
+  el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || (el instanceof HTMLElement && el.isContentEditable);
+const valueOf = (el: HTMLElement) => {
+  if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')) return String(el.checked);
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el.value;
+  return el.isContentEditable ? el.textContent ?? '' : '';
+};
+const defaultValueOf = (el: HTMLElement) => {
+  if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')) return String(el.defaultChecked);
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.defaultValue;
+  if (el instanceof HTMLSelectElement) return [...el.options].find(o => o.defaultSelected)?.value ?? el.options[0]?.value ?? '';
+  return valueOf(el);
+};
 function holdReason(): UpdateHold | null {
   for (const [el, before] of edited) {
     if (!el.isConnected) { edited.delete(el); continue; }
     const now = valueOf(el);
-    if (now.trim() && now !== before) return 'draft';
+    const nonEmpty = el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? true : !!now.trim();
+    if (nonEmpty && now !== before) return 'draft';
   }
+  if (hasUnpersistedDrafts() || hasReadyAttachments()) return 'draft';
   // A side sheet is the phone's detail view, not a dialog with state of its own.
-  if (document.querySelector(':modal:not(.side-sheet)')) return 'dialog';
+  if (document.querySelector(':modal:not(.side-sheet), [role="dialog"][aria-modal="true"]:not(.side-sheet)')) return 'dialog';
+  if (uploadsInFlight()) return 'save';
   return null;
+}
+
+function clearHiddenReload() {
+  if (hiddenTimer !== undefined) { clearTimeout(hiddenTimer); hiddenTimer = undefined; }
+}
+
+function scheduleHiddenReload() {
+  if (document.visibilityState !== 'hidden' || !updateReady.peek() || updating.peek() || updateError.peek() || hiddenTimer !== undefined) return;
+  const mine = own();
+  if (mine && reloadedInto() === mine) return;
+  const delay = HIDDEN_MIN_MS + Math.floor(Math.random() * HIDDEN_JITTER_MS);
+  hiddenTimer = setTimeout(() => {
+    hiddenTimer = undefined;
+    if (document.visibilityState !== 'hidden' || !updateReady.peek() || updating.peek() || updateError.peek()) return;
+    const cur = own();
+    if (cur && reloadedInto() === cur) return;
+    if (holdReason() !== null || requestsInFlight() > 0) { scheduleHiddenReload(); return; }
+    void applyUpdate(true);
+  }, delay);
 }
 
 function countdown() {
@@ -104,7 +161,7 @@ function countdown() {
   if (hold) { lastActive = now; updateIn.value = null; updateHold.value = hold; return; }
   const left = Math.max(0, Math.ceil((IDLE_MS - (now - lastActive)) / 1000));
   updateIn.value = left;
-  // At 0 a request still in flight (a save, a send) finishes first; past 2 s the strip says what it waits for.
+  // At 0 a request still in flight (a save, a send, a writeOnce retry) finishes first; past 2 s the strip says what it waits for.
   if (left === 0 && requestsInFlight() > 0) { updateHold.value = now - lastActive > IDLE_MS + 2000 ? 'save' : null; return; }
   updateHold.value = null;
   if (left === 0) void applyUpdate(true);
@@ -127,7 +184,7 @@ function reloadedInto(): string | null {
 
 /** The scroll areas of the page, by their class and place, so the reloaded page can find them again. */
 const SCROLLERS = '.shell-main, .split-list, .detail, .work-idle, .side-body, .limits, .runners';
-function keepScroll() {
+export function keepScroll() {
   const all = [...document.querySelectorAll<HTMLElement>(SCROLLERS)];
   const at = all.map((el, i) => ({ i, cls: el.className, top: el.scrollTop })).filter(x => x.top > 0);
   try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ path: location.pathname + location.search, window: scrollY, at })); } catch { /* the scroll is not kept */ }
@@ -175,40 +232,22 @@ export const olderThan = (a: string | null | undefined, b: string | null | undef
 };
 
 /**
- * Reload into the new app on the first click: the waiting service worker (if any) takes over first, so the reload is
- * served by the new worker and its cache; without one the reload alone fetches the new page (navigations go to the network).
- * Once the reload is asked for, `updating` stays on until the page unloads: the control never turns back into Update in
- * between (a busy state cleared before the reload landed showed the button again). A failure says why and allows Retry.
+ * Reload into the new app directly via HTTP (no caching service worker). Probes /ui-release.json with redirect: 'manual'
+ * so an expired Access session or offline coordinator aborts cleanly, flushes pending mirror and preference saves,
+ * keeps scroll positions, and reloads.
  */
 export async function applyUpdate(auto = false) {
   if (updating.value) return;
+  clearHiddenReload();
   updating.value = true;
   updateError.value = null;
   try {
-    // A reload after an unreadable page could return an old offline shell, so verify the site before proceeding.
-    if (!await servedAssets()) throw Error('The site app is unreachable. Retry when connected.');
-    const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
-    if (reg) {
-      await reg.update();
-      const installing = reg.installing;
-      if (installing) await new Promise<void>((resolve, reject) => {
-        const finish = () => {
-          if (installing.state === 'installed' || installing.state === 'activated') { clearTimeout(timer); installing.removeEventListener('statechange', finish); resolve(); }
-          else if (installing.state === 'redundant') { clearTimeout(timer); installing.removeEventListener('statechange', finish); reject(Error('App installation failed. Retry update.')); }
-        };
-        const timer = setTimeout(() => { installing.removeEventListener('statechange', finish); reject(Error('App installation is still pending. Retry update.')); }, 8000);
-        installing.addEventListener('statechange', finish); finish();
-      });
-      const w = reg.waiting;
-      if (w) await new Promise<void>((resolve, reject) => {
-        const changed = () => { if (navigator.serviceWorker.controller === w) { clearTimeout(timer); navigator.serviceWorker.removeEventListener('controllerchange', changed); resolve(); } };
-        const timer = setTimeout(() => { navigator.serviceWorker.removeEventListener('controllerchange', changed); reject(Error('App activation is still pending. Retry update.')); }, 4000);
-        navigator.serviceWorker.addEventListener('controllerchange', changed); w.postMessage('skip-waiting'); changed();
-      });
-    }
+    if (!await probeSiteRelease()) throw Error('The site app is unreachable. Retry when connected.');
+    beforeReload?.();
+    await flushPersist();
     keepScroll();
     try { if (auto) sessionStorage.setItem(RELOADED_KEY, JSON.stringify({ assets: own(), at: Date.now() })); else sessionStorage.removeItem(RELOADED_KEY); } catch { /* no loop guard */ }
-    location.reload(); // navigation is network-first; the next tab confirms its assets against the site
+    location.reload();
   } catch (error) {
     updateError.value = error instanceof Error ? error.message : String(error);
     updating.value = false;
@@ -217,37 +256,60 @@ export async function applyUpdate(auto = false) {
 
 /**
  * Starts the checks: as soon as access opens (at load, and again after access was validated anew, which clears the
- * versions), when the tab gets focus (at most once a minute), and every 5 minutes. A read before access is open would be
- * discarded, so none is made.
+ * versions), when the tab gets focus (at most once a minute), and every 5 minutes (shell check only while hidden).
  */
 export function startVersionChecks(): () => void {
   let last = 0;
-  const run = () => { if (document.hidden || access.peek().state !== 'open' || Date.now() - last < 60_000) return; last = Date.now(); void checkUpdate(); void loadVersions(); };
+  const run = (allowHidden = false) => {
+    if ((document.hidden && !allowHidden) || access.peek().state !== 'open' || Date.now() - last < 60_000) return;
+    last = Date.now();
+    void checkUpdate();
+    if (!document.hidden) void loadVersions();
+  };
   const opened = () => { last = 0; run(); };
+  const onFocus = () => run();
   // Access opening is one synchronous continuation with the baseline's activation (access.ts): the reads start after it.
   const afterOpen = () => { setTimeout(opened, 0); };
-  const first = setTimeout(opened, 0), every = setInterval(opened, 300_000);
+  const first = setTimeout(opened, 0), every = setInterval(() => { last = 0; run(true); }, 300_000);
   onAccessOpen.add(afterOpen);
-  // The person comes back: an update ready since their last action IDLE_MS ago installs now, else the count goes on.
+  // Leaving/hiding triggers jittered reload for clean hidden tabs; returning resumes or triggers idle countdown.
   const leave = () => { left = true; };
-  const back = () => { if (away()) { left = true; return; } if (updateReady.peek()) countdown(); };
-  addEventListener('focus', run); addEventListener('focus', back); addEventListener('blur', leave);
-  // Activity for the idle update: passive and captured, so a handler that stops the event still counts it.
-  const opts = { capture: true, passive: true } as const, typed = (e: Event) => {
-    const t = e.target;
-    if (!(t instanceof HTMLElement) || edited.has(t) || t.matches('input[type=search], [role=searchbox], [role=combobox]') || t.closest('[role=search], .spotlight')) return;
-    edited.set(t, valueOf(t));
+  const back = () => {
+    if (document.visibilityState === 'hidden') {
+      left = true;
+      if (updateReady.peek()) scheduleHiddenReload();
+      return;
+    }
+    clearHiddenReload();
+    if (away()) { left = true; return; }
+    if (updateReady.peek()) countdown();
   };
+  addEventListener('focus', onFocus); addEventListener('focus', back); addEventListener('blur', leave);
+  // Activity for the idle update: passive and captured, so a handler that stops the event still counts it.
+  const opts = { capture: true, passive: true } as const;
+  const record = (t: EventTarget | null, val: string) => {
+    if (!isField(t) || edited.has(t) || t.matches('input[type=search], [role=searchbox], [role=combobox]') || t.closest('[role=search], .spotlight')) return;
+    edited.set(t, val);
+  };
+  const typed = (e: Event) => record(e.target, isField(e.target) ? valueOf(e.target) : '');
+  const focusedField = (e: Event) => { if (isField(e.target)) record(e.target, valueOf(e.target)); };
+  const changedField = (e: Event) => { if (isField(e.target)) record(e.target, defaultValueOf(e.target)); };
   // Scrolling counts through its input (wheel, keys, touch, the scrollbar's pointer); a scroll event alone may be the page's own.
   const ACTIVITY = ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart', 'focusin'];
   for (const t of ACTIVITY) addEventListener(t, active, opts);
+  addEventListener('focusin', focusedField, opts);
   addEventListener('beforeinput', typed, opts);
+  addEventListener('change', changedField, opts);
   document.addEventListener('visibilitychange', back);
   restoreScroll();
   return () => {
-    clearTimeout(first); clearInterval(every); onAccessOpen.delete(afterOpen); removeEventListener('focus', run); removeEventListener('focus', back); removeEventListener('blur', leave);
+    clearTimeout(first); clearInterval(every); clearHiddenReload(); onAccessOpen.delete(afterOpen);
+    removeEventListener('focus', onFocus); removeEventListener('focus', back); removeEventListener('blur', leave);
     for (const t of ACTIVITY) removeEventListener(t, active, opts);
-    removeEventListener('beforeinput', typed, opts); document.removeEventListener('visibilitychange', back);
+    removeEventListener('focusin', focusedField, opts);
+    removeEventListener('beforeinput', typed, opts);
+    removeEventListener('change', changedField, opts);
+    document.removeEventListener('visibilitychange', back);
     clearInterval(timer); timer = undefined;
   };
 }
