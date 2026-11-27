@@ -884,6 +884,33 @@ type teardownFlags struct {
 	deleteBranch, outputsStored, step bool
 }
 
+// legacyTeardownWorkspace recovers the launch settings for a project run that predates dispatch snapshots.
+func legacyTeardownWorkspace(q *Request, last agentExecution, payload *teardownPayload) (bool, error) {
+	starts, err := commandsList(q, db.CommandsParams{ExecutionID: &last.ID, Kind: ptr("start")})
+	if err != nil {
+		return false, err
+	}
+	if len(starts) != 1 || starts[0].SessionID != last.SessionID || starts[0].HostID != deref(last.HostID) {
+		return false, nil
+	}
+	var start struct {
+		ProjectID        string          `json:"projectId"`
+		Project          json.RawMessage `json:"project"`
+		WorkspaceKey     *string         `json:"workspaceKey"`
+		WorkingDirectory string          `json:"workingDirectory"`
+		Branch           *bool           `json:"branch"`
+	}
+	if json.Unmarshal(starts[0].Payload, &start) != nil || start.ProjectID != last.ProjectID || !jsonIsObject(start.Project) {
+		return false, nil
+	}
+	payload.ProjectID, payload.Project = start.ProjectID, start.Project
+	if start.WorkspaceKey != nil {
+		payload.WorkspaceKey = jsonBytes(*start.WorkspaceKey)
+	}
+	payload.WorkingDirectory, payload.Branch = start.WorkingDirectory, start.Branch
+	return true, nil
+}
+
 func teardownCommandWith(q *Request, s agentSession, last agentExecution, f teardownFlags) (any, error) {
 	deleteBranch := f.deleteBranch
 	sid, host := s.ID, deref(last.HostID)
@@ -892,6 +919,12 @@ func teardownCommandWith(q *Request, s agentSession, last agentExecution, f tear
 		return teardownSkipped{SessionID: sid, Cleanup: "skipped", Reason: "host-gone"}, err
 	}
 	var payload teardownPayload
+	missingWorkspace := teardownSkipped{SessionID: sid, Cleanup: "unknown", Reason: "cleanup_context_unknown: original workspace settings unavailable"}
+	if last.Dispatch == nil && last.ProjectID != "" {
+		if found, err := legacyTeardownWorkspace(q, last, &payload); err != nil || !found {
+			return missingWorkspace, err
+		}
+	}
 	d := rawObject{}
 	if last.Dispatch != nil {
 		json.Unmarshal(jsonBytes(last.Dispatch), &d)
@@ -911,7 +944,7 @@ func teardownCommandWith(q *Request, s agentSession, last agentExecution, f tear
 			workspace = snapshots.object(host)
 		}
 		if workspace == nil || (workspace.has("projectId") && workspace.val("projectId") != any(p)) {
-			return teardownSkipped{SessionID: sid, Cleanup: "unknown", Reason: "cleanup_context_unknown: original workspace settings unavailable"}, nil
+			return missingWorkspace, nil
 		}
 		payload.ProjectID, payload.Project = p, json.RawMessage("null")
 		if workspace.has("project") {
@@ -922,7 +955,7 @@ func teardownCommandWith(q *Request, s agentSession, last agentExecution, f tear
 	if w, _ := workingDirectory.(string); w != "" {
 		payload.WorkingDirectory = w
 	}
-	if s.Branch != nil && !*s.Branch { // a session started without a branch (presets.go): its worktree was detached
+	if payload.Branch == nil && s.Branch != nil && !*s.Branch { // a session started without a branch (presets.go): its worktree was detached
 		payload.Branch = s.Branch
 	}
 	c := agentCommand{ID: newID(), ExecutionID: last.ID, SessionID: sid, HostID: host, ProjectID: firstString(last.ProjectID, s.ProjectID), Kind: "teardown", Payload: jsonBytes(payload), Status: "pending"}

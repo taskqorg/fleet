@@ -118,14 +118,17 @@ func hostInventory(q *Request, b *contract.HostInventoryRequest) (contract.HostI
 			prev = p.Inventory
 		}
 		for _, r := range queue {
-			queued, err := inventoryTeardownOf(q, host, r)
+			verdict, err := inventoryTeardownOf(q, host, r)
 			if err != nil {
 				return err
 			}
-			if queued {
+			switch verdict {
+			case inventoryTeardown:
 				out.Teardown = append(out.Teardown, r.ID)
-			} else {
-				out.Unknown = append(out.Unknown, r.ID) // its last run was elsewhere: no command reaches this copy
+			case inventoryUnknown:
+				out.Unknown = append(out.Unknown, r.ID)
+			default:
+				out.Keep++
 			}
 		}
 		summary.Keep, summary.Teardown, summary.Unknown = out.Keep, int64(len(out.Teardown)), int64(len(out.Unknown))
@@ -170,27 +173,29 @@ func hostInventory(q *Request, b *contract.HostInventoryRequest) (contract.HostI
 	return out, err
 }
 
-// inventoryTeardownOf queues the teardown of a settled session on this host; false when its last run was on another
-// host (or none), so no command reaches this copy.
-func inventoryTeardownOf(q *Request, host string, r db.InventorySessionsRow) (bool, error) {
+// inventoryTeardownOf queues the teardown of a settled session. An unresolvable workspace on the owning host
+// stays kept so orphan cleanup cannot apply different project settings to it.
+func inventoryTeardownOf(q *Request, host string, r db.InventorySessionsRow) (inventoryVerdict, error) {
 	s, err := sessionByID(q, r.ID)
 	if err != nil {
-		return false, err
+		return inventoryKeep, err
 	}
 	if pending, err := teardownPending(q, r.ID); err != nil || len(pending) > 0 {
-		return err == nil, err
+		return inventoryKeep, err
 	}
 	es, err := agentExecutions(q, r.ID)
 	if err != nil {
-		return false, err
+		return inventoryKeep, err
 	}
 	last := lastOnHost(es)
 	if last == nil || deref(last.HostID) != host {
-		return false, nil
+		return inventoryUnknown, nil
 	}
 	t, err := teardownCommandWith(q, s, *last, teardownFlags{deleteBranch: r.Accepted || r.Pipeline, outputsStored: r.OutputsStored != nil && *r.OutputsStored, step: r.Pipeline})
-	_, queued := t.(agentCommand)
-	return queued, err
+	if _, queued := t.(agentCommand); queued {
+		return inventoryTeardown, err
+	}
+	return inventoryKeep, err
 }
 
 // projectPersonal: the project's settings say data: personal (fleet-project-access.md#personal-data).
