@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const hostInventorySet = `-- name: HostInventorySet :exec
+const hostInventorySet = `-- name: HostInventorySet :execrows
 UPDATE host_observation SET payload = payload || jsonb_build_object('inventory', $1::jsonb) WHERE id = $2::text
 `
 
@@ -20,9 +20,12 @@ type HostInventorySetParams struct {
 }
 
 // The host's latest inventory summary (hosts_list disk); the poll's HostObservationPut keeps it.
-func (q *Queries) HostInventorySet(ctx context.Context, arg HostInventorySetParams) error {
-	_, err := q.db.Exec(ctx, hostInventorySet, arg.Inventory, arg.ID)
-	return err
+func (q *Queries) HostInventorySet(ctx context.Context, arg HostInventorySetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, hostInventorySet, arg.Inventory, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const idleSessionsToArchive = `-- name: IdleSessionsToArchive :many

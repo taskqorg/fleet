@@ -98,11 +98,19 @@ func TestSessionBusy(t *testing.T) {
 	e := &executor{db: db}
 	db.Exec(`INSERT INTO commands(id,body) VALUES('c1','{"sessionId":"prep"}'),('c2','{"sessionId":"done"}')`)
 	db.Exec(`UPDATE commands SET terminal=1 WHERE id='c2'`)
-	db.Exec(`INSERT INTO launches(execution,command,session) VALUES('x','c3','run')`)
-	for s, want := range map[string]bool{"prep": true, "run": true, "done": false, "none": false} {
-		if e.sessionBusy(s) != want {
-			t.Fatal(s)
+	db.Exec(`INSERT INTO launches(execution,command,session) VALUES('x','c3','run'),('y','c1','prep')`)
+	db.Exec(`INSERT INTO commands(id,body) VALUES('c4','{"executionId":"host-job"}')`)
+	for s, want := range map[string]contract.InventoryOutcome{
+		"prep": contract.InventoryOutcomeBusyLaunchAndCommand, "run": contract.InventoryOutcomeBusyLaunch,
+		"host-job": contract.InventoryOutcomeBusyCommand, "done": "", "none": "",
+	} {
+		if got := e.sessionCleanupBlock(s); got != want || e.sessionBusy(s) != (want != "") {
+			t.Errorf("session %s: guard = %q, want %q", s, got, want)
 		}
+	}
+	db.Close()
+	if got := e.sessionCleanupBlock("prep"); got != contract.InventoryOutcomeJournalReadError || !e.sessionBusy("prep") {
+		t.Fatalf("closed journal: guard = %q, want journal-read-error and busy", got)
 	}
 }
 

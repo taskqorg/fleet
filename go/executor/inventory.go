@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 // inventoryEntry: one session directory with a worktree, as measured.
 type inventoryEntry struct {
 	root, id  string
+	legacy    bool
 	worktrees []string // the worktree directories in it (worktree, workspaces/*/worktree)
 	bytes     int64
 	changed   time.Time
@@ -50,7 +52,7 @@ func takeInventory(roots []string) ([]inventoryEntry, contract.HostDisk) {
 	var entries []inventoryEntry
 	var worktreeBytes, otherBytes float64
 	var worktreeCount, otherCount int64
-	for _, root := range roots {
+	for i, root := range roots {
 		list, err := os.ReadDir(root)
 		if err != nil {
 			continue
@@ -69,7 +71,7 @@ func takeInventory(roots []string) ([]inventoryEntry, contract.HostDisk) {
 				continue
 			}
 			newest, _ := recent(p, st, 2)
-			e := inventoryEntry{root: root, id: en.Name(), worktrees: ws, bytes: size, changed: newest}
+			e := inventoryEntry{root: root, id: en.Name(), legacy: i > 0, worktrees: ws, bytes: size, changed: newest}
 			for _, w := range ws {
 				if st, err := os.Lstat(filepath.Join(w, "output")); err == nil && st.IsDir() {
 					e.output = true
@@ -154,12 +156,12 @@ func snake(s string) string {
 
 // inventoryPass: one hourly inventory; answers the ledger of the worktrees torn down here.
 func (e *executor) inventoryPass(roots []string, tmpOwned bool) cleanupLedger {
-	var c cleanupLedger
+	startedAt := nowMs()
 	entries, disk := takeInventory(roots)
 	measureData(&disk, e.root, tmpOwned)
 	diskSpan(disk)
 	if e.url == "" {
-		return c
+		return cleanupLedger{}
 	}
 	req := contract.HostInventoryRequest{Sessions: make([]contract.HostInventorySession, 0, len(entries)), Disk: &disk}
 	for _, en := range entries {
@@ -169,36 +171,76 @@ func (e *executor) inventoryPass(roots []string, tmpOwned bool) cleanupLedger {
 	ctx, cancel := context.WithTimeout(e.baseCtx(), time.Minute)
 	defer cancel()
 	a := sendWithClient(ctx, httpClient(time.Minute), e.url, e.token, contract.RouteInventory.Path, contract.RouteInventory.Path, req)
+	report, c := e.reconcileInventory(startedAt, entries, a)
+	e.lastInventory.Store(report)
+	return c
+}
+
+// Only Fleet session IDs are reported. An arbitrary legacy directory name can contain private text.
+var inventorySessionID = regexp.MustCompile(`(?i)^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
+
+func (e *executor) reconcileInventory(startedAt int64, entries []inventoryEntry, a answer) (*contract.DiagnosisInventory, cleanupLedger) {
+	report := &contract.DiagnosisInventory{
+		StartedAt: startedAt, Response: contract.InventoryResponseResponseFailed, Candidates: []contract.InventoryCandidate{},
+	}
+	var c cleanupLedger
 	if a.kind != answerOK {
-		return c
+		if a.kind == answerEdge && a.status >= 200 && a.status < 300 {
+			report.Response = contract.InventoryResponseDecodeFailed
+		}
+		return report, c
 	}
 	var reply contract.HostInventoryReply
+	report.Response = contract.InventoryResponseDecodeFailed
 	if json.Unmarshal(a.value, &reply) != nil {
-		return c
+		return report, c
+	}
+	// A malformed but decodable reply is still handled by the existing unknown-ID and journal checks.
+	if reply.Validate() == nil {
+		report.Response = contract.InventoryResponseReceived
+		report.InventoryAt = reply.InventoryAt
 	}
 	unknown := map[string]bool{}
 	for _, id := range reply.Unknown {
 		unknown[id] = true
 	}
 	for _, en := range entries {
-		if !unknown[en.id] || e.sessionBusy(en.id) {
+		if !unknown[en.id] {
 			continue
 		}
+		block := e.sessionCleanupBlock(en.id)
+		candidate := contract.InventoryCandidate{Root: contract.InventoryRootEffective}
+		if en.legacy {
+			candidate.Root = contract.InventoryRootLegacy
+		}
+		if inventorySessionID.MatchString(en.id) {
+			candidate.SessionId = &en.id
+		}
 		for _, w := range en.worktrees {
-			c.add(teardownUnknown(w, en.id))
+			candidate.Layout = contract.InventoryLayoutDirect
+			if w != filepath.Join(en.root, en.id, "worktree") {
+				candidate.Layout = contract.InventoryLayoutWorkspace
+			}
+			candidate.Outcome = block
+			if block == "" {
+				var removed cleanupLedger
+				removed, candidate.Outcome = teardownUnknown(w, en.id)
+				c.add(removed)
+			}
+			report.Candidates = append(report.Candidates, candidate)
 		}
 	}
-	return c
+	return report, c
 }
 
 // teardownUnknown: the worktree of a session the coordinator has no live row for goes through teardown with the
 // default keepWhen; its outputs go first, since no session can collect them any more. The branch goes only when merged
 // (git branch -d).
-func teardownUnknown(w, session string) cleanupLedger {
+func teardownUnknown(w, session string) (cleanupLedger, contract.InventoryOutcome) {
 	var c cleanupLedger
 	common, err := hardenedGit("-C", w, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 	if err != nil {
-		return c
+		return c, contract.InventoryOutcomeGitCommonDirError
 	}
 	top := filepath.Dir(strings.TrimSpace(string(common)))
 	dir := filepath.Dir(w)
@@ -207,12 +249,12 @@ func teardownUnknown(w, session string) cleanupLedger {
 		name = session + "-" + filepath.Base(dir)
 	}
 	size := treeSize(w)
-	t := teardownWith(dir, name, top, contract.ProjectContext{}, teardownOptions{dropOutput: true})
+	t, outcome := teardownWithOutcome(dir, name, top, contract.ProjectContext{}, teardownOptions{dropOutput: true})
 	if t.Removed {
 		c.dirs++
 		c.bytes += size
 	}
-	return c
+	return c, outcome
 }
 
 // projectPersonal: the command's project has data: personal (docs/designs/fleet-project-access.md#personal-data).

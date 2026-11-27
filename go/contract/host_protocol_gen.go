@@ -1320,6 +1320,30 @@ func (v *DiagnosisCommand) Validate() error {
 	return nil
 }
 
+// DiagnosisInventory: Latest completed scheduled inventory attempt in this executor process. Missing until observed.
+type DiagnosisInventory struct {
+	Candidates  []InventoryCandidate `json:"candidates"`
+	InventoryAt *int64               `json:"inventoryAt,omitempty"`
+	Response    InventoryResponse    `json:"response"`
+	StartedAt   int64                `json:"startedAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiagnosisInventory) Validate() error {
+	if v.Candidates == nil {
+		return Missing("candidates")
+	}
+	for i := range v.Candidates {
+		if err := Check(&v.Candidates[i], "candidates"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Response, "response"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DiagnosisOutbox struct {
 	OldestAt *int64           `json:"oldestAt,omitempty"`
 	Routes   []DiagnosisRoute `json:"routes"`
@@ -1694,6 +1718,7 @@ func (v *HostConsumer) Validate() error {
 type HostDiagnosis struct {
 	At              int64                   `json:"at"`
 	Commands        []DiagnosisCommand      `json:"commands"`
+	Inventory       *DiagnosisInventory     `json:"inventory,omitempty"`
 	LogPath         *string                 `json:"logPath,omitempty"`
 	LogTail         []string                `json:"logTail"`
 	Outbox          DiagnosisOutbox         `json:"outbox"`
@@ -1710,6 +1735,11 @@ func (v *HostDiagnosis) Validate() error {
 	}
 	for i := range v.Commands {
 		if err := Check(&v.Commands[i], "commands"); err != nil {
+			return err
+		}
+	}
+	if v.Inventory != nil {
+		if err := Check(v.Inventory, "inventory"); err != nil {
 			return err
 		}
 	}
@@ -1796,9 +1826,10 @@ func (v *HostEvents) Validate() error {
 }
 
 type HostInventoryReply struct {
-	Keep     int64    `json:"keep"`
-	Teardown []string `json:"teardown"`
-	Unknown  []string `json:"unknown"`
+	InventoryAt *int64   `json:"inventoryAt,omitempty"`
+	Keep        int64    `json:"keep"`
+	Teardown    []string `json:"teardown"`
+	Unknown     []string `json:"unknown"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1922,6 +1953,120 @@ func (v *InputCommand) Validate() error {
 		}
 	}
 	return nil
+}
+
+// InventoryCandidate: One discovered worktree answered unknown. Non-Fleet directory names are omitted.
+type InventoryCandidate struct {
+	Layout    InventoryLayout  `json:"layout"`
+	Outcome   InventoryOutcome `json:"outcome"`
+	Root      InventoryRoot    `json:"root"`
+	SessionId *string          `json:"sessionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *InventoryCandidate) Validate() error {
+	if err := Check(&v.Layout, "layout"); err != nil {
+		return err
+	}
+	if err := Check(&v.Outcome, "outcome"); err != nil {
+		return err
+	}
+	if err := Check(&v.Root, "root"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type InventoryLayout string
+
+const (
+	InventoryLayoutDirect    InventoryLayout = "direct"
+	InventoryLayoutWorkspace InventoryLayout = "workspace"
+)
+
+// InventoryLayoutValues lists every InventoryLayout in schema order.
+var InventoryLayoutValues = []InventoryLayout{InventoryLayoutDirect, InventoryLayoutWorkspace}
+
+// Valid: v is one of the schema's values.
+func (v InventoryLayout) Valid() bool {
+	for _, x := range InventoryLayoutValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type InventoryOutcome string
+
+const (
+	InventoryOutcomeBusyLaunch           InventoryOutcome = "busy-launch"
+	InventoryOutcomeBusyCommand          InventoryOutcome = "busy-command"
+	InventoryOutcomeBusyLaunchAndCommand InventoryOutcome = "busy-launch-and-command"
+	InventoryOutcomeJournalReadError     InventoryOutcome = "journal-read-error"
+	InventoryOutcomeGitCommonDirError    InventoryOutcome = "git-common-dir-error"
+	InventoryOutcomeUncommitted          InventoryOutcome = "uncommitted"
+	InventoryOutcomeGitStatusError       InventoryOutcome = "git-status-error"
+	InventoryOutcomeUnpushed             InventoryOutcome = "unpushed"
+	InventoryOutcomeGitReachabilityError InventoryOutcome = "git-reachability-error"
+	InventoryOutcomeTeardownFailed       InventoryOutcome = "teardown-failed"
+	InventoryOutcomeNoWorktree           InventoryOutcome = "no-worktree"
+	InventoryOutcomeWorktreeRemoveFailed InventoryOutcome = "worktree-remove-failed"
+	InventoryOutcomeRemoved              InventoryOutcome = "removed"
+)
+
+// InventoryOutcomeValues lists every InventoryOutcome in schema order.
+var InventoryOutcomeValues = []InventoryOutcome{InventoryOutcomeBusyLaunch, InventoryOutcomeBusyCommand, InventoryOutcomeBusyLaunchAndCommand, InventoryOutcomeJournalReadError, InventoryOutcomeGitCommonDirError, InventoryOutcomeUncommitted, InventoryOutcomeGitStatusError, InventoryOutcomeUnpushed, InventoryOutcomeGitReachabilityError, InventoryOutcomeTeardownFailed, InventoryOutcomeNoWorktree, InventoryOutcomeWorktreeRemoveFailed, InventoryOutcomeRemoved}
+
+// Valid: v is one of the schema's values.
+func (v InventoryOutcome) Valid() bool {
+	for _, x := range InventoryOutcomeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type InventoryResponse string
+
+const (
+	InventoryResponseReceived       InventoryResponse = "received"
+	InventoryResponseResponseFailed InventoryResponse = "response-failed"
+	InventoryResponseDecodeFailed   InventoryResponse = "decode-failed"
+)
+
+// InventoryResponseValues lists every InventoryResponse in schema order.
+var InventoryResponseValues = []InventoryResponse{InventoryResponseReceived, InventoryResponseResponseFailed, InventoryResponseDecodeFailed}
+
+// Valid: v is one of the schema's values.
+func (v InventoryResponse) Valid() bool {
+	for _, x := range InventoryResponseValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type InventoryRoot string
+
+const (
+	InventoryRootEffective InventoryRoot = "effective"
+	InventoryRootLegacy    InventoryRoot = "legacy"
+)
+
+// InventoryRootValues lists every InventoryRoot in schema order.
+var InventoryRootValues = []InventoryRoot{InventoryRootEffective, InventoryRootLegacy}
+
+// Valid: v is one of the schema's values.
+func (v InventoryRoot) Valid() bool {
+	for _, x := range InventoryRootValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // Item: A completed native item (codex), agentMessage renamed agent_message.

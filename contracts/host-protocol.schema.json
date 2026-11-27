@@ -477,12 +477,38 @@
         }
       }
     },
-    "HostDiagnosis": {"type": "object", "required": ["at", "logTail", "outbox", "outboxFailed", "transfersFailed", "commands"], "$comment": "What a person used to read on the host (docs/designs/fleet-system-management.md#hosts, host_diagnose): built by the executor (diagnose.go), credentials redacted.", "properties": {"at": {"$comment": "when the executor built it, ms", "type": "integer"}, "pid": {"type": "integer"}, "startedAt": {"$comment": "when this executor process started, ms", "type": "integer"}, "logPath": {"$comment": "the log file the tail is from", "type": "string"}, "logTail": {"$comment": "the last lines of the executor log, oldest first, each with its UTC time", "type": "array", "items": {"type": "string"}}, "outbox": {"$ref": "#/$defs/DiagnosisOutbox"}, "outboxFailed": {"$comment": "the outbox rows the coordinator refused in the last day (journal outbox_failed), newest first, at most 20", "type": "array", "items": {"$ref": "#/$defs/DiagnosisOutboxFailed"}}, "transfersFailed": {"$comment": "artifact transfers that failed in the last day, newest first", "type": "array", "items": {"$ref": "#/$defs/DiagnosisTransfer"}}, "commands": {"$comment": "commands in the journal that are not settled, oldest first", "type": "array", "items": {"$ref": "#/$defs/DiagnosisCommand"}}}},
+    "HostDiagnosis": {"type": "object", "required": ["at", "logTail", "outbox", "outboxFailed", "transfersFailed", "commands"], "$comment": "What a person used to read on the host (docs/designs/fleet-system-management.md#hosts, host_diagnose): built by the executor (diagnose.go), credentials redacted.", "properties": {"at": {"$comment": "when the executor built it, ms", "type": "integer"}, "pid": {"type": "integer"}, "startedAt": {"$comment": "when this executor process started, ms", "type": "integer"}, "logPath": {"$comment": "the log file the tail is from", "type": "string"}, "logTail": {"$comment": "the last lines of the executor log, oldest first, each with its UTC time", "type": "array", "items": {"type": "string"}}, "outbox": {"$ref": "#/$defs/DiagnosisOutbox"}, "outboxFailed": {"$comment": "the outbox rows the coordinator refused in the last day (journal outbox_failed), newest first, at most 20", "type": "array", "items": {"$ref": "#/$defs/DiagnosisOutboxFailed"}}, "transfersFailed": {"$comment": "artifact transfers that failed in the last day, newest first", "type": "array", "items": {"$ref": "#/$defs/DiagnosisTransfer"}}, "commands": {"$comment": "commands in the journal that are not settled, oldest first", "type": "array", "items": {"$ref": "#/$defs/DiagnosisCommand"}}, "inventory": {"$ref": "#/$defs/DiagnosisInventory"}}},
     "DiagnosisOutbox": {"type": "object", "required": ["rows", "routes"], "properties": {"rows": {"type": "integer"}, "oldestAt": {"$comment": "the oldest queued row's time, ms; absent when empty or unknown", "type": "integer"}, "routes": {"type": "array", "items": {"$ref": "#/$defs/DiagnosisRoute"}}}},
     "DiagnosisRoute": {"type": "object", "required": ["route", "rows"], "properties": {"route": {"type": "string"}, "rows": {"type": "integer"}}},
     "DiagnosisOutboxFailed": {"type": "object", "required": ["route", "status", "reason", "at"], "properties": {"route": {"type": "string"}, "status": {"type": "integer"}, "reason": {"type": "string"}, "at": {"type": "integer"}, "executionId": {"type": "string"}, "artifactId": {"type": "string"}}},
     "DiagnosisTransfer": {"type": "object", "required": ["id", "kind", "error", "at"], "properties": {"id": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"}, "executionId": {"type": "string"}, "error": {"type": "string"}, "at": {"type": "integer"}}},
     "DiagnosisCommand": {"type": "object", "required": ["id", "state"], "properties": {"id": {"type": "string"}, "kind": {"type": "string"}, "executionId": {"type": "string"}, "state": {"type": "string"}, "at": {"type": "integer"}}},
+    "DiagnosisInventory": {
+      "$comment": "Latest completed scheduled inventory attempt in this executor process. Missing until observed.",
+      "type": "object",
+      "required": ["startedAt", "response", "candidates"],
+      "properties": {
+        "startedAt": {"type": "integer"},
+        "inventoryAt": {"$comment": "Coordinator's saved inventory timestamp in ms, absent if unconfirmed", "type": "integer"},
+        "response": {"$ref": "#/$defs/InventoryResponse"},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/InventoryCandidate"}}
+      }
+    },
+    "InventoryResponse": {"type": "string", "enum": ["received", "response-failed", "decode-failed"]},
+    "InventoryCandidate": {
+      "$comment": "One discovered worktree answered unknown. Non-Fleet directory names are omitted.",
+      "type": "object",
+      "required": ["root", "layout", "outcome"],
+      "properties": {
+        "sessionId": {"type": "string"},
+        "root": {"$ref": "#/$defs/InventoryRoot"},
+        "layout": {"$ref": "#/$defs/InventoryLayout"},
+        "outcome": {"$ref": "#/$defs/InventoryOutcome"}
+      }
+    },
+    "InventoryRoot": {"type": "string", "enum": ["effective", "legacy"]},
+    "InventoryLayout": {"type": "string", "enum": ["direct", "workspace"]},
+    "InventoryOutcome": {"type": "string", "enum": ["busy-launch", "busy-command", "busy-launch-and-command", "journal-read-error", "git-common-dir-error", "uncommitted", "git-status-error", "unpushed", "git-reachability-error", "teardown-failed", "no-worktree", "worktree-remove-failed", "removed"]},
     "DrainReport": {
       "type": "object",
       "required": ["target", "since", "fenced", "waitsFor"],
@@ -539,6 +565,7 @@
       "type": "object",
       "required": ["keep", "teardown", "unknown"],
       "properties": {
+        "inventoryAt": { "$comment": "timestamp in ms of the coordinator's saved inventory, absent on older coordinators", "type": "integer" },
         "keep": { "type": "integer" },
         "teardown": { "$comment": "sessions whose teardown the coordinator queued; the host gets the commands on its next poll", "type": "array", "items": { "type": "string" } },
         "unknown": { "$comment": "sessions the coordinator has no live row for: the host tears their worktrees down itself", "type": "array", "items": { "type": "string" } }

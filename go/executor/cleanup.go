@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"fleet/contract"
 	"fleet/errtrack"
 	"fleet/obs"
 )
@@ -264,10 +265,26 @@ func (e *executor) startSweep() {
 // directory) or a launch of it (a live run, or one whose end is not proven yet). A host job without a session keeps its
 // directory under its executionId (workID).
 func (e *executor) sessionBusy(session string) bool {
-	var n int
-	err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches WHERE session=?1) +
-		(SELECT count(*) FROM commands WHERE (terminal=0 OR script_staging_held=1) AND coalesce(nullif(json_extract(body,'$.sessionId'),''),json_extract(body,'$.executionId'))=?1)`, session).Scan(&n)
-	return err != nil || n > 0
+	return e.sessionCleanupBlock(session) != ""
+}
+
+// sessionCleanupBlock classifies the same fail-closed journal guard for inventory and the age sweep.
+func (e *executor) sessionCleanupBlock(session string) contract.InventoryOutcome {
+	var launches, commands int
+	err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches WHERE session=?1),
+		(SELECT count(*) FROM commands WHERE (terminal=0 OR script_staging_held=1) AND coalesce(nullif(json_extract(body,'$.sessionId'),''),json_extract(body,'$.executionId'))=?1)`, session).Scan(&launches, &commands)
+	switch {
+	case err != nil:
+		return contract.InventoryOutcomeJournalReadError
+	case launches > 0 && commands > 0:
+		return contract.InventoryOutcomeBusyLaunchAndCommand
+	case launches > 0:
+		return contract.InventoryOutcomeBusyLaunch
+	case commands > 0:
+		return contract.InventoryOutcomeBusyCommand
+	default:
+		return ""
+	}
 }
 
 // sweepSessions: a session directory goes when it holds no worktree and no set-aside copy of one (worktree*, also under

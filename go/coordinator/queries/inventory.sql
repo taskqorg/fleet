@@ -33,6 +33,6 @@ WHERE s.archived_at IS NULL AND s.tombstoned_at IS NULL AND s.pipeline_run_id IS
 ORDER BY s.created_at
 LIMIT @lim;
 
--- name: HostInventorySet :exec
+-- name: HostInventorySet :execrows
 -- The host's latest inventory summary (hosts_list disk); the poll's HostObservationPut keeps it.
 UPDATE host_observation SET payload = payload || jsonb_build_object('inventory', @inventory::jsonb) WHERE id = @id::text;

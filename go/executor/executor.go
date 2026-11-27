@@ -44,6 +44,7 @@ type executor struct {
 	storeLast     []contract.StoreReport
 	browserHealth productionBrowserHealth
 	siteHealth    siteAccessHealth
+	lastInventory atomic.Pointer[contract.DiagnosisInventory]
 	loadMu        sync.Mutex
 	loadMemAt     time.Time
 	loadMemFree   float64
@@ -417,6 +418,7 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: active, Load: e.sampleHostLoad()}
 	if diagnoseNext.Swap(false) {
 		body.Diagnosis = diagnosis(e.db)
+		body.Diagnosis.Inventory = e.lastInventory.Load()
 	}
 	var a answer
 	if wait > 0 {
