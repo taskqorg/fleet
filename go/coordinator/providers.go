@@ -1330,8 +1330,8 @@ const providersJSON = `
     "unit": "requests",
     "idempotent": true,
     "headers": {"Accept": "application/json"},
-    "description": "Comments of one issue, oldest first, with their attachments (id for attachment_get, name, size, mimeType). Later comments can replace what the description says.",
-    "inputSchema": {"type": "object", "required": ["issue"], "properties": {"issue": {"type": "string", "description": "issue id such as TGT-12"}}},
+    "description": "Read comments for a YouTrack issue, oldest first, with their attachments (id for attachment_get, name, size, mimeType). Later comments can supersede the issue description. If the issue ID is missing, search YouTrack by title or keywords with issues_search and confirm the match, or ask for a YouTrack link before reading comments. Fleet task codes (such as T-FLT-54) and guessed substitutions are unsuitable.",
+    "inputSchema": {"type": "object", "required": ["issue"], "properties": {"issue": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,30}-[0-9]{1,9}$", "description": "The actual YouTrack idReadable from issues_search or issue_get, or the issue ID taken from a YouTrack link (for example, TGT-12)."}}},
     "pathPatterns": {"issue": "^[A-Za-z][A-Za-z0-9_]{0,30}-[0-9]{1,9}$"}
    },
    "issue_create": {
