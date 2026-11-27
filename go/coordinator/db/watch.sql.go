@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const childSessionIDs = `-- name: ChildSessionIDs :many
@@ -87,6 +88,49 @@ func (q *Queries) LegacyExecutionWakeDelivered(ctx context.Context, arg LegacyEx
 	return exists, err
 }
 
+const legacyTaskWakeDelivered = `-- name: LegacyTaskWakeDelivered :one
+SELECT EXISTS (
+ SELECT 1 FROM trigger t
+ JOIN session s ON (s.id = t.session_id OR s.bot_id = t.bot_id)
+ CROSS JOIN LATERAL (
+   SELECT m.text FROM message m
+   WHERE m.session_id = s.id AND m.payload->>'triggerId' = t.id AND m.source = 'trigger'
+     AND m.updated_at >= $1
+     AND NOT EXISTS (SELECT 1 FROM queued_message qm WHERE qm.session_id = m.session_id AND qm.request_id = m.request_id)
+   UNION ALL
+   SELECT qm.text FROM queued_message qm
+   WHERE qm.session_id = s.id AND qm.payload->>'triggerId' = t.id AND qm.source = 'trigger'
+     AND qm.state IN ('queued', 'started') AND qm.created_at >= $1
+ ) receipt
+ WHERE (t.session_id = $2::text OR t.bot_id = $3::text)
+   AND $4::text = ANY(string_to_array(
+     substring(split_part(receipt.text, E'\n', CASE WHEN t.session_id IS NULL THEN 1 ELSE -1 END)
+       from '^Fleet: [0-9]+ changes in (?:your focus|project [^:]+): (.*)$'), '; '))
+)
+`
+
+type LegacyTaskWakeDeliveredParams struct {
+	StateAt    time.Time
+	SessionID  *string
+	BotID      *string
+	SignalLine string
+}
+
+// A receipt reporting this state after entry covers a legacy row. A receipt for an earlier entry into the same
+// state does not. For promoted wakes use queue admission time. The generated change list is last for session triggers
+// and first for bot triggers.
+func (q *Queries) LegacyTaskWakeDelivered(ctx context.Context, arg LegacyTaskWakeDeliveredParams) (bool, error) {
+	row := q.db.QueryRow(ctx, legacyTaskWakeDelivered,
+		arg.StateAt,
+		arg.SessionID,
+		arg.BotID,
+		arg.SignalLine,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const openQuestionTask = `-- name: OpenQuestionTask :one
 SELECT coalesce(task_id, '')::text AS task_id FROM question WHERE id=$1 AND state='open'
 `
@@ -136,8 +180,16 @@ func (q *Queries) TaskCancelled(ctx context.Context, id string) (bool, error) {
 }
 
 const taskWatchState = `-- name: TaskWatchState :one
-SELECT t.state::text AS state, t.pause_reason, (t.state_at >= c.at)::bool AS state_changed
-FROM task t JOIN change c ON c.seq = $1::bigint WHERE t.id = $2::text
+SELECT coalesce(c.task_watch_state, CASE WHEN t.pause_reason = 'held' THEN 'held' ELSE t.state::text END)::text AS state,
+       CASE WHEN c.task_watch_state IS NOT NULL THEN c.task_watch_state <> ''
+            WHEN c.at = t.state_at AND c.op <> 'D' THEN NOT EXISTS (
+              SELECT 1 FROM change earlier
+              WHERE earlier.xid = c.xid AND earlier.seq < c.seq AND earlier.kind = 'task'
+                AND earlier.id = c.id AND earlier.at = c.at)
+            ELSE false END::bool AS state_changed,
+       (c.task_watch_state IS NULL)::bool AS legacy, t.state_at
+FROM task t JOIN change c ON c.seq = $1::bigint AND c.kind = 'task' AND c.id = t.id
+WHERE t.id = $2::text
 `
 
 type TaskWatchStateParams struct {
@@ -147,17 +199,22 @@ type TaskWatchStateParams struct {
 
 type TaskWatchStateRow struct {
 	State        string
-	PauseReason  *string
 	StateChanged bool
+	Legacy       bool
+	StateAt      time.Time
 }
 
-// A task's state and whether change row seq recorded a change of it: state_at is the time of the task's latest state,
-// pause or wait change, change.at the writing transaction's now(), so an edit that keeps the state (a title, a link, a
-// dependency) has state_at before its change and wakes nobody.
+// NULL marks pre-upgrade rows. Only the first row for that task in its latest state transaction can serve as a
+// legacy transition. The old log did not distinguish a task write from derived or dependency writes.
 func (q *Queries) TaskWatchState(ctx context.Context, arg TaskWatchStateParams) (TaskWatchStateRow, error) {
 	row := q.db.QueryRow(ctx, taskWatchState, arg.Seq, arg.ID)
 	var i TaskWatchStateRow
-	err := row.Scan(&i.State, &i.PauseReason, &i.StateChanged)
+	err := row.Scan(
+		&i.State,
+		&i.StateChanged,
+		&i.Legacy,
+		&i.StateAt,
+	)
 	return i, err
 }
 

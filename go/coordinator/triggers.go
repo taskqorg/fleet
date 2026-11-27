@@ -996,7 +996,7 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 				}
 				continue
 			}
-			if !slices.Contains(t.IfChanged, string(c.Kind)) || seen[string(c.Kind)+c.Id] ||
+			if !slices.Contains(t.IfChanged, string(c.Kind)) || (c.Kind != "task" && seen[string(c.Kind)+c.Id]) ||
 				(c.Actor != nil && own[*c.Actor]) || (c.SessionId != nil && (children[*c.SessionId] || *c.SessionId == self)) ||
 				(focus != nil && c.Kind != "host" && !slices.Contains(focus, p)) ||
 				// A bot's wake in its own project checks its director's authority when admitted and records a refusal
@@ -1017,12 +1017,12 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 					continue
 				}
 			}
-			// A task edit or a superseded execution signal can precede a qualifying change of the same row.
+			// A task can make several transitions in one page; a superseded execution signal can precede a qualifying one.
 			s, err := classify(q, c, target)
 			if err != nil {
 				return nil, t.ChangeCursor, t.LimitsSignaled, err
 			}
-			if s != "" || (c.Kind != "task" && c.Kind != "execution") {
+			if c.Kind != "task" && (s != "" || c.Kind != "execution") {
 				seen[string(c.Kind)+c.Id] = true
 			}
 			if s != "" {

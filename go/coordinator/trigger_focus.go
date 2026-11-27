@@ -90,22 +90,28 @@ func (s *watchSession) focus() []string {
 	return out
 }
 
-// classify: one change by its current row; "" drops it (§5 table).
+// classify: one scoped change; "" drops it (§5 table).
 func classify(q *Request, c change, target triggerTarget) (string, error) {
 	switch c.Kind {
 	case "task":
 		t, err := q.db().TaskWatchState(q.ctx(), db.TaskWatchStateParams{Seq: c.Seq, ID: c.Id})
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && !t.StateChanged {
-			return "", nil // an edit that kept the task's state is no change for a wake (2026-11-26: 23 of HAL0's 55 task wakes)
+			return "", nil
 		}
 		if err != nil {
 			return "", err
 		}
-		st := t.State
-		if deref(t.PauseReason) == "held" {
-			st = "held"
+		line := "task " + c.Id + " now " + t.State
+		if t.Legacy {
+			sessionID, botID := target.ref()
+			delivered, err := q.db().LegacyTaskWakeDelivered(q.ctx(), db.LegacyTaskWakeDeliveredParams{
+				SessionID: sessionID, BotID: botID, SignalLine: line, StateAt: t.StateAt,
+			})
+			if err != nil || delivered {
+				return "", err
+			}
 		}
-		return "task " + c.Id + " now " + st, nil
+		return line, nil
 	case "question":
 		if c.Op != "I" {
 			return "", nil

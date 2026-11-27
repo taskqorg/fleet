@@ -10,11 +10,41 @@ SELECT id FROM execution WHERE session_id = ANY(@session_ids::text[]);
 SELECT id FROM session WHERE created_by_session_id = ANY(@session_ids::text[]);
 
 -- name: TaskWatchState :one
--- A task's state and whether change row seq recorded a change of it: state_at is the time of the task's latest state,
--- pause or wait change, change.at the writing transaction's now(), so an edit that keeps the state (a title, a link, a
--- dependency) has state_at before its change and wakes nobody.
-SELECT t.state::text AS state, t.pause_reason, (t.state_at >= c.at)::bool AS state_changed
-FROM task t JOIN change c ON c.seq = sqlc.arg(seq)::bigint WHERE t.id = sqlc.arg(id)::text;
+-- NULL marks pre-upgrade rows. Only the first row for that task in its latest state transaction can serve as a
+-- legacy transition. The old log did not distinguish a task write from derived or dependency writes.
+SELECT coalesce(c.task_watch_state, CASE WHEN t.pause_reason = 'held' THEN 'held' ELSE t.state::text END)::text AS state,
+       CASE WHEN c.task_watch_state IS NOT NULL THEN c.task_watch_state <> ''
+            WHEN c.at = t.state_at AND c.op <> 'D' THEN NOT EXISTS (
+              SELECT 1 FROM change earlier
+              WHERE earlier.xid = c.xid AND earlier.seq < c.seq AND earlier.kind = 'task'
+                AND earlier.id = c.id AND earlier.at = c.at)
+            ELSE false END::bool AS state_changed,
+       (c.task_watch_state IS NULL)::bool AS legacy, t.state_at
+FROM task t JOIN change c ON c.seq = sqlc.arg(seq)::bigint AND c.kind = 'task' AND c.id = t.id
+WHERE t.id = sqlc.arg(id)::text;
+
+-- name: LegacyTaskWakeDelivered :one
+-- A receipt reporting this state after entry covers a legacy row. A receipt for an earlier entry into the same
+-- state does not. For promoted wakes use queue admission time. The generated change list is last for session triggers
+-- and first for bot triggers.
+SELECT EXISTS (
+ SELECT 1 FROM trigger t
+ JOIN session s ON (s.id = t.session_id OR s.bot_id = t.bot_id)
+ CROSS JOIN LATERAL (
+   SELECT m.text FROM message m
+   WHERE m.session_id = s.id AND m.payload->>'triggerId' = t.id AND m.source = 'trigger'
+     AND m.updated_at >= @state_at
+     AND NOT EXISTS (SELECT 1 FROM queued_message qm WHERE qm.session_id = m.session_id AND qm.request_id = m.request_id)
+   UNION ALL
+   SELECT qm.text FROM queued_message qm
+   WHERE qm.session_id = s.id AND qm.payload->>'triggerId' = t.id AND qm.source = 'trigger'
+     AND qm.state IN ('queued', 'started') AND qm.created_at >= @state_at
+ ) receipt
+ WHERE (t.session_id = sqlc.narg(session_id)::text OR t.bot_id = sqlc.narg(bot_id)::text)
+   AND @signal_line::text = ANY(string_to_array(
+     substring(split_part(receipt.text, E'\n', CASE WHEN t.session_id IS NULL THEN 1 ELSE -1 END)
+       from '^Fleet: [0-9]+ changes in (?:your focus|project [^:]+): (.*)$'), '; '))
+);
 
 -- name: OpenQuestionTask :one
 SELECT coalesce(task_id, '')::text AS task_id FROM question WHERE id=$1 AND state='open';
