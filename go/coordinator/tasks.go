@@ -786,6 +786,7 @@ func init() {
 }
 
 const idleFail, idleAccept, idleRetryResult = "fail task", "accept earlier result", "retry result"
+const idleOfferRetainedResult = "offer retained result"
 
 // withdrawIdleDecision: a new run of the task answers settleIdleTask's decision by itself.
 func withdrawIdleDecision(q *Request, id string) error {
@@ -1096,11 +1097,18 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 		}
 	}
 	if cur.Kind == db.QuestionKindOperatorDecision && data.Idle {
-		if answer == idleRetryResult && data.TaskRecovery == "missing_result" {
+		switch {
+		case answer == idleRetryResult && data.TaskRecovery == "missing_result":
 			if err := authorizeTaskResultRetry(q, deref(cur.TaskID)); err != nil {
 				return nil, err
 			}
-		} else if answer != idleFail && (answer != idleAccept || data.TaskRecovery != "") {
+		case answer == idleOfferRetainedResult && data.TaskRecovery == recoveryContinuationBlocked &&
+			slices.Contains(jsonStrings(cur.Options), answer):
+			if _, err := taskRecoveryOperator(q, deref(cur.TaskID)); err != nil {
+				return nil, err
+			}
+		case answer == idleFail, answer == idleAccept && data.TaskRecovery == "":
+		default:
 			return nil, fail(400, "Choose one of the listed recovery options")
 		}
 	}
@@ -1169,6 +1177,19 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 					return nil, err
 				}
 				if _, err := requestAcceptance(q, acceptTask{ID: task.ID, Title: task.Title, ProjectID: task.ProjectID, EarlierResult: true}, nil, nil, by); err != nil {
+					return nil, err
+				}
+			}
+			if data.Idle && answer == idleOfferRetainedResult {
+				result, err := retainedRecoveryResult(q, t, deref(cur.ExecutionID))
+				if err != nil {
+					return nil, err
+				}
+				task, err := taskLoad(q, t)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := requestAcceptance(q, acceptTask{ID: task.ID, Title: task.Title, ProjectID: task.ProjectID}, result.artifacts, nil, by); err != nil {
 					return nil, err
 				}
 			}

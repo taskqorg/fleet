@@ -108,6 +108,10 @@ A missing result enters durable reconciliation. After eligible deliveries, answe
 
 Two automatic recovery turns are allowed per episode within 90 minutes, and the second requires independently verified progress. Exhausted or unavailable recovery opens a decision for the task owner.
 
+A retry can renew the recovery budget. If Fleet cannot continue under the original session authority, the decision names the prerequisite and offers no identical retry.
+
+The authorized operator can request an offer of the exact retained result when it meets the existing acceptance requirements and its remaining checks are verified.
+
 A failed execution or explicit report of incomplete work can require an operator decision.
 
 Task details flag a missing completion report for the latest confirmed successful task-bound agent run. The note clears on continuation, an explicit offer or valid completion evidence.
