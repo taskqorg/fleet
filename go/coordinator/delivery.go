@@ -343,7 +343,13 @@ func deliveryPass(ctx context.Context, a *App) error {
 	repos, counts, failed := map[string]*deliveryRepo{}, map[string]map[string]int64{}, 0
 	repoCtx, repositories := deliverySpan(ctx, "repositories")
 	var repoErr error
-	for _, key := range targets {
+	// Repository reads are independent. Keep each repository's requests serial so a refusal still stops its reads.
+	type collection struct {
+		repo  *deliveryRepo
+		fresh bool
+	}
+	results, errs := parallel(len(targets), 3, func(i int) (collection, error) {
+		key := targets[i]
 		t := byKey[key]
 		if t.provider == "gitlab" {
 			var gl glRepo
@@ -369,31 +375,18 @@ func deliveryPass(ctx context.Context, a *App) error {
 				}
 			}
 			if err != nil {
-				failed++
-				repoErr = err
 				r := &deliveryRepo{projects: t.projects, problem: t.slug + ": " + err.Error()}
 				if p := prev.repos[key]; p != nil {
 					r.items, r.landing, r.delivered = p.items, p.landing, p.delivered
 				}
-				repos[key] = r
-				continue
+				return collection{repo: r}, err
 			}
 			its, merged := gitlabDeliveryStages(t.projects[0], t.host, t.slug, gl, now)
-			repos[key] = &deliveryRepo{projects: t.projects, items: its, delivered: merged}
-			c := map[string]int64{}
-			for _, s := range contract.DeliveryStageValues {
-				c[string(s)] = 0
-			}
-			for _, it := range its {
-				c[string(it.Stage)]++
-			}
-			counts[t.projects[0]+" "+t.slug] = c
-			continue
+			return collection{repo: &deliveryRepo{projects: t.projects, items: its, delivered: merged}, fresh: true}, nil
 		}
 		if !keyedRepo[key] && !readKeyless {
 			if p := prev.repos[key]; p != nil {
-				repos[key] = &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem, delivered: p.delivered}
-				continue
+				return collection{repo: &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem, delivered: p.delivered}}, nil
 			}
 		}
 		var g ghRepo
@@ -416,15 +409,12 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 		name := t.owner + "/" + t.repo
 		if err != nil {
-			failed++
-			repoErr = err
 			// The last good items of this repository stand; it records no sample this pass (a gap, not a dip).
 			r := &deliveryRepo{projects: t.projects, problem: name + ": " + err.Error()}
 			if p := prev.repos[key]; p != nil {
 				r.items, r.landing, r.delivered = p.items, p.landing, p.delivered
 			}
-			repos[key] = r
-			continue
+			return collection{repo: r}, err
 		}
 		// Failed checks: the latest finished pull_request runs, through the key only (never the keyless budget) and not
 		// required: a connection that does not grant runs_completed_pr leaves failed checks unseen, not the repository.
@@ -461,15 +451,27 @@ func deliveryPass(ctx context.Context, a *App) error {
 			pins.End(pinsErr)
 		}
 		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
-		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged}
+		return collection{repo: &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged}, fresh: true}, nil
+	})
+	for i, result := range results {
+		key := targets[i]
+		repos[key] = result.repo
+		if err := errs[i]; err != nil {
+			failed++
+			repoErr = err
+		}
+		if !result.fresh {
+			continue
+		}
 		c := map[string]int64{}
 		for _, s := range contract.DeliveryStageValues {
 			c[string(s)] = 0
 		}
-		for _, it := range its {
+		for _, it := range result.repo.items {
 			c[string(it.Stage)]++
 		}
-		counts[t.projects[0]+" "+name] = c
+		t := byKey[key]
+		counts[t.projects[0]+" "+t.slug] = c
 	}
 	repositories.End(repoErr)
 	samplesCtx, samplesSpan := deliverySpan(ctx, "samples")

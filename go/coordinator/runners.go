@@ -218,7 +218,11 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 	}
 	// Tool calls (gateway calls, tens of thousands a day) are summed per host and caller in SQL, priced from
 	// execution_spend (queries/runners.sql RunnerCallGroups).
-	gs, err := q.db().RunnerCallGroups(q.ctx())
+	liveFrom, err := q.db().RunnerCallLiveFrom(q.ctx())
+	if err != nil {
+		return contract.ExecutionsRunnersReply{}, err
+	}
+	gs, err := q.db().RunnerCallGroups(q.ctx(), liveFrom)
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
 	}

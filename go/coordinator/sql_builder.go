@@ -1124,6 +1124,15 @@ func sqlTaskRows(f rowFilter, G taskGroup, S string, ids []string) (string, []an
 	return "SELECT " + sqlTaskListCols + "," + G.sql + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id LEFT JOIN LATERAL " + sqlActiveExec + " ae ON true" + where(c), p, nil
 }
 
+// sqlProjectTaskCounts counts the Running view's task states by project in and out of the focus.
+func sqlProjectTaskCounts(f rowFilter) (string, []any) {
+	var args []any
+	conditions, _ := taskWhere(rowFilter{States: projectsRunningTasks()}, &args, true)
+	focus := f.projectConds(&args, "t.project_id", "", []string{"true"})
+	return "SELECT t.project_id,count(*) AS n,count(*) FILTER (WHERE " + strings.Join(focus, " AND ") +
+		") AS focused FROM task t" + where(conditions) + " GROUP BY t.project_id", args
+}
+
 // sqlTaskStateCounts: the filtered tasks per state, without the state filter (listCount rows, g empty); by group too
 // with G.
 func sqlTaskStateCounts(f rowFilter, G *taskGroup) (string, []any, error) {
@@ -1392,6 +1401,18 @@ func sqlSessionSummary(f rowFilter, o sessionOrder) (string, []any, error) {
 	}
 	return sqlSessionBase + " SELECT x.state," + o.g + " AS g,min(" + label + ") AS label,count(*) AS n,count(*) FILTER (WHERE " +
 		strings.Join(gc, " AND ") + ") AS ng FROM x WHERE " + strings.Join(cc, " AND ") + " GROUP BY 1,2 ORDER BY 2", p, nil
+}
+
+// sqlProjectWorkingCounts: the working conversations per checkout project, with the same visibility and
+// focus predicates as the conversations list. Only active summary rows join the sessions.
+func sqlProjectWorkingCounts(f rowFilter) (string, []any) {
+	var args []any
+	conditions, _ := sessionWhere(rowFilter{}, &args, false)
+	focus := f.projectConds(&args, "x.project_id", "x.project_ids", []string{"true"})
+	return `WITH x AS (SELECT d.project_id, d.archived_at, d.actor, d.pipeline_run_id,` + sessionModelCols + `
+ FROM session_summary ss JOIN session d ON d.id=ss.session_id WHERE ss.state IN ('preparing','running'))
+ SELECT x.project_id,count(*) AS n,count(*) FILTER (WHERE ` + strings.Join(focus, " AND ") + `) AS focused
+ FROM x` + where(conditions) + " GROUP BY x.project_id", args
 }
 
 // sqlSessionDone: Home's counts (home_view.go homeDone): the filtered succeeded sessions with activity since today and

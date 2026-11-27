@@ -408,18 +408,6 @@ func (q *Queries) ConnPersonExists(ctx context.Context, email string) (bool, err
 	return exists, err
 }
 
-const connRunState = `-- name: ConnRunState :one
-SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')),'')::text
-`
-
-// The state of an agent run or host job; ” when there is none.
-func (q *Queries) ConnRunState(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, connRunState, id)
-	var column_1 string
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const connSetUsageKey = `-- name: ConnSetUsageKey :exec
 UPDATE execution SET data=jsonb_set(data,'{usageKey}',to_jsonb($1::text)) WHERE id= $2::text
 `
@@ -637,24 +625,35 @@ func (q *Queries) DeleteAPIConnection(ctx context.Context, id string) error {
 }
 
 const openRunTokenExecutions = `-- name: OpenRunTokenExecutions :many
-SELECT execution_id::text FROM run_token WHERE revoked_at IS NULL AND step IS NULL AND personal IS NULL AND execution_id IS NOT NULL
- GROUP BY execution_id ORDER BY min(seq)
+WITH open AS MATERIALIZED (
+  SELECT execution_id, min(seq) AS first_seq FROM run_token
+  WHERE revoked_at IS NULL AND step IS NULL AND personal IS NULL AND execution_id IS NOT NULL
+  GROUP BY execution_id
+)
+SELECT o.execution_id::text AS execution_id,
+       coalesce((SELECT e.state::text FROM execution e WHERE e.id = o.execution_id AND e.kind IN ('agent_run','host_job')), '')::text AS state
+FROM open o ORDER BY o.first_seq
 `
 
-// The executions of open run tokens that are neither a step's nor a person's, in token order.
-func (q *Queries) OpenRunTokenExecutions(ctx context.Context) ([]string, error) {
+type OpenRunTokenExecutionsRow struct {
+	ExecutionID string
+	State       string
+}
+
+// The visible run states of open execution tokens, in token order. A missing run has an empty state.
+func (q *Queries) OpenRunTokenExecutions(ctx context.Context) ([]OpenRunTokenExecutionsRow, error) {
 	rows, err := q.db.Query(ctx, openRunTokenExecutions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []OpenRunTokenExecutionsRow
 	for rows.Next() {
-		var execution_id string
-		if err := rows.Scan(&execution_id); err != nil {
+		var i OpenRunTokenExecutionsRow
+		if err := rows.Scan(&i.ExecutionID, &i.State); err != nil {
 			return nil, err
 		}
-		items = append(items, execution_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
