@@ -427,14 +427,38 @@ func keepReasons(project contract.ProjectContext) map[string]bool {
 // commits on no remote branch, a failed teardown script). The branch goes with -d (merged only), or -D
 // when the work was delivered (deleteBranch: the task was accepted).
 func teardown(dir, session, top string, project contract.ProjectContext, deleteBranch, detached bool) contract.Teardown {
-	return teardownWith(dir, session, top, project, teardownOptions{deleteBranch: deleteBranch, detached: detached})
+	return teardownWith(dir, session, top, project, teardownOptions{deleteBranch: deleteBranch, detached: detached, roots: []string{dir}})
 }
 
 // teardownOptions: how a teardown treats the worktree (docs/designs/fleet-host-cleanup.md#10-worktree-lifecycle-for-every-run-kind).
 // dropOutput: the run's results are stored (or nothing can collect them any more), so worktree/output goes before the
 // keepWhen checks. ignoreUncommitted: a personal project's pipeline step, which writes no tracked work.
+// roots: Fleet's own directories (the executor data and sessions roots); a worktree outside them, or under any
+// .claude/worktrees (a person's or Claude Code's checkout), is never torn down.
 type teardownOptions struct {
 	deleteBranch, detached, dropOutput, ignoreUncommitted bool
+	roots                                                 []string
+}
+
+// fleetOwned: w is a real directory (not a link) whose real path is under one of roots and not under .claude/worktrees.
+func fleetOwned(w string, roots []string) bool {
+	m, err := os.Lstat(w)
+	if err != nil || m.Mode()&os.ModeSymlink != 0 || !m.IsDir() {
+		return false
+	}
+	c, err := canon(w)
+	if err != nil {
+		return false
+	}
+	if strings.Contains(filepath.ToSlash(c)+"/", "/.claude/worktrees/") {
+		return false
+	}
+	for _, r := range roots {
+		if rc, err := canon(r); err == nil && under(c, rc) {
+			return true
+		}
+	}
+	return false
 }
 
 func teardownWith(dir, session, top string, project contract.ProjectContext, opt teardownOptions) contract.Teardown {
@@ -444,6 +468,9 @@ func teardownWith(dir, session, top string, project contract.ProjectContext, opt
 		delete(keep, "uncommitted")
 	}
 	w := filepath.Join(dir, "worktree")
+	if exists(w) && !fleetOwned(w, opt.roots) {
+		return refusedTeardown("outside-fleet-roots")
+	}
 	if opt.dropOutput {
 		// Only untracked results: a repository that tracks files under output/ keeps them.
 		if st, err := os.Lstat(filepath.Join(w, "output")); err == nil && st.IsDir() {
