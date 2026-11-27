@@ -191,7 +191,8 @@ func TestUpdateDrainRetainsAuditButWaitsForRecoverableDelivery(t *testing.T) {
 	if _, err := e.db.Exec("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES(?,?,?,?,?)", "/api/hosts/receipts", enc(receipt), 401, "host authentication", 456); err != nil {
 		t.Fatal(err)
 	}
-	lease(false)
+	// A 401 row is only requeued on startup (requeueUnauthorized), so it must not block update drain.
+	lease(true)
 	// Use the existing startup recovery, then require the actual queued receipt acknowledgement.
 	if err := requeueUnauthorized(e.db); err != nil {
 		t.Fatal(err)
@@ -210,6 +211,11 @@ func TestUpdateDrainRetainsAuditButWaitsForRecoverableDelivery(t *testing.T) {
 	}
 	lease(false)
 	if err := flush(e.db, url, "fixture", "fake"); err != nil {
+		t.Fatal(err)
+	}
+	lease(true)
+	optionalBody := M{"required": false}
+	if _, err := e.db.Exec("INSERT INTO transfers(id,kind,body,state,created_at) VALUES('optional','upload',?,'running',0)", enc(optionalBody)); err != nil {
 		t.Fatal(err)
 	}
 	lease(true)

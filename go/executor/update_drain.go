@@ -126,17 +126,35 @@ func (e *executor) drainUpdate() error {
 	// One store per tick: the held poll's goroutine reads updateReady at any moment and must not see a transient nil.
 	ready, err := e.idleUpdate()
 	e.updateReady.Store(ready)
-	return err
+	if err != nil {
+		return err
+	}
+	if ready != nil {
+		signalMu.Lock()
+		if lastSignal != nil && lastSignal.Target != nil && *lastSignal.Target == *ready && (lastSignal.RestartTarget == nil || *lastSignal.RestartTarget != *ready) {
+			s := *lastSignal
+			s.RestartTarget = ready
+			_ = writeUpdateSignal(e.root, s)
+		}
+		signalMu.Unlock()
+	}
+	return nil
 }
 
 // idleUpdate releases the activity lease once nothing holds it and returns the pending update target, or nil.
 func (e *executor) idleUpdate() (*string, error) {
-	var procs, cmds, receipts, unauth, transfers bool
+	signalMu.Lock()
+	sig := lastSignal
+	signalMu.Unlock()
+	return e.idleUpdateFor(sig)
+}
+
+func (e *executor) idleUpdateFor(sig *updateSignal) (*string, error) {
+	var procs, cmds, receipts, transfers bool
 	err := e.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM launches) OR EXISTS(SELECT 1 FROM owned) OR EXISTS(SELECT 1 FROM mcp_groups),
 		EXISTS(SELECT 1 FROM commands WHERE terminal=0),
 		EXISTS(SELECT 1 FROM outbox WHERE route<>?),
-		EXISTS(SELECT 1 FROM outbox_failed WHERE status=401),
-		EXISTS(SELECT 1 FROM transfers WHERE state IN ('queued','running'))`, contract.RouteSpans.Path).Scan(&procs, &cmds, &receipts, &unauth, &transfers)
+		EXISTS(SELECT 1 FROM transfers WHERE state IN ('queued','running') AND COALESCE(json_extract(body,'$.required'),1)=1)`, contract.RouteSpans.Path).Scan(&procs, &cmds, &receipts, &transfers)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +168,7 @@ func (e *executor) idleUpdate() (*string, error) {
 		on   bool
 		what string
 	}{{procs && len(e.live) == 0, "processes of a stopped run"}, {cmds, "open commands"}, {receipts, "receipts to deliver"},
-		{unauth, "receipts refused as unauthenticated"}, {transfers, "file transfers"}} {
+		{transfers, "file transfers"}} {
 		if w.on {
 			waits = append(waits, w.what)
 		}
@@ -167,9 +185,7 @@ func (e *executor) idleUpdate() (*string, error) {
 		e.activity.Close()
 		e.activity = nil
 	}
-	signalMu.Lock()
-	defer signalMu.Unlock()
-	if updatePending(lastSignal) {
+	if updatePending(sig) {
 		// An idle executor with no prior work still needs a lock file for the updater.
 		// Leave it unlocked so readiness stays valid while the updater holds LOCK_EX.
 		if !hadLease && e.updateReady.Load() == nil {
@@ -181,7 +197,7 @@ func (e *executor) idleUpdate() (*string, error) {
 				return nil, err
 			}
 		}
-		v := *lastSignal.Target
+		v := *sig.Target
 		return &v, nil
 	}
 	return nil, nil

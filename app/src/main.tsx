@@ -269,7 +269,7 @@ function App() {
     const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (cs.some(c => touchedBy(c, 'person_settings_get', {}))) void loadPrefs(); } });
     setResyncHandler(() => { rebaseWanted = true; void recheck(); });
     validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});
     const stopChecks = startVersionChecks();
     return () => { unregister(); setResyncHandler(null); clearTimeout(retryTimer); stopFeed(); offPrefs(); stopChecks(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
   });

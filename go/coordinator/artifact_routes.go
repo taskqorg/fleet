@@ -6,7 +6,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fleet/contract"
@@ -668,14 +670,14 @@ func appRoutes() {
 		}
 		return dir
 	}
-	file := func(name, media string) http.HandlerFunc {
+	file := func(name, media, cache string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			b, err := os.ReadFile(filepath.Join(appDir(), name))
 			if err != nil {
 				writeError(w, fail(404, "App not built"))
 				return
 			}
-			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Cache-Control", cache)
 			w.Header().Set("Content-Type", media)
 			w.Write(b)
 		}
@@ -683,40 +685,40 @@ func appRoutes() {
 	publicRoute("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/home", http.StatusFound) })
 	assets := http.StripPrefix("/assets/", http.FileServer(noDirs{http.Dir(filepath.Join(dir, "assets"))}))
 	publicRoute("GET /assets/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		aw := &assetCacheWriter{ResponseWriter: w}
 		if root := os.Getenv("FLEET_UI_ROOT"); root != "" {
 			name := strings.TrimPrefix(r.URL.Path, "/assets/")
 			if name != "" && filepath.Base(name) == name {
 				if b, err := os.ReadFile(filepath.Join(root, "assets", name)); err == nil {
-					http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(b))
+					http.ServeContent(aw, r, name, time.Time{}, bytes.NewReader(b))
 					return
 				}
 			}
 		}
-		assets.ServeHTTP(w, r)
+		assets.ServeHTTP(aw, r)
 	})
-	publicRoute("GET /sw.js", file("sw.js", "text/javascript"))
+	publicRoute("GET /sw.js", file("sw.js", "text/javascript", "no-store"))
 	// The bundled UI has no release.json; it still reports itself, so a watcher sees which UI is selected.
 	publicRoute("GET /ui-release.json", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := os.Stat(filepath.Join(appDir(), "release.json")); err == nil {
-			file("release.json", "application/json")(w, r)
+			file("release.json", "application/json", "no-store")(w, r)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"kind": "bundled", "version": version, "backendVersion": version})
 	})
 	manifest, icon := regexp.MustCompile(`^[a-z]+\.webmanifest$`), regexp.MustCompile(`^[a-z0-9-]+\.svg$`)
 	publicRoute("GET /manifests/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if n := r.PathValue("name"); manifest.MatchString(n) {
-			file("manifests/"+n, "application/manifest+json")(w, r)
+			file("manifests/"+n, "application/manifest+json", "no-cache")(w, r)
 			return
 		}
 		writeError(w, fail(404, "Unknown manifest"))
 	})
 	publicRoute("GET /icons/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if n := r.PathValue("name"); icon.MatchString(n) {
-			file("icons/"+n, "image/svg+xml")(w, r)
+			file("icons/"+n, "image/svg+xml", "no-cache")(w, r)
 			return
 		}
 		writeError(w, fail(404, "Unknown icon"))
@@ -735,12 +737,58 @@ func appRoutes() {
 		if err != nil {
 			return false
 		}
+		sum := sha256.Sum256(b)
+		etag := `"` + hex.EncodeToString(sum[:16]) + `"`
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("ETag", etag)
+		if etagMatches(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
 		w.Header().Set("Content-Type", "text/html")
 		w.Write(b)
 		return true
 	}
 
+}
+
+// assetCacheWriter sets immutable caching only on 200 OK so 404/error responses are never poisoned in browser or edge caches.
+type assetCacheWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (w *assetCacheWriter) WriteHeader(code int) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		if code == http.StatusOK {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *assetCacheWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func etagMatches(header, etag string) bool {
+	if header == "" {
+		return false
+	}
+	for _, part := range strings.Split(header, ",") {
+		tag := strings.TrimSpace(part)
+		tag = strings.TrimPrefix(tag, "W/")
+		if tag == "*" || tag == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // noDirs: no directory listings under /assets/.

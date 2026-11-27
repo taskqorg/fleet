@@ -190,19 +190,6 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	if !newer(cand, running) || p.st.Refused[cand] != "" {
 		return resumed
 	}
-	// The activity lease comes before the download (release pacing, docs/designs/fleet-host-updates.md section 7): while
-	// the executor is not drained nothing is fetched. PDS18 downloaded the release every 10 seconds while its executor
-	// drained. The executor holds new commands while the lease is taken, so they wait for the download and install.
-	if p.activity != nil {
-		release, err := p.activity(cand)
-		if err != nil {
-			return u.result(cand, "error", err.Error())
-		}
-		if release == nil {
-			return u.result(cand, "pending", "executor work is draining")
-		}
-		defer release()
-	}
 	log.Printf("%s: %s -> %s", p.name, running, cand)
 	dir, err := u.fetch(p, cand)
 	if err == nil && p.name == "executor" {
@@ -214,6 +201,18 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	}
 	if err != nil {
 		return u.result(cand, "error", err.Error())
+	}
+	// Acquire the activity lease only after downloading and verifying binaries/CLIs so network I/O never locks out
+	// executor commands.
+	if p.activity != nil {
+		release, err := p.activity(cand)
+		if err != nil {
+			return u.result(cand, "error", err.Error())
+		}
+		if release == nil {
+			return u.result(cand, "pending", "executor work is draining")
+		}
+		defer release()
 	}
 	if err := u.install(p, cand, dir); err != nil {
 		return u.result(cand, "error", err.Error())
@@ -255,9 +254,11 @@ func (u *updater) fetch(p *part, ver string) (string, error) {
 				return "", err
 			}
 		}
-		return dir, nil // staged and verified earlier in this run (PDS18 coordinator side)
+		return dir, nil // staged and verified earlier (PDS18 coordinator side or draining retry)
 	}
-	os.RemoveAll(dir)
+	partDir := dir + ".part"
+	os.RemoveAll(partDir)
+	defer os.RemoveAll(partDir)
 	file := "fleet-" + ver + "-" + u.target + ".tgz"
 	if p.uiBackend != "" {
 		file = "fleet-ui-" + ver + ".tgz"
@@ -286,7 +287,7 @@ func (u *updater) fetch(p *part, ver string) (string, error) {
 	if want == "" {
 		return "", fmt.Errorf("%w: %s not in SHA256SUMS", refusal("checksum"), file)
 	}
-	tgz := dir + ".tgz"
+	tgz := partDir + ".tgz"
 	defer os.Remove(tgz)
 	for try := 0; ; try++ {
 		got, err := u.download(at+file, tgz)
@@ -300,21 +301,25 @@ func (u *updater) fetch(p *part, ver string) (string, error) {
 			return "", fmt.Errorf("%w: %s digest %s, SHA256SUMS %s", refusal("checksum"), file, got, want)
 		}
 	}
-	if err := unpack(tgz, dir); err != nil {
+	if err := unpack(tgz, partDir); err != nil {
 		return "", err
 	}
-	if v := releaseVersion(dir); v != ver {
+	if v := releaseVersion(partDir); v != ver {
 		return "", fmt.Errorf("%w: release.json version %q", refusal("checksum"), v)
 	}
 	if p.uiBackend != "" {
-		if err := validateUI(dir, ver, p.uiBackend); err != nil {
+		if err := validateUI(partDir, ver, p.uiBackend); err != nil {
 			return "", err
 		}
 	}
 	for _, b := range p.bins {
-		if out, err := exec.Command(filepath.Join(dir, b), "selftest").CombinedOutput(); err != nil {
+		if out, err := exec.Command(filepath.Join(partDir, b), "selftest").CombinedOutput(); err != nil {
 			return "", fmt.Errorf("%w: %s: %v %s", refusal("selftest"), b, err, bytes.TrimSpace(out))
 		}
+	}
+	os.RemoveAll(dir)
+	if err := os.Rename(partDir, dir); err != nil {
+		return "", err
 	}
 	return dir, nil
 }

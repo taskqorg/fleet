@@ -35,8 +35,8 @@ const own = () => assetsOf(document.head.innerHTML);
 /** A fresh copy of the page the site serves now; null when it cannot be read (offline, signed out, not the app). */
 async function servedAssets(): Promise<string | null> {
   try {
-    const r = await fetch('/home', { cache: 'no-store', credentials: 'same-origin', headers: { accept: 'text/html' } });
-    if (!r.ok || !r.headers.get('content-type')?.startsWith('text/html')) return null;
+    const r = await fetch('/home', { cache: 'no-store', credentials: 'same-origin', redirect: 'manual', headers: { accept: 'text/html' } });
+    if (r.type === 'opaqueredirect' || !r.ok || !r.headers.get('content-type')?.startsWith('text/html')) return null;
     return assetsOf(await r.text()) || null;
   } catch { return null; }
 }
@@ -191,7 +191,7 @@ export async function applyUpdate(auto = false) {
     if (reg) {
       await reg.update();
       const installing = reg.installing;
-      if (installing && !reg.waiting) await new Promise<void>((resolve, reject) => {
+      if (installing) await new Promise<void>((resolve, reject) => {
         const finish = () => {
           if (installing.state === 'installed' || installing.state === 'activated') { clearTimeout(timer); installing.removeEventListener('statechange', finish); resolve(); }
           else if (installing.state === 'redundant') { clearTimeout(timer); installing.removeEventListener('statechange', finish); reject(Error('App installation failed. Retry update.')); }
