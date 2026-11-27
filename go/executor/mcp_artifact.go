@@ -337,6 +337,7 @@ func artifactCall(context any, name string, q any, db dbExec) (any, error) {
 
 type execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 type dbExec struct{ *sql.DB }

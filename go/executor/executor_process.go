@@ -439,8 +439,12 @@ func (e *executor) commandBody(id string, onlyOpen bool) (string, bool) {
 	if onlyOpen {
 		q += " AND terminal=0"
 	}
+	ex := e.ex
+	if ex == nil {
+		ex = e.db
+	}
 	var b string
-	if e.db.QueryRow(q, id).Scan(&b) != nil {
+	if ex.QueryRow(q, id).Scan(&b) != nil {
 		return "", false
 	}
 	return b, true
