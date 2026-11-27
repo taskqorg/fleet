@@ -69,7 +69,8 @@ func (s *Store) run(ctx context.Context, q *Request, write bool, locks []string,
 	if q == nil {
 		return s.txLocks(ctx, nil, write, locks, retry, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, s.appOf(), tx)) })
 	}
-	return s.txLocks(ctx, scopeOf(q.person), write, locks, retry, func(tx pgx.Tx) error {
+	sc := databaseScopeOf(q.person)
+	return s.txLocks(ctx, sc, write, locks, retry, func(tx pgx.Tx) error {
 		q.tx = tx
 		defer func() {
 			q.tx = nil
@@ -77,6 +78,15 @@ func (s *Store) run(ctx context.Context, q *Request, write bool, locks []string,
 		}()
 		return fn(q)
 	})
+}
+
+// Full project access retains the person's identity for owner-only rows.
+func databaseScopeOf(p *Person) *Scope {
+	sc := scopeOf(p)
+	if p != nil && !p.Owner && sc == nil {
+		return &Scope{ProjectIDs: "*", Person: p.Email}
+	}
+	return sc
 }
 
 // txWrites: whether tx is a write transaction of the Store.

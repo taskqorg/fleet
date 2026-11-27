@@ -6,6 +6,65 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+type DeliveryAuthorityChoice struct {
+	Consequence string `json:"consequence"`
+	Label       string `json:"label"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryAuthorityChoice) Validate() error {
+	return nil
+}
+
+type DeliveryAuthorityDecision struct {
+	Attempts       string                    `json:"attempts"`
+	Authority      DeliveryAuthorityKind     `json:"authority"`
+	Check          string                    `json:"check"`
+	Choices        []DeliveryAuthorityChoice `json:"choices"`
+	Diagnosis      string                    `json:"diagnosis"`
+	Recommendation string                    `json:"recommendation"`
+	Uncertainty    string                    `json:"uncertainty"`
+	Waiting        string                    `json:"waiting"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryAuthorityDecision) Validate() error {
+	if err := Check(&v.Authority, "authority"); err != nil {
+		return err
+	}
+	if v.Choices == nil {
+		return Missing("choices")
+	}
+	for i := range v.Choices {
+		if err := Check(&v.Choices[i], "choices"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DeliveryAuthorityKind string
+
+const (
+	DeliveryAuthorityKindProjectGrant      DeliveryAuthorityKind = "project_grant"
+	DeliveryAuthorityKindProjectPolicy     DeliveryAuthorityKind = "project_policy"
+	DeliveryAuthorityKindExternalAuthority DeliveryAuthorityKind = "external_authority"
+	DeliveryAuthorityKindProductDecision   DeliveryAuthorityKind = "product_decision"
+)
+
+// DeliveryAuthorityKindValues lists every DeliveryAuthorityKind in schema order.
+var DeliveryAuthorityKindValues = []DeliveryAuthorityKind{DeliveryAuthorityKindProjectGrant, DeliveryAuthorityKindProjectPolicy, DeliveryAuthorityKindExternalAuthority, DeliveryAuthorityKindProductDecision}
+
+// Valid: v is one of the schema's values.
+func (v DeliveryAuthorityKind) Valid() bool {
+	for _, x := range DeliveryAuthorityKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // EntityCardReply: A card summary of one entity for an entity reference: the same read for people (the card) and agents (MCP tool).
 type EntityCardReply struct {
 	At        *string        `json:"at,omitempty"`
@@ -398,14 +457,20 @@ func (v *ProblemEscalateReply) Validate() error {
 }
 
 type ProblemEscalateRequest struct {
-	Id      string                `json:"id"`
-	Kind    ProblemEscalationKind `json:"kind"`
-	Options []string              `json:"options,omitempty"`
-	Text    string                `json:"text"`
+	DeliveryAuthority *DeliveryAuthorityDecision `json:"deliveryAuthority,omitempty"`
+	Id                string                     `json:"id"`
+	Kind              ProblemEscalationKind      `json:"kind"`
+	Options           []string                   `json:"options,omitempty"`
+	Text              string                     `json:"text"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProblemEscalateRequest) Validate() error {
+	if v.DeliveryAuthority != nil {
+		if err := Check(v.DeliveryAuthority, "deliveryAuthority"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -2891,7 +2956,7 @@ func init() {
 		"entity_refs":             {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The live state of many entity references at once (the app's references; docs/design-system/controls/entity-card.md): up to 200 codes or kinds with ids, each answered with its kind, id, code, state and title under the same grants as entity_card; unknown and forbidden ones are left out", InputSchema: json.RawMessage("{\"$comment\":\"At most 200 references: each a code, or a kind with its id.\",\"additionalProperties\":false,\"properties\":{\"refs\":{\"items\":{\"$comment\":\"A code, or a kind with its id, or an id alone (a UUID: its kind is looked up among runs, tasks, conversations, results, questions and experiments). Unknown and forbidden both answer 404.\",\"additionalProperties\":false,\"properties\":{\"code\":{\"$comment\":\"A D17 code (T-, Q-, C-; old codes too), case-insensitive.\",\"type\":\"string\"},\"id\":{\"$comment\":\"The entity id: a UUID, a host, project, agent or pipeline id, owner/repo#number for a pull request, a release tag (v1.2.3, ui-1.2.2-v1.2.3).\",\"type\":\"string\"},\"kind\":{\"$comment\":\"What an entity reference names (docs/design-system/controls/entity-card.md).\",\"enum\":[\"task\",\"question\",\"conversation\",\"execution\",\"result\",\"experiment\",\"project\",\"host\",\"agent\",\"pipeline\",\"pull_request\",\"release\"],\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"refs\"],\"type\":\"object\"}")},
 		"entity_resolve":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Case-insensitive; unknown and forbidden codes both answer 404.", InputSchema: json.RawMessage("{\"$comment\":\"Case-insensitive; unknown and forbidden codes both answer 404.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}")},
 		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Resolve every entity code in a text to its kind and id", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
-		"problem_escalate":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look.", InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"kind\":{\"enum\":[\"only-you\",\"product\",\"authority\"],\"type\":\"string\"},\"options\":{\"$comment\":\"at most 4\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"text\":{\"$comment\":\"the diagnosis in one line, what was tried, what only the owner can give and the recommendation\",\"type\":\"string\"}},\"required\":[\"id\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"problem_escalate":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "For a CI or delivery problem, supply deliveryAuthority and a genuine owner-only choice. The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look.", InputSchema: json.RawMessage("{\"properties\":{\"deliveryAuthority\":{\"additionalProperties\":false,\"properties\":{\"attempts\":{\"type\":\"string\"},\"authority\":{\"enum\":[\"project_grant\",\"project_policy\",\"external_authority\",\"product_decision\"],\"type\":\"string\"},\"check\":{\"$comment\":\"The affected check or delivery operation, in plain words.\",\"type\":\"string\"},\"choices\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"consequence\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"}},\"required\":[\"label\",\"consequence\"],\"type\":\"object\"},\"type\":\"array\"},\"diagnosis\":{\"type\":\"string\"},\"recommendation\":{\"$comment\":\"The recommended choice's label.\",\"type\":\"string\"},\"uncertainty\":{\"type\":\"string\"},\"waiting\":{\"type\":\"string\"}},\"required\":[\"authority\",\"check\",\"diagnosis\",\"attempts\",\"uncertainty\",\"waiting\",\"choices\",\"recommendation\"],\"type\":\"object\"},\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"kind\":{\"enum\":[\"only-you\",\"product\",\"authority\"],\"type\":\"string\"},\"options\":{\"$comment\":\"at most 4; omit when deliveryAuthority is set\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"text\":{\"$comment\":\"the precise choice when deliveryAuthority is set; otherwise diagnosis, attempts and recommendation\",\"type\":\"string\"}},\"required\":[\"id\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"problem_get":             {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Get one problem. When given a P-code (such as P-12) or problem UUID, pass it as id and omit cause. A cause lookup requires the exact stored cause key of a currently open problem visible to you. Raw execution errors are diagnostic text only. A cause lookup returns HTTP 404 when there is no visible open match. Use problems_list or agent_gaps to discover existing problem records.", Changes: []string{"problem"}, InputSchema: json.RawMessage("{\"properties\":{\"cause\":{\"$comment\":\"Exact stored cause key of a currently open problem visible to you. Raw execution errors are diagnostic text only. HTTP 404 means no visible open match. Discover existing records with problems_list or agent_gaps.\",\"type\":\"string\"},\"id\":{\"$comment\":\"Preferred for a known problem. Pass its supplied P-code (such as P-12) or UUID and omit cause.\",\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"problem_talk":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "no", Description: "A person writes to the bot that owns a problem, in that problem's conversation (created on the first message). This is how a person reacts to an anomaly; there is no Investigate button.", InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"id\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"problem_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "The owner bot (or the owner) sets a problem's phase, note or linked work, or closes it as fixed or as a duplicate of another problem.", InputSchema: json.RawMessage("{\"properties\":{\"close\":{\"enum\":[\"fixed\",\"duplicate\"],\"type\":\"string\"},\"duplicateOf\":{\"$comment\":\"with close duplicate: the other problem's id or code\",\"type\":\"string\"},\"id\":{\"$comment\":\"an id or a code (P-12)\",\"type\":\"string\"},\"note\":{\"type\":\"string\"},\"phase\":{\"enum\":[\"working\",\"review\",\"watching\",\"stuck\"],\"type\":\"string\"},\"work\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
@@ -2907,7 +2972,7 @@ func init() {
 		"project_view":            {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One project's Overview in one read (docs/design-system/pages/projects.md): its open questions and the Lab decisions waiting for you (finished experiments without a decision, each variant with its score, trials, failures, median time and cost), tasks in flight, the pipelines it uses grouped by job (catalogue methods in use or scoped to it and the pipelines its Lab experiments ran, each with its best result on the project's sample), the latest results and conversations, and delivery (pull requests in flight, merged count, the last merge). Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "experiment", "artifact", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"projects_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The Projects screen in one read: each visible project's open questions, sessions working and tasks in flight (the catalogue, every project), and the summary over the focus (projectIds or excludeProjectIds, '-' is work outside projects): the open questions waiting for you (the first 3 and how many), each project's sessions working and tasks in flight, and the pull requests in flight. Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"$comment\":\"The summary leaves these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"The summary's focus: only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"question_answer":         {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Answers a project question, or any other question by id.", InputSchema: json.RawMessage("{\"$comment\":\"Answers a project question, or any other question by id.\",\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
-		"question_ask":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Ask a project question (projectId, requestId, text); read its answer with question_history", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"text\"],\"type\":\"object\"}")},
+		"question_ask":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Ask a project question (projectId, requestId, text); read its answer with question_history. Report persistent CI or delivery access and diagnostic blockers with publishing_report_blocker", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"text\"],\"type\":\"object\"}")},
 		"question_history":        {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "tool", Description: "Questions asked in a project (projectId) with their answers", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"questions":               {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "bound:session", Description: "List questions", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"questions_answer":        {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Answer a question (questionId, answer, optional artifactIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},

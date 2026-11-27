@@ -144,6 +144,119 @@ func (q *Queries) BotRunsSince(ctx context.Context, arg BotRunsSinceParams) (int
 	return column_1, err
 }
 
+const openDeliveryEscalations = `-- name: OpenDeliveryEscalations :many
+SELECT p.id, p.seq, p.cause, p.source, p.rule, p.project_id, p.text, p.data, p.state, p.phase, p.owner_bot_id, p.note, p.work, p.question_id, p.count, p.misses, p.quiet_wakes, p.reopened, p.opened_at, p.seen_at, p.phase_at, p.closed_at, p.close_reason, p.tombstoned_at, p.woken_at FROM problem p JOIN question q ON q.id = p.question_id
+WHERE p.source = 'publishing-blocker' AND p.state = 'open' AND q.state = 'open'
+ORDER BY p.seq
+`
+
+func (q *Queries) OpenDeliveryEscalations(ctx context.Context) ([]Problem, error) {
+	rows, err := q.db.Query(ctx, openDeliveryEscalations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Problem
+	for rows.Next() {
+		var i Problem
+		if err := rows.Scan(
+			&i.ID,
+			&i.Seq,
+			&i.Cause,
+			&i.Source,
+			&i.Rule,
+			&i.ProjectID,
+			&i.Text,
+			&i.Data,
+			&i.State,
+			&i.Phase,
+			&i.OwnerBotID,
+			&i.Note,
+			&i.Work,
+			&i.QuestionID,
+			&i.Count,
+			&i.Misses,
+			&i.QuietWakes,
+			&i.Reopened,
+			&i.OpenedAt,
+			&i.SeenAt,
+			&i.PhaseAt,
+			&i.ClosedAt,
+			&i.CloseReason,
+			&i.TombstonedAt,
+			&i.WokenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const openDeliveryProblems = `-- name: OpenDeliveryProblems :many
+SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at, woken_at FROM problem WHERE source = 'publishing-blocker' AND state = 'open'
+ AND ($1::text IS NULL OR data->'delivery'->>'host' = $1::text)
+ AND ($2::text IS NULL OR lower(data->'delivery'->>'repo') = lower($2::text))
+ AND ($3::text IS NULL OR project_id = $3::text)
+ORDER BY seq
+`
+
+type OpenDeliveryProblemsParams struct {
+	Host      *string
+	Repo      *string
+	ProjectID *string
+}
+
+// A provider observation only touches open CI/delivery problems for its bound repository.
+func (q *Queries) OpenDeliveryProblems(ctx context.Context, arg OpenDeliveryProblemsParams) ([]Problem, error) {
+	rows, err := q.db.Query(ctx, openDeliveryProblems, arg.Host, arg.Repo, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Problem
+	for rows.Next() {
+		var i Problem
+		if err := rows.Scan(
+			&i.ID,
+			&i.Seq,
+			&i.Cause,
+			&i.Source,
+			&i.Rule,
+			&i.ProjectID,
+			&i.Text,
+			&i.Data,
+			&i.State,
+			&i.Phase,
+			&i.OwnerBotID,
+			&i.Note,
+			&i.Work,
+			&i.QuestionID,
+			&i.Count,
+			&i.Misses,
+			&i.QuietWakes,
+			&i.Reopened,
+			&i.OpenedAt,
+			&i.SeenAt,
+			&i.PhaseAt,
+			&i.ClosedAt,
+			&i.CloseReason,
+			&i.TombstonedAt,
+			&i.WokenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const problemBySeq = `-- name: ProblemBySeq :one
 SELECT id, seq, cause, source, rule, project_id, text, data, state, phase, owner_bot_id, note, work, question_id, count, misses, quiet_wakes, reopened, opened_at, seen_at, phase_at, closed_at, close_reason, tombstoned_at, woken_at FROM problem WHERE seq = $1
 `

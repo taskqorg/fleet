@@ -3,7 +3,8 @@
 import { Show } from 'solid-js';
 import { ErrorBanner } from './primitives.tsx';
 import { QuestionCard } from './question-card.tsx';
-import { answerChoices, keyConnection, type Answers, type OpenQuestionRow } from '../answer.ts';
+import { Markdown } from './thread.tsx';
+import { answerChoices, deliveryAuthorityContent, keyConnection, type Answers, type OpenQuestionRow } from '../answer.ts';
 
 /** The outcome of an answer written under a question that is not a card (a full decision block). */
 export function AnswerNote(p: { answers: Answers<unknown>; id: string }) {
@@ -15,13 +16,17 @@ export function AnswerNote(p: { answers: Answers<unknown>; id: string }) {
  * decline. `title` replaces the question's text (a list names the asking session first).
  */
 export function OpenQuestion(p: { q: OpenQuestionRow; answers: Answers<unknown>; title?: string }) {
-  const text = () => p.title ?? p.q.text ?? p.q.question ?? '';
+  const authority = () => deliveryAuthorityContent(p.q);
+  const text = () => authority()
+    ? (p.title?.split('\n\n', 1)[0] ?? authority()!.title)
+    : (p.title ?? p.q.text ?? p.q.question ?? '');
   return (
     <>
       <QuestionCard
         code={p.q.code}
         questionId={p.q.id}
         question={text()}
+        context={<Show when={authority()} keyed>{a => <Markdown text={a.evidence} />}</Show>}
         choices={answerChoices(p.q)}
         answering={p.answers.answering(p.q.id)}
         answered={p.answers.answered(p.q.id)}

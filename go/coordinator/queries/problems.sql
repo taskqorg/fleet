@@ -177,3 +177,16 @@ SELECT count(*)::int FROM execution e WHERE e.bot_id = @bot::text AND e.kind = '
 
 -- name: ProblemsWokenBySeq :exec
 UPDATE problem SET woken_at = now() WHERE seq = ANY(@seqs::bigint[]) AND owner_bot_id = @bot::text;
+
+-- name: OpenDeliveryProblems :many
+-- A provider observation only touches open CI/delivery problems for its bound repository.
+SELECT * FROM problem WHERE source = 'publishing-blocker' AND state = 'open'
+ AND (sqlc.narg(host)::text IS NULL OR data->'delivery'->>'host' = sqlc.narg(host)::text)
+ AND (sqlc.narg(repo)::text IS NULL OR lower(data->'delivery'->>'repo') = lower(sqlc.narg(repo)::text))
+ AND (sqlc.narg(project_id)::text IS NULL OR project_id = sqlc.narg(project_id)::text)
+ORDER BY seq;
+
+-- name: OpenDeliveryEscalations :many
+SELECT p.* FROM problem p JOIN question q ON q.id = p.question_id
+WHERE p.source = 'publishing-blocker' AND p.state = 'open' AND q.state = 'open'
+ORDER BY p.seq;

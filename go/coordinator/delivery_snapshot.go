@@ -25,6 +25,7 @@ type deliverySnapshot struct {
 type deliverySnapRepo struct {
 	Projects  []string                `json:"projects"`
 	Items     []contract.DeliveryItem `json:"items"`
+	CI        deliveryEvidence        `json:"ci,omitzero"`
 	Landing   int64                   `json:"landing"`
 	Problem   string                  `json:"problem"`
 	Delivered []deliverySnapPR        `json:"delivered"`
@@ -44,7 +45,7 @@ func snapshotOf(s deliveryState) deliverySnapshot {
 		for _, pr := range r.delivered {
 			prs = append(prs, deliverySnapPR{deliveryMergedPR: pr, SnapBody: pr.Body, SnapDelivered: pr.Delivered})
 		}
-		out.Repos[key] = deliverySnapRepo{Projects: r.projects, Items: r.items, Landing: r.landing, Problem: r.problem, Delivered: prs}
+		out.Repos[key] = deliverySnapRepo{Projects: r.projects, Items: r.items, CI: r.ci, Landing: r.landing, Problem: r.problem, Delivered: prs}
 	}
 	return out
 }
@@ -58,7 +59,7 @@ func (s deliverySnapshot) state() deliveryState {
 			pr.Body, pr.Delivered = p.SnapBody, p.SnapDelivered
 			prs = append(prs, pr)
 		}
-		out.repos[key] = &deliveryRepo{projects: r.Projects, items: r.Items, landing: r.Landing, problem: r.Problem, delivered: prs}
+		out.repos[key] = &deliveryRepo{projects: r.Projects, items: r.Items, ci: r.CI, landing: r.Landing, problem: r.Problem, delivered: prs}
 	}
 	return out
 }

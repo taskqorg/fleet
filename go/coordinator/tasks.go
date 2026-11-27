@@ -241,7 +241,11 @@ func questionRecord(q *Request, id string) (json.RawMessage, error) {
 }
 
 func waitReason(q *Request, id string) (string, error) {
-	if ok, err := q.db().TaskHasOpenBlockingQuestion(q.ctx(), &id); err != nil || ok {
+	// An owner-only decision still blocks the task for its other operators.
+	ok, err := unscoped(q, func() (bool, error) {
+		return q.db().TaskHasOpenBlockingQuestion(q.ctx(), &id)
+	})
+	if err != nil || ok {
 		return "question", err
 	}
 	if ok, err := openDependency(q, id); err != nil || ok {
@@ -548,6 +552,7 @@ type questionAsk struct {
 	ExecutionID, SessionID, AskedBy, RequestID *string
 	Options, Data                              []byte
 	AskedAt                                    *time.Time
+	DirectToOwner                              bool
 }
 
 // askQuestionAs asks a; a task's question (but an acceptance) settles its task.
@@ -578,8 +583,10 @@ func askQuestionAs(q *Request, a questionAsk) (string, error) {
 		ExecutionID: a.ExecutionID, SessionID: a.SessionID, Text: a.Text, Options: a.Options, AskedBy: a.AskedBy, AskedAt: at, RequestID: a.RequestID, Data: a.Data}); err != nil {
 		return "", err
 	}
-	if err := addressToManagingBot(q, a); err != nil {
-		return "", err
+	if !a.DirectToOwner {
+		if err := addressToManagingBot(q, a); err != nil {
+			return "", err
+		}
 	}
 	if a.TaskID != "" && a.Kind != "acceptance" {
 		if _, err := settleTask(q, a.TaskID, ""); err != nil {
@@ -933,6 +940,10 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 	if err != nil {
 		return nil, err
 	}
+	delivery, authority := deliveryAuthorityOf(cur.Data)
+	if authority && (q.agent != "" || q.person == nil || !q.person.Owner) {
+		return nil, fail(403, "Only the Fleet owner can answer a delivery authority decision")
+	}
 	if cur.State == db.QuestionStateAnswered {
 		if deref(cur.Answer) != answer {
 			return nil, fail(409, "Question already answered differently")
@@ -945,6 +956,11 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 	}
 	if cur.State != db.QuestionStateOpen {
 		return nil, fail(409, "Question withdrawn")
+	}
+	if authority {
+		if err := checkDeliveryAuthorityAnswer(q, id, delivery); err != nil {
+			return nil, err
+		}
 	}
 	if err := approvalMayAnswer(q, id); err != nil { // every answer path: an approval card is its approvers' (approvals.go)
 		return nil, err
@@ -1014,7 +1030,11 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 	if err := runAnswerAfter(q, id); err != nil {
 		return nil, err
 	}
-	if err := continueQuestionAsker(q, cur, answer); err != nil {
+	if authority {
+		if err := continueDeliveryAuthority(q, cur, delivery, answer); err != nil {
+			return nil, err
+		}
+	} else if err := continueQuestionAsker(q, cur, answer); err != nil {
 		return nil, err
 	}
 	if t := deref(cur.TaskID); t != "" {

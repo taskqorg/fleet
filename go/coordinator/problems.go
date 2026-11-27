@@ -514,7 +514,15 @@ func problemUpdateOp(q *Request, r *contract.ProblemUpdateRequest) (contract.Pro
 				return contract.ProblemUpdateReply{}, err
 			}
 		}
-		if err := problemsCloseIDs(q, []string{p.ID}, reason); err != nil {
+		var err error
+		if p.Source == publishingBlockerSource {
+			_, err = unscoped(q, func() (bool, error) {
+				return true, closeDeliveryBlocker(q, p, reason, "The delivery problem was closed")
+			})
+		} else {
+			err = problemsCloseIDs(q, []string{p.ID}, reason)
+		}
+		if err != nil {
 			return contract.ProblemUpdateReply{}, err
 		}
 		if err := audit(q, "problem:"+problemCode(p.Seq), "close", nil, reason, auditExtra{ProjectID: p.ProjectID}); err != nil {
@@ -544,6 +552,18 @@ func problemEscalateOp(q *Request, r *contract.ProblemEscalateRequest) (contract
 			return contract.ProblemEscalateReply{}, fail(409, "The problem already has an open escalation")
 		}
 	}
+	if p.Source == publishingBlockerSource {
+		return unscoped(q, func() (contract.ProblemEscalateReply, error) {
+			qid, err := askDeliveryAuthority(q, p, r, session, bot)
+			if err != nil {
+				return contract.ProblemEscalateReply{}, err
+			}
+			return linkProblemEscalation(q, p.ID, qid)
+		})
+	}
+	if r.DeliveryAuthority != nil {
+		return contract.ProblemEscalateReply{}, fail(400, "Delivery authority belongs to a CI or delivery problem")
+	}
 	if len(r.Options) > 4 {
 		return contract.ProblemEscalateReply{}, fail(400, "Expected at most 4 options")
 	}
@@ -563,10 +583,14 @@ func problemEscalateOp(q *Request, r *contract.ProblemEscalateRequest) (contract
 	if err != nil {
 		return contract.ProblemEscalateReply{}, err
 	}
-	if err := q.db().ProblemUpdate(q.ctx(), db.ProblemUpdateParams{ID: p.ID, Phase: ptr("escalated"), QuestionID: &qid}); err != nil {
+	return linkProblemEscalation(q, p.ID, qid)
+}
+
+func linkProblemEscalation(q *Request, problemID, qid string) (contract.ProblemEscalateReply, error) {
+	if err := q.db().ProblemUpdate(q.ctx(), db.ProblemUpdateParams{ID: problemID, Phase: ptr("escalated"), QuestionID: &qid}); err != nil {
 		return contract.ProblemEscalateReply{}, err
 	}
-	p, err = q.db().ProblemGet(q.ctx(), p.ID)
+	p, err := q.db().ProblemGet(q.ctx(), problemID)
 	return contract.ProblemEscalateReply{Problem: problemOut(q, p), QuestionId: qid}, err
 }
 
@@ -787,7 +811,7 @@ func problemTriggerParts(q *Request, bot string, seen, owned map[string]bool) ([
 		}
 	}
 	if len(parts) > 0 || len(woken) > 0 {
-		parts = append(parts, threadPart{problemsSubject, "Work these here: problem_get for the evidence, then problem_update (phase, note, work) or problem_escalate; open a problem's own conversation only for a long investigation."})
+		parts = append(parts, threadPart{problemsSubject, "Work these here: problem_get for the evidence, then problem_update (phase, note, work) or problem_escalate. For CI or delivery, investigate the evidence yourself and escalate only with deliveryAuthority for an owner-only choice; open a problem's own conversation only for a long investigation."})
 	}
 	return parts, nil
 }

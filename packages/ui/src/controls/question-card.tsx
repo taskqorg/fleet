@@ -1,3 +1,4 @@
+import type { JSX } from '@solidjs/web';
 // Question card: the card form of a decision (controls/decision-block.md#card, OR-53, board master `Question card`).
 import { createEffect, createSignal, For, Show } from 'solid-js';
 import { createDraft } from '../drafts.ts';
@@ -13,7 +14,7 @@ import type { QuestionChoice } from '../answer.ts';
  */
 export function QuestionCard(p: {
   code?: string | null; questionId?: string | null;
-  question: string; choices: QuestionChoice[]; tone?: 'attention' | 'danger';
+  question: string; context?: JSX.Element; choices: QuestionChoice[]; tone?: 'attention' | 'danger';
   /** The chosen label while its answer is on the way: that button is busy, the others wait. */
   answering?: string;
   answered?: { answer: string; at: number };
@@ -42,6 +43,7 @@ export function QuestionCard(p: {
           {ref()}
           {/* Codes, Fleet links and UUIDs in the text are entity references (OR-38, OR-44), never raw ids or URLs. */}
           <p class="qcard-q">{linkCodes(p.question, 0)}</p>
+          {p.context}
           <div class="qcard-choices">
             <For each={p.choices}>
               {c => (

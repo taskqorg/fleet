@@ -11,7 +11,26 @@ export const keyConnection = (options: unknown): string | undefined => {
 export type QuestionChoice = { label: string; primary?: boolean };
 
 /** A question as the reads carry it: `questions_list` and `session_get` rows (text) and thread blocks (question). */
-export type OpenQuestionRow = { id: string; code?: string | null; text?: string | null; question?: string | null; kind?: string | null; options?: unknown };
+export type OpenQuestionRow = { id: string; code?: string | null; text?: string | null; question?: string | null; kind?: string | null; options?: unknown; deliveryAuthority?: boolean };
+
+/** Delivery decisions keep the same options on the task, the conversation and Telegram. */
+export function deliveryAuthorityChoices(options: unknown): string[] | undefined {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) return undefined;
+  const o = options as { deliveryAuthority?: unknown; choices?: unknown };
+  return o.deliveryAuthority === true && Array.isArray(o.choices)
+    ? o.choices.filter((choice): choice is string => typeof choice === 'string' && choice.length > 0)
+    : undefined;
+}
+
+export function deliveryAuthorityContent(q: Pick<OpenQuestionRow, 'text' | 'options' | 'deliveryAuthority'>) {
+  if (!(q.deliveryAuthority || deliveryAuthorityChoices(q.options)) || !q.text) return undefined;
+  const divider = q.text.indexOf('\n\n');
+  if (divider === -1) return undefined;
+  const evidence = q.text.slice(divider + 2).split('\n')
+    .map(line => /^https:\/\/[^\s<>()]+$/.test(line) ? `[Delivery evidence](${line})` : line)
+    .join('  \n');
+  return { title: q.text.slice(0, divider), evidence };
+}
 
 /**
  * The labels a question can be answered with, in the asker's order: its options (strings, or objects with a label or a
@@ -19,6 +38,8 @@ export type OpenQuestionRow = { id: string; code?: string | null; text?: string 
  */
 export function answerLabels(q: Pick<OpenQuestionRow, 'kind' | 'options'>): string[] {
   if (keyConnection(q.options)) return ['decline'];
+  const authority = deliveryAuthorityChoices(q.options);
+  if (authority) return authority;
   if (Array.isArray(q.options) && q.options.length) {
     return (q.options as unknown[]).map(o => {
       if (o && typeof o === 'object') {

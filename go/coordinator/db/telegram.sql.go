@@ -47,6 +47,54 @@ func (q *Queries) TelegramAuthorRecentWork(ctx context.Context, arg TelegramAuth
 	return i, err
 }
 
+const telegramDeliveryAuthorityToPush = `-- name: TelegramDeliveryAuthorityToPush :many
+SELECT q.id, q.kind::text AS kind, q.text, q.session_id, r.chat_id, p.language
+FROM question q
+JOIN telegram_person p ON p.email = $1::text
+JOIN telegram_room r ON r.chat_id = p.telegram_user_id AND r.kind = 'private' AND r.thread_id = 0
+WHERE q.state = 'open' AND q.data ? 'deliveryAuthority'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
+ORDER BY q.asked_at
+LIMIT 50
+`
+
+type TelegramDeliveryAuthorityToPushRow struct {
+	ID        string
+	Kind      string
+	Text      string
+	SessionID *string
+	ChatID    int64
+	Language  string
+}
+
+// Only the owner's linked private chat receives delivery authority cards, including bot conversations without Telegram work.
+func (q *Queries) TelegramDeliveryAuthorityToPush(ctx context.Context, owner string) ([]TelegramDeliveryAuthorityToPushRow, error) {
+	rows, err := q.db.Query(ctx, telegramDeliveryAuthorityToPush, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramDeliveryAuthorityToPushRow
+	for rows.Next() {
+		var i TelegramDeliveryAuthorityToPushRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Text,
+			&i.SessionID,
+			&i.ChatID,
+			&i.Language,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const telegramDeliveryHealth = `-- name: TelegramDeliveryHealth :one
 SELECT count(*) FILTER (WHERE state = 'sent')::bigint AS sent, count(*) FILTER (WHERE state = 'failed')::bigint AS failed,
   count(*) FILTER (WHERE state = 'unknown')::bigint AS unknown,
@@ -160,7 +208,8 @@ func (q *Queries) TelegramLinkTake(ctx context.Context, code string) (string, er
 
 const telegramNeedsAll = `-- name: TelegramNeedsAll :many
 SELECT id, kind::text AS kind, text, session_id, coalesce(project_id, '')::text AS project_id FROM question
-WHERE state = 'open' ORDER BY asked_at DESC LIMIT 100
+WHERE state = 'open' AND ($1::boolean OR NOT (data ? 'deliveryAuthority'))
+ORDER BY asked_at DESC LIMIT 100
 `
 
 type TelegramNeedsAllRow struct {
@@ -172,8 +221,8 @@ type TelegramNeedsAllRow struct {
 }
 
 // Every open question, newest first, for a person's /needs in a private chat (filtered by their projects in Go).
-func (q *Queries) TelegramNeedsAll(ctx context.Context) ([]TelegramNeedsAllRow, error) {
-	rows, err := q.db.Query(ctx, telegramNeedsAll)
+func (q *Queries) TelegramNeedsAll(ctx context.Context, includeDeliveryAuthority bool) ([]TelegramNeedsAllRow, error) {
+	rows, err := q.db.Query(ctx, telegramNeedsAll, includeDeliveryAuthority)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +249,7 @@ func (q *Queries) TelegramNeedsAll(ctx context.Context) ([]TelegramNeedsAllRow, 
 
 const telegramOpenQuestions = `-- name: TelegramOpenQuestions :many
 SELECT q.id, q.kind::text AS kind, q.text, q.session_id FROM question q
-WHERE q.state = 'open' AND q.session_id IN (
+WHERE q.state = 'open' AND NOT (q.data ? 'deliveryAuthority') AND q.session_id IN (
   SELECT w.session_id FROM telegram_work w WHERE w.closed_at IS NULL
     AND ((NOT $1::boolean AND w.room_id = $2) OR ($1::boolean AND w.created_by = $3)))
 ORDER BY q.asked_at LIMIT 10
@@ -705,10 +754,13 @@ func (q *Queries) TelegramQuestionMessage(ctx context.Context, arg TelegramQuest
 
 const telegramQuestionsEnded = `-- name: TelegramQuestionsEnded :many
 SELECT q.id, q.state::text AS state, coalesce(q.answer, '')::text AS answer, coalesce(q.answered_by, '')::text AS answered_by, q.text,
-  o.chat_id, o.telegram_message_id
-FROM telegram_outbox o JOIN question q ON o.id = 'q:' || q.id
-WHERE o.state = 'sent' AND o.telegram_message_id IS NOT NULL AND q.state <> 'open'
-  AND NOT EXISTS (SELECT 1 FROM telegram_outbox e WHERE e.id = 'qend:' || q.id)
+  o.chat_id, o.telegram_message_id,
+  (CASE WHEN o.id LIKE 'qn:%' THEN 'qend:' || o.id ELSE 'qend:' || q.id END)::text AS edit_id
+FROM telegram_outbox o JOIN question q ON q.id = split_part(o.id, ':', 2)
+WHERE (o.id = 'q:' || q.id OR (o.id LIKE 'qn:%' AND q.data ? 'deliveryAuthority'))
+  AND o.state = 'sent' AND o.telegram_message_id IS NOT NULL AND q.state <> 'open'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox e WHERE e.id =
+    CASE WHEN o.id LIKE 'qn:%' THEN 'qend:' || o.id ELSE 'qend:' || q.id END)
 LIMIT 50
 `
 
@@ -720,6 +772,7 @@ type TelegramQuestionsEndedRow struct {
 	Text              string
 	ChatID            int64
 	TelegramMessageID *int64
+	EditID            string
 }
 
 // Questions sent to Telegram that were answered or withdrawn since, whose message does not say so yet.
@@ -740,6 +793,7 @@ func (q *Queries) TelegramQuestionsEnded(ctx context.Context) ([]TelegramQuestio
 			&i.Text,
 			&i.ChatID,
 			&i.TelegramMessageID,
+			&i.EditID,
 		); err != nil {
 			return nil, err
 		}
@@ -757,6 +811,7 @@ FROM question q
 JOIN telegram_work w ON w.session_id = q.session_id AND w.closed_at IS NULL
 JOIN telegram_room r ON r.id = w.room_id
 WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
+  AND NOT (q.data ? 'deliveryAuthority')
   AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
 LIMIT 50
 `

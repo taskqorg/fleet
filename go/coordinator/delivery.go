@@ -43,6 +43,7 @@ type deliveryState struct {
 type deliveryRepo struct {
 	projects  []string
 	items     []contract.DeliveryItem
+	ci        deliveryEvidence
 	landing   int64
 	problem   string
 	delivered []deliveryMergedPR
@@ -192,6 +193,8 @@ func ghPullAutoMergeMethod(v any) string {
 }
 
 type ghRun struct {
+	ID         int64  `json:"id,omitempty"`
+	Attempt    int64  `json:"run_attempt,omitempty"`
 	Event      string `json:"event"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
@@ -377,16 +380,16 @@ func deliveryPass(ctx context.Context, a *App) error {
 			if err != nil {
 				r := &deliveryRepo{projects: t.projects, problem: t.slug + ": " + err.Error()}
 				if p := prev.repos[key]; p != nil {
-					r.items, r.landing, r.delivered = p.items, p.landing, p.delivered
+					r.items, r.landing, r.delivered, r.ci = p.items, p.landing, p.delivered, p.ci
 				}
 				return collection{repo: r}, err
 			}
 			its, merged := gitlabDeliveryStages(t.projects[0], t.host, t.slug, gl, now)
-			return collection{repo: &deliveryRepo{projects: t.projects, items: its, delivered: merged}, fresh: true}, nil
+			return collection{repo: &deliveryRepo{projects: t.projects, items: its, delivered: merged, ci: gitLabDeliveryFacts(gl, now)}, fresh: true}, nil
 		}
 		if !keyedRepo[key] && !readKeyless {
 			if p := prev.repos[key]; p != nil {
-				return collection{repo: &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem, delivered: p.delivered}}, nil
+				return collection{repo: &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem, delivered: p.delivered, ci: p.ci}}, nil
 			}
 		}
 		var g ghRepo
@@ -412,7 +415,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			// The last good items of this repository stand; it records no sample this pass (a gap, not a dip).
 			r := &deliveryRepo{projects: t.projects, problem: name + ": " + err.Error()}
 			if p := prev.repos[key]; p != nil {
-				r.items, r.landing, r.delivered = p.items, p.landing, p.delivered
+				r.items, r.landing, r.delivered, r.ci = p.items, p.landing, p.delivered, p.ci
 			}
 			return collection{repo: r}, err
 		}
@@ -451,7 +454,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			pins.End(pinsErr)
 		}
 		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
-		return collection{repo: &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged}, fresh: true}, nil
+		return collection{repo: &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged, ci: githubDeliveryFacts(g, now)}, fresh: true}, nil
 	})
 	for i, result := range results {
 		key := targets[i]
@@ -525,12 +528,21 @@ func deliveryPass(ctx context.Context, a *App) error {
 			log.Printf("delivery state: %v", err)
 		}
 	}
-	// Every pass: a restart then answers this pass with its real age (one row, no change event, no lock).
+	// Store observations before changing Problems. An answer sees the new
+	// fence even while withdrawal is pending, without coupling snapshot writes
+	// to a successful task or Problem transition.
 	snapshotCtx, snapshot := deliverySpan(ctx, "snapshot")
 	err = a.store.Write(snapshotCtx, nil, nil, func(q *Request) error { return deliverySave(q, next) })
 	snapshot.End(err)
 	if err != nil {
 		log.Printf("delivery snapshot: %v", err)
+	} else if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := observeDeliveryProblems(q, next); err != nil {
+			return err
+		}
+		return reconcileDeliveryAuthority(q)
+	}); err != nil {
+		log.Printf("delivery authority reconciliation: %v", err)
 	}
 	var delivered []deliveryMergedPR
 	for _, r := range repos {
@@ -875,6 +887,7 @@ func projectRemotes(q *Request, id string) []string {
 }
 
 type glMRPipeline struct {
+	ID        int64  `json:"id,omitempty"`
 	Status    string `json:"status"`
 	SHA       string `json:"sha"`
 	UpdatedAt string `json:"updated_at"`

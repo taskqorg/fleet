@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"fleet/contract"
 )
@@ -1500,11 +1502,15 @@ func recordPublishingToJournal(ctx forgeContext, ref contract.RepoRef, adapter p
 	if !ctx.ReportPublishing || ctx.HostId == "" || ctx.Journal == "" || pr.Number <= 0 {
 		return
 	}
+	observedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	db, err := openJournal(ctx.Journal)
 	if err != nil {
 		return
 	}
 	defer db.Close()
+	journalResult := make(M, len(rawResult)+1)
+	maps.Copy(journalResult, rawResult)
+	journalResult["observedAt"] = observedAt
 	rec := contract.PublishingHostRecord{
 		HostId:            ctx.HostId,
 		CommandId:         optStr(ctx.CommandId),
@@ -1528,7 +1534,7 @@ func recordPublishingToJournal(ctx forgeContext, ref contract.RepoRef, adapter p
 		AutoMergeEnabled:  &pr.AutoMergeEnabled,
 		MergeMethod:       optStr(ctx.MergeMethod),
 		SourceExecutionId: optStr(ctx.ExecutionId),
-		Result:            json.RawMessage(enc(rawResult)),
+		Result:            json.RawMessage(enc(journalResult)),
 	}
 	key := "pub:" + ctx.CommandId + ":" + newID()
 	_ = journalOnce(db, key, enc(rec), contract.RoutePublishingRecord.Path, "")
