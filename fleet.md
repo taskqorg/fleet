@@ -98,7 +98,9 @@ Required artifacts must be stored for that execution and the acceptance identifi
 
 An operator may reject an open offer after its result loses eligibility. The rejection applies to the offered result. Missing completion evidence leaves the task open without a generated question. A failed execution or explicit report of incomplete work can require an operator decision.
 
-Task details show an informational note when the latest task-bound agent run ended with confirmed success and has no completion report. The note clears when work continues, an explicit offer covers it, or valid completion evidence is available. An idle task whose latest primary execution is a confirmed successful agent turn waits for its result to settle, including any missing completion evidence or result acceptance. New work resumes progression. Live In work omits this wait while no execution or delivery is in flight.
+Task details flag a missing completion report for the latest confirmed successful task-bound agent run. The note clears on continuation, an explicit offer or valid completion evidence.
+
+An idle task whose latest primary execution is a confirmed successful agent turn waits for its result. Live In work omits this wait unless execution or delivery is active.
 
 #### Task states
 
