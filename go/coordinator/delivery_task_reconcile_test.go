@@ -230,6 +230,118 @@ func TestDeliveredTaskAcceptance(t *testing.T) {
 			}
 		})
 	}
+	t.Run("explicit earlier result after a failed auxiliary pipeline", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, wantRecovery string
+			selectEarlier      bool
+		}{
+			{name: "keeps the exact offer", selectEarlier: true},
+			{name: "latest failure without an offer", wantRecovery: "Latest work has no confirmed successful result"},
+			{name: "offered artifact lost", selectEarlier: true, wantRecovery: "The offer no longer matches the eligible result"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				const project = "delivery-auto"
+				id, sid, run, artifact := newID(), newID(), newID(), newID()
+				lifecycleTask(t, e, id, sid, run, "succeeded")
+				exec(t, "UPDATE task SET project_id=$2 WHERE id=$1", id, project)
+				exec(t, "UPDATE session SET project_id=$2 WHERE id=$1", sid, project)
+				exec(t, `UPDATE execution SET project_id=$2,data='{"report":{"outcome":"succeeded"}}' WHERE id=$1`, run, project)
+				exec(t, `INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,task_id,project_id,state)
+					VALUES($1,'prod',$2,5,'text/plain','result.txt',$3,$4,$5,'stored')`, artifact, sha256hex([]byte("bytes")), run, id, project)
+				exec(t, `INSERT INTO execution (id,kind,state,observation,project_id,task_id,started_at,ended_at,problem)
+					VALUES($1,'pipeline_run','failed','confirmed',$2,$3,now()-interval '1 minute',now(),'authority_denied')`, newID(), project, id)
+				write := func(fn func(*Request) error) {
+					t.Helper()
+					if err := e.appStore.Write(e.ctx, nil, []string{GLOBAL}, fn); err != nil {
+						t.Fatal(err)
+					}
+				}
+				get := func() contract.TaskDetail {
+					t.Helper()
+					var task contract.TaskDetail
+					e.opInto(t, "task_get", doc{"taskId": id}, headers, &task)
+					return task
+				}
+				answer := func(question, option string) {
+					t.Helper()
+					e.opInto(t, "question_answer", doc{"questionId": question, "answer": option}, headers, &contract.QuestionRow{})
+				}
+				var offer string
+				if tc.selectEarlier {
+					write(func(q *Request) error { _, err := settleIdleTask(q, id); return err })
+					decision := get().NextAction
+					if decision == nil || decision.Kind != contract.TaskNextActionKindQuestion {
+						t.Fatalf("expected initial failure decision, got %+v", decision)
+					}
+					answer(decision.Reference, idleAccept)
+					action := get().NextAction
+					if action == nil || action.Kind != contract.TaskNextActionKindAcceptance {
+						t.Fatalf("expected earlier acceptance offer, got %+v", action)
+					}
+					offer = action.Reference
+					if tc.wantRecovery != "" {
+						exec(t, "UPDATE artifact SET role='diagnostic' WHERE id=$1", artifact)
+					}
+				}
+				pr := deliveryMergedPR{Repo: "taskqorg/fleet", Number: 90001, URL: "https://github.com/taskqorg/fleet/pull/90001",
+					Delivered: true, Stage: "installed", Release: "v1.261127.1",
+					HeadSHA: strings.Repeat("a", 40), MergeSHA: strings.Repeat("b", 40),
+					ReleaseCovered: true, ReleaseTarget: strings.Repeat("b", 40),
+					InstalledOn: []taskDeliveryHostProof{{Target: "coordinator", Version: "1.261127.1"}},
+					DeliveredAt: landedAt.Format(time.RFC3339)}
+				write(func(q *Request) error {
+					task, err := taskLoad(q, id)
+					if err != nil {
+						return err
+					}
+					return retainTaskDelivery(q, task, pr)
+				})
+				for attempt := range 2 {
+					if attempt == 1 && tc.wantRecovery == "" {
+						// An older coordinator can already have created the conflicting decision.
+						write(func(q *Request) error {
+							task, err := taskLoad(q, id)
+							if err != nil {
+								return err
+							}
+							return deliveredTaskDecision(q, task, nil, "Latest work has no confirmed successful result")
+						})
+						write(func(q *Request) error { _, err := settleIdleTask(q, id); return err })
+					}
+					write(func(q *Request) error { return wakeTask(q, id) })
+					runLifecycleWake(t, e, "task:"+id, time.Now().Add(time.Second))
+					task := get()
+					if tc.wantRecovery != "" {
+						if task.NextAction == nil || task.NextAction.Kind != contract.TaskNextActionKindQuestion {
+							t.Fatalf("expected a recovery decision, got %+v", task.NextAction)
+						}
+						var decision contract.QuestionRow
+						for _, question := range task.Questions {
+							if question.Id == task.NextAction.Reference {
+								decision = question
+								break
+							}
+						}
+						if decision.State != "open" || !strings.Contains(decision.Text, tc.wantRecovery) ||
+							string(decision.Options) != `["fail task"]` {
+							t.Fatalf("wrong recovery decision: %s (%s)", decision.Text, decision.Options)
+						}
+					} else if task.AcceptedAt != nil || task.NextAction == nil || task.NextAction.Kind != contract.TaskNextActionKindAcceptance ||
+						task.NextAction.Reference != offer {
+						t.Fatalf("original offer must stay actionable for an explicit answer: %+v", task.NextAction)
+					}
+				}
+				if tc.wantRecovery == "" {
+					answer(offer, "accepted")
+					task := get()
+					if task.State != "completed" || deref(task.AcceptedBy) != testOwnerEmail ||
+						len(task.AcceptedArtifactIds) != 1 || task.AcceptedArtifactIds[0] != artifact {
+						t.Fatalf("explicit acceptance lost the selected result: state=%s artifacts=%v", task.State, task.AcceptedArtifactIds)
+					}
+				}
+			})
+		}
+	})
 }
 
 // Requirement: deliveryMergedPR JSON payload stored on acceptance question data and audit_log omits internal-only flags.
