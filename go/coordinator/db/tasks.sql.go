@@ -119,6 +119,20 @@ func (q *Queries) TaskAcceptanceExecution(ctx context.Context, arg TaskAcceptanc
 	return i, err
 }
 
+const taskAcceptanceRecordDelivery = `-- name: TaskAcceptanceRecordDelivery :exec
+UPDATE question SET data=coalesce(data,'{}'::jsonb)||jsonb_build_object('delivery', $1::jsonb) WHERE id= $2
+`
+
+type TaskAcceptanceRecordDeliveryParams struct {
+	Delivery []byte
+	ID       string
+}
+
+func (q *Queries) TaskAcceptanceRecordDelivery(ctx context.Context, arg TaskAcceptanceRecordDeliveryParams) error {
+	_, err := q.db.Exec(ctx, taskAcceptanceRecordDelivery, arg.Delivery, arg.ID)
+	return err
+}
+
 const taskAcceptedResult = `-- name: TaskAcceptedResult :one
 WITH RECURSIVE
  candidate_sessions AS (
@@ -337,7 +351,7 @@ const taskDeliveryEvidence = `-- name: TaskDeliveryEvidence :many
 SELECT 'execution'::text AS source,e.task_id::text AS task_id,
  coalesce(e.data->'report'->>'outcome','')::text AS outcome,
  coalesce(e.data->'report'->>'summary','')::text AS text,
- coalesce(e.ended_at,e.started_at,e.updated_at)::timestamptz AS at
+ e.ended_at AS at
 FROM execution e
 WHERE e.task_id = ANY( $1::text[]) AND e.kind NOT IN ('child_agent','tool_run')
  AND e.state='succeeded' AND e.observation='confirmed' AND coalesce(e.data->'report'->>'outcome','') <> 'failed'
@@ -353,7 +367,7 @@ type TaskDeliveryEvidenceRow struct {
 	TaskID  string
 	Outcome string
 	Text    string
-	At      pgtype.Timestamptz
+	At      *time.Time
 }
 
 // Confirmed worker reports and done board posts referencing PRs or post-delivery verification.

@@ -25,7 +25,7 @@ func TestDiagnosisReport(t *testing.T) {
 	logPath = path
 	t.Cleanup(func() { logPath = old })
 	db.Exec("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES(?,?,?,?,?)", "/api/hosts/artifacts/failed",
-		`{"artifactId":"a1","executionId":"x1"}`, 404, `coordinator 404 {"message":"Unknown artifact"}`, 1795701568115)
+		`{"artifactId":"a1","executionId":"x1"}`, 404, `coordinator 404 {"message":"Unknown artifact"}`, nowMs())
 	db.Exec("INSERT INTO transfers(id,kind,body,state,response,created_at) VALUES(?,?,?,?,?,?)", "t1", "upload",
 		`{"name":"pages/p1.jpg","executionId":"x1"}`, "failed", `{"state":"failed","error":"409 Content was purged"}`, nowMs())
 	db.Exec("INSERT INTO outbox(route,body) VALUES(?,?)", "/api/hosts/events", `{"executionId":"x1"}`)
