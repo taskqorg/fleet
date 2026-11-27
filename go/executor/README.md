@@ -41,7 +41,7 @@
 - Worktree cleanup keeps work when configured reasons such as uncommitted changes, unpushed commits, or teardown failure apply ([worktree.go: `teardown`](worktree.go)).
 - A start with `branch: false` gets a worktree detached at its base, with no session branch ([worktree.go: `worktree`](worktree.go)); a start with `readOnly: true` runs codex in its read-only sandbox, claude with Read, Glob and Grep only, and ACP agents in plan mode; the executor reports `start-access-v1`, so the coordinator places such starts only here ([harness_codex.go](harness_codex.go), [harness_command.go: `readOnlyTools`](harness_command.go), [harness_acp.go](harness_acp.go)).
 
-- Update drain retains the activity lease for live ownership, unfinished commands, queued transport (span batches excepted), retryable archived status 401 and active transfers. Idle drain leaves the lease available to the updater and keeps target readiness while the updater holds it. Nonretryable archived rejection history remains preserved without blocking idle replacement ([update_drain.go](update_drain.go), [outbox.go](outbox.go)).
+- Update drain retains the activity lease for live ownership, unfinished commands, queued transport (span batches excepted), and required active transfers. Idle drain leaves the lease available to the updater, evaluates readiness even when idle during a held poll, and keeps target readiness while the updater holds it. Archived status 401 rows (requeued on startup), non-required uploads (`required: false`), and nonretryable archived rejections do not block idle replacement ([update_drain.go](update_drain.go), [outbox.go](outbox.go)).
 
 ## Side effects
 

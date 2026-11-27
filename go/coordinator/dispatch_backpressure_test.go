@@ -127,14 +127,15 @@ func TestRollingDrainFewestRunsFirst(t *testing.T) {
 	if other := a.rollingDrain("owner-mac", true, 0); other != "" {
 		t.Fatalf("an idle host waited for the turn: %q", other)
 	}
-	if other := a.rollingDrain("windows", true, 1); other != "" {
-		t.Fatalf("the emptier host did not take the turn: %q", other)
+	// Once pds18 holds the turn, a host with fewer runs must not steal it mid-drain.
+	if other := a.rollingDrain("windows", true, 1); other != "pds18" {
+		t.Fatalf("emptier host stole pinned turn: %q", other)
 	}
-	if other := a.rollingDrain("pds18", true, 4); other != "windows" {
-		t.Fatalf("pds18 kept the turn from an emptier host: %q", other)
-	}
-	a.rollingDrain("windows", false, 0) // windows updated
 	if other := a.rollingDrain("pds18", true, 4); other != "" {
-		t.Fatalf("pds18 held after windows finished: %q", other)
+		t.Fatalf("pds18 lost pinned turn: %q", other)
+	}
+	a.rollingDrain("pds18", false, 0) // pds18 updated
+	if other := a.rollingDrain("windows", true, 1); other != "" {
+		t.Fatalf("windows held after pds18 finished: %q", other)
 	}
 }

@@ -372,6 +372,11 @@ func (e *executor) sampleHostLoad() *contract.HostLoad {
 }
 
 func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply, error) {
+	reply, _, err := e.pollWaitSignal(ctx, wait, true)
+	return reply, err
+}
+
+func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush bool) (*pollReply, *updateSignal, error) {
 	v, roots := version, reportedRoots()
 	_, offset := time.Now().Zone() // seconds east of UTC: the coordinator's daily update window is in local time
 	offsetMinutes := int64(offset / 60)
@@ -388,14 +393,13 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 		a = sendWithClient(ctx, outboxClient, e.url, e.token, pollRoute, pollRoute, body)
 	}
 	if a.status == 410 && strings.Contains(a.text, "host-removed") {
-		return nil, errHostRemoved
+		return nil, nil, errHostRemoved
 	}
 	if err := ctx.Err(); err != nil && a.kind == answerRetry {
 		// The exchange cancelled its own heartbeat poll (or the executor stops): not a poll failure for update.json.
-		return nil, err
+		return nil, nil, err
 	}
 	signalMu.Lock()
-	defer signalMu.Unlock()
 	sig := updateSignal{HostId: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
 		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate
@@ -421,40 +425,60 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 	if ready := e.updateReady.Load(); ready != nil && sig.Target != nil && *ready == *sig.Target {
 		sig.RestartTarget = ready
 	}
-	if err := writeUpdateSignal(e.root, sig); err != nil {
-		fmt.Fprintln(os.Stderr, "executor: update.json:", err)
+	if flush {
+		if err := writeUpdateSignal(e.root, sig); err != nil {
+			fmt.Fprintln(os.Stderr, "executor: update.json:", err)
+		}
 	}
+	signalMu.Unlock()
 	_, err := answerValue(a)
-	return reply, err
+	if flush {
+		return reply, nil, err
+	}
+	return reply, &sig, err
 }
 
 // heldPoll waits for the coordinator's held poll while this goroutine keeps ticking, so a process exit, its output,
-// a script deadline and resource samples never wait up to longPollWait for the answer. It ticks only while
-// executions are live; an idle host checks update drain once per exchange. A tick failure cancels
-// the poll, waits for its goroutine and drops any reply: the executor stops, and commands without a receipt stay
-// pending on the coordinator (host_poll.go selects status 'pending') for delivery again.
+// a script deadline, update drain, and resource samples never wait up to longPollWait for the answer. A tick failure
+// cancels the poll, waits for its goroutine and drops any reply: the executor stops, and commands without a receipt
+// stay pending on the coordinator (host_poll.go selects status 'pending') for delivery again.
 func (e *executor) heldPoll() (*pollReply, error) {
 	ctx, cancel := context.WithCancel(e.baseCtx())
 	defer cancel()
 	type answered struct {
 		reply *pollReply
+		sig   *updateSignal
 		err   error
 	}
 	got := make(chan answered, 1)
 	errtrack.Go("poll.held", func() {
-		reply, err := e.pollWait(ctx, longPollWait)
-		got <- answered{reply, err}
+		reply, sig, err := e.pollWaitSignal(ctx, longPollWait, false)
+		got <- answered{reply, sig, err}
 	})
 	beat := time.NewTicker(tickEvery)
 	defer beat.Stop()
 	for {
 		select {
 		case a := <-got:
+			if a.sig != nil {
+				ready, err := e.idleUpdateFor(a.sig)
+				if err != nil {
+					return nil, tickFailed{err}
+				}
+				e.updateReady.Store(ready)
+				if ready != nil && a.sig.Target != nil && *ready == *a.sig.Target {
+					a.sig.RestartTarget = ready
+				} else {
+					a.sig.RestartTarget = nil
+				}
+				signalMu.Lock()
+				if err := writeUpdateSignal(e.root, *a.sig); err != nil {
+					fmt.Fprintln(os.Stderr, "executor: update.json:", err)
+				}
+				signalMu.Unlock()
+			}
 			return a.reply, a.err
 		case <-beat.C:
-			if len(e.live) == 0 {
-				continue
-			}
 			if err := e.tick(); err != nil {
 				cancel()
 				<-got

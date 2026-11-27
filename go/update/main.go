@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 // version is set at build time with -ldflags "-X main.version=<version>".
@@ -199,11 +200,17 @@ func (u *updater) runPDS18() error {
 		st.HostId, hostChanged = &sig.HostId, true // the coordinator shows these results on that host's row
 	}
 	stage := filepath.Join(s, "stage")
-	os.RemoveAll(stage)
 	if err := os.MkdirAll(stage, 0o700); err != nil {
 		return err
 	}
-	defer os.RemoveAll(stage)
+	// Keep verified <ver>.tmp dirs across 10s ticks while PDS18's executor drains, cleaning incomplete temp leftovers.
+	if entries, err := os.ReadDir(stage); err == nil {
+		for _, e := range entries {
+			if n := e.Name(); strings.HasSuffix(n, ".part") || strings.HasSuffix(n, ".tgz") || strings.HasPrefix(n, "cli-") {
+				os.RemoveAll(filepath.Join(stage, n))
+			}
+		}
+	}
 	coordR, err := openReleases(coordRoot)
 	if err != nil {
 		return err
@@ -256,12 +263,30 @@ func (u *updater) runPDS18() error {
 	}
 	if r := u.cycle(exec, autoUpdate, offered); r != nil {
 		exec.st.Last = r
+		pruneStage(stage, offered())
 		return save()
 	}
+	pruneStage(stage, offered())
 	if hostChanged {
 		return save()
 	}
 	return nil
+}
+
+func pruneStage(stage, keepVer string) {
+	entries, err := os.ReadDir(stage)
+	if err != nil {
+		return
+	}
+	keep := ""
+	if keepVer != "" {
+		keep = keepVer + ".tmp"
+	}
+	for _, e := range entries {
+		if n := e.Name(); n != keep {
+			os.RemoveAll(filepath.Join(stage, n))
+		}
+	}
 }
 
 // installUpdater copies the verified fleet-update to the root-owned path the root unit runs.
