@@ -579,12 +579,18 @@ func (v *BaseUpdatedCommand) Validate() error {
 }
 
 type BrowserAccessReply struct {
-	ClientId     string `json:"clientId"`
-	ClientSecret string `json:"clientSecret"`
+	ClientId     string                   `json:"clientId"`
+	ClientSecret string                   `json:"clientSecret"`
+	Production   *BrowserProductionAccess `json:"production,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BrowserAccessReply) Validate() error {
+	if v.Production != nil {
+		if err := Check(v.Production, "production"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -600,6 +606,51 @@ func (v *BrowserAccessRequest) Validate() error {
 
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*BrowserAccessRequest) Closed() bool { return true }
+
+type BrowserProductionAccess struct {
+	Headers        []BrowserSecretHeader  `json:"headers"`
+	Origin         string                 `json:"origin"`
+	ReadinessProbe BrowserProductionProbe `json:"readinessProbe"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BrowserProductionAccess) Validate() error {
+	if v.Headers == nil {
+		return Missing("headers")
+	}
+	for i := range v.Headers {
+		if err := Check(&v.Headers[i], "headers"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.ReadinessProbe, "readinessProbe"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type BrowserProductionProbe struct {
+	ExpectedIdentity *string `json:"expectedIdentity,omitempty"`
+	IdentityField    *string `json:"identityField,omitempty"`
+	Method           string  `json:"method"`
+	Path             string  `json:"path"`
+	Status           *int64  `json:"status,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BrowserProductionProbe) Validate() error {
+	return nil
+}
+
+type BrowserSecretHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BrowserSecretHeader) Validate() error {
+	return nil
+}
 
 // Capability: A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.
 type Capability string

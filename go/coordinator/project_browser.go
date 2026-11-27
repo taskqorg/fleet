@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"fleet/contract"
 )
@@ -18,26 +19,32 @@ func init() {
 
 func productionBrowserAccess(q *Request, request *contract.BrowserAccessRequest) (contract.BrowserAccessReply, error) {
 	var empty contract.BrowserAccessReply
-	if request.ProjectId != contract.ProductionBrowserProject {
+	projectID := request.ProjectId
+	if !filepath.IsLocal(projectID) || strings.ContainsAny(projectID, `/\`) || projectID == "." {
 		return empty, nil
 	}
-	granted, err := productionBrowserGranted(q)
+	granted, err := productionBrowserGranted(q, projectID)
 	if err != nil || !granted {
 		return empty, err
 	}
-	access, err := readProductionBrowserAccess(secretDir())
+	var access contract.BrowserAccessReply
+	if projectID == contract.ProductionBrowserProject {
+		access, err = readProductionBrowserAccess(secretDir())
+	} else {
+		access, err = readGenericBrowserAccess(secretDir(), projectID)
+	}
 	if err != nil {
 		return empty, fail(http.StatusServiceUnavailable, err.Error())
 	}
 	return access, nil
 }
 
-func productionBrowserGranted(q *Request) (bool, error) {
+func productionBrowserGranted(q *Request, projectID string) (bool, error) {
 	holder := q.peopleSnapshot().person(q.host.Holder)
 	if holder == nil || !holder.Owner {
 		return false, nil
 	}
-	settings, err := projectSettingsByID(q, contract.ProductionBrowserProject)
+	settings, err := projectSettingsByID(q, projectID)
 	if err != nil {
 		var missing *HTTPError
 		if errors.As(err, &missing) && missing.Code == http.StatusNotFound {
@@ -52,6 +59,44 @@ func productionBrowserGranted(q *Request) (bool, error) {
 		}), nil
 }
 
+func readGenericBrowserAccess(root, projectID string) (contract.BrowserAccessReply, error) {
+	var access contract.BrowserAccessReply
+	unready := errors.New("Coordinator project browser binding or credential is invalid")
+	if root == "" {
+		return access, nil
+	}
+	if !filepath.IsAbs(root) {
+		return access, unready
+	}
+	dir := filepath.Join(root, "project-browser")
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return access, nil
+	}
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		return access, unready
+	}
+	raw, err := readPrivateBrowserFile(filepath.Join(dir, projectID+".binding.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return access, nil
+	}
+	var grant contract.BrowserBindingProduction
+	if err != nil || json.Unmarshal(raw, &grant) != nil || !filepath.IsLocal(grant.AccessFile) ||
+		strings.ContainsAny(grant.AccessFile, `/\`) || grant.AccessFile == "." {
+		return access, unready
+	}
+	env, err := readPrivateBrowserFile(filepath.Join(dir, grant.AccessFile))
+	if err != nil {
+		return access, unready
+	}
+	access.Production, err = grant.Resolve(string(env))
+	reply, marshalErr := json.Marshal(access)
+	if err != nil || marshalErr != nil || len(reply) >= contract.BrowserAccessBytes {
+		return contract.BrowserAccessReply{}, unready
+	}
+	return access, nil
+}
+
 func readProductionBrowserAccess(root string) (contract.BrowserAccessReply, error) {
 	var access contract.BrowserAccessReply
 	unready := errors.New("Coordinator production browser credential is missing or invalid")
@@ -63,25 +108,36 @@ func readProductionBrowserAccess(root string) (contract.BrowserAccessReply, erro
 	if err != nil || !st.IsDir() || st.Mode().Perm() != 0700 {
 		return access, unready
 	}
-	path := filepath.Join(dir, "site-agents.json")
-	st, err = os.Lstat(path)
-	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0600 {
-		return access, unready
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return access, unready
-	}
-	defer file.Close()
-	if opened, err := file.Stat(); err != nil || !os.SameFile(st, opened) {
-		return access, unready
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, 4097))
-	if err != nil || len(raw) > 4096 || json.Unmarshal(raw, &access) != nil ||
+	raw, err := readPrivateBrowserFile(filepath.Join(dir, "site-agents.json"))
+	if err != nil || json.Unmarshal(raw, &access) != nil || access.Production != nil ||
 		!validBrowserCredential(access.ClientId) || !validBrowserCredential(access.ClientSecret) {
 		return contract.BrowserAccessReply{}, unready
 	}
 	return access, nil
+}
+
+func readPrivateBrowserFile(path string) ([]byte, error) {
+	unready := errors.New("browser authority unavailable")
+	st, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if st.Mode() != 0600 {
+		return nil, unready
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, unready
+	}
+	defer file.Close()
+	if opened, err := file.Stat(); err != nil || opened.Mode() != 0600 || !os.SameFile(st, opened) {
+		return nil, unready
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, contract.BrowserAccessBytes+1))
+	if err != nil || len(raw) > contract.BrowserAccessBytes {
+		return nil, unready
+	}
+	return raw, nil
 }
 
 func validBrowserCredential(value string) bool {

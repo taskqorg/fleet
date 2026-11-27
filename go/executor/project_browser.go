@@ -16,6 +16,8 @@ import (
 
 	"fleet/contract"
 	"fleet/errtrack"
+
+	"golang.org/x/sys/unix"
 )
 
 //go:embed project_browser.cjs
@@ -25,13 +27,9 @@ func browserCaptureDir(root, execution string) string {
 	return filepath.Join(runTempDir(root, execution), "browser-captures")
 }
 
-// browserBinding describes a local preview grant. The legacy Access path remains on the
-// file denylist until hosts remove their obsolete production entries.
 type browserBinding struct {
 	PreviewOrigins jsonValue `json:"previewOrigins"`
-	Production     struct {
-		AccessFile string `json:"accessFile"`
-	} `json:"production"`
+	Production     jsonValue `json:"production"`
 }
 
 type browserAuthority struct {
@@ -50,9 +48,9 @@ func browserRuntime() bool {
 	return isFile(os.Getenv("FLEET_PLAYWRIGHT_MODULE")) && isFile(os.Getenv("FLEET_BROWSER_EXECUTABLE"))
 }
 
-func browserConfig(payload any, production bool) (M, error) {
+func browserConfig(payload any, origin string) (M, error) {
 	projectID := browserProject(payload)
-	if projectID == "" || (production && projectID != contract.ProductionBrowserProject) {
+	if projectID == "" || (origin == contract.ProductionBrowserOrigin && projectID != contract.ProductionBrowserProject) {
 		return nil, errors.New("browser-project-not-granted")
 	}
 	var binding browserBinding
@@ -61,18 +59,18 @@ func browserConfig(payload any, production bool) (M, error) {
 		binding = readBrowserBinding(path, projectID)
 	}
 	previews, err := previewOrigins(binding)
-	if err != nil && !production {
+	if err != nil && origin == "" {
 		return nil, err
 	}
-	if len(previews) == 0 && !production {
+	if len(previews) == 0 && origin == "" {
 		return nil, errors.New("browser-project-not-granted")
 	}
 	if !browserRuntime() {
 		return nil, errors.New("browser-runtime-unready")
 	}
 	config := M{"module": os.Getenv("FLEET_PLAYWRIGHT_MODULE"), "executable": os.Getenv("FLEET_BROWSER_EXECUTABLE"), "ownedExecutor": exe(), "previewOrigins": previews, "timeoutMs": probeWait.Milliseconds()}
-	if production {
-		config["production"] = M{"origin": contract.ProductionBrowserOrigin}
+	if origin != "" {
+		config["production"] = M{"origin": origin}
 	}
 	return config, nil
 }
@@ -94,18 +92,55 @@ func previewOrigins(binding browserBinding) ([]any, error) {
 }
 
 func readBrowserBinding(path, projectID string) browserBinding {
-	if private(path) != nil {
-		return browserBinding{}
-	}
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() || owner(st) != os.Geteuid() {
-		return browserBinding{}
-	}
-	raw, err := os.ReadFile(path)
+	raw, err := readBrowserFile(path, false)
 	if err != nil {
 		return browserBinding{}
 	}
 	return typed[map[string]browserBinding](json.RawMessage(raw))[projectID]
+}
+
+func readBrowserFile(path string, credential bool) ([]byte, error) {
+	unready := errors.New("browser-authority-unready")
+	if !filepath.IsAbs(path) {
+		return nil, unready
+	}
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, unready
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || owner(info) != os.Geteuid() ||
+		info.Mode().Perm()&0o077 != 0 || (credential && info.Mode() != 0o600) {
+		return nil, unready
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return nil, unready
+	}
+	return raw, nil
+}
+
+func localBrowserAccess(projectID string) (contract.BrowserAccessReply, bool, error) {
+	var access contract.BrowserAccessReply
+	if projectID == contract.ProductionBrowserProject {
+		return access, false, nil
+	}
+	raw := readBrowserBinding(os.Getenv("FLEET_BROWSER_BINDINGS"), projectID).Production.V
+	if raw == nil {
+		return access, false, nil
+	}
+	var grant contract.BrowserBindingProduction
+	if err := json.Unmarshal([]byte(enc(raw)), &grant); err != nil {
+		return access, true, errors.New("browser-production-grant-invalid")
+	}
+	env, err := readBrowserFile(grant.AccessFile, true)
+	if err != nil {
+		return access, true, err
+	}
+	access.Production, err = grant.Resolve(string(env))
+	return access, true, err
 }
 
 // browserPipe sends only a small host-authored JSON value over an anonymous descriptor.
@@ -167,6 +202,9 @@ func serveProjectBrowser(arg string) error {
 		if err != nil {
 			return err
 		}
+		if obj, _ := cfg.(M); obj["production"] != nil {
+			return errors.New("production browser authority is ungranted")
+		}
 		cmd = browserCommand(cfg, os.Getenv("HOME"), false)
 	}
 	cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
@@ -190,13 +228,13 @@ func browserProbe(config M, home string, authority *browserAuthority) error {
 	return nil
 }
 
-func (e *executor) browserAccess(ctx context.Context) (contract.BrowserAccessReply, int) {
+func (e *executor) browserAccess(ctx context.Context, projectID string) (contract.BrowserAccessReply, int) {
 	var access contract.BrowserAccessReply
 	base, err := url.Parse(e.url)
 	if err != nil || (base.Scheme != "https" && !(base.Scheme == "http" && (base.Hostname() == "127.0.0.1" || base.Hostname() == "::1" || base.Hostname() == "localhost"))) {
 		return access, 0
 	}
-	resp, err := postJSONCtx(ctx, outboxClient, e.url+contract.RouteBrowserAccess.Path, e.token, contract.BrowserAccessRequest{ProjectId: contract.ProductionBrowserProject})
+	resp, err := postJSONCtx(ctx, outboxClient, e.url+contract.RouteBrowserAccess.Path, e.token, contract.BrowserAccessRequest{ProjectId: projectID})
 	if err != nil {
 		return access, 0
 	}
@@ -204,20 +242,36 @@ func (e *executor) browserAccess(ctx context.Context) (contract.BrowserAccessRep
 	if resp.StatusCode != http.StatusOK {
 		return access, resp.StatusCode
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&access) != nil {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, contract.BrowserAccessBytes+1))
+	if err != nil || len(raw) > contract.BrowserAccessBytes || json.Unmarshal(raw, &access) != nil {
 		return contract.BrowserAccessReply{}, 0
 	}
-	if access.ClientId == "" && access.ClientSecret == "" {
+	if access.Production == nil && access.ClientId == "" && access.ClientSecret == "" {
 		return access, http.StatusNoContent
 	}
-	if access.ClientId == "" || access.ClientSecret == "" {
+	if _, err := browserAccessOrigin(projectID, access); err != nil {
 		return contract.BrowserAccessReply{}, 0
 	}
 	return access, http.StatusOK
 }
 
+func browserAccessOrigin(projectID string, access contract.BrowserAccessReply) (string, error) {
+	if projectID == contract.ProductionBrowserProject {
+		if access.Production == nil && access.ClientId != "" && access.ClientSecret != "" {
+			return contract.ProductionBrowserOrigin, nil
+		}
+	} else if projectID != "" && access.ClientId == "" && access.ClientSecret == "" && contract.ValidBrowserProduction(access.Production) {
+		return access.Production.Origin, nil
+	}
+	return "", errors.New("browser-production-authority-unavailable")
+}
+
 func newBrowserAuthority(payload any, access contract.BrowserAccessReply) (*browserAuthority, error) {
-	config, err := browserConfig(payload, true)
+	origin, err := browserAccessOrigin(browserProject(payload), access)
+	if err != nil {
+		return nil, err
+	}
+	config, err := browserConfig(payload, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -243,20 +297,31 @@ func newBrowserAuthority(payload any, access contract.BrowserAccessReply) (*brow
 // prepareBrowser checks the same runtime used by MCP. An independently granted preview
 // can still start while the production probe is failing.
 func (e *executor) prepareBrowser(payload any, home string) (M, *browserAuthority, error) {
-	var productionErr error
-	if browserProject(payload) == contract.ProductionBrowserProject {
-		access, status := e.browserAccess(e.baseCtx())
-		if status != http.StatusOK {
+	projectID := browserProject(payload)
+	if projectID == "" {
+		return nil, nil, errors.New("browser-project-not-granted")
+	}
+	access, local, productionErr := localBrowserAccess(projectID)
+	if !local {
+		var status int
+		access, status = e.browserAccess(e.baseCtx(), projectID)
+		if status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotFound {
 			productionErr = errors.New("browser-production-authority-unavailable")
-		} else if authority, err := newBrowserAuthority(payload, access); err != nil {
+		}
+	}
+	if productionErr == nil && (local || access.Production != nil || projectID == contract.ProductionBrowserProject) {
+		if authority, err := newBrowserAuthority(payload, access); err != nil {
 			productionErr = err
 		} else if err := browserProbe(authority.Config, home, authority); err != nil {
-			productionErr = errors.New("browser-production-identity-unready")
+			productionErr = errors.New("browser-production-probe-unready")
+			if projectID == contract.ProductionBrowserProject {
+				productionErr = errors.New("browser-production-identity-unready")
+			}
 		} else {
 			return authority.Config, authority, nil
 		}
 	}
-	config, err := browserConfig(payload, false)
+	config, err := browserConfig(payload, "")
 	if err != nil {
 		if productionErr != nil {
 			return nil, nil, productionErr
@@ -302,7 +367,7 @@ func (e *executor) productionBrowserStatus() (*bool, []contract.EdgeProblem) {
 }
 
 func (e *executor) probeProductionBrowser() (bool, string) {
-	access, status := e.browserAccess(e.baseCtx())
+	access, status := e.browserAccess(e.baseCtx(), contract.ProductionBrowserProject)
 	switch status {
 	case http.StatusNoContent:
 		return false, "" // the host has no production browser grant

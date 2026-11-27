@@ -13,39 +13,77 @@ const previews = new Set(cfg.previewOrigins);
 const allowed = new Set(previews);
 if (cfg.production) allowed.add(cfg.production.origin);
 const secrets = new Set();
-let headers = {};
-if (cfg.production) {
-  const access = JSON.parse(fs.readFileSync(3, 'utf8'));
-  fs.closeSync(3);
-  for (const [key, header] of Object.entries({clientId:'CF-Access-Client-Id',clientSecret:'CF-Access-Client-Secret'})) {
-    const value = access[key];
-    if (typeof value !== 'string' || !value) throw Error('browser authority unavailable');
-    headers[header] = value; secrets.add(value);
+const authority = new Map();
+let readinessProbe, legacyFleet;
+function readAuthority(grant) {
+  if (new URL(grant.origin).origin !== grant.origin) throw Error('browser production origin invalid');
+  // The owning executor passes only the selected project's authority over private IPC.
+  let access;
+  try {
+    access = JSON.parse(fs.readFileSync(3, 'utf8'));
+  } finally {
+    fs.closeSync(3);
+  }
+  legacyFleet = !access.production;
+  if (!legacyFleet && access.production.origin !== grant.origin) throw Error('browser authority unavailable');
+  const headers = legacyFleet
+    ? [{name:'CF-Access-Client-Id',value:access.clientId},{name:'CF-Access-Client-Secret',value:access.clientSecret}]
+    : access.production.headers;
+  readinessProbe = legacyFleet
+    ? {path:'/api/ops/me',method:'POST',identityField:'email',expectedIdentity:'site-agents'}
+    : access.production.readinessProbe;
+  if (!headers.length || !readinessProbe) throw Error('browser authority unavailable');
+  for (const {name,value} of headers) {
+    if (typeof value !== 'string' || !value || /[\u0000-\u001f\u007f]/.test(value)) throw Error('browser authority unavailable');
+    authority.set(name.toLowerCase(), {name,value});
+    secrets.add(value);
   }
 }
-function safe(value) {
-  let text = String(value);
-  for (const secret of secrets) text = text.split(secret).join('[redacted]');
-  return text;
+function redactedJSON(value) {
+  const text = JSON.stringify(value);
+  if (!secrets.size) return text;
+  const escaped = [...secrets].sort((a,b)=>b.length-a.length).map(text => text.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(escaped.join('|'), 'g');
+  // Redact values and object keys before JSON escaping can disguise a match. Preserve valid JSON.
+  return text.replace(/"(?:[^"\\]|\\.)*"|-?\d[\d.eE+-]*|true|false|null/g, token => {
+    const value = String(JSON.parse(token));
+    const clean = value.replace(pattern, '[redacted]');
+    return clean === value ? token : JSON.stringify(clean);
+  });
 }
-function permitted(url) { try { return allowed.has(new URL(url).origin); } catch { return false; } }
+function requestOrigin(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return parsed.origin;
+  } catch {}
+}
+function permitted(url) { return allowed.has(requestOrigin(url)); }
 let control, primaryTarget, profileDir, initialResolve, initialReject, closing, nextCommand = 0;
 let usedProduction = false;
 const pending = new Map();
 async function close() {
   if(closing)return closing;
   closing=(async()=>{
-    const owned=context, child=launched, directory=profileDir;
+    const owned=context, child=launched, directory=profileDir, socket=control;
     browser=context=page=launched=profileDir=undefined;
-    if(control)control.close();control=undefined;
     for(const {reject} of pending.values())reject(Error('browser-closed'));
     pending.clear();
+    // The owned dependency wrapper can exit before its Chromium group has stopped.
+    const disconnected=socket && socket.readyState===WebSocket.OPEN
+      ? new Promise(resolve=>socket.addEventListener('close',resolve,{once:true})) : undefined;
     let failed=false;
-    try {if(owned)await bounded(owned.close());}catch {failed=true;}
-    if(child && child.exitCode===null) {
-      try {
-        await bounded(new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',()=>reject(Error('browser-close-failed')));child.kill('SIGTERM');}));
-      }catch {failed=true;}
+    try {
+      try {if(owned)await bounded(owned.close());}catch {failed=true;}
+      if(child && child.exitCode===null && !child.signalCode) {
+        try {
+          await bounded(new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',()=>reject(Error('browser-close-failed')));child.kill('SIGTERM');}));
+        }catch {child.kill('SIGKILL');failed=true;}
+      }
+      if(disconnected)try {await bounded(disconnected);}catch {failed=true;}
+    } finally {
+      control=undefined;
+      // Chromium resumes paused requests on detach. Do not detach a live interceptor.
+      if(!disconnected)socket?.close();
     }
     if(directory)await fs.promises.rm(directory,{recursive:true,force:true,maxRetries:20,retryDelay:100});
     if(failed)throw Error('browser-close-failed');
@@ -62,30 +100,40 @@ function targetSend(sessionId,method,params={}) {
   });
 }
 async function paused(sessionId,event) {
+  if(closing)return; // Leave requests paused until the owned browser exits.
   const request=event.request;
-  if(!permitted(request.url)) return targetSend(sessionId,'Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});
-  if(event.responseStatusCode || event.responseErrorReason){
-    const responseHeaders=(event.responseHeaders ?? []).filter(({name,value})=>{
-      const header=name.toLowerCase();
-      return !header.startsWith('cf-access-') &&
-        !(header==='set-cookie' && /^\s*CF_Authorization=/i.test(value));
+  const origin = requestOrigin(request.url);
+  if(!allowed.has(origin)) return targetSend(sessionId,'Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});
+  const production = origin === cfg.production?.origin;
+  const privateHeaders = [...authority.values()];
+  const containsAuthority = (name,value) => privateHeaders.some(secret => name.includes(secret.value) || String(value).includes(secret.value));
+  if(event.responseStatusCode || event.responseErrorReason) {
+    const original = event.responseHeaders ?? [];
+    const responseHeaders = original.filter(({name,value})=>{
+      const lower = name.toLowerCase();
+      return !lower.startsWith('cf-access-') && !authority.has(lower) && !containsAuthority(name,value) &&
+        !(lower==='set-cookie' && /^\s*CF_Authorization=/i.test(value));
     });
-    if(responseHeaders.length===(event.responseHeaders ?? []).length)
+    if(responseHeaders.length===original.length)
       return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId});
     return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId,responseCode:event.responseStatusCode,...(event.responseStatusText?{responsePhrase:event.responseStatusText}:{}),responseHeaders});
   }
-  const production=cfg.production && new URL(request.url).origin===cfg.production.origin;
   const requestHeaders=Object.entries(request.headers)
-    .filter(([name])=>!name.toLowerCase().startsWith('cf-access-client-'))
+    .filter(([name,value])=>{
+      const lower = name.toLowerCase();
+      if(lower.startsWith('cf-access-client-') || authority.has(lower)) return false;
+      return production || !containsAuthority(name,value);
+    })
     .map(([name,value])=>({name,value:String(value)}));
   if(production) {
     usedProduction = true;
-    for(const [name,value] of Object.entries(headers))requestHeaders.push({name,value});
+    requestHeaders.push(...privateHeaders);
   }
   // CDP overrides only this request; redirected requests are paused and checked again.
   await targetSend(sessionId,'Fetch.continueRequest',{requestId:event.requestId,headers:requestHeaders,...(production?{interceptResponse:true}:{})});
 }
 async function attached(event) {
+  if(closing)return;
   const {sessionId,targetInfo}=event;
   if(targetInfo.type==='service_worker') {await targetSend(null,'Target.closeTarget',{targetId:targetInfo.targetId});return;}
   if(targetInfo.type==='page') {
@@ -108,7 +156,13 @@ async function targetMessage(event) {
   } else if(message.method==='Fetch.requestPaused') await paused(message.sessionId,message.params);
   else if(message.method==='Target.attachedToTarget') await attached(message.params);
 }
-function failClosed() {if(closing)return;if(initialReject)initialReject(Error('browser-protocol-failed'));close().catch(()=>{});}
+function failClosed() {
+  if(closing)return;
+  if(initialReject)initialReject(Error('browser-protocol-failed'));
+  // The origin fence may already be down on transport loss.
+  launched?.kill('SIGKILL');
+  close().catch(()=>{});
+}
 async function open() {
   if(browser)return;
   primaryTarget=undefined;
@@ -120,19 +174,29 @@ async function open() {
   // Match Playwright's credential-store isolation; macOS must not open the user's Keychain.
   launched=require('node:child_process').spawn(executable,['--headless','--password-store=basic','--use-mock-keychain','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--remote-debugging-address=127.0.0.1','--user-data-dir='+profileDir,'about:blank'],{stdio:'ignore',...(owned?{argv0:'fleet-browser-chromium'}:{})});
   launched.on('error',failClosed);
-  const endpointFile=require('node:path').join(profileDir,'DevToolsActivePort');
-  await bounded(new Promise((resolve,reject)=>{
-    const watcher=fs.watch(profileDir,()=>{if(fs.existsSync(endpointFile)){watcher.close();resolve();}});
-    launched.once('exit',()=>{watcher.close();reject(Error('browser-launch-failed'));});
-    if(fs.existsSync(endpointFile)){watcher.close();resolve();}
-  }));
-  const [port,path]=fs.readFileSync(endpointFile,'utf8').trim().split('\n');
+  const endpointFile=path.join(profileDir,'DevToolsActivePort');
+  let watcher;
+  try {
+    await bounded(new Promise((resolve,reject)=>{
+      const check=()=>{if(fs.existsSync(endpointFile))resolve();};
+      watcher=fs.watch(profileDir,check);
+      watcher.once('error',()=>reject(Error('browser-launch-failed')));
+      launched.once('exit',()=>reject(Error('browser-launch-failed')));
+      launched.once('error',()=>reject(Error('browser-launch-failed')));
+      check();
+    }));
+  } finally {
+    watcher?.close();
+  }
+  const [port,socketPath]=fs.readFileSync(endpointFile,'utf8').trim().split('\n');
   browser=await bounded(chromium.connectOverCDP('http://127.0.0.1:'+port));
   context=browser.contexts()[0];
-  control=new WebSocket('ws://127.0.0.1:'+port+path);
-  await bounded(new Promise((resolve,reject)=>{control.addEventListener('open',resolve,{once:true});control.addEventListener('error',()=>reject(Error('browser-protocol-failed')),{once:true});}));
-  control.addEventListener('message',event=>{targetMessage(event).catch(failClosed);});
-  control.addEventListener('error',failClosed);
+  const socket=control=new WebSocket('ws://127.0.0.1:'+port+socketPath);
+  const failSocket=()=>{if(control===socket)failClosed();};
+  await bounded(new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',()=>reject(Error('browser-protocol-failed')),{once:true});}));
+  socket.addEventListener('message',event=>{if(control===socket)targetMessage(event).catch(failSocket);});
+  socket.addEventListener('error',failSocket);
+  socket.addEventListener('close',failSocket);
   const initialReady=new Promise((resolve,reject)=>{initialResolve=resolve;initialReject=reject;});
   initialReady.catch(()=>{});
   await targetSend(null,'Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
@@ -253,19 +317,39 @@ async function call(req) {
   else if(name==='press') await press(current,a);
   else if(name==='drag') await drag(current,a);
   requireScopedPage(current);
-  for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
   const title = await current.title();
   const body = await current.locator('body').innerText();
+  for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
   requireScopedPage(current);
-  return {content:[{type:'text',text:safe(JSON.stringify({result:evaluated,url:current.url(),title,text:body}))}]};
+  return {content:[{type:'text',text:redactedJSON({result:evaluated,url:current.url(),title,text:body})}]};
+}
+async function checkProduction(grant) {
+  await page.goto(grant.origin,{waitUntil:'domcontentloaded'});
+  if (requestOrigin(page.url()) !== grant.origin) throw Error('browser production origin denied');
+  const ready = await page.evaluate(async ({origin, readinessProbe, legacyFleet}) => {
+    if (location.origin !== origin) return false;
+    const {path,method,status,identityField,expectedIdentity} = readinessProbe;
+    const url = new URL(path, origin);
+    if (url.origin !== origin) return false;
+    const options = legacyFleet ? {method} : {method,mode:'same-origin',redirect:'error',cache:'no-store'};
+    if (method === 'POST') {
+      options.headers = {'Content-Type':'application/json'};
+      options.body = '{}';
+    }
+    const response = await fetch(url, options);
+    if (new URL(response.url).origin !== origin || (status ? response.status !== status : !response.ok)) return false;
+    if (!identityField) return true;
+    const body = await response.json();
+    return body !== null && typeof body === 'object' && !Array.isArray(body) &&
+      Object.hasOwn(body,identityField) && body[identityField] === expectedIdentity;
+  }, {origin:grant.origin,readinessProbe,legacyFleet});
+  if (ready !== true) throw Error('browser production unready');
 }
 (async()=>{
+ if(cfg.production)readAuthority(cfg.production);
  if(process.argv[2]==='check') {try {await open();await page.setContent('<title>Fleet readiness</title>');if(await page.title()!=='Fleet readiness')throw Error();
-    if(cfg.production) {
-      await page.goto(cfg.production.origin,{waitUntil:'domcontentloaded'});
-      const identity=await page.evaluate(async()=>{const r=await fetch('/api/ops/me',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});return r.ok&&(await r.json()).email;});
-      if(identity!=='site-agents')throw Error('browser identity unready');
-    }} finally{await close();}return;}
+    if(cfg.production)await bounded(checkProduction(cfg.production));
+  } finally{await close();}return;}
  const input=readline.createInterface({input:process.stdin});
  try { for await(const line of input) {
    let req; try { req=JSON.parse(line); } catch {continue;}

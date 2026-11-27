@@ -42,7 +42,33 @@
       "required": ["clientId", "clientSecret"],
       "properties": {
         "clientId": {"type": "string"},
-        "clientSecret": {"type": "string"}
+        "clientSecret": {"type": "string"},
+        "production": {"$ref": "#/$defs/BrowserProductionAccess"}
+      }
+    },
+    "BrowserProductionAccess": {
+      "type": "object",
+      "required": ["origin", "headers", "readinessProbe"],
+      "properties": {
+        "origin": {"type": "string"},
+        "headers": {"type": "array", "items": {"$ref": "#/$defs/BrowserSecretHeader"}},
+        "readinessProbe": {"$ref": "#/$defs/BrowserProductionProbe"}
+      }
+    },
+    "BrowserSecretHeader": {
+      "type": "object",
+      "required": ["name", "value"],
+      "properties": {"name": {"type": "string"}, "value": {"type": "string"}}
+    },
+    "BrowserProductionProbe": {
+      "type": "object",
+      "required": ["path", "method"],
+      "properties": {
+        "path": {"type": "string"},
+        "method": {"type": "string"},
+        "status": {"type": "integer"},
+        "identityField": {"type": "string"},
+        "expectedIdentity": {"type": "string"}
       }
     },
     "ForgeLogin": {

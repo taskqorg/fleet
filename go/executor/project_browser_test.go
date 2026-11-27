@@ -37,19 +37,19 @@ module.exports={chromium:{}};
 	t.Setenv("FLEET_BROWSER_EXECUTABLE", module)
 	// Normal signed StartPayload carries identity separately; normalized settings have no id.
 	payload := M{"projectId": "project", "project": M{"execution": M{"tools": []any{"browser"}}}}
-	cfg, err := browserConfig(payload, false)
+	cfg, err := browserConfig(payload, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg["marker"] = marker
-	if _, err := browserConfig(M{"projectId": "other", "project": M{"id": "project"}}, false); err == nil {
+	if _, err := browserConfig(M{"projectId": "other", "project": M{"id": "project"}}, ""); err == nil {
 		t.Fatal("foreign authoritative identity accepted")
 	}
-	if _, err := browserConfig(M{"project": M{"id": "project"}}, false); err == nil {
+	if _, err := browserConfig(M{"project": M{"id": "project"}}, ""); err == nil {
 		t.Fatal("settings identity granted browser without authoritative projectId")
 	}
 	for _, id := range []any{nil, "", false, 42, []any{"project"}, M{"id": "project"}} {
-		if _, err := browserConfig(M{"projectId": id, "project": M{"id": "project"}}, false); err == nil {
+		if _, err := browserConfig(M{"projectId": id, "project": M{"id": "project"}}, ""); err == nil {
 			t.Fatalf("invalid authoritative identity accepted: %T", id)
 		}
 	}
@@ -70,11 +70,11 @@ module.exports={chromium:{}};
 		t.Fatalf("denied call attempted browser launch: %v", err)
 	}
 	os.WriteFile(binding, []byte(`{"project":{"previewOrigins":["http://127.0.0.1:4173/admin"]}}`), 0600)
-	if _, err := browserConfig(payload, false); err == nil {
+	if _, err := browserConfig(payload, ""); err == nil {
 		t.Fatal("path accepted as origin")
 	}
 	os.WriteFile(binding, []byte(`{"project":{"production":{"origin":"https://other.invalid","accessFile":"/invented"}}}`), 0600)
-	if _, err := browserConfig(payload, false); err == nil {
+	if _, err := browserConfig(payload, ""); err == nil {
 		t.Fatal("unauthorized production accepted")
 	}
 }
@@ -107,10 +107,11 @@ fs.promises.rm=async(target,opts)=>{
   fs.writeFileSync(marker,target);
 };
 class Socket {
-  constructor(){socket=this;this.listeners={};queueMicrotask(()=>this.emit('open',{}));}
+  static OPEN = 1;
+  constructor(){socket=this;this.listeners={};this.readyState=Socket.OPEN;queueMicrotask(()=>this.emit('open',{}));}
   addEventListener(name,fn){(this.listeners[name]??=[]).push(fn);}
   emit(name,event){for(const fn of this.listeners[name]??[])fn(event);}
-  close(){}
+  close(){this.readyState=3;this.emit('close',{});}
   send(raw){
     const m=JSON.parse(raw);
     queueMicrotask(()=>this.emit('message',{data:JSON.stringify({id:m.id,result:{}})}));
@@ -137,14 +138,14 @@ require('node:child_process').spawn=(_exe,args)=>{
   fs.writeFileSync(path.join(spawnedDir,'DevToolsActivePort'),'1\n/devtools/browser/fixture');
   const child=new events.EventEmitter();
   child.exitCode=null;
-  child.kill=()=>{child.exitCode=0;queueMicrotask(()=>child.emit('exit',0));return true;};
+  child.kill=()=>{child.exitCode=0;queueMicrotask(()=>{child.emit('exit',0);socket.close();});return true;};
   return child;
 };
 const pause=params=>new Promise(resolve=>{
   pending=resolve;
   socket.emit('message',{data:JSON.stringify({method:'Fetch.requestPaused',sessionId:'page-session',params})});
 });
-const page={setContent:async()=>{},title:async()=>'Fleet readiness',evaluate:async()=>'site-agents',
+const page={setContent:async()=>{},title:async()=>'Fleet readiness',evaluate:async()=>true,url:()=>production.origin,
   goto:async url=>{
     assert.equal(url,production.origin);
     await pause({requestId:'prod',request:{url,headers:{}}});
@@ -524,11 +525,11 @@ module.exports={chromium:{}};
 	t.Setenv("FLEET_BROWSER_BINDINGS", "")
 	t.Setenv("FLEET_PLAYWRIGHT_MODULE", module)
 	t.Setenv("FLEET_BROWSER_EXECUTABLE", module)
-	cfg, err := browserConfig(M{"projectId": "fleet"}, true)
+	cfg, err := browserConfig(M{"projectId": "fleet"}, "https://fleet.ufobe.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := browserConfig(M{"projectId": "another"}, true); err == nil {
+	if _, err := browserConfig(M{"projectId": "another"}, "https://fleet.ufobe.com"); err == nil {
 		t.Fatal("managed production granted to another project")
 	}
 	pipe, err := browserPipe(M{"clientId": "invented-id", "clientSecret": "invented-production-secret"})
