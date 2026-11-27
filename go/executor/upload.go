@@ -42,6 +42,7 @@ type transferJob struct {
 	ArtifactId  *string         `json:"artifactId"`
 	StoreId     string          `json:"storeId"`
 	Url         string          `json:"url"`
+	StagingKey  *string         `json:"stagingKey"`
 	Size        *uint64         `json:"size"`
 	PartSize    *uint64         `json:"partSize"`
 	Source      transferSource  `json:"source"`
@@ -401,12 +402,12 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		if v.ArtifactId != "" {
 			a = v.ArtifactId
 		}
-		return verifyArtifact(c, a, v.StoreId, v.Url)
+		return verifyArtifact(c, a, v.StoreId, v.Url, v.StagingKey)
 	}
 	return commit, nil
 }
 
-func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contract.ArtifactStateReply, *failure) {
+func verifyArtifact(c *transferClient, artifactID, storeID, url string, stagingKey *string) (contract.ArtifactStateReply, *failure) {
 	r, f := c.get(url)
 	if f != nil {
 		return contract.ArtifactStateReply{}, f
@@ -416,7 +417,7 @@ func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contrac
 	if err != nil {
 		return contract.ArtifactStateReply{}, ioFailure(err)
 	}
-	return transferReply(c, contract.RouteArtifactsVerified, contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
+	return transferReply(c, contract.RouteArtifactsVerified, contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest, StagingKey: stagingKey})
 }
 
 const maxUploadRecoveries = 3
@@ -541,7 +542,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			return M{"artifactId": a, "state": out.State}, nil
 		}
 	case "verify":
-		return verifyArtifact(c, str0(body.ArtifactId), body.StoreId, body.Url)
+		return verifyArtifact(c, str0(body.ArtifactId), body.StoreId, body.Url, body.StagingKey)
 	case "copy":
 		// Download the source object next to the journal, then upload it to this host's store.
 		tmp := filepath.Join(body.Spool, id+".part")

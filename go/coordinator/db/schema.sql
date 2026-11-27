@@ -226,6 +226,16 @@ CREATE TABLE artifact_rule_confirmation (
   "confirmed_by" text NOT NULL,
   "confirmed_at" timestamp with time zone NOT NULL
 );
+CREATE TABLE artifact_verify_work (
+  "id" text NOT NULL,
+  "artifact_id" text NOT NULL,
+  "store_id" text NOT NULL,
+  "staging_key" text NOT NULL,
+  "digest" text NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "attempts" integer NOT NULL,
+  "last_error" text
+);
 CREATE TABLE audit_log (
   "id" text NOT NULL,
   "target" text NOT NULL,

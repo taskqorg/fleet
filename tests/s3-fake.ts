@@ -1,15 +1,16 @@
 // Fake S3 for outside tests and app checks: objects in memory, multipart uploads, Range reads; every request must carry a
 // SigV4 signature (header or query). The signer itself is checked against the AWS vector in go test.
 import {randomUUID} from 'node:crypto';
-import {createServer} from 'node:http';
+import {createServer, type IncomingMessage, type ServerResponse} from 'node:http';
 
-export async function fakeS3() {
+export async function fakeS3(intercept?: (req: IncomingMessage, res: ServerResponse, key: string, query: URLSearchParams) => boolean | Promise<boolean>) {
 const objects = new Map<string, Buffer>(), uploads = new Map<string, Map<number, Buffer>>();
 const s3 = createServer(async (req, res) => {
   const u = new URL(req.url!, 'http://x'), key = decodeURIComponent(u.pathname), q = u.searchParams;
   const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer); const body = Buffer.concat(chunks);
   const signed = /^AWS4-HMAC-SHA256 Credential=\S+, SignedHeaders=\S*host\S*, Signature=[0-9a-f]{64}$/.test(String(req.headers.authorization)) || /^[0-9a-f]{64}$/.test(q.get('X-Amz-Signature') ?? '');
   if (!signed) { res.writeHead(403); return res.end('<Error><Code>SignatureDoesNotMatch</Code></Error>'); }
+  if (await intercept?.(req, res, key, q)) return;
   if (req.method === 'POST' && q.has('uploads')) { const id = randomUUID(); uploads.set(id, new Map()); return res.end(`<InitiateMultipartUploadResult><UploadId>${id}</UploadId></InitiateMultipartUploadResult>`); }
   if (req.method === 'PUT' && q.has('partNumber')) { uploads.get(q.get('uploadId')!)!.set(Number(q.get('partNumber')), body); res.setHeader('ETag', '"e' + q.get('partNumber') + '"'); return res.end(); }
   if (req.method === 'POST' && q.has('uploadId')) { const parts = uploads.get(q.get('uploadId')!)!; objects.set(key, Buffer.concat([...parts.keys()].sort((a, b) => a - b).map(n => parts.get(n)!))); uploads.delete(q.get('uploadId')!); return res.end('<CompleteMultipartUploadResult/>'); }

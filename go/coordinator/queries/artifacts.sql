@@ -91,16 +91,33 @@ UPDATE artifact_copy SET upload_id=CASE WHEN sqlc.arg(clear_upload)::boolean THE
  lease_expires_at=CASE WHEN sqlc.arg(keep_later)::boolean THEN greatest(lease_expires_at,now()+ sqlc.arg(lease_ms)::bigint * interval '1 millisecond') ELSE now()+ sqlc.arg(lease_ms)::bigint * interval '1 millisecond' END
 WHERE artifact_id= @artifact_id AND store_id= @store_id;
 
--- name: ArtVerifyHistory :one
--- The store host's verifications of one copy: one still open, and how many failed within the last hour (the lease).
-SELECT coalesce(bool_or(status IN ('pending','accepted','started')), false)::boolean AS open,
- count(*) FILTER (WHERE status='failed' AND updated_at > now() - interval '1 hour')::int AS failed
-FROM command WHERE kind='artifact-verify' AND host_id= @host_id
- AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text;
+-- name: ArtVerifyFailures :one
+-- Count failures of the current staging object within the lease window, including pre-key verifier commands.
+SELECT count(*)::int FROM command
+WHERE kind='artifact-verify' AND host_id= @host_id AND status='failed' AND updated_at > now() - interval '1 hour'
+ AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text
+ AND coalesce(payload->'payload'->>'stagingKey'= sqlc.arg(staging_key)::text,
+  right(split_part(payload->'payload'->>'url', '?', 1), length(sqlc.arg(path_suffix)::text))= sqlc.arg(path_suffix)::text);
 
 -- name: ArtVerifyQueued :one
-SELECT EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= @host_id AND status IN ('pending','accepted','started')
- AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text);
+SELECT (EXISTS (SELECT 1 FROM command WHERE kind='artifact-verify' AND host_id= @host_id AND status IN ('pending','accepted','started')
+ AND payload->'payload'->>'artifactId'= sqlc.arg(artifact_id)::text AND payload->'payload'->>'storeId'= sqlc.arg(store_id)::text)
+ OR EXISTS (SELECT 1 FROM artifact_verify_work w JOIN artifact_copy c USING (artifact_id, store_id, staging_key)
+ WHERE w.artifact_id= @artifact_id AND w.store_id= @store_id))::boolean;
+
+-- name: ArtVerifyWorkAdd :execrows
+INSERT INTO artifact_verify_work(id, artifact_id, store_id, staging_key, digest)
+VALUES(@id, @artifact_id, @store_id, @staging_key, @digest) ON CONFLICT(artifact_id, store_id, staging_key, digest) DO NOTHING;
+
+-- name: ArtVerifyWorkDue :many
+SELECT id, attempts FROM artifact_verify_work
+WHERE next_attempt_at <= sqlc.arg(now)::pg_catalog.timestamptz ORDER BY next_attempt_at, id LIMIT sqlc.arg(lim);
+
+-- name: ArtVerifyWorkGet :one
+SELECT artifact_id, store_id, staging_key, digest FROM artifact_verify_work WHERE id=$1;
+
+-- name: ArtVerifyWorkDelete :exec
+DELETE FROM artifact_verify_work WHERE id=$1;
 
 -- name: ArtCopyReject :exec
 -- A failed copy retries after 1 minute doubling, up to the retry window.
@@ -206,7 +223,7 @@ UPDATE artifact_copy SET state= @state WHERE artifact_id= @artifact_id AND store
 UPDATE artifact SET state='deleted',deleted_at=now(),deleted_by= @deleted_by WHERE id= @id;
 
 -- name: ArtLeasesExpired :many
-SELECT artifact_id,store_id,upload_id,staging_key FROM artifact_copy WHERE state IN ('pending','copying') AND lease_expires_at < now();
+SELECT artifact_id,store_id,state,upload_id,staging_key FROM artifact_copy WHERE state IN ('pending','copying') AND lease_expires_at < now();
 
 -- name: ArtExecution :one
 -- The execution an artifact belongs to: its host, project, task, experiment and declared required names.

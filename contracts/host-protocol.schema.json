@@ -1859,6 +1859,10 @@
         },
         "sha256": {
           "type": "string"
+        },
+        "stagingKey": {
+          "type": "string",
+          "$comment": "The reservation the digest belongs to. Omitted by older senders."
         }
       },
       "$comment": "POST /api/hosts/artifacts/verified: the digest a store's host read back."
@@ -2416,6 +2420,10 @@
         },
         "url": {
           "type": "string"
+        },
+        "stagingKey": {
+          "type": "string",
+          "$comment": "The reservation the digest belongs to. Omitted by older senders."
         }
       },
       "$comment": "a presigned read of the staged object for the store host to hash"

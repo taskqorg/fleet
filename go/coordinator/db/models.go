@@ -622,6 +622,17 @@ type ArtifactRuleConfirmation struct {
 	ConfirmedAt time.Time
 }
 
+type ArtifactVerifyWork struct {
+	ID            string
+	ArtifactID    string
+	StoreID       string
+	StagingKey    string
+	Digest        string
+	NextAttemptAt time.Time
+	Attempts      int32
+	LastError     *string
+}
+
 type AuditLog struct {
 	ID         string
 	Target     string
