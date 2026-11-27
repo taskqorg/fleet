@@ -104,9 +104,15 @@ An idle task whose latest primary execution is a confirmed successful agent turn
 
 #### YouTrack project handoff
 
-The Connect YouTrack project preset binds a granted YouTrack project, or an explicit set of its immutable issue IDs, to one project PM bot. Setup verifies the connection identity, project and selector, and maps an authorized YouTrack reviewer ID to a Fleet person with project access. Overlapping bindings are refused. An operator can pause the integration at its Fleet trigger and explicitly retire the superseded polling trigger.
+The Connect YouTrack project preset binds a granted YouTrack project, or an explicit set of its immutable issue IDs, to one project PM bot.
 
-A binding authenticates minimal webhook hints independently. Fleet checks the provider's current project, issue state and activity actor through the granted connection. A verified assignment to the connection identity or an actionable reviewer comment wakes the bot in the correlated task conversation. Quiet checks, superseded assignments, resolved issues, and the connection's own echoes do not start a model turn. An overlapping, durable reconciliation cursor uses the same admission path for missed activity.
+Setup verifies the connection identity, project and selector, and maps an authorized YouTrack reviewer ID to a Fleet person with project access. Overlapping bindings are refused. An operator can pause the integration at its Fleet trigger and explicitly retire the superseded polling trigger.
+
+A binding authenticates minimal webhook hints independently. Fleet checks the provider's current project, issue state and activity actor through the granted connection.
+
+A verified assignment to the connection identity or an actionable reviewer comment wakes the bot in the correlated task conversation.
+
+Quiet checks, superseded assignments, resolved issues, and the connection's own echoes do not start a model turn. An overlapping, durable reconciliation cursor uses the same admission path for missed activity.
 
 Fleet retains at most one task per YouTrack instance and immutable issue ID. Event receipts and task wake admission commit together. Integration messages and YouTrack comments use fixed wording and stable references. Issue prose, user details and attachments stay in YouTrack during intake. The connection's capability grants and Fleet's existing result acceptance govern what happens after the wake.
 
