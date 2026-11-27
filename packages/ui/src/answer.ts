@@ -11,7 +11,7 @@ export const keyConnection = (options: unknown): string | undefined => {
 export type QuestionChoice = { label: string; primary?: boolean };
 
 /** A question as the reads carry it: `questions_list` and `session_get` rows (text) and thread blocks (question). */
-export type OpenQuestionRow = { id: string; text?: string | null; question?: string | null; kind?: string | null; options?: unknown };
+export type OpenQuestionRow = { id: string; code?: string | null; text?: string | null; question?: string | null; kind?: string | null; options?: unknown };
 
 /**
  * The labels a question can be answered with, in the asker's order: its options (strings, or objects with a label or a

@@ -33,12 +33,12 @@ export function useRailPinned(open: () => boolean, go: (to: string) => void) {
   const botIds = createMemo(() => list(PIN_LISTS.bots).filter(id => id.startsWith(BOT)).map(id => id.slice(BOT.length)));
   const live = () => open() && on() && prefsRead.value;
   // Bots: their names, pictures and states; a bot's Home conversation pinned shows as the bot.
-  const bots = useOp('bot_list', () => (live() && (botIds().length || sessionIds().length) ? scopeIds(false) : null));
+  const bots = useOp('bot_list', () => (live() && (botIds().length || sessionIds().length) ? scopeIds(false) : null), { quiet: 2000 });
   // Conversations: read by id, as the Conversations list reads its pinned rows (list_membership). An archived conversation
   // keeps its pin but leaves the zone until it is unarchived.
   const sessions = useOp('list_membership', () => (live() && sessionIds().length
     ? { ids: sessionIds().slice(0, 1000), lists: [{ name: 'sessions', filter: {}, group: 'none', sort: DEFAULT_SESSION_SORT }] }
-    : null));
+    : null), { quiet: 2000 });
   const botById = createMemo(() => new Map((bots.data?.bots ?? []).map(b => [b.id, b])));
   const botByHome = createMemo(() => new Map((bots.data?.bots ?? []).filter(b => b.conversationId).map(b => [b.conversationId!, b])));
   const sessionById = createMemo(() => new Map(((sessions.data?.lists[0]?.rows ?? []) as SessionRow[]).map(s => [s.id, s])));

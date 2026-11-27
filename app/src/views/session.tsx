@@ -146,7 +146,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   onSettled(() => () => props.onTitle?.(''));
   // A bot's conversation shows the bot itself as the speaker: its own avatar (picture or letter) with its activity state, as
   // the rail and Home do (owner, 2026-11-26); the harness mark belongs to agent runs.
-  const bots = useOp('bot_list', () => (s()?.botId ? {} : null));
+  const bots = useOp('bot_list', () => (s()?.botId ? {} : null), { quiet: 2000 });
   const bot = createMemo(() => (bots.data?.bots ?? []).find(b => b.id === s()?.botId));
   const avatar = createMemo<AvatarMark>(() => {
     const b = bot();

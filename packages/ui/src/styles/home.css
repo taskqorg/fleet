@@ -52,6 +52,8 @@
   /* Question card (decision-block.md#card) */
   .qcard { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--attention-line); border-radius: var(--radius-md); background: var(--attention-soft); cursor: default; }
   .qcard.danger { border-color: var(--danger-fg); background: var(--danger-bg); }
+  .qcard-head { display: flex; align-items: center; gap: var(--space-2); }
+  .qcard-head .ec-copy { opacity: 1; }
   /* The server writes a card's fields on their own lines (an approval: what, where, waiting for, callbacks, limits). */
   .qcard-q { margin: 0; color: var(--fg); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); white-space: pre-line; overflow-wrap: anywhere; }
   .qcard-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); }
@@ -153,7 +155,7 @@
 
   /* Home page (pages/home.md): one column of blocks right of the navigation, its own scroller (OR-25). Groups lay their
      cards in as many columns as fit; a card is never narrower than a phone column. */
-  .detail.home { gap: var(--space-6); padding-block: var(--space-6); background: var(--bg); container-type: inline-size; }
+  .detail.home { flex: 1; gap: var(--space-6); padding-block: var(--space-6); background: var(--bg); container-type: inline-size; }
   .home-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-3) var(--space-6); }
   .home-hello { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-medium); }
   .home .composer.with-target { background: var(--surface); }

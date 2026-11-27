@@ -348,12 +348,13 @@ function HomePage() {
   /** One card; `c` follows its row as reads update, so a typed answer survives them (keyed by session or question). */
   const renderCard = (c: Accessor<Card>): JSX.Element => {
     const q = createMemo(() => c().qs.find(x => !answers.answered(x.id)) ?? null);
-    const lastAnswered = createMemo(() => c().qs.map(x => answers.answered(x.id)).filter(Boolean).at(-1));
+    const lastAnsweredQ = createMemo(() => c().qs.filter(x => answers.answered(x.id)).at(-1));
     const question = () => {
       const x = q();
       if (!x) {
-        const a = lastAnswered();
-        return a ? <QuestionCard question="" choices={[]} answered={a} /> : undefined;
+        const lq = lastAnsweredQ();
+        const a = lq ? answers.answered(lq.id) : undefined;
+        return a ? <QuestionCard code={lq?.code} questionId={lq?.id} question="" choices={[]} answered={a} /> : undefined;
       }
       return <OpenQuestion q={x} answers={answers} />;
     };

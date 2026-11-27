@@ -30,7 +30,7 @@
 
 The form a question takes on a [session card](session-card.md), in the conversation and in Telegram: the same record in every place.
 
-* **Anatomy.** An `attention-soft` block with an `attention-line` border and `radius-md`: the question in `font-weight-medium`, then its choices as buttons in one row (the asker's default is primary), then the free-text answer as a one-line field that sends on `Enter`.
+* **Anatomy.** An `attention-soft` block with an `attention-line` border and `radius-md`: when the question carries an entity code (`Q-...`), its `EntityCode` header with one-click copy sits at the top (OR-38, OR-44), followed by the question in `font-weight-medium`, its choices as buttons in one row (the asker's default is primary), then the free-text answer as a one-line field that sends on `Enter`.
 * **States.** Open; answering (the chosen button busy); answered (one line in `fg-muted`: "Answered · Compact · 2m", then it leaves the card); failed recovery (the danger tone, with Retry and Open, on a Failed card).
 * **Confirmation.** A risky action asks through this card: it names its exact scope and the way back, and only a person allowed to approve that scope sees active buttons ([OR-61](../owner-rules.md)).
 * **Do.** Keep the choices the asker gave, in their order. **Don't.** Show more than one question per card; the next one takes its place after the answer.

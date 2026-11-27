@@ -123,7 +123,7 @@
   /* History's day headings (docs/design-system/pages/history.md): the live heading's look, one per day in the list. */
   [data-ui=history] .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-inline-size: 0; }
   [data-ui=history] .crumbs .chip { min-inline-size: 0; white-space: normal; overflow-wrap: anywhere; }
-  .history-day { list-style: none; padding: var(--space-3) var(--space-4) var(--space-1); }
+  .history-day { list-style: none; padding: var(--space-3) var(--space-4) var(--space-1); background: var(--bg); border-bottom: 1px solid var(--line-soft); }
   .history-day h3 { margin: 0; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
   .live-list { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
   .live-list > .lrow:last-child { border-bottom: 0; }

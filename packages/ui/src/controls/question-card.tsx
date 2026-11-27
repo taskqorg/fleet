@@ -3,7 +3,7 @@ import { createEffect, createSignal, For, Show } from 'solid-js';
 import { createDraft } from '../drafts.ts';
 import { isSubmitEnter } from '../keys.ts';
 import { Button, Ago } from './primitives.tsx';
-import { linkCodes } from './overlays.tsx';
+import { EntityCode, linkCodes } from './overlays.tsx';
 import type { QuestionChoice } from '../answer.ts';
 
 /**
@@ -12,6 +12,7 @@ import type { QuestionChoice } from '../answer.ts';
  * Answered: one muted line; the card's owner then shows the next open question in its place.
  */
 export function QuestionCard(p: {
+  code?: string | null; questionId?: string | null;
   question: string; choices: QuestionChoice[]; tone?: 'attention' | 'danger';
   /** The chosen label while its answer is on the way: that button is busy, the others wait. */
   answering?: string;
@@ -29,12 +30,16 @@ export function QuestionCard(p: {
   createEffect(() => !!p.answered, done => { if (done) clearAnswer(); });
   const send = (s: string) => { if (s.trim() && !p.answering) p.onAnswer?.(s.trim()); };
   const addKey = () => { const v = secret().trim(); if (v && !p.answering) p.onSecret?.(v); };
+  const ref = () => (p.code || p.questionId)
+    ? <div class="qcard-head"><EntityCode kind="question" code={p.code} id={p.questionId} form="code" /></div>
+    : null;
   return (
     <Show
       when={p.answered}
       keyed
       fallback={
         <div class={['qcard', { danger: danger() }]} data-ui="question-card" role="group" aria-label={p.question} onClick={e => e.stopPropagation()}>
+          {ref()}
           {/* Codes, Fleet links and UUIDs in the text are entity references (OR-38, OR-44), never raw ids or URLs. */}
           <p class="qcard-q">{linkCodes(p.question, 0)}</p>
           <div class="qcard-choices">
@@ -81,7 +86,7 @@ export function QuestionCard(p: {
         </div>
       }
     >
-      {a => <div class="qcard answered" data-ui="question-card" role="status">Answered · {a.answer} · <Ago t={a.at} /></div>}
+      {a => <div class="qcard answered" data-ui="question-card" role="status">{ref()}<span>Answered · {a.answer} · <Ago t={a.at} /></span></div>}
     </Show>
   );
 }

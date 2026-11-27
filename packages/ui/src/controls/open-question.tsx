@@ -19,6 +19,8 @@ export function OpenQuestion(p: { q: OpenQuestionRow; answers: Answers<unknown>;
   return (
     <>
       <QuestionCard
+        code={p.q.code}
+        questionId={p.q.id}
         question={text()}
         choices={answerChoices(p.q)}
         answering={p.answers.answering(p.q.id)}

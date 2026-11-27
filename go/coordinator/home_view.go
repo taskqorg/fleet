@@ -25,6 +25,24 @@ func init() {
 // homeSessions: the open sessions and the failed ones (app: openStates('session') and failed), at most homeRows.
 var homeSessionStates = []string{"idle", "preparing", "running", "waiting", "failed"}
 
+// homeRawInfraCauses: plain failure causes from host/infrastructure execution plumbing (hidden from Home FAILED and
+// operator blockers so only operator-initiated product failures surface).
+var homeRawInfraCauses = map[string]bool{
+	"abandoned":      true,
+	"interrupted":    true,
+	"draining":       true,
+	"download-cut":   true,
+	"unregistered":   true,
+	"host-checkout":  true,
+	"host-remote":    true,
+	"host-not-ready": true,
+	"host-files":     true,
+	"host-login":     true,
+	"preparation":    true,
+	"unreported":     true,
+	"agent-crashed":  true,
+}
+
 const homeRows = 200
 
 func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, error) {
@@ -85,16 +103,34 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		}
 	}
 	if len(failed) > 0 {
-		rs, err := q.db().HomeSessionFailures(q.ctx(), failed)
+		rs, err := q.db().HomeFailedSessions(q.ctx(), failed)
 		if err != nil {
 			return out, err
 		}
+		dropFailed := map[string]bool{}
+		for _, id := range failed {
+			dropFailed[id] = true
+		}
 		for _, x := range rs {
-			c := contract.PlainCause(x.Problem, "")
-			if c == nil {
+			if x.BotOwned || x.Problem == "" {
 				continue
 			}
+			c := contract.PlainCause(x.Problem, "")
+			if c == nil || homeRawInfraCauses[c.Cause] {
+				continue
+			}
+			delete(dropFailed, x.SessionID)
 			out.Failures = append(out.Failures, contract.HomeFailure{SessionId: x.SessionID, Cause: c.Cause, Text: c.Text, HostId: x.HostID, At: homeMs(x.At)})
+		}
+		if len(dropFailed) > 0 {
+			kept := make([]contract.SessionRow, 0, len(out.Sessions))
+			for _, s := range out.Sessions {
+				if s.State == "failed" && dropFailed[s.Id] {
+					continue
+				}
+				kept = append(kept, s)
+			}
+			out.Sessions = kept
 		}
 	}
 
@@ -125,9 +161,9 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		b.N = 1
 		blockers[key] = &b
 	}
-	// Open problems as blockers by family (a host problem by host and kind), so Home keeps showing them passively
-	// until its pulse line reads home_view.problems (docs/design-system/controls/pulse-line.md).
-	ps, err := q.db().ProblemsList(q.ctx(), db.ProblemsListParams{State: ptr("open"), Lim: 200})
+	// Escalated or unowned open problems as blockers by family (a host problem by host and kind); bot-owned non-escalated
+	// problems stay in System > Problems.
+	ps, err := q.db().HomeProblemsList(q.ctx(), 200)
 	if err != nil {
 		return out, err
 	}
@@ -152,8 +188,8 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 	}
 	sort.SliceStable(out.Questions, func(i, j int) bool { return textMs(out.Questions[i].AskedAt) < textMs(out.Questions[j].AskedAt) })
 
-	// Failed runs that need a look (executions_list needsYou): blockers by plain cause and host, and the failures since
-	// the visit.
+	// Failed runs that need a look (executions_list needsYou): operator-initiated product failures by plain cause and host,
+	// and the failures since the visit. Host jobs, bot-owned runs, and raw host/infra execution failures are hidden.
 	rp := db.TaskExecutionsPageParams{NeedsYou: true}
 	rp.Projects, rp.ProjectsNull = projectSplit(r.ProjectIds)
 	rp.Excluded, rp.ExcludeNull = projectSplit(r.ExcludeProjectIds)
@@ -161,7 +197,28 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 	if err != nil {
 		return out, err
 	}
+	botOwnedExec := map[string]bool{}
+	if len(runs) > 0 {
+		runIDs := make([]string, len(runs))
+		for i, e := range runs {
+			runIDs[i] = e.ID
+		}
+		ownedIDs, err := q.db().HomeBotOwnedExecutions(q.ctx(), runIDs)
+		if err != nil {
+			return out, err
+		}
+		for _, id := range ownedIDs {
+			botOwnedExec[id] = true
+		}
+	}
 	for _, e := range runs {
+		if botOwnedExec[e.ID] {
+			continue
+		}
+		c := contract.PlainCause(deref(e.Problem), "")
+		if c == nil || homeRawInfraCauses[c.Cause] {
+			continue
+		}
 		seen := e.StartedAt
 		if e.LastSeenAt != nil {
 			seen = e.LastSeenAt
@@ -170,12 +227,7 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		if e.State == db.ExecutionStateFailed && at >= since.UnixMilli() {
 			out.Counts.FailedSince++
 		}
-		// The plain cause of its problem whatever its state: an open run with a binding problem names it too.
-		b := contract.HomeBlocker{Kind: contract.HomeBlockerKindRun, Cause: "run", Text: "", HostId: e.HostID, At: at}
-		if c := contract.PlainCause(deref(e.Problem), ""); c != nil {
-			b.Cause, b.Text = c.Cause, c.Text
-		}
-		add("run:"+b.Cause+":"+deref(e.HostID), b)
+		add("run:"+c.Cause+":"+deref(e.HostID), contract.HomeBlocker{Kind: contract.HomeBlockerKindRun, Cause: c.Cause, Text: c.Text, HostId: e.HostID, At: at})
 	}
 	for _, b := range blockers {
 		out.Blockers = append(out.Blockers, *b)
@@ -251,9 +303,9 @@ func homeDone(q *Request, f rowFilter, today, since time.Time) (int64, int64, er
 	return rs[0].Today, rs[0].Since, nil
 }
 
-// homeProblems: the pulse line's problems: how many are open, who owns them, the stuck ones and those no bot owns.
+// homeProblems: the pulse line's escalated or unowned open problems.
 func homeProblems(q *Request) (*contract.HomeProblems, error) {
-	rows, err := q.db().ProblemsSummary(q.ctx())
+	rows, err := q.db().HomeProblemsSummary(q.ctx())
 	if err != nil {
 		return nil, err
 	}
@@ -284,12 +336,15 @@ func homeProblems(q *Request) (*contract.HomeProblems, error) {
 		return out.Owners[i].Name < out.Owners[j].Name
 	})
 	if out.Stuck > 0 {
-		ps, err := q.db().ProblemsList(q.ctx(), db.ProblemsListParams{State: ptr("open"), Phase: ptr("stuck"), Lim: 1})
+		ps, err := q.db().HomeProblemsList(q.ctx(), 200)
 		if err != nil {
 			return nil, err
 		}
-		if len(ps) > 0 {
-			out.FirstStuck = &contract.HomeProblemFirst{Code: problemCode(ps[0].Seq), Text: ps[0].Text}
+		for _, p := range ps {
+			if p.Phase == "stuck" {
+				out.FirstStuck = &contract.HomeProblemFirst{Code: problemCode(p.Seq), Text: p.Text}
+				break
+			}
 		}
 	}
 	return out, nil

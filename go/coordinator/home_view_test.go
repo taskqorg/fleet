@@ -109,3 +109,78 @@ func TestHomeView(t *testing.T) {
 		t.Fatalf("scope: %+v", scoped)
 	}
 }
+
+// Requirement: Home (pages/home.md) hides raw host/infra execution failures and HAL0/bot-owned problems and runs from
+// Home FAILED and operator blockers, surfacing only human product questions, escalated/unowned problems, and
+// operator-initiated product failures.
+func TestHomeViewHidesHal0AndInfraNoise(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	now := time.Now().UTC()
+	botID := "hal0-test-bot"
+	exec(`INSERT INTO bot (id, project_id, director, revision) VALUES ($1, 'fleet', $2, 1)`, botID, testOwnerEmail)
+	exec(`INSERT INTO bot_revision (bot_id, revision, name, purpose, profile_id, instructions, soul, schedule_time, schedule_zone, wake_on_needs_you) VALUES ($1, 1, 'HAL0', 'Ops', 'hal0', '', '', '', 'UTC', true)`, botID)
+
+	// 1. Bot-owned task & session failing with a product cause: hidden from FAILED, Failures, Blockers, FailedSince.
+	exec(`INSERT INTO task (id, project_id, title, state) VALUES ('t-bot', 'fleet', 'Bot task', 'in_progress')`)
+	exec(`INSERT INTO bot_task (bot_id, task_id, project_id, link_kind) VALUES ($1, 't-bot', 'fleet', 'created')`, botID)
+	exec(`INSERT INTO session (id, project_id, task_id, created_at, updated_at) VALUES ('s-bot-task', 'fleet', 't-bot', $1, $1)`, now.Add(-2*time.Minute))
+	exec(`INSERT INTO execution (id, kind, state, session_id, task_id, host_id, harness, started_at, ended_at, data, observation, config_ref, problem)
+	 VALUES ('e-bot-task', 'agent_run', 'failed', 's-bot-task', 't-bot', 'mac', 'codex', $1, $1, '{}', 'confirmed', '{}', 'step:provider-429')`, now.Add(-2*time.Minute))
+
+	// 2. Operator session failing with raw host/infra cause (preparation / unreported / host-not-ready): hidden.
+	for i, tc := range []struct {
+		sid     string
+		problem string
+	}{
+		{"s-infra-prep", "preparation failed: readiness-check-failed"},
+		{"s-infra-unrep", "unknown:unreported"},
+	} {
+		at := now.Add(-time.Duration(i+3) * time.Minute)
+		exec(`INSERT INTO session (id, project_id, directed_by, created_at, updated_at) VALUES ($1, 'fleet', $2, $3, $3)`, tc.sid, testOwnerEmail, at)
+		exec(`INSERT INTO execution (id, kind, state, session_id, host_id, harness, started_at, ended_at, data, observation, config_ref, problem)
+		 VALUES ($1, 'agent_run', 'failed', $2, 'mac', 'codex', $3, $3, '{}', 'confirmed', '{}', $4)`, tc.sid+"-r", tc.sid, at, tc.problem)
+	}
+
+	// 3. Raw host_job unreported failure: hidden from Blockers and FailedSince.
+	exec(`INSERT INTO execution (id, kind, state, host_id, started_at, ended_at, data, observation, config_ref, problem)
+	 VALUES ('e-host-job', 'host_job', 'failed', 'mac', $1, $1, '{}', 'confirmed', '{}', 'unknown:unreported')`, now.Add(-time.Minute))
+
+	// 4. Operator-initiated product failure: stays visible in Sessions, Failures, Blockers, FailedSince.
+	exec(`INSERT INTO session (id, project_id, directed_by, created_at, updated_at) VALUES ('s-op-prod', 'fleet', $1, $2, $2)`, testOwnerEmail, now.Add(-time.Minute))
+	exec(`INSERT INTO execution (id, kind, state, session_id, host_id, harness, started_at, ended_at, data, observation, config_ref, problem)
+	 VALUES ('e-op-prod', 'agent_run', 'failed', 's-op-prod', 'mac', 'codex', $1, $1, '{}', 'confirmed', '{}', 'turn.failed: bad query')`, now.Add(-time.Minute))
+
+	// 5. Problems: HAL0-owned stuck agent-gap (hidden), HAL0-owned escalated problem (visible), unowned problem (visible).
+	exec(`INSERT INTO problem (id, cause, source, text, owner_bot_id, phase) VALUES ('p-gap', 'gap:fleet-refused:task_page', 'agent-gaps', 'Agents lack task_page', $1, 'stuck')`, botID)
+	exec(`INSERT INTO problem (id, cause, source, text, owner_bot_id, phase) VALUES ('p-esc', 'problem:delivery:slow', 'delivery', 'Delivery escalated', $1, 'escalated')`, botID)
+	exec(`INSERT INTO problem (id, cause, source, text, owner_bot_id, phase) VALUES ('p-unowned', 'burst:hal0', 'breaker', 'HAL0 burst', NULL, 'new')`)
+
+	var got contract.HomeViewReply
+	e.opInto(t, "home_view", map[string]any{"dayStart": now.Add(-12 * time.Hour).UnixMilli()}, e.ownerHeaders(), &got)
+
+	if len(got.Sessions) != 1 || got.Sessions[0].Id != "s-op-prod" {
+		t.Fatalf("sessions: want only s-op-prod, got %+v", got.Sessions)
+	}
+	if len(got.Failures) != 1 || got.Failures[0].SessionId != "s-op-prod" || got.Failures[0].Cause != "agent-turn" {
+		t.Fatalf("failures: want only s-op-prod agent-turn, got %+v", got.Failures)
+	}
+	if got.Counts.FailedSince != 1 {
+		t.Fatalf("failedSince: want 1, got %d", got.Counts.FailedSince)
+	}
+	if got.Problems == nil || got.Problems.Open != 2 || got.Problems.Unowned != 1 || got.Problems.Stuck != 0 {
+		t.Fatalf("problems: want 2 open (escalated + unowned), 1 unowned, 0 stuck, got %+v", got.Problems)
+	}
+	causes := map[string]bool{}
+	for _, b := range got.Blockers {
+		causes[b.Cause] = true
+	}
+	if !causes["agent-turn"] || !causes["problem:delivery"] || !causes["problem:burst"] || causes["problem:gap"] || causes["preparation"] || causes["unreported"] {
+		t.Fatalf("blockers: unexpected causes %v", causes)
+	}
+}
