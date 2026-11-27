@@ -16,7 +16,7 @@
 - The executor records command and process state in its SQLite journal and communicates with the coordinator through typed `contract` requests and events.
 - `project-forge publish_draft` accepts an optional `force_with_lease` containing the expected remote commit as 40 lowercase hex characters. Git applies the lease to the session branch ref alone. The caller can read the remote PR head with `delivery status`.
 - Call `ci_logs` on either publishing MCP server with `jobId` and `expectedHeadSha` to get job and failure metadata, error windows, a tail, and scan completeness. Window offsets point into the decoded, redacted `excerpt`. The job must be a GitHub Actions job with conclusion `failure` or a GitLab CI job with status `failed`. The repository grant, job branch and live branch head must match. This read requires the provider credential to have access to the job and its log.
-- The [project-browser MCP](../../docs/configuration.md#coding-execution) exposes trusted keyboard and pointer input and returns redacted page summaries.
+- The [project-browser MCP](../../docs/configuration.md#coding-execution) exposes trusted input, viewport and color-scheme emulation, loopback preview PNG capture, and redacted page summaries.
 
 ## Invariants
 
@@ -61,4 +61,4 @@ go test ./executor
 CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
 ```
 
-With the [project-browser runtime paths](../../docs/configuration.md#coding-execution) set, run `go test ./executor -run TestProjectBrowserTrustedInput -count=1` to verify trusted input against local fixture origins.
+With the [project-browser runtime paths](../../docs/configuration.md#coding-execution) set, run `go test ./executor -run TestProjectBrowser -count=1` to verify trusted input, real responsive reflow and PNG capture against local fixture origins.

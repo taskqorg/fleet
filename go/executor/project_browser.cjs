@@ -1,5 +1,6 @@
 // Trusted MCP adapter: page operations stay inside the project origin grant.
 const fs = require('node:fs');
+const path = require('node:path');
 const readline = require('node:readline');
 const cfg = JSON.parse(process.argv[1]);
 const {chromium} = require(cfg.module);
@@ -8,7 +9,8 @@ const timeout=cfg.timeoutMs || 60000;
 function bounded(promise) {
  let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('browser-timeout-unknown-no-replay')),timeout);})]).finally(()=>clearTimeout(timer));
 }
-const allowed = new Set(cfg.previewOrigins);
+const previews = new Set(cfg.previewOrigins);
+const allowed = new Set(previews);
 if (cfg.production) allowed.add(cfg.production.origin);
 const secrets = new Set();
 let headers = {};
@@ -28,6 +30,7 @@ function safe(value) {
 }
 function permitted(url) { try { return allowed.has(new URL(url).origin); } catch { return false; } }
 let control, primaryTarget, profileDir, initialResolve, initialReject, closing, nextCommand = 0;
+let usedProduction = false;
 const pending = new Map();
 async function close() {
   if(closing)return closing;
@@ -64,8 +67,10 @@ async function paused(sessionId,event) {
   const requestHeaders=Object.entries(request.headers)
     .filter(([name])=>!name.toLowerCase().startsWith('cf-access-client-'))
     .map(([name,value])=>({name,value:String(value)}));
-  if(cfg.production && new URL(request.url).origin===cfg.production.origin)
+  if(cfg.production && new URL(request.url).origin===cfg.production.origin) {
+    usedProduction = true;
     for(const [name,value] of Object.entries(headers))requestHeaders.push({name,value});
+  }
   // CDP overrides only this request; redirected requests are paused and checked again.
   await targetSend(sessionId,'Fetch.continueRequest',{requestId:event.requestId,headers:requestHeaders});
 }
@@ -95,6 +100,7 @@ function failClosed() {if(closing)return;if(initialReject)initialReject(Error('b
 async function open() {
   if(browser)return;
   primaryTarget=undefined;
+  usedProduction=false;
   profileDir=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'fleet-browser-'));
   const executable=process.env.FLEET_MCP_GENERATION ? process.env.PATH.split(require('node:path').delimiter).map(dir=>require('node:path').join(dir,'fleet-browser-chromium')).find(file=>fs.existsSync(file)) : cfg.executable;
   if(!executable)throw Error('browser-owned-dependency-unready');
@@ -130,6 +136,8 @@ const tools = [
   {name:'fill',description:'Fill a unique input locator on the current page.',inputSchema:{type:'object',properties:{selector:{type:'string'},value:{type:'string'}},required:['selector','value'],additionalProperties:false}},
   {name:'press',description:'Send a trusted Playwright key or chord such as Escape, ArrowDown, Space, Enter or Shift+Tab. Optionally focus a unique locator first.',inputSchema:{type:'object',properties:{key:{type:'string'},selector:{type:'string'}},required:['key'],additionalProperties:false}},
   {name:'drag',description:'Perform a trusted pointer drag from a unique source locator to a unique target locator. Optional steps interpolate pointer movement (default 10).',inputSchema:{type:'object',properties:{source:{type:'string'},target:{type:'string'},steps:{type:'integer',minimum:1}},required:['source','target'],additionalProperties:false}},
+  {name:'emulate',description:'Set Chromium layout and color scheme on the owned page, before or after navigating. Desktop is 1440x900, mobile is 390x844, both at device scale 1 with reduced motion.',inputSchema:{type:'object',properties:{viewport:{enum:['desktop','mobile']},colorScheme:{enum:['dark','light']}},required:['viewport','colorScheme'],additionalProperties:false}},
+  {name:'screenshot',description:'Capture a granted loopback preview viewport or an optional unique Playwright locator as PNG. Use a fresh browser after production. Returns a run-private path and pixel dimensions for artifact_save.',inputSchema:{type:'object',properties:{selector:{type:'string',minLength:1}},additionalProperties:false}},
   {name:'close',description:'Close the owned browser and clean its temporary profile.',inputSchema:{type:'object',properties:{},additionalProperties:false}}
 ];
 function requireScopedPage(current) {
@@ -149,6 +157,67 @@ async function drag(current, {source, target, steps = 10}) {
   requireScopedPage(current);
   await current.locator(source).dragTo(destination,{steps,timeout});
 }
+function textResult(value) {
+  return {content:[{type:'text',text:JSON.stringify(value)}]};
+}
+async function emulate(args) {
+  const {viewport, colorScheme} = args;
+  if ((viewport !== 'desktop' && viewport !== 'mobile') ||
+      (colorScheme !== 'dark' && colorScheme !== 'light') ||
+      Object.keys(args).length !== 2) throw Error('invalid emulation arguments');
+  await open();
+  const current = page;
+  if(current.url()!=='about:blank') requireScopedPage(current);
+  const size = viewport === 'desktop' ? {width:1440,height:900} : {width:390,height:844};
+  await current.setViewportSize(size);
+  await current.emulateMedia({colorScheme,reducedMotion:'reduce'});
+  if(current !== page || current.url()!=='about:blank') requireScopedPage(current);
+  return textResult({...size,colorScheme,deviceScaleFactor:1});
+}
+function requirePreview(current) {
+  requireScopedPage(current);
+  const origin = new URL(current.url());
+  if(usedProduction || !previews.has(origin.origin) || origin.protocol!=='http:' ||
+      !['localhost','127.0.0.1'].includes(origin.hostname)) throw Error('preview capture denied');
+}
+function savePNG(png) {
+  const root = cfg.captureDir;
+  if(!root || !path.isAbsolute(root) || !fs.lstatSync(root).isDirectory()) throw Error('capture directory unavailable');
+  if(png.length < 33 || png.subarray(0,8).toString('hex') !== '89504e470d0a1a0a' ||
+      png.toString('ascii',12,16) !== 'IHDR') throw Error('invalid screenshot PNG');
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  if(!width || !height) throw Error('invalid screenshot dimensions');
+  const dir = fs.mkdtempSync(path.join(root,'browser-capture-'));
+  const file = path.join(dir,'screenshot.png');
+  try {
+    fs.writeFileSync(file,png,{flag:'wx',mode:0o600});
+  } catch(error) {
+    fs.rmSync(dir,{recursive:true,force:true});
+    throw error;
+  }
+  return textResult({path:file,width,height});
+}
+async function screenshot(current, args) {
+  const {selector} = args;
+  if(Object.keys(args).some(key=>key!=='selector') ||
+      (selector !== undefined && (typeof selector !== 'string' || !selector.trim()))) throw Error('invalid screenshot arguments');
+  requirePreview(current);
+  let navigated = false;
+  const onNavigation = frame => {if(frame === current.mainFrame()) navigated = true;};
+  current.on('framenavigated',onNavigation);
+  try {
+    // Playwright waits for fonts in the captured frame and settles CSS/Web Animations for the PNG.
+    const options = {type:'png',animations:'disabled',caret:'hide',scale:'css',timeout};
+    const png = await (selector === undefined ? current.screenshot(options) : current.locator(selector).screenshot(options));
+    requirePreview(current);
+    if(navigated) throw Error('page navigated during capture');
+    // Publish bytes only after the final scope check. No asynchronous write can outlive a timed-out call.
+    return savePNG(png);
+  } finally {
+    current.off('framenavigated',onNavigation);
+  }
+}
 async function call(req) {
   if(req.method==='initialize') return {protocolVersion:req.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'project-browser',version:'1'},instructions:'Use these tools for browser checks. Shell Chromium is unsupported in the native sandbox. Granted origins: '+[...allowed].join(', ')};
   if(req.method==='tools/list') return {tools};
@@ -156,6 +225,8 @@ async function call(req) {
   const {name,arguments:a={}}=req.params;
   if(!tools.some(t=>t.name===name)) throw Error('unknown tool');
   if(name==='close') { await close(); return {content:[{type:'text',text:'Browser closed'}]}; }
+  if(name==='emulate') return emulate(a);
+  if(name==='screenshot') return screenshot(page,a);
   if(name==='navigate' && !permitted(a.url)) throw Error('origin denied');
   await open();
   for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
