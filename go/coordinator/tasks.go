@@ -647,6 +647,12 @@ func addressToManagingBot(q *Request, a questionAsk) error {
 	return q.db().AddressQuestion(q.ctx(), db.AddressQuestionParams{Holder: "bot:" + bot, ID: a.ID})
 }
 
+func idleExecutionNeedsDecision(latest db.TaskAcceptanceExecutionRow) bool {
+	return deref(latest.Problem) == "unknown:abandoned" || latest.Observation == db.ObservationConfirmed &&
+		(latest.State == db.ExecutionStateFailed || latest.State == db.ExecutionStateCancelled && latest.AutomaticStop != "superseded" ||
+			latest.State == db.ExecutionStateSucceeded && latest.Outcome == "failed")
+}
+
 // settleIdleTask reconciles offers and generated decisions against the task's current evidence.
 // Only eligible results and observed failures that need an operator can create an inbox item.
 func settleIdleTask(q *Request, id string) (bool, error) {
@@ -683,10 +689,7 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
 	}
-	abandoned := deref(latest.Problem) == "unknown:abandoned"
-	needsDecision := abandoned || latest.Observation == db.ObservationConfirmed &&
-		(latest.State == db.ExecutionStateFailed || latest.State == db.ExecutionStateCancelled && latest.AutomaticStop != "superseded" ||
-			latest.State == db.ExecutionStateSucceeded && latest.Outcome == "failed")
+	needsDecision := idleExecutionNeedsDecision(latest)
 	if pending || !needsDecision {
 		if err := withdrawSettledIdleDecision(q, id, pending); err != nil {
 			return false, err
@@ -719,13 +722,8 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 			return false, err
 		}
 		if deref(recovery.ExecutionID) == latest.ID {
-			task, err := taskLoad(q, id)
-			if err != nil {
-				return false, err
-			}
-			err = askTaskRecovery(q, task, latest.ID, deref(latest.SessionID),
-				"Fleet stopped the automatic recovery at its deadline.", "missing_result")
-			return err == nil, err
+			// The durable task wake can lock and validate the session before offering a retry.
+			return false, wakeTask(q, id)
 		}
 	}
 	options := []string{idleFail}
@@ -739,7 +737,7 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 	}
 	what := "The last run of " + t.Title + " " + t.Latest
 	switch {
-	case abandoned:
+	case deref(latest.Problem) == "unknown:abandoned":
 		what = "The last run was abandoned. Its outcome is unknown"
 	case latest.AutomaticStop == "deadline":
 		what = "Fleet stopped the automatic turn after its recovery deadline"

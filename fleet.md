@@ -108,7 +108,7 @@ A missing result enters durable reconciliation. After eligible deliveries, answe
 
 Two automatic recovery turns are allowed per episode within 90 minutes, and the second requires independently verified progress. Exhausted or unavailable recovery opens a decision for the task owner.
 
-A retry can renew the recovery budget. If Fleet cannot continue under the original session authority, the decision names the prerequisite and offers no identical retry.
+A retry can renew the recovery budget once per decision. Replaying the answer preserves that renewal. When Fleet refuses a continuation, including after a deadline stop, it names the prerequisite and offers explicit continuation under current task authority or closure in place of another retry.
 
 The authorized operator can request an offer of the exact retained result when it meets the existing acceptance requirements and its remaining checks are verified.
 

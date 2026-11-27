@@ -406,6 +406,14 @@ func decideTaskAction(q *Request, now time.Time, w db.TaskWake) (string, time.Ti
 	if err != nil || opened {
 		return "result or decision offered", time.Time{}, err
 	}
+	if e != nil && latest.AutomaticStop == "deadline" && deref(recovery.ExecutionID) == latest.ID && idleExecutionNeedsDecision(latest) {
+		s, err := taskContinuationSession(q, t, e)
+		if err != nil {
+			return blockedResultContinuation(q, t, e, err)
+		}
+		return "recovery decision", time.Time{}, askTaskRecovery(q, t, e.ID, s.ID,
+			"Fleet stopped the automatic recovery at its deadline.", "missing_result")
+	}
 	if latest.Kind != db.ExecutionKindAgentRun || latest.State != db.ExecutionStateSucceeded ||
 		latest.Observation != db.ObservationConfirmed || latest.Outcome == "failed" || e == nil {
 		wakeDispatchAfter(q)

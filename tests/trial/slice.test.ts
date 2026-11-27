@@ -186,6 +186,75 @@ test('an answer continues the finished asking turn once (risk: a stalled task or
   assert.ok(command?.payload?.text.includes(messages[1].text), 'the host receives the answer in the continuation input');
 });
 
+nodeTest('a result retry is admitted once under the original session authority or requires a different action', {timeout: 45_000}, async () => {
+  const op = async (name: string, body: object) => ok(await browser('POST', '/api/ops/' + name, body));
+  for (const archiveSession of [true, false]) {
+    const {id: taskId} = await op('task_create', {projectId: 'hello-world', title: 'Result retry smoke'});
+    const {h, sessionId, executionId, commandId} = await started(taskId);
+    const read = () => op('task_get', {taskId});
+    const complete = async (command: {id: string, executionId: string}) => {
+      for (const status of ['accepted', 'started', 'completed']) {
+        ok(await h('/api/hosts/receipts', {commandId: command.id, executionId: command.executionId, status}));
+      }
+    };
+    const continuation = (previous: string) => hostCommand(async q => ok(await h('/api/hosts/poll' + q, {
+      platform: 'darwin', capabilities: [], stores: [], problems: [],
+    })), (c: any) => c.kind === 'start' && c.sessionId === sessionId && c.executionId !== previous);
+    const events = await stream(OWNER);
+    const decision = async (previous?: string) => {
+      const seen = await events.until(changes => changes.some(({data}) =>
+        data?.kind === 'question' && data.taskId === taskId && data.op === 'I' && data.id !== previous), 8_000);
+      const detail = await read();
+      assert.ok(seen, 'Fleet opens a recovery decision: ' + JSON.stringify({nextAction: detail.nextAction, questions: detail.questions}));
+      return detail;
+    };
+    try {
+      assert.ok(await events.until(changes => changes.some(x => x.event === 'ready')));
+      await complete({id: commandId, executionId});
+      const first = await continuation(executionId);
+      assert.ok(first, 'automatic recovery starts in the original session');
+      await complete(first);
+      const before = await decision();
+      const retry = before.questions.find((q: any) => q.state === 'open' && q.options?.includes('retry result'));
+      assert.ok(retry, 'no verified progress leads to a retry decision');
+      if (archiveSession) {
+        await op('session_archive', {sessionId});
+      }
+      const answer = () => op('question_answer', {questionId: retry.id, answer: 'retry result'});
+      for (const reply of await Promise.all([answer(), answer()])) {
+        assert.deepEqual([reply.state, reply.answer], ['answered', 'retry result']);
+      }
+      let resumed: {id: string, executionId: string} | undefined;
+      if (archiveSession) {
+        const after = await decision(retry.id);
+        const blocked = after.questions.find((q: any) => q.state === 'open');
+        assert.deepEqual(blocked?.options, ['fail task']);
+        assert.match(blocked.text, /previous task session is missing or archived/);
+        assert.match(blocked.text, /authorized task operator continue in a session linked to this task/);
+        assert.equal(after.nextAction?.reference, blocked.id);
+        assert.equal((await browser('POST', '/api/ops/question_answer', {questionId: blocked.id, answer: 'retry result'})).status, 400);
+      } else {
+        resumed = await continuation(first.executionId);
+        assert.ok(resumed && resumed.executionId !== executionId, 'the authorized retry starts a new turn');
+      }
+      await answer();
+      const after = await read();
+      assert.equal(after.directedBy, OWNER);
+      assert.equal(after.executions.length, archiveSession ? 2 : 3);
+      assert.equal(after.questions.length, archiveSession ? 2 : 1);
+      assert.equal(after.questions.filter((q: any) => q.state === 'open' && q.options?.includes('retry result')).length, 0);
+      assert.equal(after.questions.find((q: any) => q.id === retry.id)?.answer, 'retry result');
+      const original = await op('session_get', {sessionId});
+      assert.equal(original.directedBy, OWNER);
+      assert.equal(original.executions.length, after.executions.length);
+      if (resumed) await complete(resumed);
+      await op('task_cancel', {taskId});
+    } finally {
+      events.close();
+    }
+  }
+});
+
 test('a failed host job retains the cause from its receipt or publishing record', async () => {
   const projectId = 'trial-publishing-failure', hostId = 'trial-publishing-host';
   const forgeHost = 'gitlab.example.test', repo = 'trial/example';
