@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,6 +144,126 @@ func TestPublishingProviderDetectionAndBoundary(t *testing.T) {
 	}
 	if _, _, ok := contract.ParseForgeRepoEntry("gitlab.ufobe.com/*"); ok {
 		t.Fatal("host-wide grant accepted")
+	}
+}
+
+// Requirement: P-71 reports provider-confirmed absence through both status tools.
+// Risk: empty branches look like transport failures, or a failed lookup looks unpublished.
+func TestPublishingBranchStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	for _, file := range []string{"hosts.yml", "config.yml"} {
+		if err := os.WriteFile(filepath.Join(dir, file), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const branch = "fleet/fixture"
+	sha := strings.Repeat("a", 40)
+	moved := strings.Repeat("b", 40)
+	const noPR = "echo 'no pull requests found for branch \"fleet/fixture\"' >&2; exit 1"
+	const denied = "echo 'HTTP 403' >&2; exit 1"
+	for _, provider := range []struct {
+		name, host, cli, endpoint, absentLookup, existing, state string
+	}{
+		{"github", "github.com", "gh", "repos/invented/project/pulls?state=all&head=invented%3Afleet%2Ffixture", noPR,
+			fmt.Sprintf(`{"number":17,"url":"https://github.com/invented/project/pull/17","state":"MERGED","headRefName":%q,"headRefOid":%q,"statusCheckRollup":[]}`, branch, sha), "MERGED"},
+		{"gitlab", "gitlab.example.test", "glab", "projects/invented%2Fproject/merge_requests?state=opened&source_branch=fleet%2Ffixture", ":",
+			fmt.Sprintf(`[{"iid":17,"web_url":"https://gitlab.example.test/invented/project/-/merge_requests/17","state":"opened","source_branch":%q,"sha":%q,"head_pipeline":{"id":42,"status":"success"}}]`, branch, sha), "OPEN"},
+	} {
+		t.Run(provider.name, func(t *testing.T) {
+			ctx := M{"provider": provider.name, "host": provider.host, "repo": "invented/project",
+				"repositories": provider.host + "/invented/project", "branch": branch, "store": dir, "skipWorktreeHead": true}
+			const empty = "echo '[]'"
+			const invalid = "echo 'null'"
+			const readError = "project-delivery-unconfirmed: HTTP 403"
+			existing := "echo '" + provider.existing + "'"
+			type statusCase struct {
+				name, prView, list, allList, state, wantError string
+			}
+			cases := []statusCase{
+				{"unpublished", provider.absentLookup, empty, empty, "UNPUBLISHED", ""},
+				{"existing", existing, existing, "exit 2", provider.state, ""},
+				{"provider error", denied, denied, "exit 2", "", readError},
+				{"malformed list", provider.absentLookup, invalid, "exit 2", "", "invalid forge response"},
+			}
+			if provider.name == "github" {
+				cases = append(cases,
+					statusCase{"failed confirmation", noPR, denied, "exit 2", "", readError},
+					statusCase{"disagreement", noPR, "echo '[{}]'", "exit 2", "", "project-status-read-failed"},
+					statusCase{"malformed view", "echo '{}'", empty, "exit 2", "", "invalid forge response"})
+			} else {
+				cases = append(cases,
+					statusCase{"failed confirmation", ":", empty, denied, "", readError},
+					statusCase{"malformed confirmation", ":", empty, invalid, "", "invalid forge response"},
+					statusCase{"invalid merge request", ":", "echo '[null]'", "exit 2", "", "invalid forge response"})
+				for _, state := range []string{"merged", "closed", "locked"} {
+					allList := strings.Replace(existing, `"state":"opened"`, `"state":"`+state+`"`, 1)
+					cases = append(cases, statusCase{state, ":", empty, allList, strings.ToUpper(state), ""})
+				}
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = pr ] && [ "$2" = view ] && [ "$3" = %q ]; then
+  %s
+  exit 0
+fi
+case "$4" in
+  %q) %s ;;
+  %q) %s ;;
+  */statuses) echo '[]' ;;
+  *) exit 2 ;;
+esac
+`, branch, tc.prView, provider.endpoint, tc.list, strings.Replace(provider.endpoint, "state=opened", "state=all", 1), tc.allList)
+					if err := os.WriteFile(filepath.Join(dir, provider.cli), []byte(script), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					for _, call := range []struct {
+						name string
+						run  func(string, any, any) (any, error)
+						args M
+					}{
+						{"status", publishingCall, M{"expectedHeadSha": sha}},
+						{"delivery", forgeCall, M{"action": "status"}},
+					} {
+						reply, err := call.run(call.name, call.args, ctx)
+						if tc.wantError != "" {
+							if err == nil || !strings.HasPrefix(err.Error(), tc.wantError) {
+								t.Fatalf("%s: wanted %q, got %v, %v", call.name, tc.wantError, reply, err)
+							}
+							continue
+						}
+						if err != nil {
+							t.Fatalf("%s: %v", call.name, err)
+						}
+						content := reply.(M)["content"].([]any)[0].(M)["text"].(string)
+						got := decM(content)
+						if got["state"] != tc.state || got["provider"] != provider.name || got["host"] != provider.host || got["repo"] != ctx["repo"] {
+							t.Fatalf("%s: unexpected status %s", call.name, content)
+						}
+						published := tc.state != "UNPUBLISHED"
+						if !published && (got["published"] != false || got["branch"] != branch || got["headRefOid"] != nil || got["number"] != nil) {
+							t.Fatalf("%s: unexpected unpublished status %s", call.name, content)
+						}
+						if published && (got["headRefOid"] != sha || got["number"] != json.Number("17") || got["statusCheckRollup"] == nil) {
+							t.Fatalf("%s: missing existing facts in %s", call.name, content)
+						}
+						if call.name == "status" && (got["expectedHeadSha"] != sha || got["headMatchesExpected"] != published) {
+							t.Fatalf("%s: unexpected head comparison %s", call.name, content)
+						}
+					}
+					if tc.state != "" && tc.state != "UNPUBLISHED" {
+						got, err := executePublishingAction(typed[forgeContext](ctx), "status", publishingArgs{ExpectedHeadSha: &moved})
+						if err != nil || got["headMatchesExpected"] != false {
+							t.Fatalf("moved head matched: %v, %v", got, err)
+						}
+					}
+				})
+			}
+		})
 	}
 }
 
