@@ -53,6 +53,56 @@ func TestProjectBrowserAccessAndObservation(t *testing.T) {
 		t.Fatalf("granted host did not receive the fixture credential, status %d", code)
 	}
 
+	e.opInto(t, "project_create", doc{"requestId": "generic-browser-test", "id": "dam", "content": doc{
+		"settings": doc{"id": "dam", "name": "DAM", "contextFiles": []string{"rules.md"},
+			"environments": []doc{{"hostId": "browser-host", "checkoutPath": "/invented/dam"}, {"hostId": "member-host", "checkoutPath": "/invented/dam"}},
+			"execution":    doc{"tools": []string{"browser"}}},
+		"contextFiles": []doc{{"path": "rules.md", "text": "Fixture project rules."}},
+	}}, e.ownerHeaders(), &created)
+	dam := doc{"projectId": "dam"}
+	if code, response := e.callJSON(t, "POST", access, dam, granted); code != http.StatusOK || response["production"] != nil {
+		t.Fatalf("unconfigured project got authority, status %d", code)
+	}
+	generic := filepath.Join(dir, "dam.binding.json")
+	credential := filepath.Join(dir, "dam.env")
+	if err := os.WriteFile(generic, []byte(`{"origin":"https://revilio.com","accessFile":"dam.env","headers":{"X-DAM-Verification-Token":"DAM_VERIFICATION_TOKEN"},"readinessProbe":{"path":"/ready","method":"GET","status":200}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := e.callJSON(t, "POST", access, dam, granted); code != http.StatusServiceUnavailable {
+		t.Fatalf("configured project with missing credentials got status %d", code)
+	}
+	if err := os.WriteFile(credential, []byte("DAM_VERIFICATION_TOKEN=invented-dam-authority\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, headers := range []map[string]string{ungranted, notOwner} {
+		if code, response := e.callJSON(t, "POST", access, dam, headers); code != http.StatusOK || response["production"] != nil || response["clientSecret"] != "" {
+			t.Fatalf("ungranted host got production authority or status %d", code)
+		}
+	}
+	code, response := e.callJSON(t, "POST", access, dam, granted)
+	genericReply, ok := response["production"].(map[string]any)
+	if code != http.StatusOK || !ok || genericReply["origin"] != "https://revilio.com" || response["clientSecret"] != "" {
+		t.Fatalf("granted host did not get generic authority, status %d", code)
+	}
+	headers, ok := genericReply["headers"].([]any)
+	if !ok || len(headers) != 1 {
+		t.Fatal("managed production reply did not include its configured header")
+	}
+	header, ok := headers[0].(map[string]any)
+	if !ok || header["name"] != "X-DAM-Verification-Token" || header["value"] != "invented-dam-authority" {
+		t.Fatal("managed header did not resolve the configured env value")
+	}
+	rotated := filepath.Join(dir, "dam-rotated.env")
+	if err := os.Rename(credential, rotated); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rotated, credential); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := e.callJSON(t, "POST", access, dam, granted); code != http.StatusServiceUnavailable {
+		t.Fatalf("managed grant accepted symlink credential, status %d", code)
+	}
+
 	const pending = "Waiting for a production browser readiness check"
 	const failed = "Production browser failed the site-agents identity check"
 	poll := func(id string, headers map[string]string, ready *bool, problems []doc, reason string) {

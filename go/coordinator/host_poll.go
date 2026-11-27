@@ -937,7 +937,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	isBrowserProblem := func(p hostProblem) bool { return p.Kind == string(contract.ProblemKindBrowserProductionUnready) }
 	browserProblem := slices.ContainsFunc(ps, isBrowserProblem)
 	if b.BrowserProductionReady == nil || !*b.BrowserProductionReady || browserProblem {
-		granted, err := productionBrowserGranted(q)
+		granted, err := productionBrowserGranted(q, contract.ProductionBrowserProject)
 		switch {
 		case err == nil && !granted:
 			ps = slices.DeleteFunc(ps, isBrowserProblem)
