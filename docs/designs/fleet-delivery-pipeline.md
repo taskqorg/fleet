@@ -98,7 +98,8 @@ executor poll reply carries target ─► executor rewrites update.json
 
 ### 3. Flaky tests
 
-* Nothing reruns a failed job to make it green. GitHub's "re-run failed jobs" is not used on queue runs.
+* For a transient failure on an opted-in PR head, the worker uses `project-publishing rerun_failed`. Fleet records one round on the exact head and reads back the replacement attempt. Build and smoke failures go to the worker. See [PR-head CI recovery](../../fleet.md#project-publishing).
+* GitHub's "re-run failed jobs" is never used on a queue run.
 * When the queue removes a pull request for a failed check the first time, its worker enqueues it again once (`gh pr merge --auto` again). A second red run of the same pull request is a real failure; the pull request goes back to its lane.
 * A test that failed once and passed on the same head is deleted in the next change (owner decision 2026-11-25, [checks per change](#checks-per-change)); the `flaky` issue is no longer kept.
 
@@ -272,7 +273,7 @@ Owner decision of 2026-11-25. It replaces the selected-gate qualification (test 
 
 **When a test may be added.** Only when the task asks for one. Without such a task a worker adds no test of any kind: no test of documents, of source text or of a fixed bug. A requested test runs in the `go` job within its minute: a design rule, pure logic, or one more smoke step in `tests/trial/slice.test.ts`.
 
-**A failing test.** A test that fails once and passes on the same head is deleted in the next change, not retried or recorded. A failure of the smoke or of a build step is a real failure.
+**A failing test.** A test that fails once and passes on the same head is deleted in the next change. The check itself runs once per CI attempt. A failure of the smoke or of a build step is a real failure.
 
 **Commands.** The same commands run locally and in CI:
 

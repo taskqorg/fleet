@@ -582,21 +582,22 @@ func (v *BaseUpdatedCommand) Validate() error {
 type Capability string
 
 const (
-	CapabilityCodex          Capability = "codex"
-	CapabilityGpt61Sol       Capability = "gpt-6.1-sol"
-	CapabilityLow            Capability = "low"
-	CapabilityStaticOutput   Capability = "static-output"
-	CapabilitySteer          Capability = "steer"
-	CapabilityNativeFork     Capability = "native-fork"
-	CapabilityArtifactStore  Capability = "artifact-store"
-	CapabilityScript         Capability = "script"
-	CapabilityWorkspaceKeyV1 Capability = "workspace-key-v1"
-	CapabilityStartAccessV1  Capability = "start-access-v1"
-	CapabilityAttachments    Capability = "attachments"
+	CapabilityCodex               Capability = "codex"
+	CapabilityGpt61Sol            Capability = "gpt-6.1-sol"
+	CapabilityLow                 Capability = "low"
+	CapabilityStaticOutput        Capability = "static-output"
+	CapabilitySteer               Capability = "steer"
+	CapabilityNativeFork          Capability = "native-fork"
+	CapabilityArtifactStore       Capability = "artifact-store"
+	CapabilityScript              Capability = "script"
+	CapabilityWorkspaceKeyV1      Capability = "workspace-key-v1"
+	CapabilityStartAccessV1       Capability = "start-access-v1"
+	CapabilityAttachments         Capability = "attachments"
+	CapabilityPublishingCiRerunV1 Capability = "publishing-ci-rerun-v1"
 )
 
 // CapabilityValues lists every Capability in schema order.
-var CapabilityValues = []Capability{CapabilityCodex, CapabilityGpt61Sol, CapabilityLow, CapabilityStaticOutput, CapabilitySteer, CapabilityNativeFork, CapabilityArtifactStore, CapabilityScript, CapabilityWorkspaceKeyV1, CapabilityStartAccessV1, CapabilityAttachments}
+var CapabilityValues = []Capability{CapabilityCodex, CapabilityGpt61Sol, CapabilityLow, CapabilityStaticOutput, CapabilitySteer, CapabilityNativeFork, CapabilityArtifactStore, CapabilityScript, CapabilityWorkspaceKeyV1, CapabilityStartAccessV1, CapabilityAttachments, CapabilityPublishingCiRerunV1}
 
 // Valid: v is one of the schema's values.
 func (v Capability) Valid() bool {
@@ -2655,6 +2656,61 @@ func (v *ProtocolFailed) Validate() error {
 	return nil
 }
 
+type PublishingCIClaim struct {
+	CommandId    string                  `json:"commandId"`
+	ExecutionId  string                  `json:"executionId"`
+	HostId       string                  `json:"hostId"`
+	OriginalJobs []PublishingCIFailedJob `json:"originalJobs"`
+	RecoveryId   string                  `json:"recoveryId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCIClaim) Validate() error {
+	if v.OriginalJobs == nil {
+		return Missing("originalJobs")
+	}
+	for i := range v.OriginalJobs {
+		if err := Check(&v.OriginalJobs[i], "originalJobs"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PublishingCICommand struct {
+	Attempt     int64                   `json:"attempt"`
+	Dispatched  bool                    `json:"dispatched"`
+	Id          string                  `json:"id"`
+	ObserveOnly bool                    `json:"observeOnly"`
+	Policy      PublishingCIRerunPolicy `json:"policy"`
+	RunId       int64                   `json:"runId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCICommand) Validate() error {
+	if err := Check(&v.Policy, "policy"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type PublishingCIReport struct {
+	Claimed     bool                    `json:"claimed"`
+	CommandId   string                  `json:"commandId"`
+	ExecutionId string                  `json:"executionId"`
+	HostId      string                  `json:"hostId"`
+	Observation PublishingCIObservation `json:"observation"`
+	RecoveryId  string                  `json:"recoveryId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCIReport) Validate() error {
+	if err := Check(&v.Observation, "observation"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // PublishingCommand: kind publishing: execute a coordinator-dispatched publishing operation on a host holding the forge store
 type PublishingCommand struct {
 	ExecutionId string                    `json:"executionId"`
@@ -2701,30 +2757,36 @@ func (v *PublishingCommand) Validate() error {
 
 // PublishingCommandPayload: Payload for kind=publishing host commands dispatched by publishing_* operations.
 type PublishingCommandPayload struct {
-	Action            string  `json:"action"`
-	ArtifactId        *string `json:"artifactId,omitempty"`
-	AutoMerge         bool    `json:"autoMerge"`
-	BaseBranch        string  `json:"baseBranch"`
-	Body              *string `json:"body,omitempty"`
-	Branch            *string `json:"branch,omitempty"`
-	Description       *string `json:"description,omitempty"`
-	ExpectedHeadSha   *string `json:"expectedHeadSha,omitempty"`
-	Host              string  `json:"host"`
-	MergeMethod       string  `json:"mergeMethod"`
-	Number            *int64  `json:"number,omitempty"`
-	Prefix            *string `json:"prefix,omitempty"`
-	ProjectId         string  `json:"projectId"`
-	Provider          string  `json:"provider"`
-	Remote            *string `json:"remote,omitempty"`
-	Repo              string  `json:"repo"`
-	RepoId            *string `json:"repoId,omitempty"`
-	RequestId         string  `json:"requestId"`
-	SourceExecutionId *string `json:"sourceExecutionId,omitempty"`
-	Title             *string `json:"title,omitempty"`
+	Action            string               `json:"action"`
+	ArtifactId        *string              `json:"artifactId,omitempty"`
+	AutoMerge         bool                 `json:"autoMerge"`
+	BaseBranch        string               `json:"baseBranch"`
+	Body              *string              `json:"body,omitempty"`
+	Branch            *string              `json:"branch,omitempty"`
+	CiRecovery        *PublishingCICommand `json:"ciRecovery,omitempty"`
+	Description       *string              `json:"description,omitempty"`
+	ExpectedHeadSha   *string              `json:"expectedHeadSha,omitempty"`
+	Host              string               `json:"host"`
+	MergeMethod       string               `json:"mergeMethod"`
+	Number            *int64               `json:"number,omitempty"`
+	Prefix            *string              `json:"prefix,omitempty"`
+	ProjectId         string               `json:"projectId"`
+	Provider          string               `json:"provider"`
+	Remote            *string              `json:"remote,omitempty"`
+	Repo              string               `json:"repo"`
+	RepoId            *string              `json:"repoId,omitempty"`
+	RequestId         string               `json:"requestId"`
+	SourceExecutionId *string              `json:"sourceExecutionId,omitempty"`
+	Title             *string              `json:"title,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PublishingCommandPayload) Validate() error {
+	if v.CiRecovery != nil {
+		if err := Check(v.CiRecovery, "ciRecovery"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -3514,29 +3576,31 @@ func (v UpdateState) Valid() bool {
 
 // Host routes (the routes map): request, reply (any: not described), long, and plain (decoded only, no required-key check).
 var (
-	RouteAccounts          = HostRoute[AccountObservation, any]{Path: "/api/hosts/accounts", Long: false, Plain: false}
-	RouteAccountsReport    = HostRoute[AccountReceipt, any]{Path: "/api/hosts/accounts/report", Long: true, Plain: false}
-	RouteAgentTools        = HostRoute[AgentToolsRequest, any]{Path: "/api/hosts/agent-tools", Long: true, Plain: true}
-	RouteArtifactsCommit   = HostRoute[ArtifactCommitRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/commit", Long: true, Plain: false}
-	RouteArtifactsDeclare  = HostRoute[ArtifactDeclareRequest, OkReply]{Path: "/api/hosts/artifacts/declare", Long: true, Plain: false}
-	RouteArtifactsFailed   = HostRoute[ArtifactFailedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/failed", Long: true, Plain: false}
-	RouteArtifactsGet      = HostRoute[HostArtifactGetRequest, ArtifactGetReply]{Path: "/api/hosts/artifacts/get", Long: true, Plain: false}
-	RouteArtifactsList     = HostRoute[HostArtifactListRequest, any]{Path: "/api/hosts/artifacts/list", Long: true, Plain: false}
-	RouteArtifactsParts    = HostRoute[ArtifactPartsRequest, ArtifactPartsReply]{Path: "/api/hosts/artifacts/parts", Long: true, Plain: false}
-	RouteArtifactsRead     = HostRoute[HostArtifactGetRequest, any]{Path: "/api/hosts/artifacts/read", Long: true, Plain: false}
-	RouteArtifactsRenew    = HostRoute[ArtifactLeaseRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/renew", Long: true, Plain: false}
-	RouteArtifactsReserve  = HostRoute[ArtifactReserveRequest, ArtifactReserveReply]{Path: "/api/hosts/artifacts/reserve", Long: true, Plain: false}
-	RouteArtifactsVerified = HostRoute[ArtifactVerifiedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/verified", Long: true, Plain: false}
-	RouteDelegations       = HostRoute[ChildReceipt, any]{Path: "/api/hosts/delegations", Long: true, Plain: false}
-	RouteEvents            = HostRoute[HostEvents, OkReply]{Path: "/api/hosts/events", Long: true, Plain: true}
-	RouteForgeReview       = HostRoute[ForgeReviewRequest, ForgeReviewReply]{Path: "/api/hosts/forge/review", Long: true, Plain: false}
-	RouteInventory         = HostRoute[HostInventoryRequest, HostInventoryReply]{Path: "/api/hosts/inventory", Long: true, Plain: false}
-	RoutePoll              = HostRoute[PollRequest, PollReply]{Path: "/api/hosts/poll", Long: true, Plain: true}
-	RouteProjectOperations = HostRoute[ProjectReceipt, any]{Path: "/api/hosts/project-operations", Long: true, Plain: false}
-	RoutePublishingRecord  = HostRoute[PublishingHostRecord, OkReply]{Path: "/api/hosts/publishing/record", Long: true, Plain: false}
-	RouteReceipts          = HostRoute[Receipt, ReceiptReply]{Path: "/api/hosts/receipts", Long: true, Plain: false}
-	RouteSpans             = HostRoute[SpanBatchRequest, SpanBatchReply]{Path: "/api/hosts/spans", Long: true, Plain: true}
-	RouteStores            = HostRoute[StoresRequest, StoresReply]{Path: "/api/hosts/stores", Long: true, Plain: false}
+	RouteAccounts                = HostRoute[AccountObservation, any]{Path: "/api/hosts/accounts", Long: false, Plain: false}
+	RouteAccountsReport          = HostRoute[AccountReceipt, any]{Path: "/api/hosts/accounts/report", Long: true, Plain: false}
+	RouteAgentTools              = HostRoute[AgentToolsRequest, any]{Path: "/api/hosts/agent-tools", Long: true, Plain: true}
+	RouteArtifactsCommit         = HostRoute[ArtifactCommitRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/commit", Long: true, Plain: false}
+	RouteArtifactsDeclare        = HostRoute[ArtifactDeclareRequest, OkReply]{Path: "/api/hosts/artifacts/declare", Long: true, Plain: false}
+	RouteArtifactsFailed         = HostRoute[ArtifactFailedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/failed", Long: true, Plain: false}
+	RouteArtifactsGet            = HostRoute[HostArtifactGetRequest, ArtifactGetReply]{Path: "/api/hosts/artifacts/get", Long: true, Plain: false}
+	RouteArtifactsList           = HostRoute[HostArtifactListRequest, any]{Path: "/api/hosts/artifacts/list", Long: true, Plain: false}
+	RouteArtifactsParts          = HostRoute[ArtifactPartsRequest, ArtifactPartsReply]{Path: "/api/hosts/artifacts/parts", Long: true, Plain: false}
+	RouteArtifactsRead           = HostRoute[HostArtifactGetRequest, any]{Path: "/api/hosts/artifacts/read", Long: true, Plain: false}
+	RouteArtifactsRenew          = HostRoute[ArtifactLeaseRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/renew", Long: true, Plain: false}
+	RouteArtifactsReserve        = HostRoute[ArtifactReserveRequest, ArtifactReserveReply]{Path: "/api/hosts/artifacts/reserve", Long: true, Plain: false}
+	RouteArtifactsVerified       = HostRoute[ArtifactVerifiedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/verified", Long: true, Plain: false}
+	RouteDelegations             = HostRoute[ChildReceipt, any]{Path: "/api/hosts/delegations", Long: true, Plain: false}
+	RouteEvents                  = HostRoute[HostEvents, OkReply]{Path: "/api/hosts/events", Long: true, Plain: true}
+	RouteForgeReview             = HostRoute[ForgeReviewRequest, ForgeReviewReply]{Path: "/api/hosts/forge/review", Long: true, Plain: false}
+	RouteInventory               = HostRoute[HostInventoryRequest, HostInventoryReply]{Path: "/api/hosts/inventory", Long: true, Plain: false}
+	RoutePoll                    = HostRoute[PollRequest, PollReply]{Path: "/api/hosts/poll", Long: true, Plain: true}
+	RouteProjectOperations       = HostRoute[ProjectReceipt, any]{Path: "/api/hosts/project-operations", Long: true, Plain: false}
+	RoutePublishingCiClaim       = HostRoute[PublishingCIClaim, OkReply]{Path: "/api/hosts/publishing/ci-claim", Long: false, Plain: false}
+	RoutePublishingCiObservation = HostRoute[PublishingCIReport, OkReply]{Path: "/api/hosts/publishing/ci-observation", Long: false, Plain: false}
+	RoutePublishingRecord        = HostRoute[PublishingHostRecord, OkReply]{Path: "/api/hosts/publishing/record", Long: true, Plain: false}
+	RouteReceipts                = HostRoute[Receipt, ReceiptReply]{Path: "/api/hosts/receipts", Long: true, Plain: false}
+	RouteSpans                   = HostRoute[SpanBatchRequest, SpanBatchReply]{Path: "/api/hosts/spans", Long: true, Plain: true}
+	RouteStores                  = HostRoute[StoresRequest, StoresReply]{Path: "/api/hosts/stores", Long: true, Plain: false}
 )
 
 // HostRoutes: every host route path.
@@ -3560,6 +3624,8 @@ var HostRoutes = []string{
 	"/api/hosts/inventory",
 	"/api/hosts/poll",
 	"/api/hosts/project-operations",
+	"/api/hosts/publishing/ci-claim",
+	"/api/hosts/publishing/ci-observation",
 	"/api/hosts/publishing/record",
 	"/api/hosts/receipts",
 	"/api/hosts/spans",

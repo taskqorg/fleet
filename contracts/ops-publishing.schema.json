@@ -2,6 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations and host CI diagnostics for unified project publishing (GitHub PR + GitLab MR parity).",
   "operations": {
+    "publishing_rerun_failed": {
+      "read": false,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Request one policy-granted retry of verified failed CI on the source execution's current pull request head. Returns the durable recovery record."
+    },
+    "publishing_ci_recovery": {
+      "read": true,
+      "errors": [400, 404],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Read durable PR-head CI recovery records for a visible project, without invoking the provider."
+    },
     "publishing_capabilities": {
       "read": true,
       "errors": [400, 404],
@@ -59,6 +73,89 @@
     }
   },
   "$defs": {
+    "PublishingRerunFailedRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "number", "expectedHeadSha", "runId", "attempt", "reason"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "requestId": {"type": "string"},
+        "number": {"type": "integer", "minimum": 1},
+        "expectedHeadSha": {"type": "string"},
+        "runId": {"type": "integer", "minimum": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "reason": {"type": "string"}
+      }
+    },
+    "PublishingCIRerunPolicy": {
+      "$comment": "Approval for one exact GitHub workflow file revision in one repository.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repoId", "workflow", "workflowBlobSha", "requiredJobs", "profiles"],
+      "properties": {
+        "repoId": {"type": "string"},
+        "workflow": {"type": "string"},
+        "workflowBlobSha": {"type": "string"},
+        "requiredJobs": {"type": "array", "items": {"type": "string"}},
+        "profiles": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "PublishingCiRecoveryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "expectedHeadSha": {"type": "string"}
+      }
+    },
+    "PublishingCiRecoveryReply": {
+      "type": "object",
+      "required": ["recoveries"],
+      "properties": {"recoveries": {"type": "array", "items": {"$ref": "#/$defs/PublishingRerunFailedReply"}}}
+    },
+    "PublishingRerunFailedReply": {
+      "type": "object",
+      "required": ["id", "projectId", "repo", "number", "headSha", "runId", "attempt", "state", "sourceExecutionId", "requestedAt", "updatedAt", "dispatchAcknowledged"],
+      "properties": {
+        "id": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repo": {"type": "string"},
+        "number": {"type": "integer"},
+        "headSha": {"type": "string"},
+        "runId": {"type": "integer"},
+        "attempt": {"type": "integer"},
+        "state": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "requestedAt": {"type": "string"},
+        "updatedAt": {"type": "string"},
+        "handoff": {"type": "string"},
+        "dispatchAcknowledged": {"type": "boolean"},
+        "evidence": {"$ref": "#/$defs/PublishingCIObservation"}
+      }
+    },
+    "PublishingCIState": {"type": "string", "enum": ["refused", "rate_limited", "dispatch_unknown", "dispatched", "observing", "passed", "handoff"]},
+    "PublishingCIObservation": {
+      "$comment": "Only classified provider facts, without response bodies, logs or credential-bearing URLs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reason"],
+      "properties": {
+        "state": {"$ref": "#/$defs/PublishingCIState"},
+        "reason": {"type": "string"},
+        "attempt": {"type": "integer"},
+        "runId": {"type": "integer"},
+        "retryAt": {"type": "integer"},
+        "originalJobs": {"type": "array", "items": {"$ref": "#/$defs/PublishingCIFailedJob"}},
+        "failedJobs": {"type": "array", "items": {"$ref": "#/$defs/PublishingCIFailedJob"}}
+      }
+    },
+    "PublishingCIFailedJob": {
+      "type": "object",
+      "required": ["id", "name", "headSha"],
+      "properties": {"id": {"type": "integer"}, "name": {"type": "string"}, "headSha": {"type": "string"}}
+    },
     "PublishingCIWindowSource": {"type": "string", "enum": ["log", "annotation"]},
     "PublishingCIAnnotationStatus": {"type": "string", "enum": ["complete", "partial", "unavailable"]},
     "PublishingCIScanStatus": {"type": "string", "enum": ["complete", "scan_limit", "interrupted", "missing", "empty", "denied", "rate_limited", "unavailable", "unsupported_redirect"]},
@@ -181,6 +278,8 @@
         "defaultBranch": {"type": "string"},
         "gitConnection": {"type": "string"},
         "forgeEnabled": {"type": "boolean"},
+        "ciRerunPolicy": {"$ref": "#/$defs/PublishingCIRerunPolicy"},
+        "ciRerunHosts": {"type": "array", "items": {"type": "string"}},
         "autoMergeGranted": {"type": "boolean"},
         "mergeMethod": {"type": "string"},
         "eligibleHosts": {"type": "array", "items": {"type": "string"}},

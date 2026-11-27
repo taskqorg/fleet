@@ -778,7 +778,12 @@ func mcpRun(args []string) error {
 			Call: func(name string, args json.RawMessage) (any, error) { return forgeCall(name, decRaw(args), ctx) }}
 	case "project-publishing":
 		srv = mcpserve.Stdio{Name: "fleet-project-publishing", Version: "1", Tools: func() any { return publishingTools },
-			Call: func(name string, args json.RawMessage) (any, error) { return publishingCall(name, decRaw(args), ctx) }}
+			Call: func(name string, args json.RawMessage) (any, error) {
+				if name == "rerun_failed" || name == "ci_recovery" {
+					return publishingCIProxy(name, args, typed[forgeContext](ctx))
+				}
+				return publishingCall(name, decRaw(args), ctx)
+			}}
 	}
 	return srv.Serve(os.Stdin, os.Stdout)
 }

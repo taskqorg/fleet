@@ -119,7 +119,7 @@ var settingsDefaults = func() map[string]json.RawMessage {
 	"worktree": {"envMode": "worktree", "baseRef": null, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": [], "sharedDirectories": []},
 	"scripts": {"setup": null, "teardown": null}, "setupStart": "wait",
 	"execution": {"tools": [], "forge": false, "profiles": [], "environment": null},
-	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "autoAccept": null, "syncCheckoutAfterMerge": true},
+	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "autoAccept": null, "syncCheckoutAfterMerge": true, "ciRerun": null},
 	"cleanup": {"keepWhen": ["uncommitted", "unpushed", "teardown-failed"]}, "identity": null, "subscriptions": [],
 	"errors": {"bugsink": [], "ignore": []},
 	"presets": [], "data": "internal", "risks": {}, "approvals": {}}`), &d); err != nil {
@@ -398,6 +398,11 @@ func projectSettings(p any) (rawObject, []string, error) {
 				if k == "execution" && x == "environment" && !isNull(y) {
 					if err := checkDevEnvironment(y, o["tools"]); err != nil {
 						return nil, nil, err
+					}
+				}
+				if k == "integration" && x == "ciRerun" && !isNull(y) {
+					if policy, err := decodeValid[contract.PublishingCIRerunPolicy](y, true); err != nil || !contract.ValidCIRerunPolicy(policy) {
+						return nil, nil, fail(400, "Invalid integration.ciRerun policy")
 					}
 				}
 				if k == "integration" && x == "autoAccept" && !isNull(y) && jsType(y) != "boolean" {

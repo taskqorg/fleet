@@ -23,6 +23,8 @@
     "/api/hosts/artifacts/get": {"request": "HostArtifactGetRequest", "reply": "ops-artifacts.schema.json#/$defs/ArtifactGetReply", "long": true, "decode": "checked"},
     "/api/hosts/artifacts/read": {"$comment": "answers the artifact's bytes", "request": "HostArtifactGetRequest", "long": true, "decode": "checked"},
     "/api/hosts/artifacts/list": {"$comment": "answers HostArtifactListReply with the full artifact rows", "request": "HostArtifactListRequest", "long": true, "decode": "checked"},
+    "/api/hosts/publishing/ci-claim": {"request": "PublishingCIClaim", "reply": "OkReply", "decode": "checked"},
+    "/api/hosts/publishing/ci-observation": {"request": "PublishingCIReport", "reply": "OkReply", "decode": "checked"},
     "/api/hosts/forge/review": {"request": "ForgeReviewRequest", "reply": "ForgeReviewReply", "long": true, "decode": "checked"},
     "/api/hosts/publishing/record": {"request": "PublishingHostRecord", "reply": "OkReply", "long": true, "decode": "checked"},
     "/api/hosts/stores": {"request": "StoresRequest", "reply": "StoresReply", "long": true, "decode": "checked"}
@@ -751,7 +753,7 @@
     "Capability": {
       "$comment": "A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.",
       "type": "string",
-      "enum": ["codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1", "attachments"]
+      "enum": ["codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1", "attachments", "publishing-ci-rerun-v1"]
     },
     "Receipt": {
       "$comment": "Execution status receipt; delegation and account envelopes have their own generated types.",
@@ -2788,6 +2790,40 @@
         }
       }
     },
+    "PublishingCICommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "runId", "attempt", "policy", "observeOnly", "dispatched"],
+      "properties": {
+        "id": {"type": "string"},
+        "runId": {"type": "integer", "minimum": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "policy": {"$ref": "ops-publishing.schema.json#/$defs/PublishingCIRerunPolicy"},
+        "observeOnly": {"type": "boolean"},
+        "dispatched": {"type": "boolean"}
+      }
+    },
+    "PublishingCIClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostId", "commandId", "executionId", "recoveryId", "originalJobs"],
+      "properties": {
+        "hostId": {"type": "string"}, "commandId": {"type": "string"},
+        "executionId": {"type": "string"}, "recoveryId": {"type": "string"},
+        "originalJobs": {"type": "array", "items": {"$ref": "ops-publishing.schema.json#/$defs/PublishingCIFailedJob"}}
+      }
+    },
+    "PublishingCIReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostId", "commandId", "executionId", "recoveryId", "claimed", "observation"],
+      "properties": {
+        "hostId": {"type": "string"}, "commandId": {"type": "string"},
+        "executionId": {"type": "string"}, "recoveryId": {"type": "string"},
+        "claimed": {"type": "boolean"},
+        "observation": {"$ref": "ops-publishing.schema.json#/$defs/PublishingCIObservation"}
+      }
+    },
     "PublishingCommandPayload": {
       "$comment": "Payload for kind=publishing host commands dispatched by publishing_* operations.",
       "type": "object",
@@ -2813,7 +2849,8 @@
         "title": {"type": "string"},
         "body": {"type": "string"},
         "artifactId": {"type": "string"},
-        "description": {"type": "string"}
+        "description": {"type": "string"},
+        "ciRecovery": {"$ref": "#/$defs/PublishingCICommand"}
       }
     },
     "PublishingHostRecord": {

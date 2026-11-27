@@ -204,3 +204,35 @@ func ForgeRepoGranted(repositoriesEnv string, ref RepoRef) bool {
 	}
 	return false
 }
+
+// ValidCIRerunPolicy checks the shape of the owner grant before either side can use it.
+func ValidCIRerunPolicy(p *PublishingCIRerunPolicy) bool {
+	if p == nil || p.RepoId == "" || len(p.RequiredJobs) == 0 || len(p.Profiles) == 0 ||
+		!ValidPublishingSHA(p.WorkflowBlobSha) {
+		return false
+	}
+	file, ok := strings.CutPrefix(p.Workflow, ".github/workflows/")
+	if !ok || file == "" || strings.Contains(file, "/") || !allBytes(file, isSlugChar) ||
+		(!strings.HasSuffix(file, ".yml") && !strings.HasSuffix(file, ".yaml")) {
+		return false
+	}
+	for _, values := range [][]string{p.Profiles, p.RequiredJobs} {
+		for _, v := range values {
+			if strings.TrimSpace(v) == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func ValidPublishingSHA(s string) bool {
+	return len(s) == 40 && allBytes(s, func(b byte) bool {
+		return b >= '0' && b <= '9' || b >= 'a' && b <= 'f'
+	})
+}
+
+// CIRerunProvider marks the provider for which the PR and attempt fences are implemented.
+func CIRerunProvider(ref RepoRef) bool {
+	return ref.Provider == "github" && ref.Host == "github.com"
+}
