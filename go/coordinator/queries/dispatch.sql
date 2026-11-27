@@ -159,10 +159,11 @@ FROM execution WHERE execution.id=$1 FOR UPDATE;
 WITH flagged AS (
  SELECT execution.id, execution.kind::text AS kind, execution.state::text AS state, execution.seq,
   (kind IN ('agent_run','host_job') AND (state IN ('preparing','running') OR (state='waiting' AND coalesce(data->>'waitReason','')<>'artifacts')) AND EXISTS (
-   SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='outbox.failed'
-    AND ev.payload->'data'->>'route'='/api/hosts/receipts'
-    AND (execution.state IN ('running','waiting') OR EXISTS (SELECT 1 FROM event pc WHERE NOT pc.delta AND pc.execution_id=execution.id AND pc.type='process.closed')
-     OR ev.updated_at < now() - make_interval(secs => @closed_grace_secs::float8)))) AS is_outbox_failed,
+   SELECT 1 FROM event ev JOIN command c ON c.id=ev.payload->'data'->>'commandId' AND c.execution_id=execution.id
+    WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='outbox.failed'
+     AND ev.payload->'data'->>'route'='/api/hosts/receipts'
+     AND ev.payload->'data'->>'receiptStatus' IN ('completed','failed','stopped')
+     AND c.kind NOT IN ('input','steer','stop'))) AS is_outbox_failed,
   (kind IN ('agent_run','host_job') AND (state IN ('preparing','running') OR (state='waiting' AND coalesce(data->>'waitReason','')<>'artifacts')) AND EXISTS (
    SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='process.closed'
     AND ev.updated_at < now() - make_interval(secs => @closed_grace_secs::float8))) AS is_process_closed,
@@ -224,10 +225,11 @@ SELECT EXISTS(SELECT 1 FROM execution WHERE execution.id = @id AND state IN ('pr
  OR (kind='host_job' AND state='running' AND observation='confirmed' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => @secs::float8)
   AND EXISTS (SELECT 1 FROM host_observation h WHERE h.id=execution.host_id AND h.last_seen_at > now() - interval '300 seconds'))
  OR (kind IN ('agent_run','host_job') AND (state IN ('preparing','running') OR (state='waiting' AND coalesce(data->>'waitReason','')<>'artifacts')) AND EXISTS (
-  SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='outbox.failed'
-   AND ev.payload->'data'->>'route'='/api/hosts/receipts'
-   AND (execution.state IN ('running','waiting') OR EXISTS (SELECT 1 FROM event pc WHERE NOT pc.delta AND pc.execution_id=execution.id AND pc.type='process.closed')
-    OR ev.updated_at < now() - make_interval(secs => @closed_grace_secs::float8))))
+  SELECT 1 FROM event ev JOIN command c ON c.id=ev.payload->'data'->>'commandId' AND c.execution_id=execution.id
+   WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='outbox.failed'
+    AND ev.payload->'data'->>'route'='/api/hosts/receipts'
+    AND ev.payload->'data'->>'receiptStatus' IN ('completed','failed','stopped')
+    AND c.kind NOT IN ('input','steer','stop')))
  OR (kind IN ('agent_run','host_job') AND (state IN ('preparing','running') OR (state='waiting' AND coalesce(data->>'waitReason','')<>'artifacts')) AND EXISTS (
   SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='process.closed'
    AND ev.updated_at < now() - make_interval(secs => @closed_grace_secs::float8)))

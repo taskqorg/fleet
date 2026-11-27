@@ -932,6 +932,13 @@ func (p *outboxPass) poisoned(r outboxRow, value M, a answer, reason string) err
 	if r.execution != "" && !own {
 		// ponytail: seq offset 1e12+rowid keeps clear of harness sequences.
 		data := contract.OutboxFailed{Route: r.route, Status: int64(a.status), Reason: reason}
+		if r.route == contract.RouteReceipts.Path {
+			receipt := typed[contract.Receipt](value)
+			if receipt.CommandId != "" && receipt.Status.Valid() {
+				data.CommandId = &receipt.CommandId
+				data.ReceiptStatus = &receipt.Status
+			}
+		}
 		ev := contract.HostEvent{Id: fmt.Sprintf("outbox-failed-%d", r.n), Seq: 1_000_000_000_000 + r.n, Type: string(contract.FleetEventTypeOutboxFailed),
 			Timestamp: now, Data: json.RawMessage(enc(data))}
 		if err := queueTo(tx, contract.RouteEvents, contract.HostEvents{HostId: p.host, ExecutionId: r.execution, Events: []contract.HostEvent{ev}}); err != nil {

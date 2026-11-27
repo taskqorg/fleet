@@ -734,7 +734,7 @@ func runWorker(args []string) error {
 			_ = lw.emit(workerRecord{Kind: "steer_result", CommandId: str0(steer.CommandID), Ok: steer.Ok != nil && *steer.Ok})
 		}
 		mu.Lock()
-		if kind == string(contract.FleetEventTypeProtocolFailed) && !l.stopped {
+		if kind == string(contract.FleetEventTypeProtocolFailed) && !l.stopped && (!protocol || !jIsTrue(event, "resumeRejected")) {
 			l.cleanupUnknown, l.stopped = true, true
 		}
 		if projection["completed"] == true {

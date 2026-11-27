@@ -56,11 +56,14 @@ func writeFrame(w io.Writer, log *os.File, v M) (M, error) {
 }
 
 // protocolFailed is the stdout line of a protocol.failed event (contract.ProtocolFailed).
-func protocolFailed(msg, reason string) string {
+func protocolFailed(msg, reason string, resumeRejected bool) string {
 	t := string(contract.FleetEventTypeProtocolFailed)
 	v := contract.ProtocolFailed{Type: &t, Error: msg}
 	if reason != "" {
 		v.Reason = &reason
+	}
+	if resumeRejected {
+		v.ResumeRejected = &resumeRejected
 	}
 	return enc(v)
 }
@@ -104,15 +107,23 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 			derr = errors.New("frame is not an object")
 		}
 		if derr != nil {
+			var rejected codexResumeRejected
+			resumeRejected := errors.As(derr, &rejected)
+			msg := "native protocol outcome unconfirmed; no replay"
+			if resumeRejected {
+				msg = "native resume failed before the turn started"
+				w.stdin.Close()
+				w.stdin = nil
+			}
 			w.mu.Unlock()
-			out <- protocolFailed("native protocol outcome unconfirmed; no replay", derr.Error())
+			out <- protocolFailed(msg, derr.Error(), resumeRejected)
 			return
 		}
 		for _, req := range requests {
 			meta, err := writeFrame(w.stdin, w.log, req)
 			if err != nil {
 				w.mu.Unlock()
-				out <- protocolFailed("outbound delivery unknown; no replay", "")
+				out <- protocolFailed("outbound delivery unknown; no replay", "", false)
 				return
 			}
 			out <- enc(meta)
@@ -131,7 +142,7 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 		}
 	}
 	if acpProtocol && !acpComplete {
-		out <- protocolFailed("ACP EOF before terminal outcome; no replay", "")
+		out <- protocolFailed("ACP EOF before terminal outcome; no replay", "", false)
 	}
 }
 
@@ -825,7 +836,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 					}
 				}
 			}
-			if kind == string(contract.FleetEventTypeProtocolFailed) && !l.stopped {
+			if kind == string(contract.FleetEventTypeProtocolFailed) && !l.stopped && (l.wire == nil || !jIsTrue(event, "resumeRejected")) {
 				l.cleanupUnknown, l.stopped = true, true
 			}
 			if projection["completed"] == true {

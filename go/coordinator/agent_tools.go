@@ -243,7 +243,7 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 		return reject("already_reported", "A different worker_done was already accepted for this execution.")
 	}
 	if n := deref(b.NativeSessionId); n != "" {
-		known, err := agentKnownNative(q, &e)
+		known, err := agentKnownNative(q, &e, nil)
 		if err != nil {
 			return none, err
 		}

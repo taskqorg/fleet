@@ -559,6 +559,7 @@ type dispatchSpec struct {
 	Host             *string         `json:"host,omitempty"`
 	Last             *string         `json:"last,omitempty"`
 	LastAccount      *string         `json:"lastAccount,omitempty"` // the subscription of the latest started run (park: its account comes first)
+	NativeStale      bool            `json:"nativeStale,omitempty"`
 	Account          *string         `json:"account,omitempty"`
 	Access           *string         `json:"access,omitempty"`
 	Branch           *bool           `json:"branch,omitempty"`
@@ -1795,6 +1796,9 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		return none, err
 	}
 	p.NativeSessionId = nativeFor(liveSession.NativeSessionID, d.Last, host)
+	if d.NativeStale {
+		p.NativeSessionId = nil
+	}
 	moved := deref(liveSession.NativeSessionID) != "" && deref(p.NativeSessionId) == ""
 	if e.BotContext != nil {
 		p.Instructions = ptr(formatBotInstructions(deref(p.Instructions), e.BotContext))

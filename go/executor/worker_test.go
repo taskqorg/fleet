@@ -25,6 +25,56 @@ func TestWorkerFinalizesCompletedTurnWithLiveDescendant(t *testing.T) {
 	})
 }
 
+// T-FLT-141: a rejected native resume before turn/start must produce a
+// specific protocol event and a failed receipt once the worker has cleaned up.
+func TestWorkerReportsRejectedCodexResume(t *testing.T) {
+	e, root := scriptExecutor(t)
+	defer e.db.Close()
+	const execution, cid, sid = "rejected-resume", "resume-cmd", "session"
+	dir := e.commandDir(sid, "")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	harness := filepath.Join(root, "fake-codex")
+	const fixture = `#!/bin/sh
+read -r line
+printf '%s\n' '{"id":1,"result":{}}'
+read -r line
+read -r line
+case "$line" in
+  *'"method":"thread/resume"'*) ;;
+  *) exit 1 ;;
+esac
+printf '%s\n' '{"id":2,"error":{"code":-32600,"message":"no rollout found"}}'
+if read -r line; then exit 1; fi
+`
+	if err := os.WriteFile(harness, []byte(fixture), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := typedCommand(M{"id": cid, "executionId": execution, "sessionId": sid, "kind": "start", "payload": M{"harness": "codex"}})
+	if err := e.launch(execution, cid, sid); err != nil {
+		t.Fatal(err)
+	}
+	l, err := e.spawnWorker(command, workerSpec{Kind: "harness", Execution: execution, CommandId: cid, Session: sid,
+		DataDir: root, Dir: dir, Work: dir, Root: dir, Harness: "codex", Native: "recorded-thread",
+		CmdPath: harness, CmdArgs: []string{harness}, CmdDir: dir, Profile: M{"readOnly": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.live[execution] = l
+	t.Cleanup(func() { _ = workerStop(l.worker.sock, "") })
+	settle(t, e, execution)
+	if got := lastReceipt(e, cid); got != "failed" {
+		t.Fatalf("receipt = %q, want failed", got)
+	}
+	var reason string
+	err = e.db.QueryRow(`SELECT json_extract(event.value,'$.data.reason') FROM outbox, json_each(body,'$.events') AS event
+	 WHERE route='/api/hosts/events' AND json_extract(event.value,'$.type')='protocol.failed'`).Scan(&reason)
+	if err != nil || reason != "thread/resume rejected by Codex (RPC -32600)" {
+		t.Fatalf("protocol failure = %q, err = %v", reason, err)
+	}
+}
+
 func testCompletedTurnShutdown(t *testing.T, afterEOF, wantReceipt string) {
 	t.Helper()
 	e, root := scriptExecutor(t)

@@ -49,16 +49,33 @@ func refreshProfile(q *Request, s *agentSession) error {
 	return nil
 }
 
-func agentKnownNative(q *Request, e *agentExecution) (string, error) {
+// The start command fixes the expected identity for a resume. A fresh start or
+// fork binds its own identity when the first native receipt arrives.
+func agentKnownNative(q *Request, e *agentExecution, start *agentCommand) (string, error) {
+	if e.NativeSessionID != "" {
+		return e.NativeSessionID, nil
+	}
+	if start == nil {
+		starts, err := executionCommands(q, e.ID, ptr("start"), nil)
+		if err != nil || len(starts) == 0 {
+			return "", err
+		}
+		start = &starts[0]
+	}
+	if expected := deref(agentView[contract.StartPayload](start.Payload).NativeSessionId); expected != "" {
+		return expected, nil
+	}
+	// A fresh run already in progress during an upgrade may have recorded
+	// its identity only in the session.
 	s, err := sessionByID(q, e.SessionID)
 	if err != nil {
 		return "", err
 	}
 	key := baseContinuation(firstString(e.ContinuationKey, s.continuationKey()))
-	if key == s.continuationKey() {
-		return s.NativeSessionID, nil
+	if captured := s.NativeSessions[key]; captured.ExecutionID == e.ID {
+		return captured.NativeSessionID, nil
 	}
-	return s.NativeSessions[key].NativeSessionID, nil
+	return "", nil
 }
 
 // baseContinuation: a continuation key without the work-item thread suffix ("<key>#<thread>") a turn started before

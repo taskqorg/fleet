@@ -162,6 +162,8 @@ A conversation is one line of work: one subject, one clean agent context and one
 
 An execution may start or continue a session according to harness capabilities. Task, execution and session lifecycles remain distinct. [Continuation and handoff](docs/execution-continuity.md#continuation-and-handoff) preserve work when accounts, agents or environments change.
 
+When a continuation moves hosts, start a fresh native session with the retained handoff. Validate the native identity against the execution's start command and receipts. A rejected nonterminal receipt leaves execution outcome open. If the harness rejects native resume before a turn starts and the executor confirms cleanup, report the resume failure as a failed execution.
+
 Conversations exposes a [manual fresh-session boundary](docs/execution-continuity.md#fresh-session-example) with a retained routing decision, handoff packet and execution lineage.
 
 Execution states are preparing, running, waiting, succeeded, failed and cancelled. Available controls depend on the harness or tool.
