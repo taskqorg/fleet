@@ -31,6 +31,28 @@ func scriptExitUnconfirmed(ex *workerExit) bool {
 	return ex.Status == "unknown" || ex.CleanupUnknown || ex.ProcessesUnresolved
 }
 
+func (e *executor) holdScriptStaging(commandID string, held bool) error {
+	_, err := e.ex.Exec("UPDATE commands SET script_staging_held=? WHERE id=?", held, commandID)
+	return err
+}
+
+func (e *executor) finishUnconfirmedScript(c contract.Command) error {
+	id, err := idOf(c, "id")
+	if err != nil {
+		return err
+	}
+	return e.inTx(func() error {
+		if err := e.holdScriptStaging(id, true); err != nil {
+			return err
+		}
+		cleanup := contract.ScriptPersonalCleanup{Unconfirmed: new(true)}
+		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypeScriptPersonalCleanup, cleanup); err != nil {
+			return err
+		}
+		return e.finish(c, "unknown", "")
+	})
+}
+
 // Snapshot the outputs before retiring staging. Journal the close event,
 // cleanup evidence and terminal receipt together. The output summary survives
 // a restart between removing staging and writing those notices.
@@ -66,7 +88,8 @@ func (e *executor) finishPersonalScriptRun(execution string, l *live, ex *worker
 		}
 		if l.trial != nil {
 			// A replay may find the trial already removed.
-			trial = &contract.TrialRemoved{Removed: !exists(l.trial[1]) || removeTrial(l.trial[0], l.trial[1])}
+			_, err := os.Lstat(l.trial[1])
+			trial = &contract.TrialRemoved{Removed: os.IsNotExist(err) || removeTrial(l.trial[0], l.trial[1])}
 		}
 	}
 	if result.CollectionFailed {
@@ -87,6 +110,9 @@ func (e *executor) finishPersonalScriptRun(execution string, l *live, ex *worker
 		}
 		result.Reported = true
 		if err := saveScriptOutputs(e.ex, execution, result); err != nil {
+			return err
+		}
+		if err := e.holdScriptStaging(l.commandID(), scriptExitUnconfirmed(ex) || result.CollectionFailed); err != nil {
 			return err
 		}
 		e.declared = result.Names

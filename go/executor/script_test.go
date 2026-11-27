@@ -85,7 +85,7 @@ func TestLaunchWindowKeepsSessionUntilStop(t *testing.T) {
 // sees the directory busy only while the job is open. Risk: hosts refuse session-less jobs once the coordinator stops
 // creating a session per job.
 func TestHostJobWithoutSession(t *testing.T) {
-	for _, class := range []string{"", "internal", "public"} {
+	for _, class := range []string{"legacy", "internal", "public"} {
 		t.Run(class, func(t *testing.T) {
 			e, _ := scriptExecutor(t)
 			if err := e.run(M{"id": "hj-ready", "executionId": "hj-ready-x", "kind": "readiness", "payload": M{"project": M{}}}); err != nil {
@@ -94,20 +94,29 @@ func TestHostJobWithoutSession(t *testing.T) {
 			if r := lastReceipt(e, "hj-ready"); r != "completed" && r != "failed" {
 				t.Fatal("readiness receipt", r)
 			}
-			script := `printf %s "$FLEET_SESSION_ID" > "$FLEET_OUTPUT_DIR/sid"`
+			script := `while [ ! -f "$FLEET_INPUT_DIR/proceed" ]; do sleep 0.02; done
+printf %s "$FLEET_SESSION_ID" > "$FLEET_OUTPUT_DIR/sid"`
 			payload := M{"command": script}
-			if class != "" {
+			if class != "legacy" {
 				payload["project"] = M{"data": class}
 			}
 			if err := e.run(M{"id": "hj", "executionId": "hj-x", "kind": "script", "payload": payload}); err != nil {
 				t.Fatal(err)
 			}
+			l := e.live["hj-x"]
+			if l == nil {
+				t.Fatalf("script never started: %s", lastReceipt(e, "hj"))
+			}
+			t.Cleanup(func() { _ = workerStop(l.worker.sock, "") })
 			var session string
 			if err := e.db.QueryRow("SELECT session FROM launches WHERE execution='hj-x'").Scan(&session); err != nil || session != "hj-x" {
 				t.Fatal("launch session", session, err)
 			}
 			if !e.sessionBusy("hj-x") {
 				t.Fatal("open host job not busy")
+			}
+			if err := os.WriteFile(filepath.Join(e.sessions, "hj-x", "input", "proceed"), nil, 0o600); err != nil {
+				t.Fatal(err)
 			}
 			settle(t, e, "hj-x")
 			if r := lastReceipt(e, "hj"); r != "completed" {
@@ -277,6 +286,10 @@ func TestPersonalScriptCleansPreparationAndCollectionFailures(t *testing.T) {
 	}
 	settle(t, e, "collect")
 	collectDir := e.sessionDir("collect")
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	sweepSessions([]string{e.sessions}, e.sessionBusy, 24*time.Hour, time.Now().Add(48*time.Hour))
 	if _, err := os.Lstat(filepath.Join(collectDir, "output")); err != nil || !exists(filepath.Join(collectDir, "input")) {
 		t.Fatalf("staging was removed after failed collection: %v", err)
 	}
@@ -304,7 +317,7 @@ func TestPersonalScriptCompletionResumesAcrossJournalFailures(t *testing.T) {
 	}
 	// Model an unconfirmed start acknowledgement followed by a confirmed
 	// worker exit. The late exit must still collect and retire staging.
-	if err := e.finish(e.live[execution].command, "unknown", ""); err != nil {
+	if err := e.finishUnconfirmedScript(e.live[execution].command); err != nil {
 		t.Fatal(err)
 	}
 	e.live = map[string]*live{}
@@ -359,11 +372,14 @@ func TestPersonalScriptCompletionResumesAcrossJournalFailures(t *testing.T) {
 		EXISTS (SELECT 1 FROM json_each(body,'$.artifacts') WHERE value='result.txt')`).Scan(&receipts); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE json_extract(body,'$.events[0].type')='script.personal-cleanup'`).Scan(&cleanups); err != nil {
+	if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE json_extract(body,'$.events[0].type')='script.personal-cleanup' AND json_extract(body,'$.events[0].data.removed')=1`).Scan(&cleanups); err != nil {
 		t.Fatal(err)
 	}
 	if uploads != 1 || receipts != 1 || cleanups != 1 {
 		t.Fatalf("replayed completion: uploads=%d receipts=%d cleanups=%d", uploads, receipts, cleanups)
+	}
+	if e.sessionBusy(execution) {
+		t.Fatal("confirmed exit did not release the uncertain staging hold")
 	}
 }
 
@@ -436,6 +452,45 @@ func TestPersonalScriptReconcilesInterruptedPreparation(t *testing.T) {
 		t.Fatalf("interrupted preparation receipt = %q", got)
 	}
 	assertScriptStagingGone(t, dir)
+}
+
+// A dead worker without an exit cannot prove the script's result. The
+// staging hold must still let startup remove resolved process-owned files.
+func TestPersonalScriptResolvedProcessCleanupKeepsStaging(t *testing.T) {
+	e, root := scriptExecutor(t)
+	const execution, cid = "resolved-process", "resolved-cmd"
+	body := enc(M{"id": cid, "executionId": execution, "kind": "script", "payload": M{"command": "true", "project": M{"data": "personal"}}})
+	if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.launch(execution, cid, execution); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.own(execution, &live{owned: map[int]string{1<<22 + 7: "fixture-dead"}}); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(e.sessionDir(execution), "input")
+	runTmp := runTempDir(root, execution)
+	runFiles := filepath.Join(root, "runs")
+	for _, dir := range []string{staging, runTmp, runFiles} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runFile := filepath.Join(runFiles, execution+".env")
+	if err := os.WriteFile(runFile, []byte("invented fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastReceipt(e, cid); got != "unknown" || count(e.db, "launches") != 0 || exists(runTmp) || exists(runFile) {
+		t.Fatalf("process cleanup: receipt=%q launches=%d tmp=%t run-file=%t", got, count(e.db, "launches"), exists(runTmp), exists(runFile))
+	}
+	sweepSessions([]string{e.sessions}, e.sessionBusy, 24*time.Hour, time.Now().Add(48*time.Hour))
+	if !exists(staging) {
+		t.Fatal("resolved process cleanup lost unconfirmed staging")
+	}
 }
 
 // Requirement: automatic output collection uploads only regular single-link files inside the output folder, the same

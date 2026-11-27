@@ -34,3 +34,5 @@ ALTER TABLE outbox ADD COLUMN tool_queued_behind INTEGER;
 -- version 6
 -- Keep the queued output names and collection outcome across a restart between staging removal and the terminal receipt.
 ALTER TABLE launches ADD COLUMN script_outputs TEXT;
+-- The sweep must keep personal staging whose outputs were not fully queued or whose exit is unconfirmed.
+ALTER TABLE commands ADD COLUMN script_staging_held INTEGER NOT NULL DEFAULT 0;

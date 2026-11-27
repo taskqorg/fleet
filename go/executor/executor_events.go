@@ -576,9 +576,7 @@ func (e *executor) collect(d *os.File, rel, execution string, declared *[]string
 			_, err = io.Copy(out, f)
 			if scriptOutputs != nil {
 				if err == nil {
-					if syncErr := syncScriptOutput(out); syncErr != nil {
-						err = scriptQueueError{syncErr}
-					}
+					err = syncScriptOutput(out)
 				}
 				err = errors.Join(err, out.Close())
 				if err != nil {

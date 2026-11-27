@@ -952,7 +952,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	l, err := e.spawnWorker(c, spec, nil)
 	if err != nil {
 		if personal && errors.Is(err, errWorkerStartUnknown) {
-			return e.finish(c, "unknown", "")
+			return e.finishUnconfirmedScript(c)
 		}
 		removeWorkerDir(e.root, execution)
 		dropTrial()

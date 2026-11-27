@@ -614,12 +614,16 @@ func (e *executor) reconcileProcesses() error {
 				return err
 			}
 		}
-		if !resolved || x.personalScript {
-			// A personal job without a confirmed worker exit may still
-			// need its staging. Keep the sweep fence even if the recorded
-			// processes are already gone.
+		if !resolved {
 			unresolved[x.execution] = true
 			continue
+		}
+		if x.personalScript {
+			// Preserve staging when there is no confirmed exit. The
+			// separate command flag lets ordinary process cleanup proceed.
+			if err := e.holdScriptStaging(x.command, true); err != nil {
+				return err
+			}
 		}
 		if err := e.release(x.execution); err != nil {
 			return err
@@ -681,7 +685,11 @@ func (e *executor) reconcile() error {
 		}
 		if personalScriptJob(cmd) {
 			var launched bool
-			if err := e.db.QueryRow("SELECT EXISTS(SELECT 1 FROM launches WHERE execution=?)", execution).Scan(&launched); err != nil {
+			cid, err := idOf(cmd, "id")
+			if err != nil {
+				return err
+			}
+			if err := e.db.QueryRow("SELECT script_staging_held OR EXISTS(SELECT 1 FROM launches WHERE execution=?) FROM commands WHERE id=?", execution, cid).Scan(&launched); err != nil {
 				return err
 			}
 			if !launched {
@@ -704,7 +712,12 @@ func (e *executor) reconcile() error {
 				continue
 			}
 		}
-		if err := e.finish(cmd, "unknown", ""); err != nil {
+		if personalScriptJob(cmd) {
+			err = e.finishUnconfirmedScript(cmd)
+		} else {
+			err = e.finish(cmd, "unknown", "")
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -748,8 +761,14 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 				removeTrial(l.trial[0], l.trial[1])
 			}
 			l.cleanupUnknown = true
-			if err := e.finish(l.command, "unknown", l.native); err != nil {
-				return false, err
+			var finishErr error
+			if personalScriptJob(l.command) {
+				finishErr = e.finishUnconfirmedScript(l.command)
+			} else {
+				finishErr = e.finish(l.command, "unknown", l.native)
+			}
+			if finishErr != nil {
+				return false, finishErr
 			}
 			rs, rerr := e.db.Query("SELECT body FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop' AND terminal=0", execution)
 			if rerr == nil {
