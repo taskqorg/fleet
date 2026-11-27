@@ -714,8 +714,33 @@ func init() {
 		}
 		v := contract.ProjectQuestion{Id: newID(), ProjectId: r.ProjectId, RequestId: r.RequestId, Text: r.Text, State: "waiting", CreatedAt: nowMs(), Actor: actor(q, "operator")}
 		at := time.UnixMilli(v.CreatedAt).UTC()
-		_, err = askQuestionAs(q, questionAsk{ID: v.Id, Kind: "operator_decision", Text: r.Text, ProjectID: r.ProjectId, AskedBy: &v.Actor, RequestID: &v.RequestId, AskedAt: &at})
-		return v, err
+		ask := questionAsk{ID: v.Id, Kind: "operator_decision", Text: r.Text, ProjectID: r.ProjectId, AskedBy: &v.Actor, RequestID: &v.RequestId, AskedAt: &at}
+		var parentBotID string
+		if eid, ok := strings.CutPrefix(q.agent, "execution:"); ok {
+			ex, err := getExecution(q, eid)
+			if err != nil {
+				return contract.QuestionAskReply{}, err
+			}
+			s, err := sessionByID(q, ex.SessionID)
+			if err != nil {
+				return contract.QuestionAskReply{}, err
+			}
+			ask.TaskID, ask.SessionID, ask.ExecutionID, ask.AskedBy = s.TaskID, &s.ID, &ex.ID, &q.agent
+			if ask.TaskID == "" && s.CreatedBySessionID != "" {
+				if ps, err := sessionMaybe(q, s.CreatedBySessionID); err == nil && ps != nil {
+					parentBotID = ps.BotID
+				}
+			}
+		}
+		if _, err = askQuestionAs(q, ask); err != nil {
+			return v, err
+		}
+		if parentBotID != "" {
+			if err := q.db().AddressQuestion(q.ctx(), db.AddressQuestionParams{Holder: "bot:" + parentBotID, ID: ask.ID}); err != nil {
+				return v, err
+			}
+		}
+		return v, nil
 	})
 	op("question_answer", func(q *Request, r *contract.QuestionAnswerRequest) (contract.QuestionAnswerReply, error) {
 		if r.Answer == "" || len([]rune(r.Answer)) > 4000 {

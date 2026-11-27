@@ -86,9 +86,12 @@ test('a link to a Fleet page of one entity is its reference, not a raw URL (OR-3
   assert.deepEqual(ids('https://storage.example.com/objects/02c02b71-b565-4d2e-8053-a0e52f19b9dc/file.tar'), []);
 });
 
-test('a UUID in agent text is a reference (OR-38); a bare id registers by id alone', async () => {
-  const { UUID_REF } = await import('../../packages/ui/src/markdown.ts');
+test('a UUID or hash in agent text is a reference or click-to-copy tooltip (OR-38); a bare id registers by id alone', async () => {
+  const { UUID_REF, HASH_REF } = await import('../../packages/ui/src/markdown.ts');
   assert.deepEqual([...'run 8be57cc0-7076-4d1b-b0f6-6976a21496fa failed; sha abcdef'.matchAll(UUID_REF)].map(m => m[0]), ['8be57cc0-7076-4d1b-b0f6-6976a21496fa']);
+  const sha = 'e5ccd13e721556ebb5a37d92e84fe292eab09488';
+  const digest = '425aa8fddb194ad19cbaf27b5e8ab6593619e38d939ca063017ea02c94b76bc6';
+  assert.deepEqual([...`head ${sha} digest ${digest} url https://github.com/org/repo/commit/${sha}`.matchAll(HASH_REF)].map(m => m[0]), [sha, digest]);
   calls.length = 0;
   const h = source.live!({ id: 'bare-1' });
   await tick(5);

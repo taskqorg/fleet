@@ -4,7 +4,7 @@ import { createContext, createEffect, createMemo, createSignal, For, onSettled, 
 import type { JSX } from '@solidjs/web';
 import { type IconName, type Harness, type EntityKind, entityKinds, codeKind, ENTITY_CODE, states, actions, harnesses } from '../registry.ts';
 import { bytes, count, duration } from '../format.ts';
-import { APP_URL_REF, PR_REF, UUID_REF } from '../markdown.ts';
+import { APP_URL_REF, HASH_REF, PR_REF, UUID_REF } from '../markdown.ts';
 import type { EntityCardReply } from '../../../../contracts/generated/ops.ts';
 import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, HarnessMark, Ago, CopyButton, popoverAttr, type PopoverElement } from './primitives.tsx';
@@ -241,6 +241,7 @@ export function linkCodes(text: string, _key: number, literal = (value: string, 
     ...[...(uuidOnly ? [] : text.matchAll(ENTITY_CODE))].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode code={m[0]} cls="inline" /> })),
     ...[...text.matchAll(APP_URL_REF)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => m[1] ? <EntityCode id={m[1].toLowerCase()} cls="inline" /> : <EntityCode code={m[2]} cls="inline" /> })),
     ...[...text.matchAll(UUID_REF)].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode id={m[0].toLowerCase()} cls="inline" /> })),
+    ...[...(uuidOnly ? [] : text.matchAll(HASH_REF))].map(m => ({ at: m.index!, end: m.index! + m[0].length, el: () => <CopyButton label={m[0]} value={m[0]} iconOnly /> })),
     ...[...(uuidOnly ? [] : text.matchAll(PR_REF))].map(m => {
       const owner = m[1] ?? m[4], repo = m[2] ?? m[5], n = m[3] ?? m[6];
       return { at: m.index!, end: m.index! + m[0].length, el: () => <EntityCode kind="pull_request" id={`${owner}/${repo}#${n}`} code={'#' + n} cls="inline" /> };
