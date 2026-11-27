@@ -61,3 +61,7 @@ Playwright: set the headers only on a context for this host, e.g. `browser.newCo
 Walk and check scripts never print a response, cookie or header dump: a Playwright error can quote request headers and the `CF_Authorization` cookie. Open the site through `scripts/prod-browser.ts` (`prodContext`, `guardOutput`) and print errors only through its `redact`, which keeps the first line and hides Cookie, Authorization and `CF-Access-*` values.
 
 Orca embedded browser: run `deploy/infrastructure/agent-browser-open.sh`; use its returned `browserPageId` with `--page` on subsequent commands. It opens the production origin directly and checks the `site-agents` identity without printing credentials. Close the tab when finished.
+
+## External services and forges (Fleet connections)
+
+Always use Fleet's granted project connections (`gradus-gitlab`, `github`, `youtrack`, etc.) and `project-publishing` for forge, merge request, and CI pipeline operations instead of falling back to personal host CLI logins (`glab`, `gh`) or asking the owner to run `glab auth login` / `gh auth login`. Host CLI state is not shared across environments and expires independently (`invalid_grant`). When a needed connection tool or project grant is missing, report that Fleet connection gap directly or use `connections_*` within policy instead of requesting host CLI re-authentication.

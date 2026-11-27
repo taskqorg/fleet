@@ -60,8 +60,13 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			if t.File != nil && *t.File == contract.GatewayFileModeUpload && t.Method != "" && strings.ToUpper(t.Method) != "POST" {
 				return nil, fmt.Errorf("upload tool %s must POST", toolName)
 			}
-			if t.Method != "GET" {
+			switch strings.ToUpper(t.Method) {
+			case "":
 				t.Method = "POST"
+			case "GET", "POST", "PUT", "PATCH", "DELETE":
+				t.Method = strings.ToUpper(t.Method)
+			default:
+				return nil, fmt.Errorf("tool %s method %q is unsupported", toolName, t.Method)
 			}
 			if !strings.HasPrefix(t.Path, "/") {
 				return nil, errors.New("tool path must start with /")

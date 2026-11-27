@@ -1410,8 +1410,28 @@ const providersJSON = `
  },
  "gitlab": {
   "baseUrl": "https://gitlab.ufobe.com",
-  "instructions": "GitLab of gitlab.ufobe.com as the connection's account (fleet-gradus: Developer on the group gradus): merge requests, pipelines, job logs and retries. Find a project by name or group path with projects_search; its path_with_namespace is the project_id of the other tools and ssh_url_to_repo is the remote for a Fleet project.",
+  "instructions": "GitLab of gitlab.ufobe.com as the connection's account (fleet-gradus: Developer on the group gradus): merge requests (mrs_open, mrs_merged, mr_merge), pipelines (pipelines_recent, pipeline_jobs, job_log, pipeline_run, pipeline_retry, job_retry) and releases. Find a project by name or group path with projects_search; its URL-encoded path_with_namespace (or numeric project id) is the project_id of the other tools and ssh_url_to_repo is the remote for a Fleet project.",
   "tools": {
+   "mr_merge": {
+    "method": "PUT",
+    "path": "/api/v4/projects/{project_id}/merge_requests/{mr_iid}/merge",
+    "unit": "requests",
+    "idempotent": false,
+    "headers": {"Accept": "application/json"},
+    "description": "Merge an open GitLab merge request (project_id is URL-encoded path_with_namespace or numeric project id).",
+    "inputSchema": {"type": "object", "required": ["project_id", "mr_iid"], "properties": {"project_id": {"type": "string"}, "mr_iid": {"type": "string"}, "should_remove_source_branch": {"type": "boolean"}, "merge_when_pipeline_succeeds": {"type": "boolean"}, "squash": {"type": "boolean"}, "sha": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$", "mr_iid": "^[0-9]{1,12}$"}
+   },
+   "pipeline_run": {
+    "method": "POST",
+    "path": "/api/v4/projects/{project_id}/pipeline",
+    "unit": "requests",
+    "idempotent": false,
+    "headers": {"Accept": "application/json"},
+    "description": "Run a new GitLab CI pipeline on a ref (branch or tag), with optional variables [{key, value}].",
+    "inputSchema": {"type": "object", "required": ["project_id", "ref"], "properties": {"project_id": {"type": "string"}, "ref": {"type": "string"}, "variables": {"type": "array", "items": {"type": "object", "required": ["key", "value"], "properties": {"key": {"type": "string"}, "value": {"type": "string"}}}}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
+   },
    "projects_search": {
     "method": "GET",
     "path": "/api/v4/projects?search={search}&search_namespaces=true&simple=true&membership=true&order_by=last_activity_at&per_page=50",

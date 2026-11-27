@@ -8,6 +8,7 @@ package main
 import (
 	"errors"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -138,28 +139,43 @@ func runConnections(profile []string) []string {
 	return append(append([]string{}, profile...), accessGrantAll)
 }
 
-// accessExpand replaces project-access in a profile's connection list by the run project's access connections.
+// accessExpand replaces project-access with the run project's access connections, and expands the provider alias
+// "gitlab" to every active GitLab connection allowed for the run when any match.
 func accessExpand(q *Request, run mintRun, requested []string) ([]string, error) {
-	i := -1
-	for n, r := range requested {
-		if r == accessGrantAll {
-			i = n
-		}
-	}
-	if i < 0 {
+	hasAccess := slices.Contains(requested, accessGrantAll)
+	hasGitlab := slices.Contains(requested, "gitlab")
+	if !hasAccess && !hasGitlab {
 		return requested, nil
-	}
-	out := append(append([]string{}, requested[:i]...), requested[i+1:]...)
-	if run.ProjectID == nil || *run.ProjectID == "" {
-		return out, nil
 	}
 	all, err := apiConnectionAll(q)
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range all {
-		if isAccessProvider(c.Provider) && connAllowedFor(c, run) {
-			out = append(out, c.Name)
+	var accessNames, gitlabNames []string
+	if hasAccess && run.ProjectID != nil && *run.ProjectID != "" {
+		for _, c := range all {
+			if isAccessProvider(c.Provider) && connAllowedFor(c, run) {
+				accessNames = append(accessNames, c.Name)
+			}
+		}
+	}
+	if hasGitlab {
+		for _, c := range all {
+			if c.Provider == "gitlab" && c.Intake == "all" && (connAllowedFor(c, run) || accessTokenAllowed(q, c, run)) && coordinatorOnlyAllowed(c.Name, run) {
+				gitlabNames = append(gitlabNames, c.Name)
+			}
+		}
+		sort.Strings(gitlabNames)
+	}
+	out := make([]string, 0, len(requested)+len(accessNames)+len(gitlabNames))
+	for _, r := range requested {
+		switch {
+		case r == accessGrantAll:
+			out = append(out, accessNames...)
+		case r == "gitlab" && len(gitlabNames) > 0:
+			out = append(out, gitlabNames...)
+		default:
+			out = append(out, r)
 		}
 	}
 	return out, nil

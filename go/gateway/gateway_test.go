@@ -1542,3 +1542,108 @@ func TestKeyPolicyDefaultNilPassesThrough(t *testing.T) {
 	expect(t, len(p.calls()), 2, "no failover on 432")
 	expect(t, p.calls()[1].key, "k-def-1", "stayed on key 1")
 }
+
+// Requirement: GitLab catalogue tools mr_merge (PUT) and pipeline_run (POST) substitute path parameters and
+// forward remaining JSON body parameters through the gateway (FLT-70).
+func TestGitLabMutationToolsCatalogue(t *testing.T) {
+	source, err := os.ReadFile("../coordinator/providers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, literal, _ := strings.Cut(string(source), "const providersJSON = `")
+	literal, _, _ = strings.Cut(literal, "`")
+	var catalogue map[string]struct {
+		Tools map[string]tool `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(literal), &catalogue); err != nil {
+		t.Fatal(err)
+	}
+	gl := catalogue["gitlab"].Tools
+	mrMerge, ok := gl["mr_merge"]
+	if !ok {
+		t.Fatal("gitlab catalogue missing mr_merge")
+	}
+	pipelineRun, ok := gl["pipeline_run"]
+	if !ok {
+		t.Fatal("gitlab catalogue missing pipeline_run")
+	}
+	expect(t, mrMerge.Method, "PUT", "mr_merge method")
+	expect(t, pipelineRun.Method, "POST", "pipeline_run method")
+
+	var gotMethod, gotPath, gotBody string
+	prov := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.RequestURI()
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer prov.Close()
+
+	f := newFixture(t, prov.URL, "k-1")
+	key := "glpat-test-key"
+	os.MkdirAll(filepath.Join(f.dir, "keys", "gradus-gitlab"), 0o700)
+	if err := os.WriteFile(filepath.Join(f.dir, "keys", "gradus-gitlab", fp(key)), []byte(key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.write(map[string]any{
+		"schema":       2,
+		"generated_ms": 2,
+		"providers": map[string]any{
+			"gitlab": map[string]any{
+				"baseUrl": prov.URL,
+				"tools":   map[string]any{"mr_merge": mrMerge, "pipeline_run": pipelineRun},
+			},
+		},
+		"connections": map[string]any{
+			"gradus-gitlab": map[string]any{
+				"provider": "gitlab",
+				"tools":    []string{"mr_merge", "pipeline_run"},
+				"intake":   "all",
+				"keys":     []map[string]any{{"id": fp(key), "state": "active"}},
+				"blocked":  []string{},
+			},
+		},
+		"tokens":          []map[string]any{{"sha256": sha(testToken), "executionId": "ex-1", "projectId": "dam", "connections": []string{"gradus-gitlab"}}},
+		"usageTokenSha256": sha("usage-token"),
+	})
+
+	call := func(tl, body string) int {
+		status, _, _ := f.raw("POST", "/v1/call/gradus-gitlab/"+tl, "Bearer "+testToken, body)
+		return status
+	}
+
+	// Wait briefly for snapshot refresh after f.write.
+	var status int
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(15 * time.Millisecond) {
+		status = call("mr_merge", `{"project_id":"gradus%2Fdam","mr_iid":"46","should_remove_source_branch":true,"merge_when_pipeline_succeeds":false}`)
+		if status == 200 {
+			break
+		}
+	}
+	expect(t, status, 200, "mr_merge status")
+	expect(t, gotMethod, "PUT", "mr_merge HTTP method")
+	expect(t, gotPath, "/api/v4/projects/gradus%2Fdam/merge_requests/46/merge", "mr_merge path")
+	var mergeArgs map[string]any
+	if err := json.Unmarshal([]byte(gotBody), &mergeArgs); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasProj := mergeArgs["project_id"]; hasProj {
+		t.Fatal("project_id leaked into mr_merge body")
+	}
+	if mergeArgs["should_remove_source_branch"] != true || mergeArgs["merge_when_pipeline_succeeds"] != false {
+		t.Fatalf("unexpected mr_merge body: %s", gotBody)
+	}
+
+	expect(t, call("pipeline_run", `{"project_id":"gradus%2Fdam","ref":"main","variables":[{"key":"DOSSIER","value":"1"}]}`), 200, "pipeline_run status")
+	expect(t, gotMethod, "POST", "pipeline_run HTTP method")
+	expect(t, gotPath, "/api/v4/projects/gradus%2Fdam/pipeline", "pipeline_run path")
+	var pipeArgs map[string]any
+	if err := json.Unmarshal([]byte(gotBody), &pipeArgs); err != nil {
+		t.Fatal(err)
+	}
+	if pipeArgs["ref"] != "main" {
+		t.Fatalf("unexpected pipeline_run body: %s", gotBody)
+	}
+}

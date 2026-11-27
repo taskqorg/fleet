@@ -1182,6 +1182,15 @@ func (a gitlabAdapter) markReady(ctx forgeContext, pr pubView) error {
 	return nil
 }
 
+func gitlabPipelineActive(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "created", "waiting_for_resource", "preparing", "pending", "running", "waiting_for_callback", "scheduled":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a gitlabAdapter) requestMerge(ctx forgeContext, pr pubView, method string) error {
 	squash := "false"
 	if method == "squash" {
@@ -1190,8 +1199,10 @@ func (a gitlabAdapter) requestMerge(ctx forgeContext, pr pubView, method string)
 	args := []string{
 		"api", "--hostname", a.glHost(), "--method", "PUT",
 		"projects/" + a.projPath(ctx) + "/merge_requests/" + strconv.FormatInt(pr.Number, 10) + "/merge",
-		"-F", "merge_when_pipeline_succeeds=true",
 		"-F", "squash=" + squash,
+	}
+	if gitlabPipelineActive(pr.ChecksState) {
+		args = append(args, "-F", "merge_when_pipeline_succeeds=true")
 	}
 	if pr.HeadRefOid != "" {
 		args = append(args, "-f", "sha="+pr.HeadRefOid)
