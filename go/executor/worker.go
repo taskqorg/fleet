@@ -508,7 +508,7 @@ func runWorker(args []string) error {
 
 	var ident string
 	var identErr error
-	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Started: func(pid int) { ident, identErr = identity(pid) }})
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, KillLeftovers: true, Started: func(pid int) { ident, identErr = identity(pid) }})
 	if err != nil {
 		if pw != nil {
 			pw.Close()
@@ -537,7 +537,6 @@ func runWorker(args []string) error {
 		journaled: map[int]bool{},
 		metrics:   newRunMetrics(spec.GatewayConns),
 		started:   time.Now(),
-		group:     proc.Pid,
 		timeoutMs: spec.TimeoutMs,
 	}
 	if spec.Kind == "harness" && NewBlocks != nil {
@@ -611,6 +610,10 @@ func runWorker(args []string) error {
 
 	var mu sync.Mutex
 	var closedSock atomic.Bool
+	killOwned := func() error {
+		proc.Kill() // the supervisor fences group signals against the leader's reap
+		return l.cleanup()
+	}
 	errtrack.Go("worker.sock", func() {
 		for {
 			c, err := listener.AcceptUnix()
@@ -637,7 +640,7 @@ func runWorker(args []string) error {
 				case "stop":
 					mu.Lock()
 					l.stopped = true
-					if l.cleanup() == nil {
+					if killOwned() == nil {
 						resp.Ok, resp.Accepted = true, true
 					} else {
 						l.cleanupUnknown = true
@@ -666,10 +669,10 @@ func runWorker(args []string) error {
 	})
 
 	recordOwned := func() {
+		mu.Lock()
+		defer mu.Unlock()
 		if l.observe() != nil {
-			mu.Lock()
 			l.cleanupUnknown = true
-			mu.Unlock()
 		}
 		added := map[int]string{}
 		for pid, id := range l.owned {
@@ -685,7 +688,7 @@ func runWorker(args []string) error {
 		}
 	}
 
-	handleLine := func(line string) {
+	handleLine := func(line string) bool {
 		v, derr := dec(line)
 		event, isObj := v.(M)
 		if derr != nil || !isObj {
@@ -728,6 +731,7 @@ func runWorker(args []string) error {
 		retained := maps.Clone(event)
 		retained["fleetNormalized"] = projection
 		_ = lw.emit(workerRecord{Kind: "native_event", EventSeq: l.seq, EventType: kind, Data: json.RawMessage(enc(retained))})
+		return protocol && (kind == "turn.completed" || kind == "turn.failed" || kind == string(contract.FleetEventTypeProtocolFailed))
 	}
 
 	beat := time.NewTicker(tickEvery)
@@ -744,6 +748,10 @@ func runWorker(args []string) error {
 		l.eof = true
 	}
 	exitedSent := false
+	// A protocol turn can finish while its server stays open. Give EOF on stdin
+	// time to shut it down before forcing an unconfirmed process outcome.
+	const shutdownGrace = 5 * time.Second
+	var shutdownC <-chan time.Time
 	for {
 		if exitedSent && l.eof {
 			break
@@ -762,11 +770,29 @@ func runWorker(args []string) error {
 				l.eof, linesOpen = true, false
 				continue
 			}
-			handleLine(line)
+			if handleLine(line) && !exitedSent && shutdownC == nil {
+				shutdownC = time.After(shutdownGrace)
+			}
 		case <-ex:
 			exitedSent = true
+			shutdownC = nil
+			// Owned descendants can keep stdout open or await the MCP owner.
+			// Close ownership and clean up before waiting for either of them.
+			if mcp != nil && mcp.close() != nil {
+				mu.Lock()
+				l.cleanupUnknown = true
+				mu.Unlock()
+			}
+			mu.Lock()
+			if l.cleanup() != nil {
+				l.cleanupUnknown = true
+			}
+			mu.Unlock()
+			l.orphans = cleanupRun(spec.DataDir, spec.Execution)
 			for {
+				mu.Lock()
 				alive, aerr := l.aliveOwned()
+				mu.Unlock()
 				var unknown identityUnknown
 				if errors.As(aerr, &unknown) {
 					time.Sleep(100 * time.Millisecond)
@@ -783,6 +809,14 @@ func runWorker(args []string) error {
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
+		case <-shutdownC:
+			shutdownC = nil
+			if !l.exitedNow() {
+				mu.Lock()
+				l.cleanupUnknown = true
+				_ = killOwned()
+				mu.Unlock()
+			}
 		case <-deadlineC:
 			deadlineC = nil
 			mu.Lock()
@@ -790,7 +824,7 @@ func runWorker(args []string) error {
 				l.timedOut, l.stopped = true, true
 				l.seq++
 				_ = lw.emit(workerRecord{Kind: "fleet_event", EventSeq: l.seq, EventType: string(contract.FleetEventTypeScriptTimeout), Data: json.RawMessage(enc(contract.ScriptTimeout{TimeoutMs: l.timeoutMs}))})
-				if l.cleanup() != nil {
+				if killOwned() != nil {
 					l.cleanupUnknown = true
 				}
 			}
@@ -809,13 +843,6 @@ func runWorker(args []string) error {
 		}
 		l.wire.mu.Unlock()
 	}
-	if mcp != nil {
-		if err := mcp.close(); err != nil {
-			mu.Lock()
-			l.cleanupUnknown = true
-			mu.Unlock()
-		}
-	}
 	if mcpStore != nil {
 		if err := cleanupMCPPIDs(mcpStore.snapshot(), nil); err != nil {
 			mu.Lock()
@@ -825,12 +852,6 @@ func runWorker(args []string) error {
 			_ = lw.emit(workerRecord{Kind: "fleet_event", EventSeq: l.seq, EventType: "mcp.cleanup_unknown", Data: json.RawMessage(enc(M{"reason": err.Error(), "ownershipRetained": true}))})
 		}
 	}
-	if l.cleanup() != nil {
-		mu.Lock()
-		l.cleanupUnknown = true
-		mu.Unlock()
-	}
-	l.orphans = cleanupRun(spec.DataDir, spec.Execution)
 	var code *int64
 	if l.state() != nil && l.state().Exited() {
 		c := int64(l.state().ExitCode())

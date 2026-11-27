@@ -1,11 +1,128 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
+
+// A completed turn must release the worker and deliver a terminal receipt even
+// if a descendant keeps the harness stdout pipe open after the leader exits.
+func TestWorkerFinalizesCompletedTurnWithLiveDescendant(t *testing.T) {
+	t.Run("descendant keeps stdout open", func(t *testing.T) {
+		testCompletedTurnShutdown(t, "exit 0", "completed")
+	})
+	t.Run("server ignores stdin EOF", func(t *testing.T) {
+		testCompletedTurnShutdown(t, "wait", "unknown")
+	})
+}
+
+func testCompletedTurnShutdown(t *testing.T, afterEOF, wantReceipt string) {
+	t.Helper()
+	e, root := scriptExecutor(t)
+	defer e.db.Close()
+	const execution, cid, sid = "completed-turn", "start-command", "session"
+	dir := e.commandDir(sid, "")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	harness := filepath.Join(root, "fake-codex")
+	const fixture = `#!/bin/sh
+read -r line
+printf '%s\n' '{"id":1,"result":{}}'
+read -r line
+read -r line
+printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread"}}}'
+read -r line
+sleep 60 &
+printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn"}}}'
+while [ ! -f complete ]; do sleep 0.05; done
+printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}'
+read -r line
+`
+	if err := os.WriteFile(harness, []byte(fixture+afterEOF+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := enc(M{"id": cid, "executionId": execution, "sessionId": sid, "kind": "start", "payload": M{"harness": "codex"}})
+	if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.launch(execution, cid, sid); err != nil {
+		t.Fatal(err)
+	}
+	c := commandOf(body)
+	l, err := e.spawnWorker(c, workerSpec{Kind: "harness", Harness: "codex", Execution: execution, CommandId: cid, Session: sid, Work: sid, DataDir: root, Dir: dir, Root: dir,
+		CmdPath: harness, CmdDir: dir, CmdArgs: []string{harness}, CmdEnv: os.Environ(), Profile: M{"readOnly": true}, InitialSeq: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.live[execution] = l
+	t.Cleanup(func() { _ = workerStop(l.worker.sock, "") })
+	if err := e.event(c, l.seq, contract.FleetEventTypeHarness, M{}); err != nil {
+		t.Fatal(err)
+	}
+	var receivedMu sync.Mutex
+	var received []string
+	url, _ := serve(t, func(route string, body M) int {
+		receivedMu.Lock()
+		defer receivedMu.Unlock()
+		switch route {
+		case contract.RouteEvents.Path:
+			batch := typed[contract.HostEvents](body)
+			for _, event := range batch.Events {
+				if event.Type == string(contract.FleetEventTypeHarness) {
+					return http.StatusConflict
+				}
+			}
+			for _, event := range batch.Events {
+				received = append(received, event.Type)
+			}
+		case contract.RouteReceipts.Path:
+			received = append(received, jStr(body, "status"))
+		}
+		return http.StatusOK
+	})
+	for until := time.Now().Add(4 * time.Second); count(e.db, "owned") < 2; {
+		if time.Now().After(until) {
+			t.Fatal("worker did not observe the harness descendant")
+		}
+		if err := e.tick(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(tickEvery)
+	}
+	if err := flush(e.db, url, "invented-token", e.host); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "complete"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, e, execution)
+	if got := lastReceipt(e, cid); got != wantReceipt {
+		t.Fatalf("receipt = %q, want %q", got, wantReceipt)
+	}
+	for range 2 {
+		if err := flush(e.db, url, "invented-token", e.host); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receivedMu.Lock()
+	defer receivedMu.Unlock()
+	for _, marker := range []string{"outbox.failed", "turn.completed", "process.closed", wantReceipt} {
+		if !slices.Contains(received, marker) {
+			t.Fatalf("missing %q in delivered events and receipts %v", marker, received)
+		}
+	}
+	if active := e.activeExecutions(); len(active) != 0 {
+		t.Fatalf("completed execution still owns a host slot: %v", active)
+	}
+}
 
 func TestWorkerReattachesAcrossPollerRestart(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())

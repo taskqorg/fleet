@@ -674,6 +674,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	if err := e.launch(execution, cid, session); err != nil {
 		return err
 	}
+	const harnessLaunchSeq = 3
 	spec := workerSpec{
 		Kind:         "harness",
 		Execution:    execution,
@@ -698,7 +699,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		GitRoots:     gitRoots,
 		GatewayConns: gatewayConns,
 		UseMCP:       len(servers) > 0,
-		InitialSeq:   2,
+		InitialSeq:   harnessLaunchSeq,
 	}
 	l, err := e.spawnWorker(c, spec)
 	if err != nil {
@@ -710,8 +711,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		return fail(1, err.Error())
 	}
 	e.live[execution], launched = l, true
-	l.seq++
-	if err := e.event(c, l.seq, contract.FleetEventTypeHarness, observed); err != nil {
+	if err := e.event(c, harnessLaunchSeq, contract.FleetEventTypeHarness, observed); err != nil {
 		return err
 	}
 	return e.receipt(c, "started", native)

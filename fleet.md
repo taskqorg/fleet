@@ -162,6 +162,8 @@ Conversations exposes a [manual fresh-session boundary](docs/execution-continuit
 
 Execution states are preparing, running, waiting, succeeded, failed and cancelled. Available controls depend on the harness or tool.
 
+After a native protocol turn ends, the executor drains its output and closes its owned processes before reporting the execution outcome. If a rejected host event and a completed turn leave an execution active past the shutdown grace, Fleet requests cleanup from the owning host without cancelling queued turns. Host receipts and reconciliation determine the execution outcome.
+
 Conversation status is the state of its latest visible agent run by execution sequence. A conversation with no visible agent run is idle. Detail, list rows, membership, status filters, group and navigation counts, entity cards and search use this rule under their existing visibility scope. Tool calls remain in conversation history and resource accounting and do not determine conversation status.
 
 **Universal Code Mode** ([design](docs/designs/fleet-code-mode.md)): every supported harness (`codex`, `claude`, `antigravity`, `acp`) runs JavaScript tool orchestration through one `code`/`poll` MCP runtime over granted Fleet tools, connections and host functions within execution authority, keeping intermediate results out of model context.
