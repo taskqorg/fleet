@@ -58,6 +58,12 @@ Retain messages, questions, answers and results with their associated work where
 
 Provide the context needed to act and access to further detail. Communication supports the [handoff contract](execution-continuity.md#continuation-and-handoff); delivery alone does not establish that work started or completed.
 
+### Answering questions
+
+- `reply {questionId, answer}` takes the `id` of an `agent_question`. Read it with `questions {sessionId, state: "open"}` in the asking session. For a host agent, omitting `sessionId` lists its current session. A task-linked `agent_question` uses the same rule. Use the question record ID, distinct from its display code, the task ID, the execution ID and the session ID.
+- A host agent can reply in its own session or one it started. A bot can also reply in sessions owned by that bot or sessions attached to tasks it created or manages. The coordinator checks the session recorded on the question. An unknown, hidden or other-kind question ID returns `404`. If the question and its session are visible but the session is outside this scope, Fleet returns `403 Session belongs to another agent`. Answering still requires the question kind’s authority checks.
+- For a visible task or project question, including an `operator_decision`, read `questions_list` for task questions or `question_history` for project questions. An agent can use `questions_answer {questionId, answer}` if the tool is available and its existing grant and delegation authorize the answer. The same conditions apply to agent questions outside the `reply` session scope. An agent follows the configured addressee and the question kind’s decision rules. Visibility and tool access alone give no authority to decide. Route decisions to the authorized addressee when the agent lacks the tool or authority. An agent reads an answer to its own `ask` with `ask {resume: questionId}`.
+
 ## Event-initiated work
 
 Configured events may invoke the same operations as people and agents, within granted authority. Retain the source event with the work. An alert may initiate investigation; it does not establish a defect or authorize remediation. Use project rules to continue automatically or request a decision.

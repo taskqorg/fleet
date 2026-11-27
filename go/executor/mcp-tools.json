@@ -732,7 +732,6 @@
   },
   {
     "name": "reply",
-    "description": "Fleet agent session tool reply (bound to this session by the host)",
     "inputSchema": {
       "type": "object",
       "properties": {

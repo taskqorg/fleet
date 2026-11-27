@@ -503,7 +503,7 @@ People and agents use the same coordinator operations under the same permissions
 
 Permissions:
 *   The project grant is applied inside each operation.
-*   Agents may read tasks and questions of the projects in their grant, create tasks in those projects, update only tasks their own execution is linked to, and ask questions. Only operators answer `operator_decision` and `acceptance` questions.
+*   Agents may read tasks and questions of the projects in their grant, create tasks in those projects, update only tasks their own execution is linked to, and ask questions. Answers follow [agent communication](../system-operations.md#answering-questions) and the question kind’s decision rules, including human-required acceptance.
 *   Postgres row-level security on `project_id` is the second guard. The tables are owned by the role `fleet`; the coordinator connects as the non-owner role `fleet_app`, and every table has `FORCE ROW LEVEL SECURITY`. When `fleet.project_ids` is not set, a policy returns no rows.
 *   ClickHouse is reachable only through these operations, and every query gets a mandatory project filter.
 
