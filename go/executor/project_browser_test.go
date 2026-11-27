@@ -3,10 +3,18 @@ package main
 // Requirement: browser access is project-granted through normal MCP, never arbitrary origins.
 // Risk: a missing binding or cross-origin navigation launches an unscoped host browser.
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestProjectBrowserScope(t *testing.T) {
@@ -137,4 +145,185 @@ module.exports={chromium:{connectOverCDP:async()=>({contexts:()=>[context]})}};
 			t.Fatalf("expected readiness check to fail when rm rejects: %s", out)
 		}
 	})
+}
+
+// Requirement: scoped MCP actions deliver real input to browser controls.
+// Risk: synthetic events cannot capture the pointer or drive trusted keyboard gestures.
+func TestProjectBrowserTrustedInput(t *testing.T) {
+	const cookieValue = "invented-project-browser-cookie"
+	module, executable := os.Getenv("FLEET_PLAYWRIGHT_MODULE"), os.Getenv("FLEET_BROWSER_EXECUTABLE")
+	if module == "" && executable == "" {
+		t.Skip("requires the project-browser Playwright module and Chromium executable")
+	}
+	if !isFile(module) || !isFile(executable) {
+		t.Fatal("incomplete project-browser runtime")
+	}
+	var deniedRequests atomic.Int32
+	denied := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		deniedRequests.Add(1)
+	}))
+	defer denied.Close()
+	preview := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, denied.URL, http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		http.SetCookie(w, &http.Cookie{Name: "fixture", Value: cookieValue, Path: "/"})
+		_, _ = io.WriteString(w, `<!doctype html>
+<title>Trusted input fixture</title>
+<style>button { display: block; width: 140px; height: 60px; user-select: none; }</style>
+<main><button id="a">A</button><button id="b">B</button></main>
+<output>`+cookieValue+`</output>
+<script>
+  const list = document.querySelector('main');
+  const a = document.querySelector('#a');
+  const b = document.querySelector('#b');
+  const state = {down: false, captured: false, moves: 0, up: false, keys: [], cancelled: false};
+  let grabbed = false;
+  let moved = false;
+  a.addEventListener('keydown', e => {
+    state.keys.push([e.key, e.isTrusted, e.shiftKey]);
+    e.preventDefault();
+    if (e.key === ' ') grabbed = true;
+    if (grabbed && e.key === 'ArrowDown') moved = true;
+    if (e.key === 'Escape') {
+      state.cancelled = grabbed && moved;
+      grabbed = moved = false;
+    }
+    if (e.key === 'Enter' && grabbed && moved) list.append(a);
+  });
+  a.addEventListener('pointerdown', e => {
+    state.down = e.isTrusted;
+    a.setPointerCapture(e.pointerId);
+  });
+  a.addEventListener('gotpointercapture', e => { state.captured = e.isTrusted; });
+  a.addEventListener('pointermove', e => {
+    if (a.hasPointerCapture(e.pointerId) && e.isTrusted) state.moves++;
+  });
+  a.addEventListener('pointerup', e => {
+    state.up = e.isTrusted && a.hasPointerCapture(e.pointerId);
+    if (state.up && document.elementFromPoint(e.clientX, e.clientY) === b) list.append(a);
+  });
+</script>`)
+	}))
+	defer preview.Close()
+
+	cfg := M{"module": module, "executable": executable, "previewOrigins": []string{preview.URL}, "timeoutMs": 5000}
+	c := browserCommand(cfg, t.TempDir(), false)
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdin, err := c.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	timer := time.AfterFunc(45*time.Second, func() { _ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL) })
+	defer func() {
+		defer timer.Stop()
+		_ = stdin.Close()
+		if err := c.Wait(); err != nil {
+			t.Errorf("project-browser process: %v", err)
+		}
+	}()
+
+	encoder, decoder := json.NewEncoder(stdin), json.NewDecoder(stdout)
+	requestID := 0
+	request := func(method string, params M) (M, bool) {
+		t.Helper()
+		requestID++
+		if err := encoder.Encode(M{"jsonrpc": "2.0", "id": requestID, "method": method, "params": params}); err != nil {
+			t.Fatal(err)
+		}
+		var reply struct {
+			ID     int
+			Result M
+			Error  *struct{ Message string }
+		}
+		if err := decoder.Decode(&reply); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		if reply.ID != requestID {
+			t.Fatalf("unexpected response ID %d to request %d", reply.ID, requestID)
+		}
+		return reply.Result, reply.Error != nil
+	}
+	call := func(name string, args M, wantError bool) M {
+		t.Helper()
+		reply, failed := request("tools/call", M{"name": name, "arguments": args})
+		if failed != wantError {
+			t.Fatalf("%s: failed = %v, want %v", name, failed, wantError)
+		}
+		if strings.Contains(enc(reply), cookieValue) {
+			t.Fatalf("%s: fixture cookie leaked in MCP reply", name)
+		}
+		return reply
+	}
+	listing, failed := request("tools/list", nil)
+	if failed {
+		t.Fatal("tools/list failed")
+	}
+	names := map[string]bool{}
+	for _, tool := range listing["tools"].([]any) {
+		names[tool.(map[string]any)["name"].(string)] = true
+	}
+	if !names["press"] || !names["drag"] {
+		t.Fatalf("input tools missing: %v", names)
+	}
+	dragArgs := M{"source": "#a", "target": "#b", "steps": 7}
+	call("press", M{"key": "Escape"}, true)
+	call("drag", dragArgs, true)
+	call("navigate", M{"url": denied.URL}, true)
+	call("navigate", M{"url": preview.URL + "/redirect"}, true)
+	if got := deniedRequests.Load(); got != 0 {
+		t.Fatalf("ungranted origin received %d requests", got)
+	}
+	call("navigate", M{"url": preview.URL}, false)
+	call("press", M{"key": "Space", "selector": "#a"}, false)
+	call("press", M{"key": "Shift+ArrowDown"}, false)
+	call("press", M{"key": "Escape"}, false)
+	call("press", M{"key": "Enter"}, false)
+	evaluate := func(expression string, result any) {
+		t.Helper()
+		reply := call("evaluate", M{"expression": expression}, false)
+		content := reply["content"].([]any)[0].(map[string]any)["text"].(string)
+		if err := json.Unmarshal([]byte(content), result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var keyboard struct {
+		Result struct {
+			Keys      [][]any
+			Cancelled bool
+			Order     string
+		}
+	}
+	evaluate("({keys: state.keys, cancelled: state.cancelled, order: list.textContent})", &keyboard)
+	wantKeys := [][]any{{" ", true, false}, {"Shift", true, true}, {"ArrowDown", true, true}, {"Escape", true, false}, {"Enter", true, false}}
+	if !reflect.DeepEqual(keyboard.Result.Keys, wantKeys) || !keyboard.Result.Cancelled || keyboard.Result.Order != "AB" {
+		t.Fatalf("trusted keyboard cancellation failed: %+v", keyboard.Result)
+	}
+
+	call("drag", dragArgs, false)
+	var pointer struct {
+		Result struct {
+			Down, Captured, Up bool
+			Moves              int
+			Order              string
+		}
+	}
+	evaluate("({...state, order: list.textContent})", &pointer)
+	if got := pointer.Result; !got.Down || !got.Captured || !got.Up || got.Moves != 7 || got.Order != "BA" {
+		t.Fatalf("trusted pointer reorder failed: %+v", got)
+	}
+	call("drag", M{"source": "#b", "target": "button"}, true)
+	call("drag", dragArgs, true) // The failed drag closed the scoped page.
+	call("navigate", M{"url": preview.URL}, false)
+	call("press", M{"key": "Space", "selector": "button"}, true)
+	call("close", M{}, false)
 }
