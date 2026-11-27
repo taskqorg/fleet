@@ -416,6 +416,17 @@ func (e *executor) ownGroup(execution string, grp int, l *live) error {
 // releaseLaunchWindow: a stop for an execution whose launch never recorded a process is the explicit decision to
 // accept that uncertainty; the session is admitted again. The stop's result stays unknown.
 func (e *executor) releaseLaunchWindow(execution, session string) error {
+	var command, body string
+	err := e.db.QueryRow(`SELECT l.command, c.body FROM launches l JOIN commands c ON c.id=l.command
+		WHERE l.execution=? AND l.session=?`, execution, session).Scan(&command, &body)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && personalScriptJob(commandOf(body)) {
+		if err := e.holdScriptStaging(command, true); err != nil {
+			return err
+		}
+	}
 	res, err := e.db.Exec("DELETE FROM launches WHERE execution=? AND session=? AND NOT EXISTS (SELECT 1 FROM owned WHERE execution=?) AND NOT EXISTS (SELECT 1 FROM mcp_groups WHERE execution=?)", execution, session, execution, execution)
 	if err != nil {
 		return err
@@ -503,7 +514,17 @@ func (e *executor) reconcileProcesses() error {
 		// A confirmed exit can supersede an earlier unknown start receipt.
 		// An already reported unconfirmed exit keeps its launch fence.
 		uncertainExit := hasExit && (exit.ProcessesUnresolved || x.personalScript && scriptExitUnconfirmed(exit))
-		if hasCommand && (alive || hasExit && (!uncertainExit || commandOpen)) {
+		needsExit := hasExit && (!uncertainExit || commandOpen)
+		if x.personalScript && uncertainExit && !commandOpen {
+			// An unknown start receipt may precede the worker's first
+			// exit report. Reattach once to collect that report.
+			result, _, err := e.readScriptOutputs(x.execution)
+			if err != nil {
+				return err
+			}
+			needsExit = !result.Reported
+		}
+		if hasCommand && (alive || needsExit) {
 			spec, _ := readWorkerSpec(wdir)
 			native := ""
 			if sid, serr := workOf(cmd); serr == nil {
