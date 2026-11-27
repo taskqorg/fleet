@@ -424,11 +424,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		captureDir = dir
 		browserCfg["captureDir"] = captureDir
 		codeReadRoots = append(codeReadRoots, captureDir)
-		arg := "managed"
-		if browserAccess == nil {
-			arg = enc(browserCfg)
-		}
-		servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", arg}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "press", "drag", "emulate", "screenshot", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
+		servers["project-browser"] = projectBrowserServer(browserCfg, browserAccess != nil)
 	}
 	if env := requirements.Environment; env != nil {
 		if !hasW {

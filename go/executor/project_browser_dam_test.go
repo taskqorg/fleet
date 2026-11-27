@@ -1,13 +1,86 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"fleet/contract"
 )
+
+// Exercise the required tools/list check used at native MCP startup without
+// opening Chromium. The adapter must advertise every tool selected by the launch.
+func TestProjectBrowserMCPInitialization(t *testing.T) {
+	const dam = "https://revilio.com"
+	const preview = "http://127.0.0.1:4173"
+	dir := t.TempDir()
+	module := filepath.Join(dir, "fixture.cjs")
+	noErr(t, os.WriteFile(module, []byte("module.exports = {}"), 0600))
+	binding := filepath.Join(dir, "binding.json")
+	noErr(t, os.WriteFile(binding, []byte(enc(M{"dam": M{"previewOrigins": []string{preview}}})), 0600))
+	t.Setenv("FLEET_BROWSER_EXECUTABLE", module)
+	t.Setenv("FLEET_PLAYWRIGHT_MODULE", module)
+
+	for _, tc := range []struct {
+		name, origin string
+		preview      bool
+	}{
+		{name: "restricted DAM", origin: dam},
+		{name: "DAM with preview", origin: dam, preview: true},
+		{name: "preview only", preview: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FLEET_BROWSER_BINDINGS", "")
+			if tc.preview {
+				t.Setenv("FLEET_BROWSER_BINDINGS", binding)
+			}
+			cfg, err := browserConfig(M{"projectId": "dam"}, tc.origin)
+			noErr(t, err)
+			server := projectBrowserServer(cfg, tc.origin != "")
+			selected := server["tools"].([]any)
+			cmd := browserCommand(cfg, dir, false)
+			if tc.origin != "" {
+				pipe, err := browserPipe(M{"production": M{
+					"origin":         dam,
+					"headers":        []M{{"name": "X-DAM-Verification-Token", "value": "invented-test-token"}},
+					"readinessProbe": M{"path": "/site/verification", "method": "GET", "status": 200},
+				}})
+				noErr(t, err)
+				defer pipe.Close()
+				cmd.ExtraFiles = []*os.File{pipe}
+			}
+			const startup = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
+			cmd.Stdin = strings.NewReader(startup)
+			raw, err := cmd.Output()
+			noErr(t, err)
+			var output bytes.Buffer
+			noErr(t, filterMCP(strings.NewReader(startup), &output, io.Discard, bytes.NewReader(raw), dir, selected, ""))
+			replies := json.NewDecoder(&output)
+			var init, listed M
+			noErr(t, replies.Decode(&init))
+			noErr(t, replies.Decode(&listed))
+			if jStr(init, "result", "serverInfo", "name") != "project-browser" || listed["error"] != nil {
+				t.Fatalf("MCP startup failed: initialize=%s tools/list=%s", enc(init), enc(listed))
+			}
+			names := mcpToolNames(jAt(listed, "result"))
+			if tc.origin != "" && !tc.preview {
+				if !slices.Equal(names, []any{"navigate", "assert", "close"}) {
+					t.Fatalf("restricted DAM tools = %v, want navigate, assert, close", names)
+				}
+			} else if !slices.Contains(names, any("read")) || !slices.Contains(names, any("screenshot")) ||
+				slices.Contains(names, any("assert")) != (tc.origin != "") {
+				t.Fatalf("unexpected preview tools: %v", names)
+			}
+		})
+	}
+}
 
 // Verify the MCP output and CDP policy together. A permissive route, response,
 // credential or tool must fail against synthetic pages with private fields.
