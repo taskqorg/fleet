@@ -215,8 +215,9 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		if botOwnedExec[e.ID] {
 			continue
 		}
-		c := contract.PlainCause(deref(e.Problem), "")
-		if c == nil || homeRawInfraCauses[c.Cause] {
+		prob := deref(e.Problem)
+		c := contract.PlainCause(prob, "")
+		if c == nil || homeRawInfraCauses[c.Cause] || strings.Contains(prob, "preparation failed:") {
 			continue
 		}
 		seen := e.StartedAt

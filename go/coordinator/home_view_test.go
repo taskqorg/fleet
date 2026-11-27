@@ -147,9 +147,11 @@ func TestHomeViewHidesHal0AndInfraNoise(t *testing.T) {
 		 VALUES ($1, 'agent_run', 'failed', $2, 'mac', 'codex', $3, $3, '{}', 'confirmed', '{}', $4)`, tc.sid+"-r", tc.sid, at, tc.problem)
 	}
 
-	// 3. Raw host_job unreported failure: hidden from Blockers and FailedSince.
+	// 3. Raw host_job unreported failure and background pipeline_step/pipeline_run failures: hidden from Blockers and FailedSince.
 	exec(`INSERT INTO execution (id, kind, state, host_id, started_at, ended_at, data, observation, config_ref, problem)
 	 VALUES ('e-host-job', 'host_job', 'failed', 'mac', $1, $1, '{}', 'confirmed', '{}', 'unknown:unreported')`, now.Add(-time.Minute))
+	exec(`INSERT INTO execution (id, kind, state, started_at, ended_at, data, observation, config_ref, problem)
+	 VALUES ('e-pipe-step', 'pipeline_step', 'failed', $1, $1, '{}', 'confirmed', '{}', 'step:failed: script exited 1')`, now.Add(-time.Minute))
 
 	// 4. Operator-initiated product failure: stays visible in Sessions, Failures, Blockers, FailedSince.
 	exec(`INSERT INTO session (id, project_id, directed_by, created_at, updated_at) VALUES ('s-op-prod', 'fleet', $1, $2, $2)`, testOwnerEmail, now.Add(-time.Minute))
@@ -180,7 +182,7 @@ func TestHomeViewHidesHal0AndInfraNoise(t *testing.T) {
 	for _, b := range got.Blockers {
 		causes[b.Cause] = true
 	}
-	if !causes["agent-turn"] || !causes["problem:delivery"] || !causes["problem:burst"] || causes["problem:gap"] || causes["preparation"] || causes["unreported"] {
+	if !causes["agent-turn"] || !causes["problem:delivery"] || !causes["problem:burst"] || causes["problem:gap"] || causes["preparation"] || causes["unreported"] || causes["step"] {
 		t.Fatalf("blockers: unexpected causes %v", causes)
 	}
 }

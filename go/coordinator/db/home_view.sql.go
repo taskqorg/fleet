@@ -17,7 +17,8 @@ LEFT JOIN session s ON s.id = e.session_id
 LEFT JOIN session ps ON ps.id = s.created_by_session_id
 WHERE e.id = ANY($1::text[])
  AND (
-  e.kind = 'host_job'
+  e.kind IN ('host_job', 'pipeline_step')
+  OR (e.kind = 'pipeline_run' AND e.session_id IS NULL AND e.task_id IS NULL)
   OR e.bot_id IS NOT NULL
   OR s.bot_id IS NOT NULL
   OR s.directed_by = 'site-agents'
@@ -28,7 +29,7 @@ WHERE e.id = ANY($1::text[])
  )
 `
 
-// Executions in ids that belong to host jobs, a bot directly, or a bot-owned task/session.
+// Executions in ids that belong to host jobs, non-session pipeline runs/steps, a bot directly, or a bot-owned task/session.
 func (q *Queries) HomeBotOwnedExecutions(ctx context.Context, ids []string) ([]string, error) {
 	rows, err := q.db.Query(ctx, homeBotOwnedExecutions, ids)
 	if err != nil {
