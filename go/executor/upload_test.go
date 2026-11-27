@@ -331,29 +331,13 @@ func TestUploadRecoversFromNoSuchKeyAndVanishedUpload(t *testing.T) {
 // terminal cause and terminate the transfers job so the host update queue (fleet-update) is released.
 // Risk: failed or unrecoverable uploads remain queued/running in transfers and deadlock update drain indefinitely.
 func TestUploadTerminalFailureReleasesUpdateQueue(t *testing.T) {
-	t.Run("missing_local_file_terminates_and_releases_update_queue", func(t *testing.T) {
+	t.Run("missing_local_file_terminates_and_records_failure", func(t *testing.T) {
 		e, _ := scriptExecutor(t)
-		lastSignal = nil
-		t.Cleanup(func() {
-			lastSignal = nil
-			if e.activity != nil {
-				e.activity.Close()
-				e.activity = nil
-			}
-		})
-		target := "1.261113.20"
-		lastSignal = &updateSignal{Target: &target, Running: "1.261113.19", AutoUpdate: "on"}
 
 		missing := filepath.Join(t.TempDir(), "missing.json")
 		body := M{"path": missing, "spool": true, "name": "result.json", "mediaType": "application/json", "executionId": "ex-missing"}
 		if err := enqueue(e.db, "job-missing", "upload", body); err != nil {
 			t.Fatal(err)
-		}
-		if err := e.drainUpdate(); err != nil {
-			t.Fatal(err)
-		}
-		if e.updateReady.Load() != nil {
-			t.Fatal("pending transfer must block update drain before failure settles")
 		}
 
 		v, f := runJob(newTransferClient("http://127.0.0.1:0", "tok", "h1", nil), e.db, "job-missing", "upload", readJob(enc(body)))
@@ -379,29 +363,10 @@ func TestUploadTerminalFailureReleasesUpdateQueue(t *testing.T) {
 		if route != "/api/hosts/artifacts/failed" || !strings.Contains(outBody, f.msg) {
 			t.Fatalf("unexpected outbox route=%s body=%s", route, outBody)
 		}
-		if _, err := e.db.Exec("DELETE FROM outbox"); err != nil {
-			t.Fatal(err)
-		}
-		if err := e.drainUpdate(); err != nil {
-			t.Fatal(err)
-		}
-		if p := e.updateReady.Load(); p == nil || *p != target {
-			t.Fatalf("update queue stayed blocked after terminal transfer failure: %v", p)
-		}
 	})
 
-	t.Run("exhausted_recovery_terminates_and_releases_update_queue", func(t *testing.T) {
+	t.Run("exhausted_recovery_terminates_and_records_failure", func(t *testing.T) {
 		e, _ := scriptExecutor(t)
-		lastSignal = nil
-		t.Cleanup(func() {
-			lastSignal = nil
-			if e.activity != nil {
-				e.activity.Close()
-				e.activity = nil
-			}
-		})
-		target := "1.261113.20"
-		lastSignal = &updateSignal{Target: &target, Running: "1.261113.19", AutoUpdate: "on"}
 
 		path := filepath.Join(t.TempDir(), "result.json")
 		if err := os.WriteFile(path, []byte(`{"ok":true}`), 0600); err != nil {
@@ -450,15 +415,6 @@ func TestUploadTerminalFailureReleasesUpdateQueue(t *testing.T) {
 		}
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("local file copy prematurely removed: %v", err)
-		}
-		if _, err := e.db.Exec("DELETE FROM outbox"); err != nil {
-			t.Fatal(err)
-		}
-		if err := e.drainUpdate(); err != nil {
-			t.Fatal(err)
-		}
-		if p := e.updateReady.Load(); p == nil || *p != target {
-			t.Fatalf("update queue stayed blocked after exhausted upload recovery: %v", p)
 		}
 	})
 }

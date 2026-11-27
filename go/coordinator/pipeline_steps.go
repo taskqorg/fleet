@@ -68,7 +68,7 @@ type pipelineScriptPayload struct {
 }
 
 // scriptHost: the host for a script step that names none, chosen as dispatch chooses for agent work: held by someone
-// who may run the project's work, online, accepting work, able to run scripts, not updating, not overloaded or full, in host order with the default host first; a spare host
+// who may run the project's work, online, accepting work, able to run scripts, not overloaded or full, in host order with the default host first; a spare host
 // only when no other host qualifies (fleet-people-access.md §7). With none, the default host, as before.
 func scriptHost(q *Request, projectID, director string) (string, error) {
 	k, err := loadDispatchContext(q)
@@ -91,7 +91,7 @@ func scriptHost(q *Request, projectID, director string) (string, error) {
 			switch {
 			case !ok || k.spare(id) != spare || deref(h.Intake) == "paused":
 			case !q.app.holderMayRun(deref(h.Holder), projectID, director): // the same trust gate as dispatch
-			case !(float64(now)-k.seen[id] < onlineMs) || !inList(k.caps[id], "script") || k.updating[id] != "":
+			case !(float64(now)-k.seen[id] < onlineMs) || !inList(k.caps[id], "script"):
 			case hostOverloadReason(id, k.loads[id], now) != "":
 			// Queued steps take no slot (work-allocation B7), but a host full with running and queued work is skipped, so a
 			// burst of unpinned steps spreads over the hosts instead of queueing on the first.

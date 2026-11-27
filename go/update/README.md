@@ -12,7 +12,6 @@
 - `fleet-update install-local <verified-stage> <releases>` prepares the managed CLI cache and switches the local release under the same lock as auto-update.
 - `fleet-update selftest` verifies the compiled-in Ed25519 release-key setup.
 - The files it shares with the executor are declared in [`contracts/host-files.schema.json`](../../contracts/host-files.schema.json) and generated into `contract`: `update.json` (`contract.UpdateSignal`, written by the executor), `update-state.json` (`contract.UpdateStateFile`, whose `last` the executor sends in its poll), and on PDS18 `pds18-state.json` (`contract.Pds18StateFile`, read by the coordinator). Hosts run mixed versions during an update, so these shapes change only compatibly.
-- Linux and macOS trigger helpers write a path watcher for the executor's `update.json` target signal when the matching existing service definition is present.
 
 ## Invariants
 
@@ -30,7 +29,6 @@
 - Unexpected errors and panics go to Bugsink through [`errtrack`](../errtrack/README.md) with `errtrack.DSN()`, tagged `service` fleet-update.
 
 - Downloads release metadata and archives, writes cached metadata and update state, installs release trees and symlinks, restarts services, and prunes obsolete releases ([update.go: `fetch`, `install`, `pruneReleases`](update.go)).
-- Executor mode may write the target-file trigger unit through `runExecutor` and `ensureTrigger` ([main.go](main.go), [trigger.go: `triggerFor`](trigger.go)).
 - On PDS18 it may upload source maps to Bugsink's loopback address, run `pg_dump` before a release that carries a new migration (`stagedMigrates`: a migration id the staged `fleet-coordinator migrations` lists and `schema_migration` lacks), copy the verified updater to its root-owned path, and update UI release files ([main.go: `runPDS18`, `installUpdater`](main.go), [ui.go: `cycleUI`](ui.go)).
 
 ## Verification

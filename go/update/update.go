@@ -102,7 +102,6 @@ type part struct {
 	dataDir           string // nonempty points to the executor data directory containing active-releases/<ver>.lock
 	selfExec          bool   // true lets an executor poller self-exec into cand before falling back to unit restart
 	restart           func() error
-	activity          func(string) (func(), error)
 	health            func(ver string) probe
 	st                *State
 }
@@ -164,21 +163,7 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	// A release without a healthy marker is still being checked (pending, an interrupted run, a first install).
 	var resumed *Result
 	if _, err := p.r.Stat("current/healthy"); running != "" && err != nil {
-		var release func()
-		if p.activity != nil {
-			var err error
-			release, err = p.activity(running)
-			if err != nil {
-				return u.result(running, "error", err.Error())
-			}
-			if release == nil {
-				return u.result(running, "pending", "executor work is draining")
-			}
-		}
 		resumed = u.settle(p, running, false)
-		if release != nil {
-			release()
-		}
 		if resumed.State != "ok" {
 			return resumed
 		}
@@ -204,18 +189,6 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	}
 	if err != nil {
 		return u.result(cand, "error", err.Error())
-	}
-	// Acquire the activity lease only after downloading and verifying binaries/CLIs so network I/O never locks out
-	// executor commands.
-	if p.activity != nil {
-		release, err := p.activity(cand)
-		if err != nil {
-			return u.result(cand, "error", err.Error())
-		}
-		if release == nil {
-			return u.result(cand, "pending", "executor work is draining")
-		}
-		defer release()
 	}
 	if err := u.install(p, cand, dir); err != nil {
 		return u.result(cand, "error", err.Error())

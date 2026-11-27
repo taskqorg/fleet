@@ -96,46 +96,29 @@ func TestHostOverloadReasonSwapAndTopConsumers(t *testing.T) {
 	}
 }
 
-// Requirement: dispatch places no start on a host whose executor fences starts for an update, and places again once
-// the fence opens; risk: starts wait preparing behind a long run while other hosts idle (2026-11-26, pds18-native).
-func TestHostDrainMirrorsExecutorFence(t *testing.T) {
-	old, newer, now := "1.261125.155", "1.261125.165", time.Now()
-	if d := hostDrain(nil, &old, &newer, "on", now); d == nil || !d.Fenced || d.Target != newer || (hostSeen{Drain: d}).drainTarget() != newer {
-		t.Fatalf("an older executor with a newer offer is not fenced: %+v", d)
-	}
-	if hostDrain(nil, &newer, &newer, "on", now) != nil || hostDrain(nil, &old, &newer, "off", now) != nil ||
-		hostDrain(nil, &old, &newer, now.Add(time.Hour).UTC().Format(time.RFC3339), now) != nil || hostDrain(nil, &old, nil, "on", now) != nil {
-		t.Fatal("fenced without a pending update")
-	}
-	open := &contract.DrainReport{Target: newer, Fenced: false, WaitsFor: []string{"1 run"}}
-	if d := hostDrain(open, &old, &newer, "on", now); (hostSeen{Drain: d}).drainTarget() != newer {
-		t.Fatal("an open pause of the drain let work in: the host would never reach its idle moment")
-	}
-	if got := drainDetail(&contract.DrainReport{Target: newer, Fenced: true, WaitsFor: []string{"1 run"}}); got != "updating to 1.261125.165: takes no new start; waits for 1 run" {
-		t.Fatal(got)
-	}
-}
+// Requirement: paceUpdate keeps the changedIn skip (no unnecessary restarts on UI/docs commits) while offering
+// changed releases immediately without time-window or idle deferral.
+func TestPaceUpdateKeepsChangedInSkipAndOffersImmediately(t *testing.T) {
+	target := "1.261127.12"
+	var rel releaseInfo
+	rel.Executor.ChangedIn = "1.261127.10"
+	rel.Executor.UrgentIn = "1.261127.8"
 
-func TestRollingDrainFewestRunsFirst(t *testing.T) {
-	a := &App{}
-	if other := a.rollingDrain("pds18", true, 4); other != "" {
-		t.Fatalf("the only busy host was held: %q", other)
+	unchangedHost := "1.261127.10"
+	p := paceUpdate(&target, rel, &unchangedHost)
+	if p.target != nil || p.view == nil || p.view.State != contract.UpdatePacingStateCurrent {
+		t.Fatalf("unchanged host should skip update: %+v", p)
 	}
-	if other := a.rollingDrain("windows", true, 6); other != "pds18" {
-		t.Fatalf("a busier host took the turn: %q", other)
+
+	olderNormal := "1.261127.9"
+	p = paceUpdate(&target, rel, &olderNormal)
+	if p.target == nil || *p.target != target || p.view == nil || p.view.State != contract.UpdatePacingStateOffered || p.view.Class != contract.UpdatePacingClassNormal {
+		t.Fatalf("changed host should be offered immediately: %+v", p)
 	}
-	if other := a.rollingDrain("owner-mac", true, 0); other != "" {
-		t.Fatalf("an idle host waited for the turn: %q", other)
-	}
-	// Once pds18 holds the turn, a host with fewer runs must not steal it mid-drain.
-	if other := a.rollingDrain("windows", true, 1); other != "pds18" {
-		t.Fatalf("emptier host stole pinned turn: %q", other)
-	}
-	if other := a.rollingDrain("pds18", true, 4); other != "" {
-		t.Fatalf("pds18 lost pinned turn: %q", other)
-	}
-	a.rollingDrain("pds18", false, 0) // pds18 updated
-	if other := a.rollingDrain("windows", true, 1); other != "" {
-		t.Fatalf("windows held after pds18 finished: %q", other)
+
+	olderUrgent := "1.261127.7"
+	p = paceUpdate(&target, rel, &olderUrgent)
+	if p.target == nil || *p.target != target || p.view == nil || p.view.State != contract.UpdatePacingStateOffered || p.view.Class != contract.UpdatePacingClassImmediate {
+		t.Fatalf("urgent host should be offered immediately: %+v", p)
 	}
 }
