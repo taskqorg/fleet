@@ -28,6 +28,30 @@ func browserCaptureDir(root, execution string) string {
 	return filepath.Join(runTempDir(root, execution), "browser-captures")
 }
 
+func projectBrowserServer(config M, managed bool) M {
+	arg := "managed"
+	if !managed {
+		arg = enc(config)
+	}
+	tools := []any{"navigate", "read", "evaluate", "click", "fill", "press", "drag", "emulate", "screenshot", "close"}
+	// Match the adapter's discovery for the prepared grant. Preview tools are
+	// available in mixed sessions, with the adapter enforcing the current origin.
+	if jIsTrue(config, "damVerification") {
+		if len(jArr(config, "previewOrigins")) == 0 {
+			tools = []any{"navigate", "assert", "close"}
+		} else {
+			tools = append(tools, "assert")
+		}
+	}
+	return M{
+		"command":           exe(),
+		"args":              []any{"mcp", "project-browser", arg},
+		"tools":             tools,
+		"dependencies":      M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")},
+		"ownedDependencies": []any{"fleet-browser-chromium"},
+	}
+}
+
 type browserBinding struct {
 	PreviewOrigins jsonValue `json:"previewOrigins"`
 	Production     jsonValue `json:"production"`
