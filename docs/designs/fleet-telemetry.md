@@ -195,11 +195,15 @@ Operations, under the [data foundation §6](fleet-data-foundation.md#6-operation
 | Operation | Stage | Reply |
 |---|---|---|
 | `telemetry_summary` | 1 (baseline column in 2) | RED per operation for a window, change against the previous window, drop counter, rules-pass last run, bytes per day |
-| `telemetry_trace` | 1 | one trace as a flat list ordered by `start`; the app builds the tree |
+| `telemetry_trace` | 1 | one trace as a flat list ordered by `start`; lookup by trace ID, execution ID or completed coordinator pass |
 | `telemetry_findings` | 1 | current findings with exemplars, grouped findings marked with their group cause |
 | `telemetry_query` | 2 | grouped counts and quantiles over span columns with filters, no raw SQL |
 
 **Permissions.** Project spans need the project grant; system spans (no `project_id`) need the owner. For non-owners the coordinator adds `project_id IN (<granted>)` to every query. **PM agent:** sees all telemetry within its director's rights; the owner's PM sees the whole system. Metadata only; transcripts only through its own transcript grant.
+
+**Completed pass lookup.** Send `pass` with the full span `name` (for example `pass.session-titles`) and RFC 3339 `from` and `until` timestamps. The start window includes `from` and excludes `until` at microsecond precision. The operation selects the longest visible completed coordinator pass in that window and returns its trace. With no visible match it returns empty spans and omits the trace ID. A disabled or unavailable span store returns 503 for this lookup. An absence finding's exemplar still links to the last observed completion. Choose a window around the suspected slow pass's start.
+
+**Session title stages.** The `pass.session-titles` trace records candidate and reply reads, claim, gateway preparation, the gateway round trip including the provider response, and settlement as each runs. Database stages include transaction admission and completion. Gateway preparation covers the read token and any snapshot publication it requires. The client span measures the combined round trip and records the gateway's outcome, including `unknown`. These system spans use fixed names and contain no conversation data or session or call IDs.
 
 **Overlap with existing operations.** Boundary: telemetry queries spans (operations, latency, errors); [`analytics_query`](fleet-analytics.md#analytics_query) queries work records (executions, tokens, cost, experiments). `telemetry_query` never reports cost, and `analytics_query` never reads spans; a question needing both links them by `executionId`. `usage_summary` was never implemented; cost totals come from `analytics_query`. `executions_get` keeps state; it gains a `traceId` field that links to `telemetry_trace`.
 
@@ -221,8 +225,9 @@ Operations, under the [data foundation §6](fleet-data-foundation.md#6-operation
     "hostId": {"type": "string"}, "name": {"type": "string"}, "kind": {"$ref": "#/$defs/SpanKind"}, "start": {"type": "string", "format": "date-time"},
     "durationMs": {"type": "number"}, "outcome": {"$ref": "#/$defs/SpanOutcome"}, "errorClass": {"type": "string"},
     "executionId": {"type": "string"}, "attrs": {"type": "object", "additionalProperties": {"type": "string"}}}},
-  "TelemetryTraceRequest": {"type": "object", "required": ["traceId"], "properties": {"traceId": {"type": "string"}}},
-  "TelemetryTraceReply": {"type": "object", "required": ["spans"], "properties": {"spans": {"type": "array", "items": {"$ref": "#/$defs/Span"}}, "hidden": {"type": "integer"}}},
+  "TelemetryPassLookup": {"type": "object", "required": ["name", "from", "until"], "properties": {"name": {"type": "string"}, "from": {"type": "string", "format": "date-time"}, "until": {"type": "string", "format": "date-time"}}},
+  "TelemetryTraceRequest": {"type": "object", "properties": {"traceId": {"type": "string"}, "executionId": {"type": "string"}, "pass": {"$ref": "#/$defs/TelemetryPassLookup"}}},
+  "TelemetryTraceReply": {"type": "object", "required": ["spans", "hidden"], "properties": {"spans": {"type": "array", "items": {"$ref": "#/$defs/Span"}}, "hidden": {"type": "integer"}, "traceId": {"type": "string"}}},
   "Finding": {"type": "object", "required": ["rule", "subject", "value", "since", "exemplars"], "properties": {
     "rule": {"type": "string"}, "subject": {"type": "string"}, "value": {"type": "number"}, "baseline": {"type": "number"},
     "since": {"type": "string", "format": "date-time"}, "exemplars": {"type": "array", "items": {"type": "string"}},

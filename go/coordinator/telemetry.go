@@ -419,9 +419,47 @@ func chTime(s string) string {
 	return s
 }
 
+func slowestPassTrace(q *Request, pass *contract.TelemetryPassLookup) (string, error) {
+	from, fromErr := time.Parse(time.RFC3339, pass.From)
+	until, untilErr := time.Parse(time.RFC3339, pass.Until)
+	from, until = from.Truncate(time.Microsecond), until.Truncate(time.Microsecond)
+	if fromErr != nil || untilErr != nil || !from.Before(until) {
+		return "", fail(400, "Specify an increasing RFC 3339 pass start window")
+	}
+	if !strings.HasPrefix(pass.Name, "pass.") || pass.Name == "pass." {
+		return "", fail(400, "Specify the full pass span name")
+	}
+	if spanStore == nil {
+		return "", fail(503, "Span store unavailable")
+	}
+	params := map[string]string{"name": pass.Name, "from": from.UTC().Format(obs.TimeFormat), "until": until.UTC().Format(obs.TimeFormat)}
+	where := spanScope(q.person, params)
+	var rows []struct{ TraceID string }
+	if err := spanStore.Query(q.ctx(), `SELECT trace_id AS TraceID FROM span
+	WHERE service = 'coordinator' AND kind = 'pass' AND name = {name:String}
+	AND start >= {from:DateTime64(6, 'UTC')} AND start < {until:DateTime64(6, 'UTC')} AND `+where+`
+	ORDER BY duration_ns DESC, start DESC, trace_id LIMIT 1`, params, &rows); err != nil {
+		return "", fail(503, "Span store unavailable")
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return rows[0].TraceID, nil
+}
+
 func telemetryTrace(q *Request, r *contract.TelemetryTraceRequest) (contract.TelemetryTraceReply, error) {
 	out := contract.TelemetryTraceReply{Spans: []contract.Span{}}
 	traceID := deref(r.TraceId)
+	if r.Pass != nil {
+		if r.TraceId != nil || r.ExecutionId != nil {
+			return out, fail(400, "Specify one of traceId, executionId or pass")
+		}
+		var err error
+		traceID, err = slowestPassTrace(q, r.Pass)
+		if err != nil || traceID == "" {
+			return out, err
+		}
+	}
 	if deref(r.ExecutionId) != "" {
 		if traceID != "" {
 			return out, fail(400, "Specify traceId or executionId, not both")
@@ -466,6 +504,9 @@ func telemetryTrace(q *Request, r *contract.TelemetryTraceRequest) (contract.Tel
 	ifNull(execution_id, '') AS ExecutionID, duration_ns / 1e6 AS DurationMs, cpu_seconds AS CPU, rss_bytes AS RSS, peak_rss_bytes AS Peak,
 	attrs AS Attrs, (`+where+`) AS Visible
 	FROM span WHERE trace_id = {t:String} ORDER BY start LIMIT 10000`, params, &rows); err != nil {
+		if r.Pass != nil {
+			return out, fail(503, "Span store unavailable")
+		}
 		return out, fail(503, "Span store: "+err.Error())
 	}
 	for _, x := range rows {
