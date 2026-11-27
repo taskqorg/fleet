@@ -1,6 +1,7 @@
 // Answering open questions, the same way on every screen (controls/decision-block.md#open-question, OR-53): the labels a
 // question is answered with and the write state of a view's answers. `controls/open-question.tsx` shows them.
 import { createSignal } from 'solid-js';
+import type { AcceptanceEvidenceRow } from './controls/acceptance-evidence.tsx';
 
 /** The connection a key request (a secret question) asks a key for: its options are {connection}. */
 export const keyConnection = (options: unknown): string | undefined => {
@@ -11,7 +12,7 @@ export const keyConnection = (options: unknown): string | undefined => {
 export type QuestionChoice = { label: string; primary?: boolean };
 
 /** A question as the reads carry it: `questions_list` and `session_get` rows (text) and thread blocks (question). */
-export type OpenQuestionRow = { id: string; code?: string | null; text?: string | null; question?: string | null; kind?: string | null; options?: unknown; deliveryAuthority?: boolean };
+export type OpenQuestionRow = AcceptanceEvidenceRow & { id: string; code?: string | null; text?: string | null; question?: string | null; kind?: string | null; options?: unknown; deliveryAuthority?: boolean };
 
 /** Delivery decisions keep the same options on the task, the conversation and Telegram. */
 export function deliveryAuthorityChoices(options: unknown): string[] | undefined {

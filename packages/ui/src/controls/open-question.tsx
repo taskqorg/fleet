@@ -1,6 +1,7 @@
 // Open question: one open question answered in place, the same way on every screen (controls/decision-block.md#open-question,
 // OR-53). `answer.ts:useAnswer` owns the write state; `OpenQuestion` shows a `QuestionCard` and the answer's outcome under it.
 import { Show } from 'solid-js';
+import { AcceptanceEvidence } from './acceptance-evidence.tsx';
 import { ErrorBanner } from './primitives.tsx';
 import { QuestionCard } from './question-card.tsx';
 import { Markdown } from './thread.tsx';
@@ -26,7 +27,11 @@ export function OpenQuestion(p: { q: OpenQuestionRow; answers: Answers<unknown>;
         code={p.q.code}
         questionId={p.q.id}
         question={text()}
-        context={<Show when={authority()} keyed>{a => <Markdown text={a.evidence} />}</Show>}
+        context={
+          <Show when={p.q.kind === 'acceptance'} fallback={<Show when={authority()} keyed>{a => <Markdown text={a.evidence} />}</Show>}>
+            <div class="type-sm"><AcceptanceEvidence q={p.q} /></div>
+          </Show>
+        }
         choices={answerChoices(p.q)}
         answering={p.answers.answering(p.q.id)}
         answered={p.answers.answered(p.q.id)}

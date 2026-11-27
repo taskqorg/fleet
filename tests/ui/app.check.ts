@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import type { HomeViewReply } from '../../contracts/generated/ops-people.ts';
+import { lit } from '../harness.ts';
 import { checkServer } from './seed.ts';
 import { layoutFindings } from './layout.check.ts';
 import { openWaiting } from './home-card.ts';
@@ -14,10 +15,10 @@ import { hscrollScan } from './hscroll.ts';
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });
 const out = { push: (l: string) => console.log('    ' + l) };
-const { c, origin, seed, close } = await checkServer();
+const { c, origin, seed, close } = await checkServer({ store: true });
 
 // Fixtures: a few hundred tasks across projects, states and priorities; sessions with a transcript; hosts; open questions.
-let waiting = '', running = '';
+let waiting = '', running = '', delivered = '';
 seed.bulk(() => {
   for (let i = 0; i < 240; i++) {
     const p = ['cs', 'game', 'fleet'][i % 3];
@@ -31,6 +32,28 @@ seed.bulk(() => {
   seed.execution({ id: 'sx-1', kind: 'agent_run', sessionId: 'sess-1', hostId: 'pds18', harness: 'codex', state: 'succeeded' });
   seed.put('message', { id: 'msg-1', sessionId: 'sess-1', executionId: 'sx-1', text: 'Rework the hero copy; keep it short.' });
   for (let i = 0; i < 12; i++) seed.put('event', { id: 'ev-' + i, sessionId: 'sess-1', executionId: 'sx-1', type: 'item.completed', data: { fleetNormalized: { blocks: [i % 2 ? { kind: 'tool', name: 'npm test', input: null, output: 'ok', state: 'completed' } : { kind: 'text', role: 'agent', markdown: 'Step ' + i + ' done; checking the next file.' }] } } });
+  delivered = seed.task({ title: 'Add the regression check', projectId: 'fleet', state: 'waiting', waitReason: 'acceptance' });
+  seed.execution({
+    id: 'run-acceptance', taskId: delivered, projectId: 'fleet', state: 'completed',
+    report: { outcome: 'succeeded', at: Date.now(), summary: 'Added a regression check for repeat submissions.\nVerified: application and Go tests passed.\nPR #138 shipped in v1.2.3.' },
+  });
+  const artifactId = '3933f0e9-15da-4c1b-8bd4-562565b9c771';
+  seed.artifact({
+    id: artifactId, executionId: 'run-acceptance', taskId: delivered, projectId: 'fleet',
+    name: 'Verification report', mediaType: 'text/plain', bytes: Buffer.from('Test results'),
+  });
+  const acceptanceId = seed.question({
+    kind: 'acceptance', taskId: delivered, executionId: 'run-acceptance', text: 'Accept the regression check?', options: ['accepted', 'rejected'],
+  });
+  seed.sql(`UPDATE question SET data=${lit({ artifactIds: [artifactId] })}::jsonb WHERE id=${lit(acceptanceId)}`);
+  const published = new Date().toISOString();
+  seed.sql(`INSERT INTO delivery_pr(id, project_id, number, payload) VALUES('delivery-pr-138', 'fleet', 138, ${lit({
+    title: 'Add regression coverage', url: 'https://github.com/taskqorg/fleet/pull/138', number: 138, release: 'v1.2.3',
+    opened: published, merged: published, released: published, installed: { coordinator: published }, durations: {},
+  })}::jsonb)`);
+  seed.sql(`INSERT INTO delivery_release(id, project_id, tag, payload) VALUES('delivery-release-fixture', 'fleet', 'v1.2.3', ${lit({
+    tag: 'v1.2.3', published, installed: { coordinator: published },
+  })}::jsonb)`);
 });
 
 const b = await chromium.launch();
@@ -105,6 +128,16 @@ try {
   await openWaiting(page);
   const asked = await page.locator('[data-ui=question-card]').count();
   out.push(`home (OR-53): ${asked} question cards${asked < 5 ? '  MISSING QUESTIONS' : ''}`);
+  const richAcceptance = page.getByRole('group', { name: 'Accept the regression check?', exact: true });
+  await richAcceptance.getByText('Added a regression check for repeat submissions.', { exact: true }).waitFor();
+  await richAcceptance.getByText('Verified: application and Go tests passed.', { exact: true }).waitFor();
+  for (const name of [/^Task T-FLT-/, /^Pull request #138/, /^Release v1\.2\.3/, /^Result R-FLT-/]) {
+    await richAcceptance.getByRole('button', { name }).waitFor();
+  }
+  const sparseAcceptance = page.getByRole('group', { name: 'Accept this result?', exact: true });
+  await sparseAcceptance.getByRole('button', { name: /^Task T-CS-/ }).waitFor();
+  await sparseAcceptance.getByRole('button', { name: 'accepted', exact: true }).waitFor();
+  assert.equal(await sparseAcceptance.getByRole('button', { name: /^(Pull request|Release|Result)/ }).count(), 0);
   // T-FLT-129: an empty waiting group leaves active work next to the composer, even when the pulse is crowded.
   const homeFixture: HomeViewReply = {
     sessions: [{
@@ -161,6 +194,25 @@ try {
   const codes = await page.$$eval('[data-ui=entity-code]', els => els.filter(e => e.textContent && (getComputedStyle(e).whiteSpace !== 'nowrap' || e.getClientRects().length > 1)).length);
   const hashes = await page.$$eval('[data-ui=detail] a, [data-ui=detail] .title', els => els.filter(e => /[0-9a-f]{8}-[0-9a-f]{4}-|[0-9a-f]{24,}/i.test(e.textContent ?? '')).length);
   out.push(`entity codes (OR-38): ${codes ? codes + ' WRAP' : 'never wrap'}, ${hashes ? hashes + ' HASH NAMES' : 'no hash names'}`);
+  // Acceptance shows the selected result evidence in its decision and omits absent delivery or artifact references.
+  await page.goto(origin + `/projects/tasks/${delivered}`);
+  await page.getByRole('tab', { name: 'Details', exact: true }).click();
+  const decision = page.locator('[data-ui=decision-block]');
+  await decision.getByText('Added a regression check for repeat submissions.', { exact: true }).waitFor();
+  await decision.getByText('Verified: application and Go tests passed.', { exact: true }).waitFor();
+  await decision.getByRole('button', { name: /^Task T-FLT-/ }).waitFor();
+  for (const [name, title] of [[/^Pull request #138/, 'Add regression coverage'], [/^Release v1\.2\.3/, 'Release 1.2.3']] as const) {
+    await decision.getByRole('button', { name }).click();
+    await page.getByRole('dialog').getByText(title, { exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+  }
+  await decision.getByRole('button', { name: /^Result/ }).click();
+  await page.getByRole('dialog').getByText('Verification report', { exact: true }).waitFor();
+  assert.doesNotMatch(await decision.innerText(), /3933f0e9-15da-4c1b-8bd4-562565b9c771/);
+  await page.goto(origin + `/projects/tasks/${waiting}`);
+  await page.getByRole('tab', { name: 'Details', exact: true }).click();
+  await decision.getByRole('button', { name: 'accepted', exact: true }).waitFor();
+  assert.equal(await decision.getByRole('button', { name: /^(Pull request|Release|Result)/ }).count(), 0);
   await page.setViewportSize({ width: 1440, height: 900 });
   // Narrow width: the rail stays, the opened item takes the place of the catalogue.
   const narrow = await b.newPage({ viewport: { width: 600, height: 900 } });

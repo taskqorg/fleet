@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/projects.md",
+  "route": "/projects",
+  "states": {
+    "default": "/projects/acceptance",
+    "task": "/projects/acceptance-task"
+  },
+  "landmark": "[data-ui=question-card]",
+  "stateLandmarks": {
+    "task": "[data-ui=decision-block]"
+  }
+}

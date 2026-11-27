@@ -6,6 +6,36 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// AcceptanceContext: Evidence from the task result selected by this acceptance offer.
+type AcceptanceContext struct {
+	PullRequest  *AcceptancePullRequest `json:"pullRequest,omitempty"`
+	Release      *string                `json:"release,omitempty"`
+	Summary      *string                `json:"summary,omitempty"`
+	TaskCode     *string                `json:"taskCode,omitempty"`
+	Verification *string                `json:"verification,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AcceptanceContext) Validate() error {
+	if v.PullRequest != nil {
+		if err := Check(v.PullRequest, "pullRequest"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type AcceptancePullRequest struct {
+	Number int64   `json:"number"`
+	Repo   string  `json:"repo"`
+	Url    *string `json:"url,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AcceptancePullRequest) Validate() error {
+	return nil
+}
+
 type DeliveryAuthorityChoice struct {
 	Consequence string `json:"consequence"`
 	Label       string `json:"label"`
@@ -1889,28 +1919,34 @@ func (v QuestionKind) Valid() bool {
 
 // QuestionRow: One question row (questionCols in go/coordinator/tasks.go); artifactIds, cause and addressedTo only when set.
 type QuestionRow struct {
-	AddressedTo *string         `json:"addressedTo,omitempty"`
-	Answer      *string         `json:"answer"`
-	AnsweredAt  *string         `json:"answeredAt"`
-	AnsweredBy  *string         `json:"answeredBy"`
-	ArtifactIds json.RawMessage `json:"artifactIds,omitempty"`
-	AskedAt     string          `json:"askedAt"`
-	AskedBy     *string         `json:"askedBy"`
-	Cause       json.RawMessage `json:"cause,omitempty"`
-	Code        *string         `json:"code"`
-	ExecutionId *string         `json:"executionId"`
-	Id          string          `json:"id"`
-	Kind        QuestionKind    `json:"kind"`
-	Options     json.RawMessage `json:"options"`
-	ProjectId   *string         `json:"projectId"`
-	SessionId   *string         `json:"sessionId"`
-	State       string          `json:"state"`
-	TaskId      *string         `json:"taskId"`
-	Text        string          `json:"text"`
+	Acceptance  *AcceptanceContext `json:"acceptance,omitempty"`
+	AddressedTo *string            `json:"addressedTo,omitempty"`
+	Answer      *string            `json:"answer"`
+	AnsweredAt  *string            `json:"answeredAt"`
+	AnsweredBy  *string            `json:"answeredBy"`
+	ArtifactIds json.RawMessage    `json:"artifactIds,omitempty"`
+	AskedAt     string             `json:"askedAt"`
+	AskedBy     *string            `json:"askedBy"`
+	Cause       json.RawMessage    `json:"cause,omitempty"`
+	Code        *string            `json:"code"`
+	ExecutionId *string            `json:"executionId"`
+	Id          string             `json:"id"`
+	Kind        QuestionKind       `json:"kind"`
+	Options     json.RawMessage    `json:"options"`
+	ProjectId   *string            `json:"projectId"`
+	SessionId   *string            `json:"sessionId"`
+	State       string             `json:"state"`
+	TaskId      *string            `json:"taskId"`
+	Text        string             `json:"text"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionRow) Validate() error {
+	if v.Acceptance != nil {
+		if err := Check(v.Acceptance, "acceptance"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}

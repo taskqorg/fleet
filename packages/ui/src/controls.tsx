@@ -16,6 +16,7 @@ export * from './controls/avatar.tsx';
 export * from './controls/identity.tsx';
 export * from './controls/question-card.tsx';
 export * from './controls/open-question.tsx';
+export * from './controls/acceptance-evidence.tsx';
 export * from './controls/session-card.tsx';
 export * from './controls/bot-tile.tsx';
 export * from './controls/pulse-line.tsx';
