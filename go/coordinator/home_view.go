@@ -198,6 +198,7 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		return out, err
 	}
 	botOwnedExec := map[string]bool{}
+	supersededExec := map[string]bool{}
 	if len(runs) > 0 {
 		runIDs := make([]string, len(runs))
 		for i, e := range runs {
@@ -210,9 +211,17 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		for _, id := range ownedIDs {
 			botOwnedExec[id] = true
 		}
+		supersededIDs, err := q.db().HomeSupersededExecutions(q.ctx(), runIDs)
+		if err != nil {
+			return out, err
+		}
+		for _, id := range supersededIDs {
+			supersededExec[id] = true
+		}
 	}
+	blockerCutoff := now.Add(-24 * time.Hour).UnixMilli()
 	for _, e := range runs {
-		if botOwnedExec[e.ID] {
+		if botOwnedExec[e.ID] || supersededExec[e.ID] {
 			continue
 		}
 		prob := deref(e.Problem)
@@ -225,6 +234,9 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 			seen = e.LastSeenAt
 		}
 		at := homeMs(seen)
+		if at > 0 && at < blockerCutoff {
+			continue
+		}
 		if e.State == db.ExecutionStateFailed && at >= since.UnixMilli() {
 			out.Counts.FailedSince++
 		}

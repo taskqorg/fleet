@@ -8,3 +8,10 @@ SELECT coalesce(
   (SELECT coalesce(b.code, b.id) FROM bot b WHERE b.id = sqlc.narg(bot_id)::text),
   sqlc.narg(host_id)::text,
   '')::text AS title;
+
+-- name: HistoryBotNames :many
+-- Current bot names for resolving raw bot UUID actors in history entries (OR-38).
+SELECT b.id::text AS id, r.name::text AS name
+FROM bot b
+JOIN bot_revision r ON r.bot_id = b.id AND r.revision = b.revision
+WHERE b.id = ANY(@ids::text[]);

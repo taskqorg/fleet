@@ -9,6 +9,39 @@ import (
 	"context"
 )
 
+const historyBotNames = `-- name: HistoryBotNames :many
+SELECT b.id::text AS id, r.name::text AS name
+FROM bot b
+JOIN bot_revision r ON r.bot_id = b.id AND r.revision = b.revision
+WHERE b.id = ANY($1::text[])
+`
+
+type HistoryBotNamesRow struct {
+	ID   string
+	Name string
+}
+
+// Current bot names for resolving raw bot UUID actors in history entries (OR-38).
+func (q *Queries) HistoryBotNames(ctx context.Context, ids []string) ([]HistoryBotNamesRow, error) {
+	rows, err := q.db.Query(ctx, historyBotNames, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HistoryBotNamesRow
+	for rows.Next() {
+		var i HistoryBotNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const historyObjectTitle = `-- name: HistoryObjectTitle :one
 SELECT coalesce(
   (SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = $1::text),

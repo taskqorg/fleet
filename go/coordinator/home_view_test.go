@@ -158,7 +158,19 @@ func TestHomeViewHidesHal0AndInfraNoise(t *testing.T) {
 	exec(`INSERT INTO execution (id, kind, state, session_id, host_id, harness, started_at, ended_at, data, observation, config_ref, problem)
 	 VALUES ('e-op-prod', 'agent_run', 'failed', 's-op-prod', 'mac', 'codex', $1, $1, '{}', 'confirmed', '{}', 'turn.failed: bad query')`, now.Add(-time.Minute))
 
-	// 5. Problems: HAL0-owned stuck agent-gap (hidden), HAL0-owned escalated problem (visible), unowned problem (visible).
+	// 5. Operator failure superseded by a later succeeded run in the same session, and a >24h-old failure: both excluded from Blockers.
+	exec(`INSERT INTO session (id, project_id, directed_by, created_at, updated_at) VALUES ('s-op-rec', 'fleet', $1, $2, $2)`, testOwnerEmail, now.Add(-2*time.Hour))
+	exec(`INSERT INTO execution (id, kind, state, session_id, harness, started_at, ended_at, data, observation, config_ref, problem)
+	 VALUES ('e-op-old-step', 'pipeline_run', 'failed', 's-op-rec', NULL, $1, $1, '{}', 'confirmed', '{}', 'infra:inputs: stale')`, now.Add(-2*time.Hour))
+	exec(`INSERT INTO execution (id, kind, state, session_id, host_id, harness, started_at, ended_at, data, observation, config_ref)
+	 VALUES ('e-op-rec-ok', 'agent_run', 'succeeded', 's-op-rec', 'mac', 'codex', $1, $1, '{}', 'confirmed', '{}')`, now.Add(-time.Hour))
+	exec(`INSERT INTO session (id, project_id, directed_by, created_at, updated_at) VALUES ('s-op-stale', 'fleet', $1, $2, $2)`, testOwnerEmail, now.Add(-26*time.Hour))
+	exec(`INSERT INTO execution (id, kind, state, session_id, host_id, harness, started_at, ended_at, data, observation, config_ref)
+	 VALUES ('e-op-stale-init', 'agent_run', 'succeeded', 's-op-stale', 'mac', 'codex', $1, $1, '{}', 'confirmed', '{}')`, now.Add(-27*time.Hour))
+	exec(`INSERT INTO execution (id, kind, state, session_id, harness, started_at, ended_at, data, observation, config_ref, problem)
+	 VALUES ('e-op-26h', 'pipeline_run', 'failed', 's-op-stale', NULL, $1, $1, '{}', 'confirmed', '{}', 'step:failed: old')`, now.Add(-26*time.Hour))
+
+	// 6. Problems: HAL0-owned stuck agent-gap (hidden), HAL0-owned escalated problem (visible), unowned problem (visible).
 	exec(`INSERT INTO problem (id, cause, source, text, owner_bot_id, phase) VALUES ('p-gap', 'gap:fleet-refused:task_page', 'agent-gaps', 'Agents lack task_page', $1, 'stuck')`, botID)
 	exec(`INSERT INTO problem (id, cause, source, text, owner_bot_id, phase) VALUES ('p-esc', 'problem:delivery:slow', 'delivery', 'Delivery escalated', $1, 'escalated')`, botID)
 	exec(`INSERT INTO problem (id, cause, source, text, owner_bot_id, phase) VALUES ('p-unowned', 'burst:hal0', 'breaker', 'HAL0 burst', NULL, 'new')`)

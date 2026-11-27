@@ -47,6 +47,18 @@ const ms = (s: string | null | undefined) => timeOf(s, 0);
 const timeAt = (s: string | null | undefined) => timeOf(s, NaN);
 const fin = (t: number | undefined | null): t is number => t != null && Number.isFinite(t);
 const lifeOfTask = (state: string): Life => (lifeOf.task as Record<string, Life>)[state] ?? 'queued';
+const isTaskActive = (t: { state: string; activeState?: string | null }) =>
+  t.activeState === 'running' || t.activeState === 'preparing';
+const taskWorkLife = (t: { state: string; activeState?: string | null }): Life => {
+  if (isTaskActive(t)) return 'working';
+  // An in_progress task between runs has no active execution on any host, so keep its dot calm instead of pulsing working.
+  if (t.state === 'in_progress') return 'waiting';
+  return lifeOfTask(t.state);
+};
+const taskWorkLabel = (t: { state: string; activeState?: string | null }): string => {
+  if (t.state === 'in_progress' && !isTaskActive(t)) return 'In progress · idle';
+  return states.task[t.state as keyof typeof states.task]?.label ?? t.state;
+};
 /** Bars of a trend: `n` buckets of `size` ms ending now, each the sum of `value` over the items whose time falls in it. */
 function buckets<T>(items: readonly T[], at: (x: T) => number | null, now: number, n = 12, size = 2 * HOUR, value: (x: T) => number = () => 1): number[] {
   const out = new Array<number>(n).fill(0), from = now - n * size;
@@ -226,34 +238,40 @@ export function Live(props: { wall: boolean }) {
     const working = Array.from({ length: 12 }, (_, i) => { const at = t - (11 - i) * 2 * HOUR; return agentRuns().filter(r => r.startedAt != null && r.startedAt <= at && (ACTIVE.has(r.state) || (r.endedAt ?? 0) >= at)).length; });
     return [
       { key: 'working', label: 'Agents working', value: m(busy), of: slots || undefined, sub: `of ${slots} slots`, trend: working, trendLabel: 'agents working, last 24 hours' },
-      { key: 'runs', label: 'Agent runs today', value: m(kindRuns('agent_run') + kindRuns('child_agent')), sub: [hostJobs ? `+${hostJobs} host jobs` : '', toolCalls ? `${toolCalls} tool calls` : ''].filter(Boolean).join(' · ') || undefined, trend: buckets(agentRuns(), r => r.startedAt, t), trendLabel: 'agent runs started, last 24 hours' },
-      { key: 'done', label: 'Tasks done today', value: m(done().length), sub: lead != null ? `lead time P50 ${duration(lead / 1000).text}` : undefined, trend: buckets(doneTasks.data?.tasks ?? [], x => ms(x.stateAt), t), trendLabel: 'tasks done, last 24 hours' },
-      { key: 'tokens', label: 'Tokens today', value: m(tokToday), sub: tokMonth != null ? `month ${count(tokMonth).text}` : undefined, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => r.tokens ?? 0), trendLabel: 'tokens, last 24 hours' },
-      { key: 'spend', label: 'Spend today', value: m(usdToday, { currency: 'USD' }), kind: 'money' as const, sub: `month ${money(usdMonth).text}`, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => usdOf(r.cost)), trendLabel: 'spend at list price, last 24 hours' },
+      { key: 'runs', label: 'Agent runs today', value: m(kindRuns('agent_run') + kindRuns('child_agent')), sub: [hostJobs ? `+${hostJobs} host jobs` : '', toolCalls ? `${toolCalls} tool calls` : '', 'UTC day'].filter(Boolean).join(' · '), trend: buckets(agentRuns(), r => r.startedAt, t), trendLabel: 'agent runs started, last 24 hours' },
+      { key: 'done', label: 'Tasks done today', value: m(done().length), sub: lead != null ? `lead time P50 ${duration(lead / 1000).text} · local day` : 'local day', trend: buckets(doneTasks.data?.tasks ?? [], x => ms(x.stateAt), t), trendLabel: 'tasks done, last 24 hours' },
+      { key: 'tokens', label: 'Tokens today', value: m(tokToday), sub: [tokMonth != null ? `month ${count(tokMonth).text}` : '', 'UTC day'].filter(Boolean).join(' · '), trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => r.tokens ?? 0), trendLabel: 'tokens, last 24 hours' },
+      { key: 'spend', label: 'Spend today', value: m(usdToday, { currency: 'USD' }), kind: 'money' as const, sub: `month ${money(usdMonth).text} · UTC day`, trend: buckets(runs(), r => r.startedAt, t, 12, 2 * HOUR, r => usdOf(r.cost)), trendLabel: 'spend at list price, last 24 hours' },
       { key: 'failed', label: 'Failed starts 6h', value: m(fs.length), alert: !!cause, sub: cause?.text, trend: buckets(fs, r => r.startedAt ?? r.endedAt, t, 12, 30 * MIN), trendLabel: 'failed starts, last 6 hours' },
     ];
   });
 
   // Side column.
   const projectRows = createMemo(() => {
-    const t = now(), d = done();
-    const rows = (openTasks.data?.groups ?? []).map(g => {
+    const t = now(), d = done(), open = openList();
+    const groups = openTasks.data?.groups ?? [];
+    const totalOpen = groups.reduce((acc, g) => acc + sum(Object.values(g.counts ?? {})), 0);
+    const exactActive = open.length >= totalOpen;
+    const rows = groups.map(g => {
       const id = g.key === '~' ? null : g.key, c = g.counts ?? {};
       const doneHere = d.filter(x => (x.projectId ?? null) === id);
-      return { id, name: id ? projectName().get(id) ?? g.label ?? id : 'Outside projects', running: (c.in_progress ?? 0) + (c.waiting ?? 0), queued: (c.queued ?? 0) + (c.held ?? 0), done: doneHere.length,
+      const activeHere = exactActive ? open.filter(x => (x.projectId ?? null) === id && isTaskActive(x)).length : (c.in_progress ?? 0);
+      const nonQueuedOpen = (c.in_progress ?? 0) + (c.waiting ?? 0);
+      const idleOpen = Math.max(0, nonQueuedOpen - activeHere);
+      return { id, name: id ? projectName().get(id) ?? g.label ?? id : 'Outside projects', running: activeHere, open: idleOpen, queued: (c.queued ?? 0) + (c.held ?? 0), done: doneHere.length,
         trend: buckets(doneHere, x => ms(x.stateAt), t) };
     });
     // Projects with only work done today have no open-task group.
     for (const id of new Set(d.map(x => x.projectId ?? null))) {
       if (rows.some(r => r.id === id)) continue;
       const doneHere = d.filter(x => (x.projectId ?? null) === id);
-      rows.push({ id, name: id ? projectName().get(id) ?? id : 'Outside projects', running: 0, queued: 0, done: doneHere.length, trend: buckets(doneHere, x => ms(x.stateAt), t) });
+      rows.push({ id, name: id ? projectName().get(id) ?? id : 'Outside projects', running: 0, open: 0, queued: 0, done: doneHere.length, trend: buckets(doneHere, x => ms(x.stateAt), t) });
     }
-    return rows.filter(r => r.running + r.queued + r.done > 0).toSorted((a, b) => b.running - a.running || b.queued - a.queued || a.name.localeCompare(b.name));
+    return rows.filter(r => r.running + r.open + r.queued + r.done > 0).toSorted((a, b) => b.running - a.running || b.open - a.open || b.queued - a.queued || a.name.localeCompare(b.name));
   });
-  // In work: every open task with its work facts, working first, then the longest in work (a task stuck in retries is
-  // here between its attempts, when no slot shows it).
-  const work = createMemo(() => openList().toSorted((a, b) => (WORK_ORDER[a.state] ?? 3) - (WORK_ORDER[b.state] ?? 3)
+  // In work: every open task with its work facts, actually running/preparing first, then in_progress/waiting/queued, longest in work first.
+  const work = createMemo(() => openList().toSorted((a, b) => Number(isTaskActive(b)) - Number(isTaskActive(a))
+    || (WORK_ORDER[a.state] ?? 3) - (WORK_ORDER[b.state] ?? 3)
     || (timeAt(a.startedAt) || Infinity) - (timeAt(b.startedAt) || Infinity) || a.title.localeCompare(b.title)));
   const delivery = createMemo(() => (deliveryOp.data?.items ?? []).filter(i => IN_FLIGHT.has(i.stage)).toSorted((a, b) => ms(b.since) - ms(a.since)));
   const ci = createMemo(() => {
@@ -316,7 +334,7 @@ export function Live(props: { wall: boolean }) {
             <section aria-label="Projects now">
               {head('Projects · now', projectRows().length, '/projects')}
               <ul class="live-list">
-                <For each={feed(projectRows())}>{p => <LiveRow kind="project" name={p.name} running={p.running} queued={p.queued} done={p.done} trend={p.trend} trendLabel="tasks done, last 24 hours" stale={stale()} onOpen={p.id ? open(`/projects/${encodeURIComponent(p.id)}`) : undefined} />}</For>
+                <For each={feed(projectRows())}>{p => <LiveRow kind="project" name={p.name} running={p.running} open={p.open} queued={p.queued} done={p.done} trend={p.trend} trendLabel="tasks done, last 24 hours" stale={stale()} onOpen={p.id ? open(`/projects/${encodeURIComponent(p.id)}`) : undefined} />}</For>
               </ul>
             </section>
           </Show>
@@ -325,10 +343,10 @@ export function Live(props: { wall: boolean }) {
               {head('In work', work().length, '/tasks')}
               <ul class="live-list">
                 <For each={feed(work())} keyed={t => t.id}>{t => (
-                  <LiveRow kind="task" state={lifeOfTask(t().state)} code={t().code ?? undefined} title={t().title} stale={stale()} onOpen={open(`/tasks/${t().code ?? t().id}`)}
+                  <LiveRow kind="task" state={taskWorkLife(t())} code={t().code ?? undefined} title={t().title} stale={stale()} onOpen={open(`/tasks/${t().code ?? t().id}`)}
                     facts={<WorkFacts attempts={t().executions} attemptsFence={attemptsFence()} lastAt={timeAt(t().lastStartedAt ?? t().activeStartedAt) - offset()}
                       workAt={timeAt(t().startedAt) - offset()} workFence={workFence()} agent={t().agent ?? t().lastAgent}
-                      state={{ label: states.task[t().state as keyof typeof states.task]?.label ?? t().state, at: timeAt(t().stateAt) - offset() }} />} />
+                      state={{ label: taskWorkLabel(t()), at: timeAt(t().stateAt) - offset() }} />} />
                 )}</For>
               </ul>
             </section>

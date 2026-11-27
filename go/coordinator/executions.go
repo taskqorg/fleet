@@ -1295,7 +1295,7 @@ func reconcileLostReason(cause string) string {
 	case "unconfirmed_expired":
 		return "reconciled (unconfirmed_expired): unconfirmed execution or unanswered stop expired"
 	case "orphan_pipeline_step":
-		return "reconciled (orphan_pipeline_step): parent pipeline run no longer exists"
+		return "reconciled (orphan_pipeline_step): parent pipeline run is missing or already terminal"
 	default:
 		return "reconciled: no host terminal receipt after process closed, host stopped reporting the run, or host lost track"
 	}
