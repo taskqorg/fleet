@@ -82,6 +82,66 @@ func (q *Queries) TaskAcceptanceAskAgain(ctx context.Context, arg TaskAcceptance
 	return err
 }
 
+const taskAcceptanceContext = `-- name: TaskAcceptanceContext :many
+SELECT qu.id, t.code AS task_code,
+ qu.project_id,
+ coalesce(e.data->'report'->>'summary','')::text AS report,
+ coalesce(e.state='succeeded' AND e.observation='confirmed',false)::boolean AS run_succeeded,
+ (qu.data->'delivery')::jsonb AS delivery,
+ coalesce(a.summary,'')::text AS artifact_summary
+FROM question qu
+LEFT JOIN task t ON t.id=qu.task_id AND t.tombstoned_at IS NULL
+LEFT JOIN execution e ON e.id=qu.execution_id AND e.task_id=qu.task_id
+LEFT JOIN LATERAL (
+ SELECT a.summary FROM artifact a
+ WHERE a.state='stored' AND a.role='original' AND a.tombstoned_at IS NULL AND a.summary <> ''
+ AND ((qu.execution_id IS NULL AND a.task_id=qu.task_id)
+      OR (a.execution_id=qu.execution_id AND (a.task_id IS NULL OR a.task_id=qu.task_id)))
+ AND (qu.data->'artifactIds') ? coalesce(a.legacy_id,a.id)
+ ORDER BY a.seq LIMIT 1
+) a ON true
+WHERE qu.kind='acceptance' AND qu.id=ANY($1::text[])
+`
+
+type TaskAcceptanceContextRow struct {
+	ID              string
+	TaskCode        *string
+	ProjectID       *string
+	Report          string
+	RunSucceeded    bool
+	Delivery        []byte
+	ArtifactSummary string
+}
+
+// Read context by visible question ID. Use the offered execution and artifacts even when later work exists.
+func (q *Queries) TaskAcceptanceContext(ctx context.Context, ids []string) ([]TaskAcceptanceContextRow, error) {
+	rows, err := q.db.Query(ctx, taskAcceptanceContext, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskAcceptanceContextRow
+	for rows.Next() {
+		var i TaskAcceptanceContextRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskCode,
+			&i.ProjectID,
+			&i.Report,
+			&i.RunSucceeded,
+			&i.Delivery,
+			&i.ArtifactSummary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const taskAcceptanceExecution = `-- name: TaskAcceptanceExecution :one
 SELECT id,kind,state,observation,problem,session_id,ended_at,directed_by,coalesce(data->>'automaticStop','')::text AS automatic_stop,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution x
  WHERE x.task_id= $1 AND x.kind NOT IN ('child_agent','tool_run')
@@ -131,6 +191,43 @@ func (q *Queries) TaskAcceptanceExecution(ctx context.Context, arg TaskAcceptanc
 		&i.Outcome,
 	)
 	return i, err
+}
+
+const taskAcceptancePRHistory = `-- name: TaskAcceptancePRHistory :many
+SELECT number, coalesce(payload->>'headSha','')::text AS head_sha, coalesce(payload->>'release','')::text AS release
+FROM delivery_pr WHERE project_id= $1 AND tombstoned_at IS NULL AND number=ANY($2::bigint[])
+`
+
+type TaskAcceptancePRHistoryParams struct {
+	ProjectID string
+	Numbers   []int64
+}
+
+type TaskAcceptancePRHistoryRow struct {
+	Number  int64
+	HeadSha string
+	Release string
+}
+
+// Fleet's retained release observations for PRs named by the offered executions' publishing records.
+func (q *Queries) TaskAcceptancePRHistory(ctx context.Context, arg TaskAcceptancePRHistoryParams) ([]TaskAcceptancePRHistoryRow, error) {
+	rows, err := q.db.Query(ctx, taskAcceptancePRHistory, arg.ProjectID, arg.Numbers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskAcceptancePRHistoryRow
+	for rows.Next() {
+		var i TaskAcceptancePRHistoryRow
+		if err := rows.Scan(&i.Number, &i.HeadSha, &i.Release); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const taskAcceptanceRecordDelivery = `-- name: TaskAcceptanceRecordDelivery :exec

@@ -89,6 +89,18 @@ test('SL3 a created session reads back; an unknown one is 404 (risk: session row
   assert.equal((await browser('POST', '/api/ops/session_get', {sessionId: randomUUID()})).status, 404);
 });
 
+test('an external acceptance keeps its task reference when no linked evidence was supplied', async () => {
+  const op = async (name: string, body: object) => ok(await browser('POST', '/api/ops/' + name, body));
+  const task = await op('task_create', {projectId: 'hello-world', title: 'External result acceptance smoke'});
+  const offer = await op('task_request_acceptance', {taskId: task.id});
+  assert.match(offer.acceptance.taskCode, /^T-/);
+  assert.deepEqual(offer.acceptance, {taskCode: offer.acceptance.taskCode});
+  assert.deepEqual(offer.artifactIds, []);
+  const {questions} = await op('questions_list', {taskId: task.id, kind: 'acceptance'});
+  assert.deepEqual(questions[0].acceptance, offer.acceptance);
+  await op('questions_answer', {questionId: offer.id, answer: 'accepted'});
+});
+
 test('SL4 a message queues one execution with no host yet; a repeated requestId returns the same execution; a bad body changes nothing (risk: duplicate work on client retry)', async () => {
   const id = await session();
   const e = ok(await browser('POST', '/api/ops/message_send', {sessionId: id, requestId: 'r1', text: 'hello'}));

@@ -158,6 +158,32 @@ WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
 ORDER BY seq
 LIMIT sqlc.narg(lim)::bigint;
 
+-- name: TaskAcceptanceContext :many
+-- Read context by visible question ID. Use the offered execution and artifacts even when later work exists.
+SELECT qu.id, t.code AS task_code,
+ qu.project_id,
+ coalesce(e.data->'report'->>'summary','')::text AS report,
+ coalesce(e.state='succeeded' AND e.observation='confirmed',false)::boolean AS run_succeeded,
+ (qu.data->'delivery')::jsonb AS delivery,
+ coalesce(a.summary,'')::text AS artifact_summary
+FROM question qu
+LEFT JOIN task t ON t.id=qu.task_id AND t.tombstoned_at IS NULL
+LEFT JOIN execution e ON e.id=qu.execution_id AND e.task_id=qu.task_id
+LEFT JOIN LATERAL (
+ SELECT a.summary FROM artifact a
+ WHERE a.state='stored' AND a.role='original' AND a.tombstoned_at IS NULL AND a.summary <> ''
+ AND ((qu.execution_id IS NULL AND a.task_id=qu.task_id)
+      OR (a.execution_id=qu.execution_id AND (a.task_id IS NULL OR a.task_id=qu.task_id)))
+ AND (qu.data->'artifactIds') ? coalesce(a.legacy_id,a.id)
+ ORDER BY a.seq LIMIT 1
+) a ON true
+WHERE qu.kind='acceptance' AND qu.id=ANY(@ids::text[]);
+
+-- name: TaskAcceptancePRHistory :many
+-- Fleet's retained release observations for PRs named by the offered executions' publishing records.
+SELECT number, coalesce(payload->>'headSha','')::text AS head_sha, coalesce(payload->>'release','')::text AS release
+FROM delivery_pr WHERE project_id= @project_id AND tombstoned_at IS NULL AND number=ANY(@numbers::bigint[]);
+
 -- name: TaskExecutionsPage :many
 -- Execution rows (executions_list) in (seq, id) order after the cursor, each filter optional. system: include, only
 -- or anything else (none); projects and excluded as in TaskQuestions. A pipeline step's end is its typed column or

@@ -1,5 +1,5 @@
-import { For, Match, Show, Switch, createMemo } from 'solid-js';
-import { EntityCode } from '../../../packages/ui/src/index.ts';
+import { Match, Show, Switch, createMemo } from 'solid-js';
+import { AcceptanceEvidence, EntityCode } from '../../../packages/ui/src/index.ts';
 import type { QuestionRow } from '../../../contracts/generated/ops.ts';
 
 /** Whether a typed answer can be accepted: acceptance and a decision with options take their options only (the server
@@ -11,10 +11,6 @@ export function typedAnswer(q: QuestionRow): boolean {
 
 export function TaskQuestionContext(props: { question: QuestionRow }) {
   const q = () => props.question;
-  const artifacts = createMemo(() => {
-    const ids = q().artifactIds;
-    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
-  });
   const isIdle = createMemo(() => {
     const rawOpts = q().options;
     const opts = Array.isArray(rawOpts) ? rawOpts.map(String) : [];
@@ -38,28 +34,7 @@ export function TaskQuestionContext(props: { question: QuestionRow }) {
       }
     >
       <Match when={q().kind === 'acceptance'}>
-        <>
-          <strong>Result acceptance</strong>
-          <Show when={q().executionId} keyed>
-            {execId => (
-              <>
-                {' · '}
-                <EntityCode id={execId} kind="execution" label cls="inline" />
-              </>
-            )}
-          </Show>
-          <Show when={artifacts().length > 0} fallback={<span class="muted"> · No stored output files</span>}>
-            <For each={artifacts()}>
-              {id => (
-                <span>
-                  {' · '}
-                  <EntityCode id={id} kind="result" label cls="inline" />
-                </span>
-              )}
-            </For>
-          </Show>
-          <p>Accepting records this result and completes the task. Rejecting keeps it open for rework.</p>
-        </>
+        <AcceptanceEvidence q={q()} />
       </Match>
       <Match when={q().cause}>
         <>
