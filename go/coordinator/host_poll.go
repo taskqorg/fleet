@@ -188,17 +188,6 @@ func (e *hostWakeEntry) wake() {
 }
 
 func init() {
-	// The rolling-update turn survives a coordinator restart: the hosts that reported a drain just before it count as
-	// draining until they poll again (rollingDrain).
-	onStart(func(ctx context.Context, a *App) {
-		_ = a.store.Read(ctx, nil, func(q *Request) error {
-			rows, err := q.db().HostsDraining(q.ctx(), onlineMs/1000)
-			for _, r := range rows {
-				a.draining.Store(r.ID, turnClaim{at: nowMs(), runs: int(r.Runs)})
-			}
-			return err
-		})
-	})
 	hostRouteObserved(contract.RoutePoll, pollObserved, func(q *Request, b *contract.PollRequest) (contract.PollReply, error) { return q.app.pollOnce(q, b) })
 }
 
@@ -954,27 +943,8 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	}
 	// Release pacing (update_pacing.go): the target this poll offers, decided once for the observation and the reply.
 	offered, offeredRel := healthyRelease()
-	pace := paceUpdate(offered, offeredRel, b.Version, b.Drain != nil, len(b.ActiveExecutions) == 0, b.UtcOffsetMinutes, time.Now())
-	if other := a.rollingDrain(host, pace.target != nil, len(b.ActiveExecutions)); other != "" {
-		// One busy host updates at a time, so the fleet keeps the others' capacity while it drains (2026-11-26: all
-		// three hosts drained at once and took no new start).
-		pace = hostPace{view: &contract.HostUpdatePacing{Release: *pace.target, State: contract.UpdatePacingStateDeferred,
-			Class: contract.UpdatePacingClassNormal, Reason: "waits for " + other + " to finish its update"}}
-	}
+	pace := paceUpdate(offered, offeredRel, b.Version)
 	obs.Pacing = pace.view
-	if d := hostDrain(b.Drain, b.Version, pace.target, autoUpdateOf(q.host), time.Now()); d != nil {
-		obs.Drain = d
-		if d.Fenced && len(d.WaitsFor) > 0 {
-			// Work holding a drain is what blocks new starts while fenced: the problem explains it and replaces version-behind.
-			kept := []hostProblem{{Kind: "updating", Detail: drainDetail(d)}}
-			for _, p := range ps {
-				if p.Kind != string(contract.ProblemKindVersionBehind) {
-					kept = append(kept, p)
-				}
-			}
-			ps = kept
-		}
-	}
 	obs.Problems = ps
 	upd := rawAny(open.Update)
 	if host != "" && host == pds18Host() {
@@ -1120,13 +1090,6 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 		}
 	}
 replyNow:
-	if pace.target != nil && len(b.ActiveExecutions) > 0 {
-		if cur, ok := a.draining.Load(host); ok {
-			c := cur.(turnClaim)
-			c.at = nowMs()
-			a.draining.Store(host, c)
-		}
-	}
 	reply := contract.PollReply{Commands: out, Target: pace.target, AutoUpdate: ptr(autoUpdateOf(q.host))}
 	if pollWantsDiagnosis(q, host) {
 		reply.Diagnose = ptr(true)
@@ -1264,78 +1227,6 @@ type hostPollObservationPayload struct {
 	Drain            *contract.DrainReport      `json:"drain,omitempty"`
 	Pacing           *contract.HostUpdatePacing `json:"pacing,omitempty"`
 	PollError        json.RawMessage            `json:"pollError,omitempty"`
-}
-
-const drainTurnTTLMs = 90_000
-
-// rollingDrain: the other executing host that holds the update turn, when this host should wait for it before its
-// own update is offered; "" when this host may update now. An idle host (no active runs) installs at once: it starts
-// nothing new, so it needs no fence and takes no turn. Busy hosts share one turn; once a busy host claims the turn,
-// it remains pinned until it becomes idle/updated or its claim exceeds drainTurnTTLMs (past longPollWait).
-func (a *App) rollingDrain(host string, offered bool, runs int) string {
-	now := nowMs()
-	if !offered || runs == 0 {
-		a.draining.Delete(host)
-		return ""
-	}
-	pinned := ""
-	holder, best := host, runs
-	a.draining.Range(func(k, v any) bool {
-		id, c := k.(string), v.(turnClaim)
-		if float64(now-c.at) >= drainTurnTTLMs {
-			a.draining.Delete(id)
-			return true
-		}
-		if c.holding && (pinned == "" || id < pinned) {
-			pinned = id
-		}
-		if c.runs < best || (c.runs == best && id < holder) {
-			holder, best = id, c.runs
-		}
-		return true
-	})
-	if pinned != "" {
-		a.draining.Store(host, turnClaim{at: now, runs: runs, holding: pinned == host})
-		if pinned == host {
-			return ""
-		}
-		return pinned
-	}
-	a.draining.Store(host, turnClaim{at: now, runs: runs, holding: holder == host})
-	if holder == host {
-		return ""
-	}
-	return holder
-}
-
-// turnClaim: a busy host's claim on the update turn (rollingDrain): when it last polled, how many runs it had, and
-// whether it currently holds the pinned turn.
-type turnClaim struct {
-	at      int64
-	runs    int
-	holding bool
-}
-
-// hostDrain: the drain of a host's executor as dispatch and Live read it; nil while it drains for nothing. An executor
-// that reports its drain is taken at its word. An older one fences every new start, unbounded, from the first poll that
-// offers it a newer release (autoUpdate on): dispatch must place nothing there, or the start waits for the whole drain
-// (2026-11-26: 13 starts sat preparing on pds18-native behind one long run).
-func hostDrain(reported *contract.DrainReport, running, offered *string, autoUpdate string, now time.Time) *contract.DrainReport {
-	if reported != nil {
-		return reported
-	}
-	if running == nil || offered == nil || !olderVersion(*running, *offered) || autoUpdate == "off" {
-		return nil
-	}
-	if t, err := time.Parse(time.RFC3339, autoUpdate); err == nil && t.After(now) {
-		return nil
-	}
-	return &contract.DrainReport{Target: *offered, Fenced: true, WaitsFor: []string{"its runs"}}
-}
-
-// drainDetail: the updating problem in words (only while work holds the drain).
-func drainDetail(d *contract.DrainReport) string {
-	return "updating to " + d.Target + ": takes no new start; waits for " + strings.Join(d.WaitsFor, ", ")
 }
 
 // hostPollObservation: what a poll observes of its host (the host-observation record): its platform, capabilities,

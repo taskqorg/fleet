@@ -272,7 +272,6 @@ type dispatchContext struct {
 	roots    map[string][]string
 	conns    map[string][]string             // git connection names each host reported; absent: unknown
 	loads    map[string]*hostLoadObservation // latest reported load/CPU/memory per host
-	updating map[string]string               // the release a host's executor drains for: it admits no new launch until then
 	running  map[string]int64                // active executions (preparing/running) per host, updated in-pass
 	accounts []dispatchAccountRec
 	readings map[string][]Reading
@@ -295,23 +294,11 @@ type dispatchHost struct {
 
 // hostSeen: the fields dispatch reads of a host observation.
 type hostSeen struct {
-	Capabilities   []string              `json:"capabilities"`
-	GitConnections *[]string             `json:"gitConnections"`
-	ProjectRoots   *[]string             `json:"projectRoots"`
-	Load           *hostLoadObservation  `json:"load"`
-	Version        *string               `json:"version"`
-	Drain          *contract.DrainReport `json:"drain"`
-}
-
-// drainTarget: the newer release a host's executor drains for (executor_launch.go, hostDrain). Dispatch places no new
-// work there for the whole drain, its executor's open pauses included: a pause let new runs in, so a busy host never
-// reached the idle moment its update installs at (2026-11-26: pds18-native drained 3 h for .109 to .133 while new runs
-// kept starting). The other hosts take the work; one host updates at a time (pollOnce, rollingDrain).
-func (o hostSeen) drainTarget() string {
-	if o.Drain == nil {
-		return ""
-	}
-	return o.Drain.Target
+	Capabilities   []string             `json:"capabilities"`
+	GitConnections *[]string            `json:"gitConnections"`
+	ProjectRoots   *[]string            `json:"projectRoots"`
+	Load           *hostLoadObservation `json:"load"`
+	Version        *string              `json:"version"`
 }
 
 // dispatchAccountRec: a subscription (managed_account) decoded once for dispatch.
@@ -332,7 +319,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{hosts: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, loads: map[string]*hostLoadObservation{}, updating: map[string]string{}, running: map[string]int64{}, orders: map[string]contract.DispatchOrder{}}
+	k := &dispatchContext{hosts: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, loads: map[string]*hostLoadObservation{}, running: map[string]int64{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
 		if !h.executes() {
 			continue
@@ -361,9 +348,6 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 		}
 		if l := q.app.effectiveHostLoad(r.ID, o.Load); l != nil {
 			k.loads[r.ID] = l
-		}
-		if v := o.drainTarget(); v != "" {
-			k.updating[r.ID] = v
 		}
 	}
 	for id := range k.hosts {
@@ -657,8 +641,6 @@ type dispatchExecution struct {
 	ForkOfNativeSessionID string               `json:"forkOfNativeSessionId,omitempty"`
 	HandoffID             string               `json:"handoffId,omitempty"`
 	BotContext            *botExecutionContext `json:"botContext,omitempty"`
-	HoldSince             *float64             `json:"holdSince,omitempty"` // first pass that held it for its updating host
-	holdStart             float64              // this pass began the hold (written with the wait reason)
 	rest                  recordRest
 }
 
@@ -688,7 +670,6 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 	dir := deref(e.DirectedBy)
 	projectID := x.ProjectID
 	harness := x.Harness
-	holdFor := "" // the updating host a continuation waits for (its last host)
 	order := []string{}
 	if deref(x.Host) != "" {
 		order = []string{*x.Host}
@@ -962,23 +943,6 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if v := k.updating[id]; v != "" {
-				// A continuation waits, unplaced, for its own host's update, where its native session and worktree live,
-				// for up to continuationHostWait; past that it moves and starts with a context handoff (startCommand).
-				if id == deref(x.Last) && deref(hv.Intake) != "spare" {
-					since := float64(now)
-					if e.HoldSince != nil {
-						since = *e.HoldSince
-					} else {
-						e.holdStart = since
-					}
-					if float64(now)-since < continuationHostWait {
-						holdFor = id
-					}
-				}
-				skip(fmt.Sprintf("%s is updating to %s and starts no new work until then", id, v), "host:"+id+":updating")
-				continue
-			}
 			if reason := hostOverloadReason(id, k.loads[id], now); reason != "" {
 				skip(reason, "host:"+id+":overloaded")
 				continue
@@ -1027,14 +991,6 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 	last, lastAccount := deref(x.Last), deref(x.LastAccount)
 	rank := func(c *candidate) int { return parkRank(c, last, lastAccount, k.spare(c.Host)) }
 	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
-	// Held for its own host: no other host takes it now. It stays unplaced, so every pass ranks it again.
-	if holdFor != "" {
-		for _, c := range out {
-			if c.Skipped == "" {
-				c.Skipped, c.Cause = fmt.Sprintf("waits for %s to finish its update: the conversation's native session lives there", holdFor), "host:"+holdFor+":updating"
-			}
-		}
-	}
 	live := []*candidate{}
 	for _, c := range out {
 		if c.Subscription != nil && c.Skipped == "" {
@@ -1377,7 +1333,7 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 			return nil
 		}
 		cur := &e
-		if deref(cur.WaitDetail) != reason || e.holdStart != 0 {
+		if deref(cur.WaitDetail) != reason {
 			claimed, err := claimRow(q, id)
 			if err != nil {
 				return err
@@ -1386,15 +1342,6 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 				return nil
 			}
 			cur = claimed
-		}
-		// Checked again on the locked row: an overlapping pass may have written the same wait meanwhile.
-		if e.holdStart != 0 && cur.HoldSince == nil {
-			cur.HoldSince = &e.holdStart
-			if deref(cur.WaitDetail) == reason {
-				if err := executionPut(q, cur); err != nil {
-					return err
-				}
-			}
 		}
 		if deref(cur.WaitDetail) != reason {
 			kind := waitKindOf(cause)
@@ -1479,7 +1426,7 @@ func hostConcurrencyLimit(hv dispatchHost, load *hostLoadObservation, now int64)
 }
 
 func isBackpressureCause(cause string) bool {
-	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency") || strings.HasSuffix(cause, ":updating")
+	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency")
 }
 
 // publishes: the run may publish to the project's forge (push its branch, open a pull or merge request). It depends
@@ -1514,7 +1461,7 @@ func withoutForge(project map[string]json.RawMessage) {
 // passingCause: a skip that clears without anyone changing a setting: the host comes back, finishes its update or
 // load, a subscription limit resets, a budget or a paused host or subscription is resumed.
 func passingCause(cause string) bool {
-	for _, s := range []string{":offline", ":updating", ":overloaded", ":concurrency", ":paused", ":limit", ":reached"} {
+	for _, s := range []string{":offline", ":overloaded", ":concurrency", ":paused", ":limit", ":reached"} {
 		if strings.HasSuffix(cause, s) {
 			return true
 		}
@@ -1666,10 +1613,6 @@ type dispatchStartCommand struct {
 	HandedOut   bool            `json:"handedOut"`
 	Payload     json.RawMessage `json:"payload"`
 }
-
-// continuationHostWait: how long a continuation waits for its own updating host before it moves (a release drains in
-// minutes; 2026-11-24 a drain held by an undeliverable receipt never ended).
-const continuationHostWait = 15 * 60 * 1000 // milliseconds
 
 // nativeFor: the session's native id when the run starts on the host of its last run. A native session lives in that
 // host's harness home, so on another host the executor refuses to resume it ("native account/session binding

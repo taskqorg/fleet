@@ -153,7 +153,6 @@ func (u *updater) runExecutor() error {
 	st := &State{}
 	readJSON(stateFile, st)
 	signal := filepath.Join(s, "update.json")
-	ensureTrigger(signal)
 	restart := []string{"systemctl", "--user", "restart", "fleet-executor"}
 	if runtime.GOOS == "darwin" {
 		restart = []string{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(os.Getuid()) + "/com.ufobe.fleet-executor"}
@@ -165,7 +164,7 @@ func (u *updater) runExecutor() error {
 	}
 	defer r.Close()
 	p := &part{r: r, name: "executor", root: root, stage: root, dataDir: executorDataDir(), selfExec: true, bins: []string{"fleet-executor", "fleet-update"},
-		activity: u.executorActivity(signal), restart: command(restart...), health: u.executorHealth(signal), st: st}
+		restart: command(restart...), health: u.executorHealth(signal), st: st}
 	var in signalFile
 	if !readJSON(signal, &in) {
 		log.Print("no update.json yet: the executor has not polled")
@@ -227,8 +226,8 @@ func (u *updater) runPDS18() error {
 		restart: command("systemctl", "--user", "-M", "fleet@", "restart", "fleet", "fleet-gateway", "fleet-access-guard"),
 		health:  u.coordinatorHealth, st: &st.Coordinator}
 	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, dataDir: filepath.Dir(filepath.Dir(execSignal)), selfExec: true, bins: []string{"fleet-executor"},
-		activity: u.executorActivity(execSignal), restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
-		health: u.executorHealth(execSignal), st: &st.Executor}
+		restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
+		health:  u.executorHealth(execSignal), st: &st.Executor}
 	// The host's autoUpdate holds its executor only. The coordinator side (coordinator, gateway, guard, UI) serves every
 	// host, so a hold on PDS18's work host must not freeze it: 2026-11-26 a hold set to let pds18-native's executor take
 	// work kept a coordinator fix from the hosts that needed it. FLEET_RELEASE_PAUSE stops new releases for all.

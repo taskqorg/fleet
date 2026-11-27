@@ -41,31 +41,6 @@ func (e *executor) run(c M) error {
 	if typedErr != nil {
 		cmd = contract.Command{Raw: json.RawMessage(body)} // receipts and events still read its identities
 	}
-	if admittedWhileDraining(kind) {
-		// Admitted control/service commands (stop, steer, teardown, artifact-copy/verify) still execute even if
-		// the updater holds the exclusive activity lease; take a shared lease when available.
-		if _, leaseErr := e.activityLease(); leaseErr != nil {
-			return leaseErr
-		}
-	} else {
-		signalMu.Lock()
-		draining := fencedLocked(time.Now())
-		signalMu.Unlock()
-		if draining {
-			return nil
-		}
-		leased, leaseErr := e.activityLease()
-		if leaseErr != nil {
-			return leaseErr
-		}
-		if !leased {
-			fmt.Fprintf(os.Stderr, "executor: deferring %s (%s): updater holds activity lease\n", cid, kind)
-			return errors.New("updater holds activity lease")
-		}
-	}
-	if err := e.withdrawUpdateReady(); err != nil {
-		return err
-	}
 	if old, ok := e.commandBody(cid, false); ok {
 		if old != body {
 			return errors.New("command identity conflict")

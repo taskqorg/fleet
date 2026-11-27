@@ -29,8 +29,6 @@ var shutdown atomic.Bool
 
 type executor struct {
 	stopCtx      context.Context
-	activity     *os.File
-	updateReady  atomic.Pointer[string]
 	db           *sql.DB
 	ex           execer // db, or the open transaction
 	root         string
@@ -276,10 +274,6 @@ func runExecutor() error {
 			return err
 		}
 		if nextExe := selfExecTarget(); nextExe != "" {
-			if e.activity != nil {
-				e.activity.Close()
-				e.activity = nil
-			}
 			baseEnv.restore()
 			_ = odb.Close()
 			_ = db.Close()
@@ -409,7 +403,7 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 	offsetMinutes := int64(offset / 60)
 	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, ForgeLogins: forgeLoginReport(), Version: &v, HarnessVersions: managedVersions(), ToolVersions: toolVersions(), Update: lastUpdate(e.root),
-		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions(), Load: e.sampleHostLoad(), Drain: drainReport(time.Now())}
+		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions(), Load: e.sampleHostLoad()}
 	if diagnoseNext.Swap(false) {
 		body.Diagnosis = diagnosis(e.db)
 	}
@@ -449,9 +443,6 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 			}
 		}
 	}
-	if ready := e.updateReady.Load(); ready != nil && sig.Target != nil && *ready == *sig.Target {
-		sig.RestartTarget = ready
-	}
 	if flush {
 		if err := writeUpdateSignal(e.root, sig); err != nil {
 			fmt.Fprintln(os.Stderr, "executor: update.json:", err)
@@ -488,16 +479,6 @@ func (e *executor) heldPoll() (*pollReply, error) {
 		select {
 		case a := <-got:
 			if a.sig != nil {
-				ready, err := e.idleUpdateFor(a.sig)
-				if err != nil {
-					return nil, tickFailed{err}
-				}
-				e.updateReady.Store(ready)
-				if ready != nil && a.sig.Target != nil && *ready == *a.sig.Target {
-					a.sig.RestartTarget = ready
-				} else {
-					a.sig.RestartTarget = nil
-				}
 				signalMu.Lock()
 				if err := writeUpdateSignal(e.root, *a.sig); err != nil {
 					fmt.Fprintln(os.Stderr, "executor: update.json:", err)
@@ -521,10 +502,7 @@ func (e *executor) heldPoll() (*pollReply, error) {
 }
 
 func (e *executor) tick() error {
-	if err := e.tickProcesses(); err != nil {
-		return err
-	}
-	return e.drainUpdate()
+	return e.tickProcesses()
 }
 
 func (e *executor) tickProcesses() error {
