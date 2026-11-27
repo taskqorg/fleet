@@ -382,6 +382,9 @@ func saveTrigger(q *Request, in triggerSaveIn) (db.Trigger, error) {
 	if err := normalizeTriggerSettings(&s); err != nil {
 		return none, err
 	}
+	if deref(s.PresetId) == youtrackPreset && (s.When != "manual" || len(s.IfChanged) != 0 || s.Text != "") {
+		return none, fail(409, "YouTrack triggers run only for verified YouTrack activity")
+	}
 	if in.target.bot == nil && slices.Contains(s.IfChanged, "problem") {
 		return none, fail(400, "Change kind problem wakes a bot only: a problem goes to the bot that owns it")
 	}
@@ -480,11 +483,15 @@ func triggerList(q *Request, r *contract.TriggerListRequest) (contract.TriggerLi
 	if out.Presets, err = triggerPresets(); err != nil {
 		return out, err
 	}
+	out.Presets = slices.DeleteFunc(out.Presets, func(p contract.TriggerPreset) bool { return p.Id == youtrackPreset })
 	return out, nil
 }
 
 func triggerSaveOp(q *Request, r *contract.TriggerSaveRequest) (contract.TriggerSaveReply, error) {
 	var out contract.TriggerSaveReply
+	if deref(r.PresetId) == youtrackPreset {
+		return out, fail(409, "Use youtrack_project_connect to provision this trigger")
+	}
 	if r.BaseRevision == 0 && !botIDPattern.MatchString(r.Id) { // migrated triggers keep their older ids
 		return out, fail(400, "Expected a trigger UUID")
 	}
@@ -549,6 +556,9 @@ func triggerRunOp(q *Request, r *contract.TriggerRunRequest) (contract.TriggerRu
 	t, target, err := triggerManaged(q, r.Id)
 	if err != nil {
 		return out, err
+	}
+	if t.PresetID == youtrackPreset {
+		return out, fail(409, "YouTrack triggers run only for verified YouTrack activity")
 	}
 	if err := target.writable(q); err != nil {
 		return out, err

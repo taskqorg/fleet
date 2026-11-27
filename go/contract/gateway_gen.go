@@ -456,6 +456,7 @@ type GatewayRunToken struct {
 	FileDownloads []string `json:"fileDownloads,omitempty"`
 	ProjectId     string   `json:"projectId"`
 	Sha256        string   `json:"sha256"`
+	SystemActor   *string  `json:"systemActor,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -495,23 +496,25 @@ func (v *GatewaySnapshot) Validate() error {
 }
 
 type GatewayTool struct {
-	AdoptFields     []string                   `json:"adoptFields,omitempty"`
-	AdoptMatch      *string                    `json:"adoptMatch,omitempty"`
-	File            *GatewayFileMode           `json:"file,omitempty"`
-	FileFrom        *GatewayFileFrom           `json:"fileFrom,omitempty"`
-	ForbiddenIsCall *bool                      `json:"forbiddenIsCall,omitempty"`
-	Headers         map[string]string          `json:"headers,omitempty"`
-	Idempotent      bool                       `json:"idempotent"`
-	Inject          map[string]json.RawMessage `json:"inject,omitempty"`
-	Method          string                     `json:"method"`
-	Path            string                     `json:"path"`
-	PathPatterns    map[string]string          `json:"pathPatterns,omitempty"`
-	TextReply       *bool                      `json:"textReply,omitempty"`
-	Unit            string                     `json:"unit"`
-	UsageField      *string                    `json:"usageField,omitempty"`
-	UsageFields     *GatewayUsageFields        `json:"usageFields,omitempty"`
-	UsageOnce       *string                    `json:"usageOnce,omitempty"`
-	UsageWhen       *GatewayUsageWhen          `json:"usageWhen,omitempty"`
+	AdoptFields         []string                   `json:"adoptFields,omitempty"`
+	AdoptMatch          *string                    `json:"adoptMatch,omitempty"`
+	CoordinatorRequires *string                    `json:"coordinatorRequires,omitempty"`
+	File                *GatewayFileMode           `json:"file,omitempty"`
+	FileFrom            *GatewayFileFrom           `json:"fileFrom,omitempty"`
+	ForbiddenIsCall     *bool                      `json:"forbiddenIsCall,omitempty"`
+	Headers             map[string]string          `json:"headers,omitempty"`
+	Idempotent          bool                       `json:"idempotent"`
+	Inject              map[string]json.RawMessage `json:"inject,omitempty"`
+	Method              string                     `json:"method"`
+	Path                string                     `json:"path"`
+	PathPatterns        map[string]string          `json:"pathPatterns,omitempty"`
+	ServiceActor        *string                    `json:"serviceActor,omitempty"`
+	TextReply           *bool                      `json:"textReply,omitempty"`
+	Unit                string                     `json:"unit"`
+	UsageField          *string                    `json:"usageField,omitempty"`
+	UsageFields         *GatewayUsageFields        `json:"usageFields,omitempty"`
+	UsageOnce           *string                    `json:"usageOnce,omitempty"`
+	UsageWhen           *GatewayUsageWhen          `json:"usageWhen,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }

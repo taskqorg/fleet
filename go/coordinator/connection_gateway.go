@@ -145,7 +145,7 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 			downloads = []string{}
 		}
 		snap.Tokens = append(snap.Tokens, contract.GatewayRunToken{Sha256: t.Sha256, ExecutionId: deref(t.ExecutionID), DirectedBy: deref(t.DirectedBy),
-			ProjectId: deref(t.ProjectID), ExperimentId: deref(t.ExperimentID), Connections: conns, FileDownloads: downloads})
+			ProjectId: deref(t.ProjectID), ExperimentId: deref(t.ExperimentID), Connections: conns, FileDownloads: downloads, SystemActor: t.SystemActor})
 	}
 	return snap, nil
 }

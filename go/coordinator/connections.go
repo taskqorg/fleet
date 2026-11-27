@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -473,7 +472,14 @@ func connUpdated(q *Request, c apiConnection) error {
 
 // toolNames: a provider's tools, sorted.
 func toolNames(provider string) []string {
-	return slices.Sorted(maps.Keys(gatewayProviders[provider].Tools))
+	var names []string
+	for name, tool := range gatewayProviders[provider].Tools {
+		if tool.CoordinatorRequires == nil {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // idList: the ids once each, in order; an id longer than 320 is refused.

@@ -743,21 +743,163 @@ func (v *BotTasksRequest) Validate() error {
 	return nil
 }
 
+type YoutrackCommentState string
+
+const (
+	YoutrackCommentStateQueued    YoutrackCommentState = "queued"
+	YoutrackCommentStateUnknown   YoutrackCommentState = "unknown"
+	YoutrackCommentStateConfirmed YoutrackCommentState = "confirmed"
+	YoutrackCommentStateSkipped   YoutrackCommentState = "skipped"
+)
+
+// YoutrackCommentStateValues lists every YoutrackCommentState in schema order.
+var YoutrackCommentStateValues = []YoutrackCommentState{YoutrackCommentStateQueued, YoutrackCommentStateUnknown, YoutrackCommentStateConfirmed, YoutrackCommentStateSkipped}
+
+// Valid: v is one of the schema's values.
+func (v YoutrackCommentState) Valid() bool {
+	for _, x := range YoutrackCommentStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type YoutrackCommentSyncReply struct {
+	CommentId *string              `json:"commentId,omitempty"`
+	LastError *string              `json:"lastError,omitempty"`
+	State     YoutrackCommentState `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *YoutrackCommentSyncReply) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type YoutrackCommentSyncRequest struct {
+	MilestoneId string `json:"milestoneId"`
+	Recheck     *bool  `json:"recheck,omitempty"`
+	TaskId      string `json:"taskId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *YoutrackCommentSyncRequest) Validate() error {
+	return nil
+}
+
+type YoutrackExistingTask struct {
+	Issue string `json:"issue"`
+	Task  string `json:"task"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *YoutrackExistingTask) Validate() error {
+	return nil
+}
+
+type YoutrackProjectConnectReply struct {
+	Applied            bool                   `json:"applied"`
+	BindingId          string                 `json:"bindingId"`
+	BotId              string                 `json:"botId"`
+	Connection         *string                `json:"connection,omitempty"`
+	ExistingTasks      []YoutrackExistingTask `json:"existingTasks,omitempty"`
+	IssueIds           []string               `json:"issueIds"`
+	PollingTriggerId   *string                `json:"pollingTriggerId,omitempty"`
+	ProjectId          string                 `json:"projectId"`
+	ReviewerPerson     string                 `json:"reviewerPerson"`
+	ReviewerUserId     string                 `json:"reviewerUserId"`
+	Revision           int64                  `json:"revision"`
+	TriggerId          string                 `json:"triggerId"`
+	WebhookPath        string                 `json:"webhookPath"`
+	WholeProject       bool                   `json:"wholeProject"`
+	YoutrackProjectId  string                 `json:"youtrackProjectId"`
+	YoutrackProjectKey *string                `json:"youtrackProjectKey,omitempty"`
+	ZeroPii            bool                   `json:"zeroPii"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *YoutrackProjectConnectReply) Validate() error {
+	for i := range v.ExistingTasks {
+		if err := Check(&v.ExistingTasks[i], "existingTasks"); err != nil {
+			return err
+		}
+	}
+	if v.IssueIds == nil {
+		return Missing("issueIds")
+	}
+	return nil
+}
+
+type YoutrackProjectConnectRequest struct {
+	BaseRevision           *int64                 `json:"baseRevision,omitempty"`
+	BindingId              string                 `json:"bindingId"`
+	BotId                  *string                `json:"botId,omitempty"`
+	ExistingTasks          []YoutrackExistingTask `json:"existingTasks,omitempty"`
+	IssueIds               []string               `json:"issueIds,omitempty"`
+	IssueKeys              []string               `json:"issueKeys,omitempty"`
+	PollingTriggerId       *string                `json:"pollingTriggerId,omitempty"`
+	PollingTriggerRevision *int64                 `json:"pollingTriggerRevision,omitempty"`
+	Preview                *bool                  `json:"preview,omitempty"`
+	ProjectId              string                 `json:"projectId"`
+	ReviewerLogin          *string                `json:"reviewerLogin,omitempty"`
+	ReviewerPerson         string                 `json:"reviewerPerson"`
+	ReviewerUserId         *string                `json:"reviewerUserId,omitempty"`
+	WebhookTokenSha256     string                 `json:"webhookTokenSha256"`
+	WholeProject           *bool                  `json:"wholeProject,omitempty"`
+	YoutrackProjectId      string                 `json:"youtrackProjectId"`
+	ZeroPii                bool                   `json:"zeroPii"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *YoutrackProjectConnectRequest) Validate() error {
+	for i := range v.ExistingTasks {
+		if err := Check(&v.ExistingTasks[i], "existingTasks"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type YoutrackProjectDisconnectReply struct {
+	Revision int64 `json:"revision"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *YoutrackProjectDisconnectReply) Validate() error {
+	return nil
+}
+
+type YoutrackProjectDisconnectRequest struct {
+	BaseRevision int64  `json:"baseRevision"`
+	BindingId    string `json:"bindingId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *YoutrackProjectDisconnectRequest) Validate() error {
+	return nil
+}
+
 func init() {
 	for n, o := range map[string]Operation{
-		"bot_avatar_clear":  {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Clear a bot's avatar: the bot shows its letter again.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_avatar_set":    {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's avatar to a stored image or video artifact of the bot's project: any still or animated picture (PNG, JPEG, WebP, AVIF, GIF, APNG, SVG) or a muted loop (WebM, MP4). stillArtifactId is an optional still frame that lists show in place of an animated file; glow (#RRGGBB) colours the activity light. Make one with the avatar-make pipeline or upload it (artifact_upload_begin).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"glow\":{\"type\":\"string\"},\"stillArtifactId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"artifactId\"],\"type\":\"object\"}")},
-		"bot_get":           {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read the saved settings, scoped memory and runtime status of a bot by id.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_identity_set":  {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's identity colour and pattern (OR-72): color one of rose, violet, sky, teal, lime, sand, coral, slate, or '' for the automatic one; pattern solid, hatch or '' (solid).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"color\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\"}},\"required\":[\"botId\",\"color\",\"pattern\"],\"type\":\"object\"}")},
-		"bot_list":          {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "List bot settings and runtime status visible in granted projects, optionally for one project.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[],\"type\":\"object\"}")},
-		"bot_memory_save":   {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Save a new project-scoped bot memory revision.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"memory\":{\"type\":\"string\"}},\"required\":[\"botId\",\"baseRevision\",\"memory\"],\"type\":\"object\"}")},
-		"bot_pause":         {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Pause or resume a bot's future scheduled and Needs-you wakes.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"paused\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\",\"paused\"],\"type\":\"object\"}")},
-		"bot_run":           {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Run a bot now in its conversation without a subject (with automationId: the trigger's conversation), pinning settings, memory and project. A busy conversation queues the message as its next turn: the reply then has no run.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_runs":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List bot runs: the agent runs of the bot's conversations, including quiet wakes and queued, failed and unconfirmed work. A trigger wake that never ran is in the trigger's last run (trigger_list), not here.", Changes: []string{"execution", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"cause\":{\"enum\":[\"manual\",\"schedule\",\"needs_you\",\"message\"],\"type\":\"string\"},\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"observation\":{\"enum\":[\"confirmed\",\"unconfirmed\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"quiet\":{\"type\":\"boolean\"},\"state\":{\"enum\":[\"queued\",\"running\",\"waiting\",\"succeeded\",\"failed\",\"cancelled\",\"skipped\"],\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
-		"bot_settings_save": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its conversation without a subject.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"duty\":{\"$comment\":\"Which problems the bot owns (docs/designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner). Absent: none.\",\"additionalProperties\":false,\"properties\":{\"problems\":{\"additionalProperties\":false,\"properties\":{\"projects\":{\"$comment\":\"project ids whose problems this bot owns\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"system\":{\"$comment\":\"owns every problem without a project and those of projects no other bot claims\",\"type\":\"boolean\"}},\"type\":\"object\"}},\"type\":\"object\"},\"instructions\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"purpose\":{\"type\":\"string\"},\"soul\":{\"type\":\"string\"}},\"required\":[\"name\",\"purpose\",\"profileId\",\"instructions\",\"soul\"],\"type\":\"object\"}},\"required\":[\"botId\",\"projectId\",\"baseRevision\",\"settings\"],\"type\":\"object\"}")},
-		"bot_stop":          {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Request cancellation of a bot's active execution through the execution lifecycle and report the observed stop outcome.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_task_link":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Link a Fleet task in the bot's project as a managed task of the bot without attaching the Home conversation.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"executionId\":{\"$comment\":\"the bot run (execution) the link names; default the calling run\",\"type\":\"string\"},\"linkKind\":{\"enum\":[\"created\",\"continued\",\"managed\"],\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"taskId\"],\"type\":\"object\"}")},
-		"bot_tasks":         {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List managed Fleet tasks linked to a bot, keeping each task's own Fleet state and independent history.", Changes: []string{"bot", "task", "execution", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"state\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_avatar_clear":            {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Clear a bot's avatar: the bot shows its letter again.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_avatar_set":              {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's avatar to a stored image or video artifact of the bot's project: any still or animated picture (PNG, JPEG, WebP, AVIF, GIF, APNG, SVG) or a muted loop (WebM, MP4). stillArtifactId is an optional still frame that lists show in place of an animated file; glow (#RRGGBB) colours the activity light. Make one with the avatar-make pipeline or upload it (artifact_upload_begin).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"glow\":{\"type\":\"string\"},\"stillArtifactId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"artifactId\"],\"type\":\"object\"}")},
+		"bot_get":                     {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read the saved settings, scoped memory and runtime status of a bot by id.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_identity_set":            {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's identity colour and pattern (OR-72): color one of rose, violet, sky, teal, lime, sand, coral, slate, or '' for the automatic one; pattern solid, hatch or '' (solid).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"color\":{\"type\":\"string\"},\"pattern\":{\"type\":\"string\"}},\"required\":[\"botId\",\"color\",\"pattern\"],\"type\":\"object\"}")},
+		"bot_list":                    {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "List bot settings and runtime status visible in granted projects, optionally for one project.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[],\"type\":\"object\"}")},
+		"bot_memory_save":             {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Save a new project-scoped bot memory revision.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"memory\":{\"type\":\"string\"}},\"required\":[\"botId\",\"baseRevision\",\"memory\"],\"type\":\"object\"}")},
+		"bot_pause":                   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Pause or resume a bot's future scheduled and Needs-you wakes.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"paused\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\",\"paused\"],\"type\":\"object\"}")},
+		"bot_run":                     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Run a bot now in its conversation without a subject (with automationId: the trigger's conversation), pinning settings, memory and project. A busy conversation queues the message as its next turn: the reply then has no run.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_runs":                    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List bot runs: the agent runs of the bot's conversations, including quiet wakes and queued, failed and unconfirmed work. A trigger wake that never ran is in the trigger's last run (trigger_list), not here.", Changes: []string{"execution", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"cause\":{\"enum\":[\"manual\",\"schedule\",\"needs_you\",\"message\"],\"type\":\"string\"},\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"observation\":{\"enum\":[\"confirmed\",\"unconfirmed\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"quiet\":{\"type\":\"boolean\"},\"state\":{\"enum\":[\"queued\",\"running\",\"waiting\",\"succeeded\",\"failed\",\"cancelled\",\"skipped\"],\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
+		"bot_settings_save":           {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its conversation without a subject.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"duty\":{\"$comment\":\"Which problems the bot owns (docs/designs/fleet-system-management.md#problems-anomalies-with-a-bot-owner). Absent: none.\",\"additionalProperties\":false,\"properties\":{\"problems\":{\"additionalProperties\":false,\"properties\":{\"projects\":{\"$comment\":\"project ids whose problems this bot owns\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"system\":{\"$comment\":\"owns every problem without a project and those of projects no other bot claims\",\"type\":\"boolean\"}},\"type\":\"object\"}},\"type\":\"object\"},\"instructions\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"purpose\":{\"type\":\"string\"},\"soul\":{\"type\":\"string\"}},\"required\":[\"name\",\"purpose\",\"profileId\",\"instructions\",\"soul\"],\"type\":\"object\"}},\"required\":[\"botId\",\"projectId\",\"baseRevision\",\"settings\"],\"type\":\"object\"}")},
+		"bot_stop":                    {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Request cancellation of a bot's active execution through the execution lifecycle and report the observed stop outcome.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_task_link":               {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Link a Fleet task in the bot's project as a managed task of the bot without attaching the Home conversation.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"executionId\":{\"$comment\":\"the bot run (execution) the link names; default the calling run\",\"type\":\"string\"},\"linkKind\":{\"enum\":[\"created\",\"continued\",\"managed\"],\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"taskId\"],\"type\":\"object\"}")},
+		"bot_tasks":                   {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List managed Fleet tasks linked to a bot, keeping each task's own Fleet state and independent history.", Changes: []string{"bot", "task", "execution", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"state\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"youtrack_comment_sync":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Queue a zero-PII YouTrack comment for a correlated Fleet task's open question or current result offer. milestoneId is the Fleet question or acceptance question ID. Replaying the same milestone reuses its durable write and reports the last confirmed outcome. recheck: true expedites the safe readback of an unknown write.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"milestoneId\":{\"type\":\"string\"},\"recheck\":{\"type\":\"boolean\"},\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\",\"milestoneId\"],\"type\":\"object\"}")},
+		"youtrack_project_connect":    {Read: false, Long: true, Errors: []int{400, 403, 404, 409, 503}, Auth: "owner", Agent: "tool", Description: "Connect YouTrack project. Preview or apply with a stable bindingId. Supply the immutable YouTrack project ID and exactly one selector (issueIds, issueKeys or wholeProject: true), a YouTrack reviewer ID or login mapped to their Fleet person, and the SHA-256 of a high-entropy webhook bearer configured in YouTrack. Reuse botId or provision the project's PM bot at bindingId. Applying the same setup is idempotent. Use baseRevision for credential rotation, reviewer or selector changes, or reconnection. existingTasks can adopt an explicitly selected managed Fleet task for an issue. Optionally pause an explicitly named polling trigger at its expected revision.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"bindingId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"existingTasks\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"issue\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"required\":[\"issue\",\"task\"],\"type\":\"object\"},\"type\":\"array\"},\"issueIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"issueKeys\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"pollingTriggerId\":{\"type\":\"string\"},\"pollingTriggerRevision\":{\"type\":\"integer\"},\"preview\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"reviewerLogin\":{\"type\":\"string\"},\"reviewerPerson\":{\"type\":\"string\"},\"reviewerUserId\":{\"type\":\"string\"},\"webhookTokenSha256\":{\"type\":\"string\"},\"wholeProject\":{\"type\":\"boolean\"},\"youtrackProjectId\":{\"type\":\"string\"},\"zeroPii\":{\"type\":\"boolean\"}},\"required\":[\"bindingId\",\"projectId\",\"youtrackProjectId\",\"reviewerPerson\",\"webhookTokenSha256\",\"zeroPii\"],\"type\":\"object\"}")},
+		"youtrack_project_disconnect": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "owner", Agent: "tool", Description: "Disconnect the YouTrack webhook and reconciliation at baseRevision. Retain correlated tasks. Reconnect or rotate through youtrack_project_connect with the latest revision.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"bindingId\":{\"type\":\"string\"}},\"required\":[\"bindingId\",\"baseRevision\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

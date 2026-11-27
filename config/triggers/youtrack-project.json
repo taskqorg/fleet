@@ -1,0 +1,11 @@
+{
+  "id": "youtrack-project",
+  "name": "YouTrack project",
+  "description": "Wake the PM bot for verified activity in a bound YouTrack project.",
+  "target": "bot",
+  "settings": {
+    "name": "YouTrack project",
+    "when": "manual",
+    "enabled": true
+  }
+}
