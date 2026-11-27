@@ -26,7 +26,8 @@ go_checks() {
 app_checks() {
   step pnpm install --frozen-lockfile
   step pnpm run app:build
-  step node --test tests/ui/*.test.ts
+  step node packages/ui/scripts/design-sources.mjs
+  step node --test tests/ui/*.test.ts tests/ui/*.test.mjs
 }
 case ${1:-all} in
   go) go_checks ;;

@@ -347,6 +347,8 @@ The coordinator opens `problem:backup:missing` when it finds no completed nightl
 
 Pull requests reach `main` only through the GitHub merge queue. A worker runs `/code-review` before it opens its pull request and enables auto-merge on it after the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
 
+**Target — visual delivery.** Every visible Fleet UI change follows [OR-62 and OR-69](docs/design-system/owner-rules.md#rules). Owner selection of a retained preview recipe precedes production implementation. A trusted `design-approval` check covers the exact PR head and the combined merge-queue tree. Cutover requires qualified decision, admission, issuer and host evidence.
+
 Every change passes `scripts/check.sh` (`pnpm run check`), the same in CI and locally ([checks per change](docs/designs/fleet-delivery-pipeline.md#checks-per-change)).
 
 Its `go` part: `go generate` leaves no diff, `go vet`, the four binaries built with `CGO_ENABLED=0`, `go test ./...` (design rules, pure logic, the schema drift checks) and the smoke `node tests/trial/run.ts` (the coordinator binary on a fresh database, 11 checks over HTTP and SSE). Its `app` part: typecheck and bundle, the app unit tests.

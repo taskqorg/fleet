@@ -1,5 +1,7 @@
 # Hosts, environments and stores (architect)
 
+**Preview sources:** [scene directory](../../../packages/ui/book/scenes/pages/hosts/list). Existing mockups are reference fixtures.
+
 **Target home.** [System](system.md) › Hosts (`/system/hosts/<name>`) and › Accounts & limits (`/system/accounts`); the live picture of hosts is [Live](live.md). `/hosts` and `/hosts/limits` redirect. The "updated 40s" page head is dropped there ([system](system.md#review-of-the-current-build)).
 
 **Mockup routes:** `#/hosts`, `#/hosts/limits` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).

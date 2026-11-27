@@ -15,6 +15,8 @@ Perform a thorough whole-branch review of `origin/<base>...HEAD` inside the mana
 - When independent review is required, route it through the project's configured review pipeline or start a separate session using the project's `reviewer` role (`session_start` with the configured reviewer profile); never `message_send` another agent's or bot's session (`403: Session belongs to another agent`), never open an unaddressed operator question via `question_ask`, and never include raw commit SHAs or raw UUIDs in question text (`OR-38`; use entity codes such as `T-...`, `C-...`, `R-...`).
 - Follow the project contract (`fleet.md`, `AGENTS.md`, `README.md` contracts along changed paths, and pinned shared rules in `$FLEET_INPUT_DIR/context-sources/` when present).
 
+For Fleet visual work, check normal routes and semantic changes that affect copy, visibility, ordering or actions, including server-derived behavior. Under [Design first](../../../docs/design-system/README.md#design-first), cite the owner selection, exact candidate, affected scopes and matching evidence in the report. Unmapped impact and missing runtime comparisons are open findings. The code-review status attests only to the reviewed head.
+
 ## Depth levels
 
 - `quick`: obvious bugs, compile/type issues, diff hygiene (`git diff --check`), and test results.

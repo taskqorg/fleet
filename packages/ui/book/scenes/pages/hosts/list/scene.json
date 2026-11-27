@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/hosts.md",
+  "route": "/hosts",
+  "states": {
+    "default": "/hosts",
+    "limits": "/hosts/limits"
+  },
+  "landmark": "[data-ui=app-shell]",
+  "stateLandmarks": {
+    "limits": "section[aria-label=Limits]"
+  }
+}

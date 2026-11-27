@@ -1,5 +1,7 @@
 # Overview (operator)
 
+**Preview sources:** [scene directory](../../../packages/ui/book/scenes/pages/overview/inbox). Existing mockups are reference fixtures.
+
 **Status.** Retired (2026-11-25, [FLT-48](https://youtrack.ufobe.com/issue/FLT-48)): [Home](home.md) replaces it at `/home`; hosts and delivery in flight move to [Live](live.md). Kept as the record of what the Overview did; [home.md](home.md) is the current spec.
 
 **Mockup routes:** `#/overview`, `#/overview/q1`, `#/overview/p1` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).

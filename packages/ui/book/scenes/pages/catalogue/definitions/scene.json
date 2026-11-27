@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/catalogue.md",
+  "route": "/catalogue",
+  "states": {
+    "default": "/catalogue"
+  },
+  "landmark": "[data-ui=app-shell]"
+}

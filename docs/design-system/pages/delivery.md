@@ -1,5 +1,7 @@
 # Publishing (operator)
 
+**Preview sources:** [scene directory](../../../packages/ui/book/scenes/pages/delivery/overview). Existing mockups are reference fixtures.
+
 **Target home.** The Delivery facet of a project: `/projects/<code>/delivery` and `/projects/<code>/delivery/<n>` ([projects](projects.md#target)); across projects, the Delivery tab of `/projects`. In-flight pull requests also show on [Live](live.md). `/delivery` and `/publishing` redirect.
 
 **App routes:** `/delivery` (and `/publishing` alias) in the operator app (`app/src/views/delivery.tsx`, navigation label **Publishing**). **Mockup routes:** `#/delivery` in [mockups.html](mockups.html) (same composition with fixture data). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).

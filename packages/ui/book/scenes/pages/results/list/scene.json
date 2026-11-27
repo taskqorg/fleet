@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/results.md",
+  "route": "/results",
+  "states": {
+    "default": "/results"
+  },
+  "landmark": "[data-ui=app-shell]"
+}

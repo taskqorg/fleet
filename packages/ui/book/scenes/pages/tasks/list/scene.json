@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/tasks.md",
+  "route": "/tasks",
+  "states": {
+    "default": "/tasks",
+    "waiting": "/tasks/9989",
+    "failed": "/tasks/9978"
+  },
+  "landmark": "[data-ui=app-shell]",
+  "details": true,
+  "stateLandmarks": {
+    "waiting": "article[data-ui=detail] .detail-title",
+    "failed": "article[data-ui=detail] .detail-title"
+  }
+}

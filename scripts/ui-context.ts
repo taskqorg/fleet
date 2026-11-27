@@ -1,11 +1,12 @@
 // UI context (docs/design-system/README.md, "Context for a UI task"): the minimal reading an agent needs before it
-// designs or builds one page. Reads the page spec, its blocks (the links in its `## Blocks` section), the controls and patterns it and they link, its board canvas,
+// designs or builds one page. Resolves scenes and historical frames, the page spec, its blocks, controls and patterns,
 // and the text of every judgment rule they cite by ID, after the owner's principles card (OR-<n> in owner-rules.md, UR-<n> in principles.md);
 // a rule a component spec or a check keeps gets a one-line pointer to its home instead. Prints Markdown;
-// never fails a build. Node standard library only.
+// using only Node standard library.
 // Usage: node scripts/ui-context.ts <page>   (a page spec name such as home; without one it lists the pages)
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize, relative } from 'node:path';
+import { readScenes } from '../packages/ui/scripts/scenes.ts';
 
 const root = join(import.meta.dirname, '..');
 const ds = 'docs/design-system';
@@ -98,9 +99,9 @@ export function frames(index: { frames: Frame[] } | null, canvases: string[]): s
   });
 }
 
-const GROUPS = ['Canvas', 'Blocks', 'Controls', 'Patterns'] as const;
+const GROUPS = ['Historical canvas', 'Blocks', 'Controls', 'Patterns'] as const;
 const group = (p: string) =>
-  p.endsWith('.bl') ? 'Canvas' : p.startsWith(`${ds}/controls/`) ? 'Controls' : p.startsWith(`${ds}/patterns/`) ? 'Patterns' : null;
+  p.endsWith('.bl') ? 'Historical canvas' : p.startsWith(`${ds}/controls/`) ? 'Controls' : p.startsWith(`${ds}/patterns/`) ? 'Patterns' : null;
 
 export function context(page: string): string {
   const spec = `${ds}/pages/${page}.md`;
@@ -131,24 +132,29 @@ export function context(page: string): string {
     const g = group(p);
     if (!g || blockFiles.has(p) || !existsSync(join(root, p))) continue;
     add(g, p);
-    if (g !== 'Canvas') cite(read(p), relative(ds, p));
+    if (g !== 'Historical canvas') cite(read(p), relative(ds, p));
   }
-  const L = [`# UI context: ${page}`, '', card(owner), '', `Read next: ${spec}`, ''];
+  const scenes = readScenes(root).filter(scene => scene.spec === spec);
+  const L = [card(owner), '', `# UI context: ${page}`, '', `Read next: ${spec}`, '', 'Scene sources:'];
+  for (const scene of scenes) L.push(`- ${scene.key}: ${Object.keys(scene.states).join(', ')} (${scene.dir}/scene.json)`);
+  if (scenes.length === 0) L.push('- This page has no registered scene.');
+  L.push('Scene discovery identifies source and states. Owner approval is recorded in Fleet.', '');
   for (const g of GROUPS) {
     const ps = parts.get(g);
     if (!ps) continue;
     L.push(`${g}:`, ...ps.map(p => `- ${p}`));
-    if (g === 'Canvas') {
-      L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; a visible change is drawn first on a drafts/<task>/ copy in ~/Projects/fleet-board (never on its tracked canvases) and approved by the owner, then copied into your worktree (OR-62, README.md#design-board).');
+    if (g === 'Historical canvas') {
       const fs = frames(index, ps);
-      if (fs.length) L.push('', 'Frames (board/index.json):', ...fs);
-      L.push('', 'Before you build: frame vs prod data (board frames carry illustrative data):',
-        '- Walk the page on prod as site-agents (AGENTS.md, "Opening the deployed web app").',
-        '- Mark each difference between the frame and prod: code (the UI lacks it), data (the UI is right, prod data differs) or missing field (the model has no such field).',
-        '- Put that list in the pull request description.');
+      if (fs.length) L.push('', 'Frames (board/index.json, historical references):', ...fs);
     }
     L.push('');
   }
+  L.push('Design-first procedure (Target, docs/design-system/README.md#design-first):',
+    '- Before design and after deploy, walk the live page and neighbours in dark and light at 1440×900 and 390×844. Record routes, version and real-data cases.',
+    '- Mark each difference as code (the UI lacks it), data (the UI is right, prod data differs) or missing field (the model has no such field). Record unobserved cases explicitly.',
+    '- In private preview sources, compose 1–3 options from packages/ui. Capture four original PNGs per reviewed state, inspect each at full size and record a visual critique.',
+    '- Store the originals, critique and exact recipe. Obtain the Fleet owner’s selection of one sealed option before production coding, including for restorations.',
+    '- In the PR, link the decision and approved recipe, compare the app and its neighbours, and attach the post-deploy observations.', '');
   // Data (docs/designs/fleet-data-layer.md): how this page gets its data, so a change keeps it instant.
   L.push('Data (docs/designs/fleet-data-layer.md):',
     '- Read the screen through one view operation with useView (contract `view: true`, composed on the server from summaries); add fields to the view, not new reads.',
@@ -169,7 +175,7 @@ export function context(page: string): string {
   }
   L.push('', `Rules cited, kept by a component or a check (${kept.length}); read them there:`);
   for (const [key, list] of byHome) L.push(`- ${list.join(', ')} → ${key}${listed.has(key.replace(/^component: /, '').split('#')[0]) ? ' (listed above)' : ''}`);
-  L.push('', 'Build from `packages/ui` and the book (OR-13); compare the app at 1440 and 390 px with the canvas; `pnpm run check:design` shows the design report.');
+  L.push('', 'Build from `packages/ui` and the book (OR-13); compare the app with the approved references in all four cells. Run `pnpm run check:design` before delivery.');
   return L.join('\n');
 }
 

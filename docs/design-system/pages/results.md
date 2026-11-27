@@ -1,5 +1,7 @@
 # Results (operator)
 
+**Preview sources:** [scene directory](../../../packages/ui/book/scenes/pages/results/list). Existing mockups are reference fixtures.
+
 **Target home.** The Results facet of a project: `/projects/<code>/results` ([projects](projects.md#target)); `/results` redirects there. The list and viewer below keep their rules inside the facet.
 
 **Mockup routes:** `#/results` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).

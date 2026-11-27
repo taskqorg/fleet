@@ -625,7 +625,7 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Owner's answer:** pagination that shows some rows, then `+K` and Show less, is out; every list loads on scroll and wastes nothing. Loading row: A, three faint skeleton rows.
 * **Rule:** [OR-65](patterns/infinite-list.md#rules-kept-here); [OR-30](patterns/infinite-list.md#rules-kept-here) now means a fixed preview whose title opens the full list.
 * **Pattern:** [infinite list](patterns/infinite-list.md): one sentinel per list, cursor pages, one request in flight, an abort on close, a danger row with Retry, nothing after the last row.
-* **Board (OR-62):** [infinite-lists.bl](board/infinite-lists.bl), 1440 and 390.
+* **Board (OR-62):** [infinite-lists.bl](https://github.com/taskqorg/fleet/blob/d899f56c/docs/design-system/board/infinite-lists.bl), 1440 and 390.
 ## 2026-11-25: A person's Telegram is set on the person card
 
 * **Owner's ask:** "Телеграм id его добавь - добавь такую возможность": set a person's Telegram id in Fleet, not only through an op.
@@ -701,3 +701,7 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Choice (owner, "B. Лишние проекты Brilliant, C. Старые черновики, D. Структура"):** all three. The extra Brilliant projects close; the drafts sm-a, sm-b, masters-test, design-method, host-diagnose and local-agents are deleted (archived first); `local-agents.bl` moves to [screens/local-agents](board/screens/local-agents.bl), the infinite list frame moves into [patterns](board/patterns.bl) (the decision of 2026-11-25 above linked the old `infinite-lists.bl`), and `no-hscroll.bl` goes, its rule kept in [no horizontal scroll](patterns/no-horizontal-scroll.md). Flows (ia, flow, conversation-model) follow as a separate task.
 * **Reason:** one place per kind of frame, so an agent finds a frame by its canvas and nothing on the board contradicts the specs.
 * **Amendment (owner, 27 Nov, via MASTER):** automatic colours must not collide (ABT and CBZ were both sand): the default is the least-used colour of its kind when a project or bot is created, stored and stable; the owner can still override it.
+
+## 2026-11-27: Host-independent Design-First UI
+
+The owner selected Option A in [T-FLT-144](https://fleet.ufobe.com/projects/FLT/tasks/T-FLT-144). The approved [architecture](https://fleet.ufobe.com/projects/FLT/tasks/T-FLT-147) and [adoption request](https://fleet.ufobe.com/projects/FLT/tasks/T-FLT-146) define [OR-62 and OR-69](owner-rules.md#rules). Render task-private scene options with Fleet’s actual UI library and retain the exact selected recipe and four-frame evidence in Fleet. Use the same procedure for restorations and other visible changes on Linux, Windows and Mac. Preserve the Brilliant canvases as historical references at cutover.

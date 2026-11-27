@@ -4,7 +4,9 @@ import { createSignal, For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { Button, EntityCode, EntityCards, entityKinds, type EntityCardData, type EntityCardSource, type EntityRef, type EntityForm, Markdown } from '../src/index.ts';
 
-const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+import { NOW } from './fixtures.ts';
+
+const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
 const PR = '#' + 643; // built: a literal reads as a colour to check-design
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 

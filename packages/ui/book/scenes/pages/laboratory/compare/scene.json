@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/laboratory.md",
+  "route": "/lab",
+  "states": {
+    "default": "/lab"
+  },
+  "landmark": "[data-ui=app-shell]"
+}

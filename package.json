@@ -11,14 +11,15 @@
     "board:tokens": "node packages/ui/scripts/board-tokens.mjs",
     "board:index": "node packages/ui/scripts/board-index.mjs",
     "board:lint": "node packages/ui/scripts/board-lint.mjs",
-    "check:design": "node packages/ui/scripts/build-book.mjs; node packages/ui/scripts/check-design.mjs",
+    "check:design": "node packages/ui/scripts/build-book.mjs && node packages/ui/scripts/check-design.mjs",
     "app:build": "pnpm run typecheck && node app/build.mjs",
     "app:bundle": "node contracts/gen-ts.mjs && node app/build.mjs",
     "app:dev": "node --watch-path=app/src --watch-path=packages/ui --watch-path=packages/view-url app/build.mjs",
     "contracts": "node contracts/gen-ts.mjs",
     "typecheck": "node contracts/gen-ts.mjs && tsc && tsc -p app && tsc -p packages/ui",
     "go:sqlc": "cd go && GOFLAGS=-mod=readonly go tool sqlc generate -f coordinator/sqlc.yaml",
-    "go:build": "cd go && for c in coordinator executor gateway update; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$c ./$c || exit 1; done"
+    "go:build": "cd go && for c in coordinator executor gateway update; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$c ./$c || exit 1; done",
+    "preview:scene": "node packages/ui/scripts/build-scene.mjs"
   },
   "dependencies": {
     "@sentry/browser": "11.10.0",

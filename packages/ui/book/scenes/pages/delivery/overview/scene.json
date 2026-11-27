@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/delivery.md",
+  "route": "/delivery",
+  "states": {
+    "default": "/delivery"
+  },
+  "landmark": "[data-ui=app-shell]"
+}
