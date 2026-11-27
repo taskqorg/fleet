@@ -60,7 +60,33 @@ func forgeLoginCheck(provider, host string) bool {
 	}
 	user := typedRaw[map[string]any](out)
 	v, _ := user[field].(string)
-	return strings.TrimSpace(v) != ""
+	if strings.TrimSpace(v) == "" {
+		return false
+	}
+	if provider == "gitlab" {
+		if patOut, patErr := boundedOutput(forgeCommand(ctx, "glab", "api", "--hostname", host, "personal_access_tokens/self"), probeWait); patErr == nil {
+			pat := typedRaw[struct {
+				Active *bool    `json:"active"`
+				Scopes []string `json:"scopes"`
+			}](patOut)
+			if pat.Active != nil && !*pat.Active {
+				return false
+			}
+			if len(pat.Scopes) > 0 {
+				hasAPI := false
+				for _, s := range pat.Scopes {
+					if s == "api" {
+						hasAPI = true
+						break
+					}
+				}
+				if !hasAPI {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // forgeLoginReport: every answered forge login check, for the poll (System › Access shows a missing login).

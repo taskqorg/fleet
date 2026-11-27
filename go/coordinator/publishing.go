@@ -860,6 +860,7 @@ type publishingMutationParams struct {
 	repo              *string
 	branch            *string
 	number            *int64
+	hostID            *string
 	expectedHeadSha   *string
 	title             *string
 	body              *string
@@ -869,6 +870,7 @@ type publishingMutationParams struct {
 	sourceExecutionID *string
 	requireLocalHost  bool
 	requireAutoMerge  bool
+	excludeHosts      map[string]bool
 }
 
 func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID, targetHost, cmdID string, err error) {
@@ -1019,9 +1021,14 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 	requireHost := ""
 	if p.requireLocalHost && sourceExec != nil {
 		requireHost = deref(sourceExec.HostID)
+	} else if deref(p.hostID) != "" {
+		requireHost = *p.hostID
 	}
 	bestRank := 3
 	for _, h := range online {
+		if p.excludeHosts[h.id] {
+			continue
+		}
 		if requireHost != "" && h.id != requireHost {
 			continue
 		}
@@ -1042,6 +1049,9 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 		}
 	}
 	if targetHost == "" {
+		if deref(p.hostID) != "" && !p.requireLocalHost {
+			return "", "", "", fail(409, "Requested host "+requireHost+" is not online and eligible for publishing "+chosenRef.Slug)
+		}
 		if requireHost != "" {
 			return "", "", "", fail(409, "Source execution host lacks publishing capability for "+chosenRef.Slug)
 		}
@@ -1124,71 +1134,87 @@ func runPublishingMutation[Rep any](q *Request, p publishingMutationParams) (Rep
 			}
 		}
 	}
-	var projectID, targetHost, cmdID string
-	var cachedReply json.RawMessage
-	runWrite := func(wq *Request) error {
-		pid := deref(p.projectID)
-		if pid == "" && deref(p.sourceExecutionID) != "" {
-			if se, eerr := getExecution(wq, *p.sourceExecutionID); eerr == nil && se.ProjectID != "" {
-				pid = se.ProjectID
+	tried := map[string]bool{}
+	p.excludeHosts = tried
+	var lastMsg string
+	for {
+		var projectID, targetHost, cmdID string
+		var cachedReply json.RawMessage
+		runWrite := func(wq *Request) error {
+			pid := deref(p.projectID)
+			if pid == "" && deref(p.sourceExecutionID) != "" {
+				if se, eerr := getExecution(wq, *p.sourceExecutionID); eerr == nil && se.ProjectID != "" {
+					pid = se.ProjectID
+				}
+			}
+			if pid != "" {
+				pubMu.Lock()
+				cached, ok := pubIdempotent[publishingIdempotencyKey(pid, p.action, p.requestID)]
+				pubMu.Unlock()
+				if ok && len(cached) > 0 {
+					cachedReply = cached
+					return nil
+				}
+			}
+			var err error
+			projectID, targetHost, cmdID, err = resolvePublishingTarget(wq, p)
+			return err
+		}
+		if q.tx == nil && q.app != nil {
+			if err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, runWrite); err != nil {
+				if lastMsg != "" {
+					return none, fail(502, lastMsg)
+				}
+				return none, err
+			}
+		} else {
+			if err := runWrite(q); err != nil {
+				if lastMsg != "" {
+					return none, fail(502, lastMsg)
+				}
+				return none, err
 			}
 		}
-		if pid != "" {
+		if len(cachedReply) > 0 {
+			if err := json.Unmarshal(cachedReply, &none); err == nil {
+				return none, nil
+			}
+		}
+		if q.app != nil && targetHost != "" {
+			q.app.wakeHost(targetHost)
+		}
+		out, err := publishingAwaitCommand(q.ctx(), cmdID, publishingCommandTimeout)
+		if err != nil {
+			return none, err
+		}
+		if out.outcome != "completed" {
+			msg := out.errMsg
+			if msg == "" {
+				msg = "Publishing action failed"
+			}
+			if strings.Contains(msg, "head changed") || strings.Contains(msg, "draft") || strings.Contains(msg, "not open") {
+				return none, fail(409, msg)
+			}
+			if !p.requireLocalHost && deref(p.hostID) == "" && targetHost != "" && !tried[targetHost] {
+				tried[targetHost] = true
+				lastMsg = msg
+				continue
+			}
+			return none, fail(502, msg)
+		}
+		if len(out.result) == 0 {
+			return none, fail(502, "Host completed publishing action without result payload")
+		}
+		if err := json.Unmarshal(out.result, &none); err != nil {
+			return none, fail(502, "Invalid publishing result payload: "+err.Error())
+		}
+		if projectID != "" {
 			pubMu.Lock()
-			cached, ok := pubIdempotent[publishingIdempotencyKey(pid, p.action, p.requestID)]
+			pubIdempotent[publishingIdempotencyKey(projectID, p.action, p.requestID)] = out.result
 			pubMu.Unlock()
-			if ok && len(cached) > 0 {
-				cachedReply = cached
-				return nil
-			}
 		}
-		var err error
-		projectID, targetHost, cmdID, err = resolvePublishingTarget(wq, p)
-		return err
+		return none, nil
 	}
-	if q.tx == nil && q.app != nil {
-		if err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, runWrite); err != nil {
-			return none, err
-		}
-	} else {
-		if err := runWrite(q); err != nil {
-			return none, err
-		}
-	}
-	if len(cachedReply) > 0 {
-		if err := json.Unmarshal(cachedReply, &none); err == nil {
-			return none, nil
-		}
-	}
-	if q.app != nil && targetHost != "" {
-		q.app.wakeHost(targetHost)
-	}
-	out, err := publishingAwaitCommand(q.ctx(), cmdID, publishingCommandTimeout)
-	if err != nil {
-		return none, err
-	}
-	if out.outcome != "completed" {
-		msg := out.errMsg
-		if msg == "" {
-			msg = "Publishing action failed"
-		}
-		if strings.Contains(msg, "head changed") || strings.Contains(msg, "draft") || strings.Contains(msg, "not open") {
-			return none, fail(409, msg)
-		}
-		return none, fail(502, msg)
-	}
-	if len(out.result) == 0 {
-		return none, fail(502, "Host completed publishing action without result payload")
-	}
-	if err := json.Unmarshal(out.result, &none); err != nil {
-		return none, fail(502, "Invalid publishing result payload: "+err.Error())
-	}
-	if projectID != "" {
-		pubMu.Lock()
-		pubIdempotent[publishingIdempotencyKey(projectID, p.action, p.requestID)] = out.result
-		pubMu.Unlock()
-	}
-	return none, nil
 }
 
 func publishingPublishDraft(q *Request, r *contract.PublishingPublishDraftRequest) (contract.PublishingPublishDraftReply, error) {
@@ -1228,6 +1254,7 @@ func publishingMarkReady(q *Request, r *contract.PublishingMarkReadyRequest) (co
 		repo:              r.Repo,
 		branch:            r.Branch,
 		number:            r.Number,
+		hostID:            r.HostId,
 		expectedHeadSha:   r.ExpectedHeadSha,
 		sourceExecutionID: r.SourceExecutionId,
 	})
@@ -1247,6 +1274,7 @@ func publishingRequestMerge(q *Request, r *contract.PublishingRequestMergeReques
 		repo:              r.Repo,
 		branch:            r.Branch,
 		number:            r.Number,
+		hostID:            r.HostId,
 		expectedHeadSha:   r.ExpectedHeadSha,
 		mergeMethod:       mm,
 		sourceExecutionID: r.SourceExecutionId,
@@ -1263,6 +1291,7 @@ func publishingCancelMergeRequest(q *Request, r *contract.PublishingCancelMergeR
 		repo:              r.Repo,
 		branch:            r.Branch,
 		number:            r.Number,
+		hostID:            r.HostId,
 		expectedHeadSha:   r.ExpectedHeadSha,
 		sourceExecutionID: r.SourceExecutionId,
 	})

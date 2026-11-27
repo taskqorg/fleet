@@ -226,3 +226,55 @@ func TestGitlabRequestMergePipelineStatus(t *testing.T) {
 		}
 	}
 }
+
+// Requirement: forgeSanitizeErr skips glab deprecation warnings (and forgeCommand uses GLAB_NO_PROMPT)
+// so warning lines cannot hide real API errors, and forgeLoginCheck rejects read-only GitLab PATs (FLT-70).
+func TestGlabErrorSanitizeAndLoginScopeCheck(t *testing.T) {
+	if err := forgeSanitizeErr(
+		"project-delivery-unconfirmed",
+		"DEPRECATION WARNING: The environment variable NO_PROMPT has been deprecated.\nglab: 403 Forbidden (HTTP 403)\n",
+		errors.New("exit status 1"),
+	); err == nil || strings.Contains(err.Error(), "DEPRECATION WARNING") || !strings.Contains(err.Error(), "403 Forbidden") {
+		t.Fatalf("got %v, want real error line instead of deprecation warning", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	bin := t.TempDir()
+	store := t.TempDir()
+	glabDir := filepath.Join(store, "glab")
+	if err := os.MkdirAll(glabDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(glabDir, "config.yml"), []byte("hosts:\n  gitlab.ufobe.com:\n    token: glpat-test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLEET_FORGE_CONFIG_DIR", store)
+	t.Setenv("PATH", bin)
+
+	// read_api-only token answers `user` but lacks `api` scope in `personal_access_tokens/self`.
+	readOnlyScript := "#!/bin/sh\n" +
+		"if [ -n \"$NO_PROMPT\" ] || [ \"$GLAB_NO_PROMPT\" != 1 ]; then exit 2; fi\n" +
+		"case \"$*\" in\n" +
+		"  *\"config get token\"*) echo glpat-test;;\n" +
+		"  *\" user\"*) echo '{\"username\":\"fleet-gradus\"}';;\n" +
+		"  *\"personal_access_tokens/self\"*) echo '{\"active\":true,\"scopes\":[\"read_api\"]}';;\n" +
+		"  *) exit 1;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "glab"), []byte(readOnlyScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if forgeLoginCheck("gitlab", "gitlab.ufobe.com") {
+		t.Fatal("forgeLoginCheck returned true for read_api-only token")
+	}
+
+	// api-scoped active token succeeds and passes GLAB_NO_PROMPT=1 (without deprecated NO_PROMPT).
+	apiScript := strings.ReplaceAll(readOnlyScript, `"read_api"`, `"api","read_repository"`)
+	if err := os.WriteFile(filepath.Join(bin, "glab"), []byte(apiScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !forgeLoginCheck("gitlab", "gitlab.ufobe.com") {
+		t.Fatal("forgeLoginCheck returned false for active api-scoped token")
+	}
+}
