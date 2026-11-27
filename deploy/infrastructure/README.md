@@ -30,3 +30,12 @@ SQL creates roles/database and changes grants. Backup writes `/backup/fleet`, mi
 ## Verification
 
 Documentation-only work uses link validation and `git diff --check`. `python3 deploy/infrastructure/agent-browser-open-test.py` is the existing isolated browser-helper check. Live access/SSE checks require authorized site access and, for SSE, a disposable test task. Backups and service installation must not be run as documentation checks.
+
+
+## Production project browser
+
+Install the existing `ufobe-site-agents` Access pair once on the coordinator. In its configured `FLEET_SECRET_DIR`, create `project-browser/` owned by the coordinator user with mode `0700`. Place a coordinator-owned `site-agents.json` with mode `0600` there. Use the JSON keys `clientId` and `clientSecret`, with string values from the approved service-token store. Use a private input file and an atomic rename for rotation. Keep values out of command arguments, output and deployment artifacts. The coordinator reads the file on demand.
+
+The standard native release updates the coordinator and executor. The host channel already carries `POST /api/hosts/*`, including `/api/hosts/browser/access`. The route returns credentials only to registered owner-held hosts named in the Fleet project's browser-enabled environments. Existing executor units and per-host preview grants need no change.
+
+After landing, read the affected host's `problems` in `hosts_list` or `host_diagnose`. In a fresh Fleet coding run on that host, open the deployed site with project-browser, verify `/api/ops/me` returns `site-agents`, and close the browser. After verifying the new executor, remove obsolete production entries from its preview binding file. Retain any local credentials still used by standalone Orca or smoke scripts. A rolled-back executor uses its previous host-local browser configuration.

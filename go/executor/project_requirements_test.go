@@ -24,7 +24,7 @@ func TestProjectRequirements(t *testing.T) {
 func TestReadinessProfileRequirements(t *testing.T) {
 	for _, ids := range [][]any{nil, {}, {"coding-worker"}, {"pm"}} {
 		p := M{"roles": M{"pm": "codex"}, "profileIds": M{"pm": "pm"}, "execution": M{"profiles": ids, "tools": []any{"pnpm"}, "forge": true}}
-		r := readiness(M{"projectId": "fixture", "project": p}, "pds", "")
+		r := readiness(M{"projectId": "fixture", "project": p}, "pds", "", false)
 		coding := false
 		for _, c := range r.Checks {
 			if c.Check == "forge" || c.Check == "coding-tools" {
@@ -48,7 +48,7 @@ func TestReadinessHarnessNotOffered(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := M{"roles": M{"worker": "codex", "reviewer": "claude", "designer": "antigravity"}}
-	r := readiness(M{"projectId": "fixture", "project": p}, "pds", reg)
+	r := readiness(M{"projectId": "fixture", "project": p}, "pds", reg, false)
 	got := map[string]string{}
 	for _, c := range r.Checks {
 		got[c.Check] = string(c.Status) + " " + str0(c.Reason)
@@ -63,7 +63,7 @@ func TestReadinessHarnessNotOffered(t *testing.T) {
 	t.Setenv("FLEET_CLAUDE_PLACEMENT", "windows-wsl")
 	reg2 := filepath.Join(t.TempDir(), "accounts.json")
 	os.WriteFile(reg2, []byte(`{"codex-1":{"harness":"codex","readiness":"ready"},"claude-1":{"harness":"claude","readiness":"ready"}}`), 0o600)
-	if r := readiness(M{"projectId": "fixture", "project": p}, "pds", reg2); r.Ok {
+	if r := readiness(M{"projectId": "fixture", "project": p}, "pds", reg2, false); r.Ok {
 		t.Fatalf("misplaced Claude passes: %s", enc(r))
 	}
 }

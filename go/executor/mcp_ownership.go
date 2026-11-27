@@ -29,6 +29,7 @@ import (
 )
 
 type mcpOwner struct {
+	browser                *browserAuthority
 	db                     *sql.DB
 	local                  *workerMCPStore
 	execution, dir, socket string

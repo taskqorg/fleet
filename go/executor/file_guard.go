@@ -358,7 +358,7 @@ func executorStores() []string {
 			bindings, _ := all.(M)
 			for _, raw := range bindings {
 				// an entry or grant that is not an object names no file
-				list = append(list, typed[browserProduction](typed[browserBinding](raw).Production).AccessFile)
+				list = append(list, typed[browserBinding](raw).Production.AccessFile)
 			}
 		}
 	}

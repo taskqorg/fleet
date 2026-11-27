@@ -15,11 +15,11 @@ if (cfg.production) allowed.add(cfg.production.origin);
 const secrets = new Set();
 let headers = {};
 if (cfg.production) {
-  const text = fs.readFileSync(cfg.production.accessFile, 'utf8');
-  for (const [key, header] of Object.entries({CF_ACCESS_CLIENT_ID:'CF-Access-Client-Id',CF_ACCESS_CLIENT_SECRET:'CF-Access-Client-Secret'})) {
-    const line = text.split('\n').find(x => x.trim().replace(/^export\s+/, '').startsWith(key+'='));
-    const value = line?.trim().replace(/^export\s+/, '').slice(key.length+1).replace(/^['"]|['"]$/g, '');
-    if (!value) throw Error('browser authority unavailable');
+  const access = JSON.parse(fs.readFileSync(3, 'utf8'));
+  fs.closeSync(3);
+  for (const [key, header] of Object.entries({clientId:'CF-Access-Client-Id',clientSecret:'CF-Access-Client-Secret'})) {
+    const value = access[key];
+    if (typeof value !== 'string' || !value) throw Error('browser authority unavailable');
     headers[header] = value; secrets.add(value);
   }
 }
@@ -64,15 +64,26 @@ function targetSend(sessionId,method,params={}) {
 async function paused(sessionId,event) {
   const request=event.request;
   if(!permitted(request.url)) return targetSend(sessionId,'Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});
+  if(event.responseStatusCode || event.responseErrorReason){
+    const responseHeaders=(event.responseHeaders ?? []).filter(({name,value})=>{
+      const header=name.toLowerCase();
+      return !header.startsWith('cf-access-') &&
+        !(header==='set-cookie' && /^\s*CF_Authorization=/i.test(value));
+    });
+    if(responseHeaders.length===(event.responseHeaders ?? []).length)
+      return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId});
+    return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId,responseCode:event.responseStatusCode,responsePhrase:event.responseStatusText ?? "",responseHeaders});
+  }
+  const production=cfg.production && new URL(request.url).origin===cfg.production.origin;
   const requestHeaders=Object.entries(request.headers)
     .filter(([name])=>!name.toLowerCase().startsWith('cf-access-client-'))
     .map(([name,value])=>({name,value:String(value)}));
-  if(cfg.production && new URL(request.url).origin===cfg.production.origin) {
+  if(production) {
     usedProduction = true;
     for(const [name,value] of Object.entries(headers))requestHeaders.push({name,value});
   }
   // CDP overrides only this request; redirected requests are paused and checked again.
-  await targetSend(sessionId,'Fetch.continueRequest',{requestId:event.requestId,headers:requestHeaders});
+  await targetSend(sessionId,'Fetch.continueRequest',{requestId:event.requestId,headers:requestHeaders,...(production?{interceptResponse:true}:{})});
 }
 async function attached(event) {
   const {sessionId,targetInfo}=event;
@@ -83,6 +94,7 @@ async function attached(event) {
   }
   // Children (including out-of-process frames/workers) must be intercepted before resuming.
   await targetSend(sessionId,'Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
+  if(cfg.production)await targetSend(sessionId,'Network.setCacheDisabled',{cacheDisabled:true});
   await targetSend(sessionId,'Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]});
   await targetSend(sessionId,'Runtime.runIfWaitingForDebugger');
   if(targetInfo.targetId===primaryTarget)initialResolve();
@@ -102,10 +114,11 @@ async function open() {
   primaryTarget=undefined;
   usedProduction=false;
   profileDir=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'fleet-browser-'));
-  const executable=process.env.FLEET_MCP_GENERATION ? process.env.PATH.split(require('node:path').delimiter).map(dir=>require('node:path').join(dir,'fleet-browser-chromium')).find(file=>fs.existsSync(file)) : cfg.executable;
+  const owned=Boolean(process.env.FLEET_MCP_GENERATION);
+  const executable=owned ? cfg.ownedExecutor : cfg.executable;
   if(!executable)throw Error('browser-owned-dependency-unready');
   // Match Playwright's credential-store isolation; macOS must not open the user's Keychain.
-  launched=require('node:child_process').spawn(executable,['--headless','--password-store=basic','--use-mock-keychain','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--remote-debugging-address=127.0.0.1','--user-data-dir='+profileDir,'about:blank'],{stdio:'ignore'});
+  launched=require('node:child_process').spawn(executable,['--headless','--password-store=basic','--use-mock-keychain','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--remote-debugging-address=127.0.0.1','--user-data-dir='+profileDir,'about:blank'],{stdio:'ignore',...(owned?{argv0:'fleet-browser-chromium'}:{})});
   launched.on('error',failClosed);
   const endpointFile=require('node:path').join(profileDir,'DevToolsActivePort');
   await bounded(new Promise((resolve,reject)=>{

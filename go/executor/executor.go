@@ -28,26 +28,27 @@ import (
 var shutdown atomic.Bool
 
 type executor struct {
-	stopCtx      context.Context
-	db           *sql.DB
-	ex           execer // db, or the open transaction
-	root         string
-	url          string
-	token        string
-	host         string
-	live         map[string]*live
-	sessions     string
-	harnessCache map[string]M
-	storeCfg     *storeFile
-	declared     []string
-	storeAt      time.Time
-	storeLast    []contract.StoreReport
-	loadMu       sync.Mutex
-	loadMemAt    time.Time
-	loadMemFree  float64
-	loadPressure contract.HostLoad // swap, compressor, tmpfs and top consumers, sampled with memory
-	loadMemTotal float64
-	loadMemOK    bool
+	stopCtx       context.Context
+	db            *sql.DB
+	ex            execer // db, or the open transaction
+	root          string
+	url           string
+	token         string
+	host          string
+	live          map[string]*live
+	sessions      string
+	harnessCache  map[string]M
+	storeCfg      *storeFile
+	declared      []string
+	storeAt       time.Time
+	storeLast     []contract.StoreReport
+	browserHealth productionBrowserHealth
+	loadMu        sync.Mutex
+	loadMemAt     time.Time
+	loadMemFree   float64
+	loadPressure  contract.HostLoad // swap, compressor, tmpfs and top consumers, sampled with memory
+	loadMemTotal  float64
+	loadMemOK     bool
 }
 
 // inTx runs fn with every journal write of the executor inside one transaction.
@@ -408,8 +409,9 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 	v, roots := version, reportedRoots()
 	_, offset := time.Now().Zone() // seconds east of UTC: the coordinator's daily update window is in local time
 	offsetMinutes := int64(offset / 60)
-	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
-		Problems: edgeProblems(pollRoute), ProjectRoots: roots, ForgeLogins: forgeLoginReport(), Version: &v, HarnessVersions: managedVersions(), ToolVersions: toolVersions(), Update: lastUpdate(e.root),
+	browserReady, browserProblems := e.productionBrowserStatus()
+	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(browserReady), Stores: e.stores(),
+		Problems: append(browserProblems, edgeProblems(pollRoute)...), ProjectRoots: roots, ForgeLogins: forgeLoginReport(), Version: &v, HarnessVersions: managedVersions(), ToolVersions: toolVersions(), Update: lastUpdate(e.root),
 		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions(), Load: e.sampleHostLoad()}
 	if diagnoseNext.Swap(false) {
 		body.Diagnosis = diagnosis(e.db)

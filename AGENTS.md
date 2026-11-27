@@ -49,18 +49,9 @@ Agents read Fleet's production PostgreSQL only through the `fleet-postgres` conn
 
 ## Opening the deployed web app
 
-Agents open `https://fleet.ufobe.com` as person `site-agents` (owner-equivalent rights, own actor) with the Access service token in `~/.config/ufobe-agents/site-access.env` ([design](docs/designs/fleet-people-access.md#agent-access-to-the-web-app)). Source the file inside the process that sends the request; never print, copy or log its values.
+Use the granted `project-browser` MCP tools to open `https://fleet.ufobe.com` as `site-agents`. Close the browser after the check. Use `hosts_list` or `host_diagnose` to inspect a missing production grant or runtime. The coordinator owns the binding and credentials ([configuration](docs/configuration.md#coding-execution)).
 
-```sh
-( . ~/.config/ufobe-agents/site-access.env
-  curl -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" https://fleet.ufobe.com/api/ops )
-```
-
-Playwright: set the headers only on a context for this host, e.g. `browser.newContext({ extraHTTPHeaders: { 'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID, 'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET } })`, and open only `https://fleet.ufobe.com` pages in it. Check: `deploy/infrastructure/agent-access-smoke.sh`.
-
-Walk and check scripts never print a response, cookie or header dump: a Playwright error can quote request headers and the `CF_Authorization` cookie. Open the site through `scripts/prod-browser.ts` (`prodContext`, `guardOutput`) and print errors only through its `redact`, which keeps the first line and hides Cookie, Authorization and `CF-Access-*` values.
-
-Orca embedded browser: run `deploy/infrastructure/agent-browser-open.sh`; use its returned `browserPageId` with `--page` on subsequent commands. It opens the production origin directly and checks the `site-agents` identity without printing credentials. Close the tab when finished.
+Standalone Orca and access smoke scripts have their own operator procedure ([people access](docs/designs/fleet-people-access.md#agent-access-to-the-web-app)).
 
 ## External services and forges (Fleet connections)
 

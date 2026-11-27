@@ -121,7 +121,7 @@ type accountView struct {
 	NativeHome jsonValue `json:"nativeHome"`
 }
 
-func readiness(payload any, host, registry string, forbidden ...[]string) contract.Readiness {
+func readiness(payload any, host, registry string, productionBrowserReady bool, forbidden ...[]string) contract.Readiness {
 	pp, err := contractOf[contract.ProjectPayload](payload)
 	project, perr := projectContext(pp.Project)
 	if err != nil || perr != nil {
@@ -311,7 +311,12 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 			failed := ""
 			var err error
 			if tool == "browser" {
-				err = browserReady(payload, home)
+				cfg, configErr := browserConfig(payload, productionBrowserReady && browserProject(payload) == contract.ProductionBrowserProject)
+				err = configErr
+				if err == nil {
+					delete(cfg, "production") // the host observation covers the separate production identity probe
+					err = browserProbe(cfg, home, nil)
+				}
 			} else {
 				err = codingTool(tool, home)
 			}

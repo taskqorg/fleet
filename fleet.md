@@ -231,6 +231,7 @@ An environment provides:
 - Software: installed programs, dependencies and capabilities.
 - Workspace: project files, checkout or worktree, inputs and results.
 - Interaction: terminal, browser, APIs and desktop control through computer use (CUA).
+- Project-browser production access for Fleet uses coordinator-managed site-agents credentials. Eligible executor hosts probe production readiness before launches and surface failures in host observations. Credentials travel only over the authenticated host channel and private process IPC. Preview grants remain separate. See [coding execution](docs/configuration.md#coding-execution).
 - Access: available data, accounts and external services.
 
 Manage its lifecycle: prepare, check readiness, make available for work, preserve or release. Track [working area ownership and cleanup](docs/execution-continuity.md#working-areas); preserve required results and history before release. A task completes only when its result reaches its destination.

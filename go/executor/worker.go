@@ -293,7 +293,7 @@ func (w *workerLogWriter) emit(rec workerRecord) error {
 }
 
 func runWorker(args []string) error {
-	if len(args) != 1 {
+	if len(args) != 1 && (len(args) != 2 || args[1] != "browser-authority") {
 		return errors.New("run-worker requires worker directory")
 	}
 	workerDir := args[0]
@@ -310,6 +310,17 @@ func runWorker(args []string) error {
 		})
 	}
 	defer sendReply(workerStartReply{Ok: false, FailReason: "worker exited before starting"})
+
+	var authority *browserAuthority
+	if len(args) == 2 {
+		unix.CloseOnExec(4)
+		pipe := os.NewFile(4, "browser-authority")
+		err := json.NewDecoder(pipe).Decode(&authority)
+		pipe.Close()
+		if err != nil || authority == nil {
+			return errors.New("browser authority unavailable")
+		}
+	}
 
 	specBytes, err := os.ReadFile(filepath.Join(workerDir, "spec.json"))
 	if err != nil {
@@ -382,6 +393,7 @@ func runWorker(args []string) error {
 			sendReply(workerStartReply{Ok: false, FailReason: err.Error()})
 			return err
 		}
+		mcp.browser = authority
 		defer func() {
 			_ = mcp.close()
 			removeMCPOwnerDir(mcp.dir)
@@ -954,7 +966,7 @@ type liveWorker struct {
 	offset  int64
 }
 
-func (e *executor) spawnWorker(c contract.Command, spec workerSpec) (*live, error) {
+func (e *executor) spawnWorker(c contract.Command, spec workerSpec, authority *browserAuthority) (*live, error) {
 	wdir := workerDirFor(e.root, spec.Execution)
 	if err := os.MkdirAll(wdir, 0o700); err != nil {
 		return nil, err
@@ -980,6 +992,17 @@ func (e *executor) spawnWorker(c contract.Command, spec workerSpec) (*live, erro
 		cmd.Stderr = werr
 	}
 	cmd.ExtraFiles = []*os.File{pw}
+	if authority != nil {
+		pipe, err := browserPipe(authority)
+		if err != nil {
+			pw.Close()
+			return nil, err
+		}
+		defer pipe.Close()
+		cmd.Args = append(cmd.Args, "browser-authority")
+		cmd.ExtraFiles = append(cmd.ExtraFiles, pipe)
+	}
+
 	if err := cmd.Start(); err != nil {
 		pw.Close()
 		return nil, err

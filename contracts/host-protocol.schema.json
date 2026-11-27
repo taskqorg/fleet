@@ -27,9 +27,24 @@
     "/api/hosts/publishing/ci-observation": {"request": "PublishingCIReport", "reply": "OkReply", "decode": "checked"},
     "/api/hosts/forge/review": {"request": "ForgeReviewRequest", "reply": "ForgeReviewReply", "long": true, "decode": "checked"},
     "/api/hosts/publishing/record": {"request": "PublishingHostRecord", "reply": "OkReply", "long": true, "decode": "checked"},
+    "/api/hosts/browser/access": {"request": "BrowserAccessRequest", "reply": "BrowserAccessReply", "long": true, "decode": "checked"},
     "/api/hosts/stores": {"request": "StoresRequest", "reply": "StoresReply", "long": true, "decode": "checked"}
   },
   "$defs": {
+    "BrowserAccessRequest": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["projectId"],
+      "properties": {"projectId": {"type": "string"}, "hostId": {"type": "string"}}
+    },
+    "BrowserAccessReply": {
+      "type": "object",
+      "required": ["clientId", "clientSecret"],
+      "properties": {
+        "clientId": {"type": "string"},
+        "clientSecret": {"type": "string"}
+      }
+    },
     "ForgeLogin": {
       "type": "object",
       "required": ["provider", "host", "ok"],
@@ -609,6 +624,7 @@
       "type": "string",
       "enum": [
         "edge-redirect",
+        "browser-production-unready",
         "version-behind"
       ]
     },

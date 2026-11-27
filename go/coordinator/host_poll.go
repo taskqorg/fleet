@@ -410,7 +410,7 @@ type hostProblem struct {
 	Detail   string  `json:"detail"`
 }
 
-// hostProblems: the edge problems a host reports (at most 20, texts cut), redirects only.
+// hostProblems: the edge problems a host reports (at most 20, texts cut).
 func hostProblems(list []contract.EdgeProblem) []hostProblem {
 	var out []hostProblem
 	cut := func(t string, n int) string {
@@ -420,7 +420,7 @@ func hostProblems(list []contract.EdgeProblem) []hostProblem {
 		return t
 	}
 	for _, p := range list {
-		if p.Kind != contract.ProblemKindEdgeRedirect || p.Status == 0 {
+		if p.Kind != contract.ProblemKindBrowserProductionUnready && (p.Kind != contract.ProblemKindEdgeRedirect || p.Status == 0) {
 			continue
 		}
 		var loc *string
