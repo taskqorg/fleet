@@ -1013,14 +1013,20 @@ func (e *executor) spawnWorker(c contract.Command, spec workerSpec, authority *b
 
 	var rep workerStartReply
 	line, rerr := bufio.NewReader(pr).ReadString('\n')
+	unconfirmed := func(err error) error {
+		if personalScriptJob(c) {
+			return errors.Join(errWorkerStartUnknown, err)
+		}
+		return err
+	}
 	if rerr != nil && !errors.Is(rerr, io.EOF) {
-		return nil, rerr
+		return nil, unconfirmed(rerr)
 	}
 	if line == "" {
-		return nil, errors.New("worker exited without reporting start status")
+		return nil, unconfirmed(errors.New("worker exited without reporting start status"))
 	}
 	if err := json.Unmarshal([]byte(line), &rep); err != nil {
-		return nil, err
+		return nil, unconfirmed(err)
 	}
 	if !rep.Ok {
 		if rep.Unknown {
@@ -1047,7 +1053,7 @@ func (e *executor) spawnWorker(c contract.Command, spec workerSpec, authority *b
 	if rep.MCPDir != "" {
 		if _, err := e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", rep.MCPDir, spec.Execution); err != nil {
 			_ = workerStop(l.worker.sock, "")
-			return nil, err
+			return nil, unconfirmed(err)
 		}
 	}
 	if err := e.ownGroup(spec.Execution, rep.Grp, l); err != nil {
@@ -1283,14 +1289,21 @@ func (e *executor) finishWorkerRun(execution string, l *live, ex *workerExit) (b
 	if !ex.CleanupUnknown {
 		ownedRemaining = new(bool)
 	}
-	if err := e.event(l.command, ex.Seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{
+	closed := contract.ProcessClosed{
 		ExitCode:                        ex.ExitCode,
 		StdoutClosed:                    ex.StdoutClosed,
 		ObservedOwnedProcessesRemaining: ownedRemaining,
 		CleanupUnknown:                  ex.CleanupUnknown,
 		Resources:                       ex.Resources,
 		StderrTail:                      ex.StderrTail,
-	}); err != nil {
+	}
+	if personalScriptJob(l.command) {
+		if err := e.finishPersonalScriptRun(execution, l, ex, closed); err != nil {
+			return false, err
+		}
+		return e.finishWorkerStops(execution, l)
+	}
+	if err := e.event(l.command, ex.Seq, contract.FleetEventTypeProcessClosed, closed); err != nil {
 		return false, err
 	}
 	sid, err := workOf(l.command)
@@ -1309,10 +1322,7 @@ func (e *executor) finishWorkerRun(execution string, l *live, ex *workerExit) (b
 		}
 		return true, e.finish(l.command, "failed", l.native)
 	}
-	var diagnostics []string
-	if err := e.artifacts(dir, []string{execution + ".mcp"}, execution, &diagnostics); err != nil {
-		_ = e.event(l.command, ex.Seq+1, "mcp.diagnostics_unavailable", M{"reason": "safe receipt collection failed"})
-	}
+	e.workerDiagnostics(dir, execution, l.command, ex.Seq+1)
 	if c := l.command; c.Start != nil && c.Start.Payload != nil && projectPersonal(c.Start.Payload.Project) {
 		dropPersonal(dir, output)
 	}
@@ -1325,26 +1335,38 @@ func (e *executor) finishWorkerRun(execution string, l *live, ex *workerExit) (b
 	if err := e.finish(l.command, ex.Status, l.native); err != nil {
 		return false, err
 	}
-	if l.stopped {
-		rs, err := e.db.Query("SELECT body FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop'", execution)
-		if err != nil {
+	return e.finishWorkerStops(execution, l)
+}
+
+func (e *executor) workerDiagnostics(dir, execution string, c contract.Command, seq uint64) {
+	var diagnostics []string
+	if err := e.artifacts(dir, []string{execution + ".mcp"}, execution, &diagnostics); err != nil {
+		_ = e.event(c, seq, "mcp.diagnostics_unavailable", M{"reason": "safe receipt collection failed"})
+	}
+}
+
+func (e *executor) finishWorkerStops(execution string, l *live) (bool, error) {
+	if !l.stopped {
+		return true, nil
+	}
+	rs, err := e.db.Query("SELECT body FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop'", execution)
+	if err != nil {
+		return false, err
+	}
+	var bodies []string
+	for rs.Next() {
+		var b string
+		rs.Scan(&b)
+		bodies = append(bodies, b)
+	}
+	rs.Close()
+	st := "stopped"
+	if l.cleanupUnknown {
+		st = "unknown"
+	}
+	for _, b := range bodies {
+		if err := e.finish(commandOf(b), st, l.native); err != nil {
 			return false, err
-		}
-		var bodies []string
-		for rs.Next() {
-			var b string
-			rs.Scan(&b)
-			bodies = append(bodies, b)
-		}
-		rs.Close()
-		st := "stopped"
-		if l.cleanupUnknown {
-			st = "unknown"
-		}
-		for _, b := range bodies {
-			if err := e.finish(commandOf(b), st, l.native); err != nil {
-				return false, err
-			}
 		}
 	}
 	return true, nil

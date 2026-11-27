@@ -28,3 +28,26 @@ GROUP BY r.subject;
 -- name: RulesInventories :many
 -- leftovers and personal-output (docs/designs/fleet-host-cleanup.md#13-rules): each host's latest inventory.
 SELECT id::text AS host_id, (payload->'inventory')::jsonb AS inventory FROM host_observation WHERE payload ? 'inventory';
+
+-- name: RulesPersonalScriptFailures :many
+-- Personal script jobs whose staging cleanup or original artifact upload failed.
+SELECT e.project_id::text AS project_id, count(*)::bigint AS n
+FROM execution e
+WHERE e.kind='host_job' AND e.session_id IS NULL AND e.project_id IS NOT NULL
+  AND e.ended_at IS NOT NULL AND e.tombstoned_at IS NULL
+  AND EXISTS (
+    SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='script' AND c.session_id IS NULL
+      AND c.payload->'payload'->'project'->>'data'='personal'
+  )
+  AND (
+    (jsonb_typeof(e.data->'refusedArtifacts')='array' AND e.data->'refusedArtifacts'<>'[]'::jsonb)
+    OR EXISTS (
+      SELECT 1 FROM artifact a WHERE a.execution_id=e.id AND a.role='original'
+        AND a.state='failed' AND a.tombstoned_at IS NULL
+    )
+    OR EXISTS (
+      SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND ev.type='script.personal-cleanup' AND NOT ev.delta
+        AND (ev.payload->'data'->>'removed'='false' OR ev.payload->'data'->>'collectionFailed'='true')
+    )
+  )
+GROUP BY e.project_id;

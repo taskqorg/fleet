@@ -1,14 +1,19 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
-	"fleet/contract"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
 
 func scriptExecutor(t *testing.T) (*executor, string) {
@@ -112,6 +117,271 @@ func TestHostJobWithoutSession(t *testing.T) {
 	}
 	if e.sessionBusy("hj-x") {
 		t.Fatal("finished host job still busy")
+	}
+}
+
+// Personal script staging belongs to the run. The transfer must still have the
+// exact output after staging is removed, including when the script exits nonzero.
+func TestPersonalScriptRetiresStaging(t *testing.T) {
+	for _, tc := range []struct {
+		name, finish, status string
+		timeout              int
+	}{
+		{"completed", "exit 0", "completed", 0},
+		{"failed", "exit 2", "failed", 0},
+		{"timed out", "exec sleep 60", "failed", 1500},
+		{"stopped", "exec sleep 60", "stopped", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _ := scriptExecutor(t)
+			server := scriptInputServer(t)
+			e.url = server.URL
+			const execution, cid = "personal-script", "personal-cmd"
+			dir := e.sessionDir(execution)
+			command := `cat "$FLEET_INPUT_DIR/nested/fixture" > "$FLEET_OUTPUT_DIR/result.txt"; printf 'invented diagnostic' >&2; ` + tc.finish
+			payload := M{"command": command, "project": M{"data": "personal"}, "inputs": []M{{"artifactId": "fixture", "path": "nested/fixture"}}}
+			if tc.timeout > 0 {
+				payload["timeout_ms"] = tc.timeout
+			}
+			if err := e.run(M{"id": cid, "executionId": execution, "kind": "script", "payload": payload}); err != nil {
+				t.Fatal(err)
+			}
+			worker := e.live[execution].worker
+			t.Cleanup(func() { _ = workerStop(worker.sock, "") })
+			if tc.name == "stopped" {
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					info, err := os.Stat(filepath.Join(dir, "output", "result.txt"))
+					if err == nil && info.Size() == int64(len("invented fixture bytes")) {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("active script output missing")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				if !exists(filepath.Join(dir, "input", "nested", "fixture")) {
+					t.Fatal("active script input missing")
+				}
+				if err := e.run(M{"id": "stop-cmd", "executionId": execution, "kind": "stop"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			settle(t, e, execution)
+			if got := lastReceipt(e, cid); got != tc.status {
+				t.Fatalf("receipt = %q, want %q", got, tc.status)
+			}
+			assertScriptStagingGone(t, dir)
+			var id, body string
+			if err := e.db.QueryRow(`SELECT id, body FROM transfers WHERE json_extract(body,'$.name')='result.txt' AND state='queued'`).Scan(&id, &body); err != nil {
+				t.Fatal(err)
+			}
+			job := readJob(body)
+			if b, err := os.ReadFile(job.Path); err != nil || string(b) != "invented fixture bytes" {
+				t.Fatalf("spool bytes = %q, err = %v", b, err)
+			}
+			if tc.name == "failed" {
+				var n int
+				if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE route=? AND body LIKE '%invented diagnostic%'`, contract.RouteEvents.Path).Scan(&n); err != nil || n != 1 {
+					t.Fatalf("failed script diagnostic count = %d, err = %v", n, err)
+				}
+				if err := settleJob(e.db, e.host, id, "upload", job, 0, nil, retryf("fixture transient")); err != nil {
+					t.Fatal(err)
+				}
+				var attempts int
+				if err := e.db.QueryRow("SELECT attempts FROM transfers WHERE id=?", id).Scan(&attempts); err != nil || attempts != 1 || !exists(job.Path) {
+					t.Fatalf("retry attempts = %d, err = %v, spool exists = %t", attempts, err, exists(job.Path))
+				}
+				if err := settleJob(e.db, e.host, id, "upload", job, 1, nil, permanentf("fixture terminal")); err != nil {
+					t.Fatal(err)
+				}
+				if err := e.db.QueryRow("SELECT count(*) FROM outbox WHERE route=? AND json_extract(body,'$.artifactId')=? AND json_extract(body,'$.error')='fixture terminal'", contract.RouteArtifactsFailed.Path, id).Scan(&n); err != nil || n != 1 {
+					t.Fatalf("permanent upload failure notices = %d, err = %v", n, err)
+				}
+			}
+		})
+	}
+}
+
+func scriptInputServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case contract.RouteArtifactsGet.Path:
+			var b contract.HostArtifactGetRequest
+			if json.NewDecoder(r.Body).Decode(&b) != nil || b.ArtifactId != "fixture" {
+				http.Error(w, "fixture unavailable", http.StatusNotFound)
+				return
+			}
+			fmt.Fprintf(w, `{"artifactId":"fixture","state":"stored","url":"http://%s/fixture"}`, r.Host)
+		case "/fixture":
+			fmt.Fprint(w, "invented fixture bytes")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func assertScriptStagingGone(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range []string{"input", "output"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("run staging %s was not removed: %v", name, err)
+		}
+	}
+}
+
+// A late preparation refusal must remove inputs fetched earlier in that attempt.
+// A linked output directory is a collection failure and its target stays intact.
+func TestPersonalScriptCleansPreparationAndCollectionFailures(t *testing.T) {
+	e, root := scriptExecutor(t)
+	e.url = scriptInputServer(t).URL
+	if err := e.run(M{"id": "bad-input", "executionId": "prep", "kind": "script", "payload": M{
+		"command": "exit 0", "project": M{"data": "personal"}, "inputs": []M{
+			{"artifactId": "fixture", "path": "nested/fixture"}, {"artifactId": "missing", "path": "missing"},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastReceipt(e, "bad-input"); got != "failed" {
+		t.Fatalf("preparation receipt = %q", got)
+	}
+	assertScriptStagingGone(t, e.sessionDir("prep"))
+	var reason string
+	if err := e.db.QueryRow(`SELECT json_extract(body,'$.events[0].data.reason') FROM outbox WHERE route=? AND json_extract(body,'$.events[0].type')='preparation.failed'`, contract.RouteEvents.Path).Scan(&reason); err != nil || !strings.Contains(reason, "input missing") {
+		t.Fatalf("preparation reason = %q, err = %v", reason, err)
+	}
+	outside := filepath.Join(root, "separate")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "marker"), []byte("invented outside bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := fmt.Sprintf(`mv "$FLEET_OUTPUT_DIR" "$FLEET_OUTPUT_DIR.saved"; ln -s %q "$FLEET_OUTPUT_DIR"`, outside)
+	if err := e.run(M{"id": "bad-output", "executionId": "collect", "kind": "script", "payload": M{"command": command, "project": M{"data": "personal"}}}); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, e, "collect")
+	assertScriptStagingGone(t, e.sessionDir("collect"))
+	if got := lastReceipt(e, "bad-output"); got != "failed" {
+		t.Fatalf("collection receipt = %q", got)
+	}
+	var n int
+	if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE route=? AND json_extract(body,'$.events[0].type')='script.personal-cleanup' AND json_extract(body,'$.events[0].data.collectionFailed')=1 AND json_extract(body,'$.events[0].data.removed')=1`, contract.RouteEvents.Path).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("collection failure notices = %d, err = %v", n, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(outside, "marker")); err != nil || string(b) != "invented outside bytes" {
+		t.Fatalf("outside marker changed: %q, %v", b, err)
+	}
+}
+
+// A journal failure before queueing keeps the source available. After cleanup,
+// a restarted poller still declares the queued artifact on the terminal receipt.
+func TestPersonalScriptCompletionResumesAcrossJournalFailures(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	const execution, cid = "replayed-script", "replayed-cmd"
+	dir := e.sessionDir(execution)
+	command := `printf fixture > "$FLEET_OUTPUT_DIR/result.txt"`
+	if err := e.run(M{"id": cid, "executionId": execution, "kind": "script", "payload": M{"command": command, "project": M{"data": "personal"}}}); err != nil {
+		t.Fatal(err)
+	}
+	mustExec := func(statement string) {
+		t.Helper()
+		if _, err := e.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(`CREATE TRIGGER block_upload BEFORE INSERT ON transfers
+		WHEN json_extract(NEW.body,'$.name')='result.txt'
+		BEGIN SELECT RAISE(FAIL,'fixture queue failure'); END`)
+	awaitJournalFailure := func(reason string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if err := e.tick(); err != nil {
+				if !strings.Contains(err.Error(), reason) {
+					t.Fatal(err)
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("did not hit %s", reason)
+	}
+	awaitJournalFailure("fixture queue failure")
+	if !exists(filepath.Join(dir, "output", "result.txt")) || !exists(filepath.Join(dir, "input")) {
+		t.Fatal("staging removed before the queue accepted the output")
+	}
+	mustExec("DROP TRIGGER block_upload")
+	mustExec(`CREATE TRIGGER block_receipt BEFORE INSERT ON outbox
+		WHEN json_extract(NEW.body,'$.status')='completed'
+		BEGIN SELECT RAISE(FAIL,'fixture receipt failure'); END`)
+	awaitJournalFailure("fixture receipt failure")
+	assertScriptStagingGone(t, dir)
+	mustExec("DROP TRIGGER block_receipt")
+
+	e.live = map[string]*live{}
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, e, execution)
+	var uploads, receipts, cleanups int
+	if err := e.db.QueryRow(`SELECT count(*) FROM transfers WHERE json_extract(body,'$.name')='result.txt'`).Scan(&uploads); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE json_extract(body,'$.status')='completed' AND
+		EXISTS (SELECT 1 FROM json_each(body,'$.artifacts') WHERE value='result.txt')`).Scan(&receipts); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE json_extract(body,'$.events[0].type')='script.personal-cleanup'`).Scan(&cleanups); err != nil {
+		t.Fatal(err)
+	}
+	if uploads != 1 || receipts != 1 || cleanups != 1 {
+		t.Fatalf("replayed completion: uploads=%d receipts=%d cleanups=%d", uploads, receipts, cleanups)
+	}
+}
+
+// An unresolved process may still use its staging. Keep the files and ownership
+// fence even when the worker can report that its result is unknown.
+func TestPersonalScriptPreservesUnconfirmedStaging(t *testing.T) {
+	e, root := scriptExecutor(t)
+	const execution, cid = "unconfirmed-script", "unconfirmed-cmd"
+	body := enc(M{"id": cid, "executionId": execution, "kind": "script", "payload": M{"command": "true", "project": M{"data": "personal"}}})
+	if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.launch(execution, cid, execution); err != nil {
+		t.Fatal(err)
+	}
+	dir := e.sessionDir(execution)
+	for _, name := range []string{"input", "output"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, "fixture"), []byte("invented"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wdir := workerDirFor(root, execution)
+	if err := os.MkdirAll(wdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	exit := workerExit{Status: "unknown", Seq: 5, CleanupUnknown: true, ProcessesUnresolved: true}
+	if err := os.WriteFile(filepath.Join(wdir, "exit.json"), []byte(enc(exit)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.live[execution] = &live{command: commandOf(body), worker: &liveWorker{dir: wdir}}
+	settle(t, e, execution)
+	if got := lastReceipt(e, cid); got != "unknown" || count(e.db, "launches") != 1 || count(e.db, "transfers") != 0 {
+		t.Fatalf("uncertain exit: receipt=%q launches=%d uploads=%d", got, count(e.db, "launches"), count(e.db, "transfers"))
+	}
+	for _, name := range []string{"input", "output"} {
+		if !exists(filepath.Join(dir, name, "fixture")) {
+			t.Errorf("unconfirmed %s staging removed", name)
+		}
 	}
 }
 

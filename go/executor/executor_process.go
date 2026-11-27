@@ -713,7 +713,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			_ = l.cleanup()
 			cleanupRun(e.root, execution)
 			removeRunFiles(e.root, execution)
-			if l.trial != nil {
+			if l.trial != nil && !personalScriptJob(l.command) {
 				removeTrial(l.trial[0], l.trial[1])
 			}
 			l.cleanupUnknown = true

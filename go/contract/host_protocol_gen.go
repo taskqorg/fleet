@@ -1466,31 +1466,32 @@ func (v *ExecutionResourceSummary) Validate() error {
 type FleetEventType string
 
 const (
-	FleetEventTypePreparation         FleetEventType = "preparation"
-	FleetEventTypePreparationFailed   FleetEventType = "preparation.failed"
-	FleetEventTypeHarness             FleetEventType = "harness"
-	FleetEventTypeSetup               FleetEventType = "setup"
-	FleetEventTypeReadiness           FleetEventType = "readiness"
-	FleetEventTypeReadinessFailed     FleetEventType = "readiness.failed"
-	FleetEventTypeCheckoutSynced      FleetEventType = "checkout.synced"
-	FleetEventTypeSyncFailed          FleetEventType = "sync-failed"
-	FleetEventTypeTeardown            FleetEventType = "teardown"
-	FleetEventTypeScriptStarted       FleetEventType = "script.started"
-	FleetEventTypeScriptTimeout       FleetEventType = "script.timeout"
-	FleetEventTypeTrialRemoved        FleetEventType = "trial.removed"
-	FleetEventTypeProcessClosed       FleetEventType = "process.closed"
-	FleetEventTypeProcessReconciled   FleetEventType = "process.reconciled"
-	FleetEventTypeResourceObservation FleetEventType = "resource.observation"
-	FleetEventTypeProtocolWrite       FleetEventType = "protocol.write"
-	FleetEventTypeProtocolFailed      FleetEventType = "protocol.failed"
-	FleetEventTypeSteerResult         FleetEventType = "steer.result"
-	FleetEventTypeLimitReading        FleetEventType = "limit_reading"
-	FleetEventTypeOutboxFailed        FleetEventType = "outbox.failed"
-	FleetEventTypeUnparsed            FleetEventType = "unparsed"
+	FleetEventTypePreparation           FleetEventType = "preparation"
+	FleetEventTypePreparationFailed     FleetEventType = "preparation.failed"
+	FleetEventTypeHarness               FleetEventType = "harness"
+	FleetEventTypeSetup                 FleetEventType = "setup"
+	FleetEventTypeReadiness             FleetEventType = "readiness"
+	FleetEventTypeReadinessFailed       FleetEventType = "readiness.failed"
+	FleetEventTypeCheckoutSynced        FleetEventType = "checkout.synced"
+	FleetEventTypeSyncFailed            FleetEventType = "sync-failed"
+	FleetEventTypeTeardown              FleetEventType = "teardown"
+	FleetEventTypeScriptStarted         FleetEventType = "script.started"
+	FleetEventTypeScriptTimeout         FleetEventType = "script.timeout"
+	FleetEventTypeScriptPersonalCleanup FleetEventType = "script.personal-cleanup"
+	FleetEventTypeTrialRemoved          FleetEventType = "trial.removed"
+	FleetEventTypeProcessClosed         FleetEventType = "process.closed"
+	FleetEventTypeProcessReconciled     FleetEventType = "process.reconciled"
+	FleetEventTypeResourceObservation   FleetEventType = "resource.observation"
+	FleetEventTypeProtocolWrite         FleetEventType = "protocol.write"
+	FleetEventTypeProtocolFailed        FleetEventType = "protocol.failed"
+	FleetEventTypeSteerResult           FleetEventType = "steer.result"
+	FleetEventTypeLimitReading          FleetEventType = "limit_reading"
+	FleetEventTypeOutboxFailed          FleetEventType = "outbox.failed"
+	FleetEventTypeUnparsed              FleetEventType = "unparsed"
 )
 
 // FleetEventTypeValues lists every FleetEventType in schema order.
-var FleetEventTypeValues = []FleetEventType{FleetEventTypePreparation, FleetEventTypePreparationFailed, FleetEventTypeHarness, FleetEventTypeSetup, FleetEventTypeReadiness, FleetEventTypeReadinessFailed, FleetEventTypeCheckoutSynced, FleetEventTypeSyncFailed, FleetEventTypeTeardown, FleetEventTypeScriptStarted, FleetEventTypeScriptTimeout, FleetEventTypeTrialRemoved, FleetEventTypeProcessClosed, FleetEventTypeProcessReconciled, FleetEventTypeResourceObservation, FleetEventTypeProtocolWrite, FleetEventTypeProtocolFailed, FleetEventTypeSteerResult, FleetEventTypeLimitReading, FleetEventTypeOutboxFailed, FleetEventTypeUnparsed}
+var FleetEventTypeValues = []FleetEventType{FleetEventTypePreparation, FleetEventTypePreparationFailed, FleetEventTypeHarness, FleetEventTypeSetup, FleetEventTypeReadiness, FleetEventTypeReadinessFailed, FleetEventTypeCheckoutSynced, FleetEventTypeSyncFailed, FleetEventTypeTeardown, FleetEventTypeScriptStarted, FleetEventTypeScriptTimeout, FleetEventTypeScriptPersonalCleanup, FleetEventTypeTrialRemoved, FleetEventTypeProcessClosed, FleetEventTypeProcessReconciled, FleetEventTypeResourceObservation, FleetEventTypeProtocolWrite, FleetEventTypeProtocolFailed, FleetEventTypeSteerResult, FleetEventTypeLimitReading, FleetEventTypeOutboxFailed, FleetEventTypeUnparsed}
 
 // Valid: v is one of the schema's values.
 func (v FleetEventType) Valid() bool {
@@ -3127,6 +3128,16 @@ func (v *ScriptPayload) Validate() error {
 			return err
 		}
 	}
+	return nil
+}
+
+type ScriptPersonalCleanup struct {
+	CollectionFailed *bool `json:"collectionFailed,omitempty"`
+	Removed          bool  `json:"removed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ScriptPersonalCleanup) Validate() error {
 	return nil
 }
 

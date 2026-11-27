@@ -74,6 +74,55 @@ func (q *Queries) RulesInventories(ctx context.Context) ([]RulesInventoriesRow, 
 	return items, nil
 }
 
+const rulesPersonalScriptFailures = `-- name: RulesPersonalScriptFailures :many
+SELECT e.project_id::text AS project_id, count(*)::bigint AS n
+FROM execution e
+WHERE e.kind='host_job' AND e.session_id IS NULL AND e.project_id IS NOT NULL
+  AND e.ended_at IS NOT NULL AND e.tombstoned_at IS NULL
+  AND EXISTS (
+    SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='script' AND c.session_id IS NULL
+      AND c.payload->'payload'->'project'->>'data'='personal'
+  )
+  AND (
+    (jsonb_typeof(e.data->'refusedArtifacts')='array' AND e.data->'refusedArtifacts'<>'[]'::jsonb)
+    OR EXISTS (
+      SELECT 1 FROM artifact a WHERE a.execution_id=e.id AND a.role='original'
+        AND a.state='failed' AND a.tombstoned_at IS NULL
+    )
+    OR EXISTS (
+      SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND ev.type='script.personal-cleanup' AND NOT ev.delta
+        AND (ev.payload->'data'->>'removed'='false' OR ev.payload->'data'->>'collectionFailed'='true')
+    )
+  )
+GROUP BY e.project_id
+`
+
+type RulesPersonalScriptFailuresRow struct {
+	ProjectID string
+	N         int64
+}
+
+// Personal script jobs whose staging cleanup or original artifact upload failed.
+func (q *Queries) RulesPersonalScriptFailures(ctx context.Context) ([]RulesPersonalScriptFailuresRow, error) {
+	rows, err := q.db.Query(ctx, rulesPersonalScriptFailures)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RulesPersonalScriptFailuresRow
+	for rows.Next() {
+		var i RulesPersonalScriptFailuresRow
+		if err := rows.Scan(&i.ProjectID, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const rulesRunFrequency = `-- name: RulesRunFrequency :many
 WITH runs AS (
   SELECT coalesce('pipeline:' || pipeline_id, 'bot:' || bot_id) AS subject, started_at FROM execution

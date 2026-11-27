@@ -96,6 +96,16 @@ var (
 func cleanupStateRules(ctx context.Context, a *App) ([]contract.Finding, error) {
 	var out []contract.Finding
 	err := a.store.Read(ctx, nil, func(q *Request) error {
+		personalFailures, err := q.db().RulesPersonalScriptFailures(q.ctx())
+		if err != nil {
+			return err
+		}
+		for _, r := range personalFailures {
+			project := r.ProjectID
+			f := contract.Finding{Rule: "personal-output", Subject: project, Value: float64(r.N), Cause: "problem:project:" + project + ":personal-output", ProjectId: ptr(project), Exemplars: []string{}}
+			text(&f, fmt.Sprintf("%d personal script jobs in %s had an output upload or staging cleanup fail.", r.N, project))
+			out = append(out, f)
+		}
 		invs, err := q.db().RulesInventories(q.ctx())
 		if err != nil {
 			return err
