@@ -67,7 +67,7 @@ function buckets<T>(items: readonly T[], at: (x: T) => number | null, now: numbe
 }
 /** Delivery stages as the shared stage chip names them (registry stages). */
 const STAGE = CHIP_STAGE;
-const IN_FLIGHT = new Set<DeliveryStage>(['pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing']);
+const IN_FLIGHT = new Set<DeliveryStage>(['pr_ci', 'mq_wait', 'mq_ci', 'releasing', 'installing']);
 
 /** One problem on Live: repeats of a cause on a host collapse into one with ×N (OR-58). */
 type Problem = { host: string | null; cause: string; text: string; n: number; since: number; latest: number };
@@ -270,11 +270,17 @@ export function Live(props: { wall: boolean }) {
     }
     return rows.filter(r => r.running + r.open + r.queued + r.done > 0).toSorted((a, b) => b.running - a.running || b.open - a.open || b.queued - a.queued || a.name.localeCompare(b.name));
   });
-  // In work: every open task with its work facts, actually running/preparing first, then in_progress/waiting/queued, longest in work first.
-  const work = createMemo(() => openList().toSorted((a, b) => Number(isTaskActive(b)) - Number(isTaskActive(a))
-    || (WORK_ORDER[a.state] ?? 3) - (WORK_ORDER[b.state] ?? 3)
-    || (timeAt(a.startedAt) || Infinity) - (timeAt(b.startedAt) || Infinity) || a.title.localeCompare(b.title)));
-  const delivery = createMemo(() => (deliveryOp.data?.items ?? []).filter(i => IN_FLIGHT.has(i.stage)).toSorted((a, b) => ms(b.since) - ms(a.since)));
+  const delivery = createMemo(() => (deliveryOp.data?.items ?? [])
+    .filter(i => IN_FLIGHT.has(i.stage) || i.stage === 'pr_failed' || i.stage === 'mq_failed')
+    .toSorted((a, b) => ms(b.since) - ms(a.since)));
+  const work = createMemo(() => {
+    const delivering = new Set(delivery().filter(i => IN_FLIGHT.has(i.stage)).map(i => i.taskId));
+    return openList().filter(t => t.waitReason !== 'awaiting result' || isTaskActive(t)
+      || delivering.has(t.id) || (t.stage && IN_FLIGHT.has(t.stage)))
+      .toSorted((a, b) => Number(isTaskActive(b)) - Number(isTaskActive(a))
+        || (WORK_ORDER[a.state] ?? 3) - (WORK_ORDER[b.state] ?? 3)
+        || (timeAt(a.startedAt) || Infinity) - (timeAt(b.startedAt) || Infinity) || a.title.localeCompare(b.title));
+  });
   const ci = createMemo(() => {
     const d = ciOp.data;
     if (!d) return [];

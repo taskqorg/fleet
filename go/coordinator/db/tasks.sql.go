@@ -285,7 +285,8 @@ SELECT id,coalesce(code,'')::text AS code,coalesce(project_id,'')::text AS proje
  coalesce(expected_outcome,'')::text AS expected_outcome,state::text AS state,
  completion_requirements,coalesce(result_destination,'')::text AS result_destination,created_at
 FROM task
-WHERE state IN ('queued','in_progress') AND accepted_at IS NULL AND tombstoned_at IS NULL
+WHERE (state IN ('queued','in_progress') OR (state='waiting' AND wait_reason='awaiting result'))
+ AND accepted_at IS NULL AND tombstoned_at IS NULL
 ORDER BY created_at
 `
 
@@ -301,7 +302,7 @@ type TaskDeliveryCandidatesRow struct {
 	CreatedAt              time.Time
 }
 
-// Open tasks eligible for delivery reconciliation (queued or in_progress, unaccepted).
+// Unaccepted tasks eligible for delivery reconciliation.
 func (q *Queries) TaskDeliveryCandidates(ctx context.Context) ([]TaskDeliveryCandidatesRow, error) {
 	rows, err := q.db.Query(ctx, taskDeliveryCandidates)
 	if err != nil {
@@ -910,7 +911,7 @@ const taskIdle = `-- name: TaskIdle :one
 SELECT t.id,t.title,t.project_id,coalesce(l.id,'')::text AS latest_id,coalesce(l.state::text,'')::text AS latest,l.session_id AS latest_session
 FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id FROM execution x
  WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') ORDER BY x.seq DESC LIMIT 1) l ON true
-WHERE t.id=$1 AND t.state='in_progress'
+WHERE t.id=$1 AND (t.state='in_progress' OR (t.state='waiting' AND t.wait_reason='awaiting result'))
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance'
  AND qq.state='answered' AND qq.answer='rejected' AND qq.execution_id IS NOT DISTINCT FROM l.id)
@@ -925,7 +926,7 @@ type TaskIdleRow struct {
 	LatestSession *string
 }
 
-// An in-progress task with no open question or rejection of its latest primary run.
+// A task with no open question or rejection of its latest primary run.
 // The caller has already checked for pending work.
 func (q *Queries) TaskIdle(ctx context.Context, id string) (TaskIdleRow, error) {
 	row := q.db.QueryRow(ctx, taskIdle, id)

@@ -35,7 +35,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * A 24-hour strip of runs, one tick per run window, with failures in the danger tone; marks at −24 h, −18 h, −12 h, −6 h and now.
 4. **Side column.**
    * Projects now: running, queued and done counts per project, with a sparkline.
-   * In work: every open task (working, then waiting, then queued; longest in work first) with its work facts: attempts, the agent and the time in work, last; the latest attempt and the time in its state on hover. A task stuck in retries shows here between its attempts, when no slot shows it.
+   * In work: open tasks (working, then waiting, then queued, longest in work first) with their work facts: agent turns, the agent and the time in work, last; the latest attempt and the time in its state on hover. A task stuck in retries shows here between attempts. An idle task awaiting its result stays in Tasks and leaves In work unless delivery is in flight.
    * Delivery: pull requests moving through checks, merge, release and install, each with its time since opened (time in the stage on hover) and its stage chip.
    * CI runners: jobs running and minutes today; self-hosted runner state.
    * Just now: the newest work entries of [History](history.md) in the focus (`history_view` section work, 5 rows; a host's upkeep jobs, settings and Lab stay on their own pages), each with its state, what happened, the actor and the age; repeats come folded with `×N` (OR-58). The heading opens History.
@@ -97,7 +97,7 @@ Each line says why in words: who set it, when, until, what it moved. A subscript
 | Host bands | `hosts_list`: `slotLimit`, `running`, `runningByHarness`, `queued`, `problems`, `pollError`, `lastSeenAt` |
 | Gauges | `hosts_list` `load`: CPU (`100 * load1 / cpus`), memory (`memFree` of `memTotal`) and free disk (`diskFree`), while the host polls and the reading is under 2 minutes old |
 | Slot tiles | `hosts_list` `runs` in slot order: tile *i* shows `runs[i]` (title and harness from `executions_runners`; code, project, `executions` and `startedAt` from `task_page`); a band covers `max(slotLimit, running)` slots |
-| In work | `task_page` open tasks: `executions` (attempts), `lastStartedAt` (latest attempt), `startedAt` (first attempt), `state` and `stateAt`, `agent` else `lastAgent`; outliers against the same rows (`peerFence`) |
+| In work | `task_page` open tasks: `executions` (agent turns), `lastStartedAt` (latest attempt), `startedAt` (first attempt), `state` and `stateAt`, `agent` else `lastAgent`; outliers against the same rows (`peerFence`) |
 | Failures | `failure` on `executions_list` rows and `bot_runs` records: `text` in plain words, `code` under Details, `cause` to group by |
 | Strips | `executions_runners` (the newest runs, per host, with time strips) |
 | Figures | `execution_totals` (via `executions_runners`: runs, tokens and list-price spend today and this month), `task_page` (tasks done today and their lead time) |

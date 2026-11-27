@@ -343,10 +343,11 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     | `queued` | the first execution of the task starts and all dependencies are `completed` | `in_progress` |
     | `queued` | an open question of kind `operator_decision` blocks the task before its first execution, or a dependency is not `completed` | `waiting`, with `wait_reason` |
     | `in_progress` | an open question of kind `operator_decision` or `agent_question` blocks the task, or a dependency is not `completed` | `waiting`, with `wait_reason` |
-    | `waiting` | the blocking question is answered or withdrawn, or the dependency completes | `in_progress` when all blockers clear, otherwise `waiting` with the remaining reason |
-    | `in_progress` | the latest execution has an eligible result under [the task acceptance rule](../../fleet.md#work-management), with no pending continuation or open question | `in_progress`; Fleet asks one `acceptance` question for that result |
-    | `in_progress` | the completion requirements are met and an `acceptance` question is answered `accepted` | `completed` |
-    | `in_progress` | an `acceptance` question is answered `rejected` | `in_progress`, with a new execution expected |
+    | `waiting` | a blocker clears, or work resumes after a result wait | `in_progress` when all wait conditions clear, otherwise `waiting` with the remaining reason |
+    | `in_progress` | the latest primary execution is a confirmed successful agent turn, the worker has reported no failure, and no continuation is pending | `waiting`, with `wait_reason = awaiting result` unless a question or dependency already blocks the task |
+    | `in_progress` or result wait | the latest execution has an eligible result under [the task acceptance rule](../../fleet.md#work-management), with no pending continuation or open question | State stays open and Fleet asks one `acceptance` question for that result |
+    | `in_progress` or result wait | the completion requirements are met and an `acceptance` question is answered `accepted` | `completed` |
+    | `in_progress` or result wait | an `acceptance` question is answered `rejected` | State stays open for rework |
     | `in_progress` or `waiting` | the operator stops the task, or its last execution fails and the operator marks it failed | `failed` |
     | `in_progress` | execution failed, was cancelled or abandoned, or explicitly reported incomplete work, with no pending work or open question | `waiting`; Fleet asks one `operator_decision`. A retry withdraws it. `fail task` makes the task `failed`. When offered, `accept earlier result` asks for acceptance of an eligible earlier result. |
     | any open state | the operator pauses or resumes it | `paused`, or back to the state before |
