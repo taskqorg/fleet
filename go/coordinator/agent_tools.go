@@ -30,12 +30,27 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		if r.Question != nil || r.RequestId != nil || r.TaskId != nil {
 			return nil, fail(400, "Use question + requestId for a fresh ask, or resume=<questionId> alone to read an existing answer; resume is not continuation prose")
 		}
-		qu, err := agentQuestionGet(q, rid)
+		row, err := q.db().TaskAskerQuestion(q.ctx(), rid)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		qu, err := agentQuestionOf(row)
 		if err != nil {
 			return nil, err
 		}
 		if qu.ExecutionID != e.ID && qu.SessionID != e.SessionID {
 			return nil, fail(403, "Question belongs to another session")
+		}
+		if qu.State == "answered" {
+			if err := q.db().TaskWakeAnswer(q.ctx(), rid); err != nil {
+				return nil, err
+			}
+			if err := q.db().TaskWakeReadAnswer(q.ctx(), "reply:"+rid); err != nil {
+				return nil, err
+			}
 		}
 		return recOf(qu), nil
 	}
@@ -119,76 +134,33 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	if answer == "" {
 		return nil, fail(400, "Expected answer")
 	}
-	if qu.State == "answered" {
-		if qu.Answer != answer {
-			return nil, fail(409, "Question already answered differently")
-		}
-		return recOf(qu), nil
-	}
-	if qu.ProjectID == nil { // a question asked before it carried its session's project
-		s, err := sessionByID(q, qu.SessionID)
-		if err != nil {
-			return nil, err
-		}
-		qu.ProjectID = agentOpt(s.ProjectID)
-	}
-	// The answer is the answering person's, by email, as for every other question (not "operator").
-	qu.State, qu.Answer, qu.AnsweredAt, qu.AnsweredBy = "answered", answer, nowMs(), actor(q, "operator")
-	d, err := submitQuestionReply(q, qu.SessionID, qid, qu.Question, answer)
-	if err != nil {
+	if _, err := answerQuestion(q, qid, answer, actor(q, "operator"), nil); err != nil {
 		return nil, err
 	}
-	if d.queued != nil {
-		qu.Delivery = &agentQuestionDelivery{QueueID: d.queued.ID, State: d.queued.State}
-	} else {
-		qu.Delivery = &agentQuestionDelivery{ExecutionID: d.execution.ID}
-	}
-	err = agentQuestionPut(q, &qu)
+	qu, err = agentQuestionGet(q, qid)
 	return recOf(qu), err
+}
+
+func questionReplyText(qid, question, answer string) string {
+	return fmt.Sprintf("Fleet reply to your question %s (\"%s\"):\n%s", qid, question, answer)
 }
 
 func submitQuestionReply(q *Request, sid, qid, question, answer string) (agentSubmitted, error) {
 	return agentSubmit(q, &contract.MessageSendRequest{SessionId: &sid, RequestId: ptr("reply:" + qid),
-		Text: ptr(fmt.Sprintf("Fleet reply to your question %s (\"%s\"):\n%s", qid, question, answer))}, "")
+		Text: ptr(questionReplyText(qid, question, answer))}, "wake")
 }
 
-// continueQuestionAsker admits the answer as an ordinary message only when the asking session needs a turn.
-func continueQuestionAsker(q *Request, question db.Question, answer string) error {
-	sid, eid := deref(question.SessionID), deref(question.ExecutionID)
-	if question.Kind != db.QuestionKindOperatorDecision || sid == "" || eid == "" ||
-		deref(question.AskedBy) != "execution:"+eid {
+// continueQuestionAsker retains the semantic receipt in the answer transaction.
+func continueQuestionAsker(q *Request, question db.Question) error {
+	eid := deref(question.ExecutionID)
+	if (question.Kind != db.QuestionKindAgentQuestion && question.Kind != db.QuestionKindOperatorDecision) ||
+		eid == "" || deref(question.SessionID) == "" || deref(question.AskedBy) != "execution:"+eid {
 		return nil
 	}
-	// Use the same lock as message_send and queue promotion so none can admit a turn between this check and submit.
-	if err := acquireTxLock(q, "session:"+sid); err != nil {
+	if err := q.db().TaskWakeAnswer(q.ctx(), question.ID); err != nil {
 		return err
 	}
-	s, err := sessionMaybe(q, sid)
-	if err != nil || s == nil || s.ArchivedAt != nil {
-		return err
-	}
-	if tid := firstString(s.DeliveryID, s.TaskID, deref(question.TaskID)); tid != "" {
-		state, err := q.db().TaskStateForShare(q.ctx(), tid)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		if err != nil || !openTask[string(state)] || state == db.TaskStatePaused {
-			return err
-		}
-	}
-	asking, err := executionMaybe(q, eid)
-	if err != nil || asking == nil || asking.SessionID != sid || !asking.terminal() {
-		return err
-	}
-	if active, err := agentActive(q, sid); err != nil || active != nil {
-		return err
-	}
-	steering, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid, State: ptr("steering")})
-	if err != nil || len(steering) != 0 {
-		return err
-	}
-	_, err = submitQuestionReply(q, sid, question.ID, question.Text, answer)
-	return err
+	return kitNotify(q, taskWakeQueue)
 }
 
 type workerDonePayload struct {
@@ -236,7 +208,7 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 		return reject("stale_dispatch", fmt.Sprintf("Execution %s is superseded by %s.", eid, latest.ID))
 	}
 	if r := e.Report; r != nil {
-		if r.Outcome == outcome && (r.Summary == nil) == (summary == nil) && deref(r.Summary) == deref(summary) {
+		if r.Outcome == outcome && (r.Summary == nil) == (summary == nil) && deref(r.Summary) == deref(summary) && deref(r.LiveCheck) == deref(b.LiveCheck) {
 			report, yes := *r, true
 			return contract.WorkerDoneReply{Action: "accepted", ExecutionId: eid, Report: &report, Duplicate: &yes}, nil
 		}
@@ -251,7 +223,10 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 			return reject("native_identity_conflict", "Reported native session differs from the captured one.")
 		}
 	}
-	report := contract.WorkerReport{Outcome: outcome, Summary: summary, At: nowMs()}
+	if b.LiveCheck != nil && (outcome != "succeeded" || deref(summary) == "" || !validDigest(*b.LiveCheck)) {
+		return reject("invalid_live_check", "A live check needs a successful outcome, evidence summary and exact check key.")
+	}
+	report := contract.WorkerReport{Outcome: outcome, Summary: summary, At: nowMs(), LiveCheck: b.LiveCheck}
 	e.Report = &report
 	if err := executionPut(q, &e); err != nil {
 		return none, err
@@ -270,6 +245,9 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 			return none, err
 		}
 		if taskID := deref(link.TaskID); taskID != "" {
+			if err := wakeTask(q, taskID); err != nil {
+				return none, err
+			}
 			if _, err := settleIdleTask(q, taskID); err != nil {
 				return none, err
 			}

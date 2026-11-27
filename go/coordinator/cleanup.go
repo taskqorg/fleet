@@ -735,6 +735,11 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 			teardowns++
 		}
 	}
+	for _, id := range c.sets["task"] {
+		if err := wakeBlocker(q, id); err != nil {
+			return err
+		}
+	}
 	out.Teardowns = teardowns
 	// The objects get their tombstone; an experiment's own rows (scores, notes, the events and messages of its trials)
 	// too, since only a deleted project's rows are hidden by project.

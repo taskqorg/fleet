@@ -1493,6 +1493,20 @@ CREATE TABLE task (
   "held_by" text,
   "held_by_name" text
 );
+CREATE TABLE task_delivery_result (
+  "task_id" text NOT NULL,
+  "project_id" text,
+  "proof" jsonb NOT NULL,
+  "verification_key" text NOT NULL,
+  "stage_since" timestamp with time zone NOT NULL
+);
+CREATE TABLE task_delivery_verification (
+  "verification_key" text NOT NULL,
+  "task_id" text NOT NULL,
+  "project_id" text,
+  "execution_id" text NOT NULL,
+  "deadline" timestamp with time zone NOT NULL
+);
 CREATE TABLE task_dependency (
   "task_id" text NOT NULL,
   "depends_on_task_id" text NOT NULL,
@@ -1509,6 +1523,15 @@ CREATE TABLE task_derived (
   "executions" integer NOT NULL,
   "last_agent" text
 );
+CREATE TABLE task_recovery (
+  "task_id" text NOT NULL,
+  "project_id" text,
+  "deadline" timestamp with time zone NOT NULL,
+  "generation" integer NOT NULL,
+  "turns" integer NOT NULL,
+  "execution_id" text,
+  "progress" text[] NOT NULL
+);
 -- view
 CREATE TABLE task_view (
   "task_id" text,
@@ -1520,6 +1543,20 @@ CREATE TABLE task_view (
   "totals" jsonb,
   "latest_result" jsonb,
   "open_questions" jsonb
+);
+CREATE TABLE task_wake (
+  "id" text NOT NULL,
+  "kind" text NOT NULL,
+  "source_id" text NOT NULL,
+  "task_id" text,
+  "project_id" text,
+  "revision" bigint NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "attempts" integer NOT NULL,
+  "last_error" text,
+  "disposition" text,
+  "cursor_id" text
 );
 CREATE TABLE telegram_history (
   "id" text NOT NULL,

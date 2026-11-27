@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"math"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -49,7 +51,7 @@ type taskRule struct {
 var taskTransitions = map[string][]string{
 	"queued":      {"in_progress", "waiting", "paused", "completed", "cancelled"},
 	"in_progress": {"in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
-	"waiting":     {"in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
+	"waiting":     {"queued", "in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
 	"paused":      {"queued", "in_progress", "waiting", "cancelled"},
 	"completed":   nil,
 	"failed":      nil,
@@ -57,16 +59,17 @@ var taskTransitions = map[string][]string{
 }
 
 var taskRules = map[string]taskRule{
-	"first_execution": {[]string{"queued"}, "in_progress"},
-	"blocked":         {[]string{"queued", "in_progress", "waiting"}, "waiting"},
-	"unblocked":       {[]string{"waiting"}, "in_progress"},
-	"accepted":        {[]string{"queued", "in_progress", "waiting"}, "completed"},
-	"operator_fail":   {[]string{"in_progress", "waiting"}, "failed"},
-	"pause":           {[]string{"queued", "in_progress", "waiting"}, "paused"},
-	"hold":            {[]string{"queued"}, "paused"},
-	"release":         {[]string{"paused"}, "previous"},
-	"resume":          {[]string{"paused"}, "previous"},
-	"cancel":          {[]string{"queued", "in_progress", "waiting", "paused"}, "cancelled"},
+	"first_execution":     {[]string{"queued"}, "in_progress"},
+	"blocked":             {[]string{"queued", "in_progress", "waiting"}, "waiting"},
+	"unblocked":           {[]string{"waiting"}, "in_progress"},
+	"dependency_released": {[]string{"waiting"}, "queued"},
+	"accepted":            {[]string{"queued", "in_progress", "waiting"}, "completed"},
+	"operator_fail":       {[]string{"in_progress", "waiting"}, "failed"},
+	"pause":               {[]string{"queued", "in_progress", "waiting"}, "paused"},
+	"hold":                {[]string{"queued"}, "paused"},
+	"release":             {[]string{"paused"}, "previous"},
+	"resume":              {[]string{"paused"}, "previous"},
+	"cancel":              {[]string{"queued", "in_progress", "waiting", "paused"}, "cancelled"},
 }
 
 var priorities = map[string]string{"urgent": "urgent", "normal": "normal", "background": "background", "p0": "urgent", "p1": "normal", "p2": "background"}
@@ -255,7 +258,7 @@ func waitReason(q *Request, id string) (string, error) {
 }
 
 func openDependency(q *Request, id string) (bool, error) {
-	return q.db().TaskHasOpenDependency(q.ctx(), id)
+	return unscoped(q, func() (bool, error) { return q.db().TaskHasOpenDependency(q.ctx(), id) })
 }
 
 func taskTransition(q *Request, id, trigger, reason string) (string, error) {
@@ -281,7 +284,7 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 			return "", fail(409, "Task has no started execution or a blocking dependency is open")
 		}
 	}
-	if trigger == "unblocked" {
+	if trigger == "unblocked" || trigger == "dependency_released" {
 		if r, err := waitReason(q, id); err != nil || r != "" {
 			if err == nil {
 				err = fail(409, "Task is still blocked")
@@ -329,7 +332,18 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 			return "", err
 		}
 	}
-	return to, q.db().TaskSetState(q.ctx(), set)
+	if err := q.db().TaskSetState(q.ctx(), set); err != nil {
+		return "", err
+	}
+	switch trigger {
+	case "accepted", "operator_fail", "cancel":
+		_, err = unscoped(q, func() (struct{}, error) {
+			return struct{}{}, wakeBlocker(q, id)
+		})
+	case "resume", "release", "pause", "hold":
+		err = wakeTask(q, id)
+	}
+	return to, err
 }
 
 // taskHolder: who holds a task now and the name to show for it (fleet-pm-agent.md §4): the calling agent execution
@@ -495,6 +509,9 @@ func settleTask(q *Request, id, target string) (string, error) {
 		}
 	}
 	if reason != "" || target == "waiting" {
+		if state == "queued" && reason == "dependency" {
+			return state, nil
+		}
 		if state != "waiting" || reason != "" && deref(t.WaitReason) != reason {
 			if reason == "" {
 				reason = "question"
@@ -504,6 +521,16 @@ func settleTask(q *Request, id, target string) (string, error) {
 		return state, err
 	}
 	if state == "waiting" {
+		if deref(t.WaitReason) == "dependency" {
+			started, err := q.db().TaskHasStartedExecution(q.ctx(), &id)
+			if err != nil {
+				return "", err
+			}
+			if !started {
+				err := step("dependency_released", "")
+				return state, err
+			}
+		}
 		if err := step("unblocked", ""); err != nil {
 			return "", err
 		}
@@ -640,7 +667,7 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 				continue
 			}
 		}
-		selected, err := acceptanceResult(q, id, data.EarlierResult, pending, deref(question.AskedBy) == "fleet")
+		selected, err := eligibleTaskResult(q, id, data.EarlierResult, pending, deref(question.AskedBy) == "fleet", data.Delivery)
 		var conflict *HTTPError
 		if err != nil && (!errors.As(err, &conflict) || conflict.Code != 409) {
 			return false, err
@@ -658,10 +685,10 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 	}
 	abandoned := deref(latest.Problem) == "unknown:abandoned"
 	needsDecision := abandoned || latest.Observation == db.ObservationConfirmed &&
-		(latest.State == db.ExecutionStateFailed || latest.State == db.ExecutionStateCancelled ||
+		(latest.State == db.ExecutionStateFailed || latest.State == db.ExecutionStateCancelled && latest.AutomaticStop != "superseded" ||
 			latest.State == db.ExecutionStateSucceeded && latest.Outcome == "failed")
 	if pending || !needsDecision {
-		if err := withdrawIdleDecision(q, id); err != nil {
+		if err := withdrawSettledIdleDecision(q, id, pending); err != nil {
 			return false, err
 		}
 	}
@@ -686,6 +713,21 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 		}
 		return err == nil, err
 	}
+	if latest.AutomaticStop == "deadline" {
+		recovery, err := q.db().TaskRecoveryGet(q.ctx(), id)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return false, err
+		}
+		if deref(recovery.ExecutionID) == latest.ID {
+			task, err := taskLoad(q, id)
+			if err != nil {
+				return false, err
+			}
+			err = askTaskRecovery(q, task, latest.ID, deref(latest.SessionID),
+				"Fleet stopped the automatic recovery at its deadline.", "missing_result")
+			return err == nil, err
+		}
+	}
 	options := []string{idleFail}
 	if _, err := acceptanceResult(q, id, true, false, true); err == nil {
 		options = append(options, idleAccept)
@@ -699,6 +741,8 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 	switch {
 	case abandoned:
 		what = "The last run was abandoned. Its outcome is unknown"
+	case latest.AutomaticStop == "deadline":
+		what = "Fleet stopped the automatic turn after its recovery deadline"
 	case latest.Outcome == "failed":
 		what = "The worker reported that the task is incomplete"
 	}
@@ -741,7 +785,7 @@ func init() {
 	})
 }
 
-const idleFail, idleAccept = "fail task", "accept earlier result"
+const idleFail, idleAccept, idleRetryResult = "fail task", "accept earlier result", "retry result"
 
 // withdrawIdleDecision: a new run of the task answers settleIdleTask's decision by itself.
 func withdrawIdleDecision(q *Request, id string) error {
@@ -750,6 +794,17 @@ func withdrawIdleDecision(q *Request, id string) error {
 		return err
 	}
 	return questionsWithdraw(q, idle)
+}
+
+func withdrawSettledIdleDecision(q *Request, id string, pending bool) error {
+	if pending {
+		return withdrawIdleDecision(q, id)
+	}
+	ids, err := q.db().TaskFailureDecisions(q.ctx(), &id)
+	if err != nil {
+		return err
+	}
+	return questionsWithdraw(q, ids)
 }
 
 type taskAcceptanceResult struct {
@@ -862,7 +917,7 @@ func requestAcceptanceWithDelivery(q *Request, t acceptTask, artifactIDs []strin
 	if err != nil {
 		return "", err
 	}
-	selected, err := acceptanceResult(q, t.ID, t.EarlierResult, pending, askedBy == "fleet")
+	selected, err := eligibleTaskResult(q, t.ID, t.EarlierResult, pending, askedBy == "fleet", delivery)
 	if err != nil {
 		return "", err
 	}
@@ -899,6 +954,9 @@ func requestAcceptanceWithDelivery(q *Request, t acceptTask, artifactIDs []strin
 				}
 			}
 			if delivery == nil && slices.Equal(data.ArtifactIds, ids) {
+				if data.Delivery != nil {
+					return question.ID, nil
+				}
 				return question.ID, q.db().TaskAcceptanceAskAgain(q.ctx(), db.TaskAcceptanceAskAgainParams{ID: question.ID, Text: body, ArtifactIds: jsonBytes(ids), AskedBy: &askedBy})
 			}
 		}
@@ -914,20 +972,29 @@ func requestAcceptanceWithDelivery(q *Request, t acceptTask, artifactIDs []strin
 	if t.EarlierResult {
 		data.EarlierResult = &t.EarlierResult
 	}
+	row, err := taskLoad(q, t.ID)
+	if err != nil {
+		return "", err
+	}
+	human, err := acceptanceRequiresHuman(q, row)
+	if err != nil {
+		return "", err
+	}
 	return askQuestionAs(q, questionAsk{Kind: "acceptance", TaskID: t.ID, ProjectID: deref(t.ProjectID), Text: body, Options: jsonBytes([]string{"accepted", "rejected"}),
-		AskedBy: &askedBy, ExecutionID: strPtr(selected.id), Data: jsonBytes(data)})
+		DirectToOwner: human, AskedBy: &askedBy, ExecutionID: strPtr(selected.id), Data: jsonBytes(data)})
 }
 
 // questionData: the fields of a question's data the answer path reads.
 type questionData struct {
 	EarlierResult bool              `json:"earlierResult"`
 	Idle          bool              `json:"idle"`
+	TaskRecovery  string            `json:"taskRecovery,omitempty"`
 	ArtifactIds   []string          `json:"artifactIds"`
 	Delivery      *deliveryMergedPR `json:"delivery,omitempty"`
 }
 
 func sameDeliveryRef(a, b *deliveryMergedPR) bool {
-	return a.Repo == b.Repo && a.Number == b.Number && a.HeadSHA == b.HeadSHA && a.Release == b.Release && a.Stage == b.Stage
+	return a.URL == b.URL && a.Repo == b.Repo && a.Number == b.Number && a.HeadSHA == b.HeadSHA && a.MergeSHA == b.MergeSHA && a.Release == b.Release && a.Stage == b.Stage
 }
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
@@ -951,6 +1018,20 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 		// A replay (a client retry) keeps the owner-only rule of a key request; the answer itself was checked when given.
 		if cur.Kind == db.QuestionKindSecret && (q.agent != "" || q.person == nil || !fullAccess(q.person)) {
 			return nil, fail(403, "Only the owner answers a key request")
+		}
+		if cur.Kind == db.QuestionKindAcceptance && answer == "accepted" {
+			t, err := taskLoad(q, deref(cur.TaskID))
+			if err != nil {
+				return nil, err
+			}
+			if taskRequiresHuman(t) && (q.agent != "" || q.person == nil) && by != deliveryActor {
+				return nil, fail(403, "This result requires human acceptance")
+			}
+		}
+		if !authority && (cur.Kind == db.QuestionKindAgentQuestion || cur.Kind == db.QuestionKindOperatorDecision) {
+			if err := continueQuestionAsker(q, cur); err != nil {
+				return nil, err
+			}
 		}
 		return questionRecord(q, id)
 	}
@@ -977,11 +1058,22 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 		if decodeErr != nil {
 			return nil, fail(409, "The offer has invalid result data")
 		}
+		t, err := taskLoad(q, deref(cur.TaskID))
+		if err != nil {
+			return nil, err
+		}
+		human, err := acceptanceRequiresHuman(q, t)
+		if err != nil {
+			return nil, err
+		}
+		if human && (q.agent != "" || q.person == nil || by == deliveryActor) {
+			return nil, fail(403, "This result requires human acceptance")
+		}
 		pending, err := q.db().TaskHasPendingWork(q.ctx(), cur.TaskID)
 		if err != nil {
 			return nil, err
 		}
-		selected, err := acceptanceResult(q, deref(cur.TaskID), data.EarlierResult, pending, deref(cur.AskedBy) == "fleet")
+		selected, err := eligibleTaskResult(q, deref(cur.TaskID), data.EarlierResult, pending, deref(cur.AskedBy) == "fleet", data.Delivery)
 		if err != nil {
 			return nil, err
 		}
@@ -1003,8 +1095,14 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 			data.ArtifactIds = ids
 		}
 	}
-	if cur.Kind == db.QuestionKindOperatorDecision && data.Idle && answer != idleFail && answer != idleAccept {
-		return nil, fail(400, "Answer "+idleFail+", or "+idleAccept+" when offered; retry with a new message in the session")
+	if cur.Kind == db.QuestionKindOperatorDecision && data.Idle {
+		if answer == idleRetryResult && data.TaskRecovery == "missing_result" {
+			if err := authorizeTaskResultRetry(q, deref(cur.TaskID)); err != nil {
+				return nil, err
+			}
+		} else if answer != idleFail && (answer != idleAccept || data.TaskRecovery != "") {
+			return nil, fail(400, "Choose one of the listed recovery options")
+		}
 	}
 	qu, err := questionRecord(q, id)
 	if err != nil {
@@ -1034,10 +1132,15 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 		if err := continueDeliveryAuthority(q, cur, delivery, answer); err != nil {
 			return nil, err
 		}
-	} else if err := continueQuestionAsker(q, cur, answer); err != nil {
-		return nil, err
+	} else if cur.Kind == db.QuestionKindAgentQuestion || cur.Kind == db.QuestionKindOperatorDecision {
+		if err := continueQuestionAsker(q, cur); err != nil {
+			return nil, err
+		}
 	}
 	if t := deref(cur.TaskID); t != "" {
+		if err := wakeTask(q, t); err != nil {
+			return nil, err
+		}
 		if cur.Kind == db.QuestionKindAcceptance {
 			if answer == "accepted" {
 				if _, err := taskTransition(q, t, "accepted", ""); err != nil {
@@ -1162,7 +1265,7 @@ func projectIn(c []string, p []any, ids []string) ([]string, []any) {
 type newTask struct {
 	ProjectID, ExpectedOutcome, Priority, ResultDestination *string
 	BotID                                                   *string
-	Title, CreatedBy, DirectedBy                            string
+	Title, CreatedBy, DirectedBy, BlocksTaskID              string
 	CompletionRequirements                                  json.RawMessage
 	DependsOn                                               []string
 	Held                                                    bool // a Held task: paused before its first queue (fleet-pm-agent.md §4)
@@ -1251,6 +1354,30 @@ func createTask(q *Request, v newTask) (string, error) {
 			return "", err
 		}
 	}
+	var dependent db.Task
+	if v.BlocksTaskID != "" {
+		dependent, err = taskLoad(q, v.BlocksTaskID)
+		if err != nil {
+			return "", err
+		}
+		if deref(v.ProjectID) == "" || deref(dependent.ProjectID) != deref(v.ProjectID) ||
+			!mayAccessProjectID(q.person, deref(v.ProjectID)) ||
+			(!fullAccess(q.person) && deref(dependent.DirectedBy) != v.DirectedBy) {
+			return "", fail(403, "An inverse dependency requires authority over both tasks in the same project")
+		}
+		if !openTask[string(dependent.State)] {
+			return "", fail(409, "The dependent task is closed")
+		}
+		cycle, err := unscoped(q, func() (bool, error) {
+			return q.db().TaskDependencyWouldCycle(q.ctx(), db.TaskDependencyWouldCycleParams{Dependent: dependent.ID, Prerequisites: v.DependsOn})
+		})
+		if err != nil {
+			return "", err
+		}
+		if cycle {
+			return "", fail(409, "This dependency would create a cycle")
+		}
+	}
 	var heldBy, heldByName *string
 	if v.Held {
 		var err error
@@ -1269,12 +1396,87 @@ func createTask(q *Request, v newTask) (string, error) {
 			return "", err
 		}
 	}
+	if dependent.ID != "" {
+		if err := q.db().TaskLifecycleLock(q.ctx(), dependent.ID); err != nil {
+			return "", err
+		}
+		if err := q.db().TaskDependencyAdd(q.ctx(), db.TaskDependencyAddParams{TaskID: dependent.ID, DependsOn: id, ProjectID: dependent.ProjectID}); err != nil {
+			return "", err
+		}
+		if err := wakeTask(q, dependent.ID); err != nil {
+			return "", err
+		}
+	}
 	if resolvedBotID != "" {
 		if err := linkBotTask(q, resolvedBotID, id, deref(v.ProjectID), linkKind, v.CreatedBy, linkSessionID, linkExecID); err != nil {
 			return "", err
 		}
 	}
 	return id, nil
+}
+
+func resolveTaskDependency(q *Request, taskID, blocker, replacement string) error {
+	if !idOK(blocker) || (replacement != "" && (!idOK(replacement) || blocker == replacement)) {
+		return fail(400, "Supply a dependency to waive and, if needed, a different replacement")
+	}
+	t, err := taskLoad(q, taskID)
+	if err != nil {
+		return err
+	}
+	if q.person == nil || q.agent != "" || !mayAccessProjectID(q.person, deref(t.ProjectID)) ||
+		(!fullAccess(q.person) && q.person.Email != deref(t.DirectedBy)) {
+		return fail(403, "The task director or Fleet owner must resolve the dependency")
+	}
+	if !openTask[string(t.State)] {
+		return fail(409, "The dependent task is closed")
+	}
+	if err := q.db().TaskLifecycleLock(q.ctx(), taskID); err != nil {
+		return err
+	}
+	if replacement != "" {
+		r, err := taskLoad(q, replacement)
+		if err != nil {
+			return err
+		}
+		if deref(t.ProjectID) == "" || deref(r.ProjectID) != deref(t.ProjectID) {
+			return fail(403, "The replacement must be in the same project")
+		}
+		cycle, err := unscoped(q, func() (bool, error) {
+			return q.db().TaskDependencyWouldCycle(q.ctx(), db.TaskDependencyWouldCycleParams{
+				Dependent: taskID, Prerequisites: []string{replacement},
+			})
+		})
+		if err != nil {
+			return err
+		}
+		if cycle {
+			return fail(409, "This dependency would create a cycle")
+		}
+	}
+	n, err := q.db().TaskDependencyWaive(q.ctx(), db.TaskDependencyWaiveParams{TaskID: taskID, Blocker: blocker})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fail(409, "The task has no matching dependency")
+	}
+	if replacement != "" {
+		if err := q.db().TaskDependencyAdd(q.ctx(), db.TaskDependencyAddParams{TaskID: taskID, DependsOn: replacement, ProjectID: t.ProjectID}); err != nil {
+			return err
+		}
+	}
+	if err := audit(q, "task:"+taskID, "dependency", blocker, replacement, auditExtra{ProjectID: t.ProjectID}); err != nil {
+		return err
+	}
+	decision, err := q.db().TaskRecoveryDecision(q.ctx(), db.TaskRecoveryDecisionParams{TaskID: &taskID, Cause: "dependency"})
+	if err == nil {
+		if err := questionsWithdraw(q, []string{decision}); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return wakeTask(q, taskID)
 }
 
 func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
@@ -1473,6 +1675,10 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 		d.Dependencies = append(d.Dependencies, contract.TaskDependency{Id: x.ID, Kind: x.Kind, Code: x.Code})
 	}
 	d.Questions, err = questionsList(q, id, "", "", "", nil, nil, nil)
+	if err != nil {
+		return none, err
+	}
+	d.NextAction, err = taskNextAction(q, t, d)
 	if err != nil {
 		return none, err
 	}
@@ -1725,7 +1931,7 @@ func init() {
 		}
 		id, err := createTask(q, newTask{ProjectID: strPtr(r.ProjectId), BotID: strPtr(r.BotId), Title: r.Title, ExpectedOutcome: r.ExpectedOutcome, Priority: r.Priority,
 			CompletionRequirements: r.CompletionRequirements, ResultDestination: r.ResultDestination, CreatedBy: actor(q, "operator"), DirectedBy: director(q),
-			DependsOn: deps, Held: q.agent != "" || (r.Held != nil && *r.Held)})
+			DependsOn: deps, BlocksTaskID: deref(r.BlocksTaskId), Held: q.agent != "" || (r.Held != nil && *r.Held)})
 		if err != nil {
 			return contract.TaskDetail{}, err
 		}
@@ -1759,9 +1965,11 @@ func init() {
 				if _, err := settleIdleTask(q, id); err != nil {
 					return none, err
 				}
-				if _, err := reconcileTaskDeliveryFromCache(q, id); err != nil {
-					return none, err
-				}
+			}
+		}
+		if r.WaiveDependencyId != nil || r.ReplaceDependencyId != nil {
+			if err := resolveTaskDependency(q, id, deref(r.WaiveDependencyId), deref(r.ReplaceDependencyId)); err != nil {
+				return none, err
 			}
 		}
 		set := db.TaskUpdateFieldsParams{ID: id}
@@ -1788,6 +1996,9 @@ func init() {
 			if err := q.db().TaskUpdateFields(q.ctx(), set); err != nil {
 				return none, err
 			}
+			if err := wakeTask(q, id); err != nil {
+				return none, err
+			}
 		}
 		return taskDetail(q, id)
 	})
@@ -1802,11 +2013,6 @@ func init() {
 				}
 			} else if _, err := taskTransition(q, r.TaskId, x.trig, ""); err != nil {
 				return contract.TaskDetail{}, err
-			}
-			if x.trig == "release" {
-				if _, err := reconcileTaskDeliveryFromCache(q, r.TaskId); err != nil {
-					return contract.TaskDetail{}, err
-				}
 			}
 			return taskDetail(q, r.TaskId)
 		})
@@ -2072,55 +2278,14 @@ type taskCompletionReq struct {
 }
 
 type taskDeliveryMatch struct {
-	taskID string
-	pr     deliveryMergedPR
+	taskID    string
+	projectID string
+	pr        deliveryMergedPR
 }
 
 type deliveryPRRef struct {
 	repo   string
 	number int64
-}
-
-// reconcileDeliveredTasks reconciles open tasks against delivered pull requests after each delivery pass.
-func reconcileDeliveredTasks(ctx context.Context, a *App, delivered []deliveryMergedPR) error {
-	if len(delivered) == 0 {
-		return nil
-	}
-	var matches []taskDeliveryMatch
-	if err := a.store.Read(ctx, nil, func(q *Request) error {
-		var err error
-		matches, err = findTaskDeliveryMatches(q, delivered)
-		return err
-	}); err != nil {
-		return err
-	}
-	for _, m := range matches {
-		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-			_, err := reconcileTaskDelivery(q, m.taskID, m.pr)
-			return err
-		}); err != nil {
-			log.Printf("reconcile delivered task %s: %v", m.taskID, err)
-		}
-	}
-	return nil
-}
-
-// reconcileTaskDeliveryFromCache checks whether id matches a currently cached delivered PR and reconciles it.
-func reconcileTaskDeliveryFromCache(q *Request, id string) (bool, error) {
-	delivered := snapshotDeliveredPRs()
-	if len(delivered) == 0 {
-		return false, nil
-	}
-	matches, err := findTaskDeliveryMatches(q, delivered)
-	if err != nil {
-		return false, err
-	}
-	for _, m := range matches {
-		if m.taskID == id {
-			return reconcileTaskDelivery(q, m.taskID, m.pr)
-		}
-	}
-	return false, nil
 }
 
 func findTaskDeliveryMatches(q *Request, delivered []deliveryMergedPR) ([]taskDeliveryMatch, error) {
@@ -2140,10 +2305,6 @@ func findTaskDeliveryMatches(q *Request, delivered []deliveryMergedPR) ([]taskDe
 	if err != nil {
 		return nil, err
 	}
-	evidence, err := q.db().TaskDeliveryEvidence(q.ctx(), taskIDs)
-	if err != nil {
-		return nil, err
-	}
 	sessionsByTask := map[string][]string{}
 	for _, s := range sessions {
 		ownerTask := ""
@@ -2160,10 +2321,6 @@ func findTaskDeliveryMatches(q *Request, delivered []deliveryMergedPR) ([]taskDe
 	for _, r := range forgeRefs {
 		forgeByTask[r.TaskID] = append(forgeByTask[r.TaskID], r)
 	}
-	evByTask := map[string][]db.TaskDeliveryEvidenceRow{}
-	for _, e := range evidence {
-		evByTask[e.TaskID] = append(evByTask[e.TaskID], e)
-	}
 	policies := map[string]deliveryProjectPolicy{}
 	var matches []taskDeliveryMatch
 	for _, t := range candidates {
@@ -2172,11 +2329,11 @@ func findTaskDeliveryMatches(q *Request, delivered []deliveryMergedPR) ([]taskDe
 			pol = deliveryPolicyForProject(q, t.ProjectID)
 			policies[t.ProjectID] = pol
 		}
-		pr, matched := matchTaskDeliveredPR(t, pol, sessionsByTask[t.ID], forgeByTask[t.ID], evByTask[t.ID], delivered)
+		pr, matched := matchTaskDeliveredPR(t, pol, sessionsByTask[t.ID], forgeByTask[t.ID], delivered)
 		if !matched {
 			continue
 		}
-		matches = append(matches, taskDeliveryMatch{taskID: t.ID, pr: pr})
+		matches = append(matches, taskDeliveryMatch{taskID: t.ID, projectID: t.ProjectID, pr: pr})
 	}
 	return matches, nil
 }
@@ -2205,10 +2362,9 @@ func deliveryPolicyForProject(q *Request, projectID string) deliveryProjectPolic
 	jsonRoundTrip(raw, &settings)
 	for _, r := range settings.Repos {
 		if ref, ok := contract.ParseRepoRemote(r.Remote, r.Forge, r.Host); ok {
-			out.repos[strings.ToLower(ref.Slug)] = true
 			out.repos[strings.ToLower(ref.Host+"/"+ref.Slug)] = true
 		} else if m := githubRemote.FindStringSubmatch(r.Remote); len(m) >= 3 {
-			out.repos[strings.ToLower(m[1]+"/"+m[2])] = true
+			out.repos[strings.ToLower("github.com/"+m[1]+"/"+m[2])] = true
 		}
 	}
 	out.autoAccept = settings.Integration.Mode == "pr" && settings.Integration.AutoMerge
@@ -2223,7 +2379,6 @@ func matchTaskDeliveredPR(
 	pol deliveryProjectPolicy,
 	sessionIDs []string,
 	forgeRefs []db.TaskDeliveryForgeRefsRow,
-	evidence []db.TaskDeliveryEvidenceRow,
 	delivered []deliveryMergedPR,
 ) (deliveryMergedPR, bool) {
 	var req taskCompletionReq
@@ -2236,29 +2391,38 @@ func matchTaskDeliveredPR(
 	if s, ok := req.PullRequest.(string); ok {
 		destRefs = append(destRefs, explicitPRRefs(s)...)
 	}
-	evTexts := make([]deliveryPRRef, 0)
-	for _, ev := range evidence {
-		evTexts = append(evTexts, explicitPRRefs(ev.Text)...)
-	}
+	slices.SortFunc(destRefs, func(a, b deliveryPRRef) int {
+		if a.repo != b.repo {
+			return strings.Compare(a.repo, b.repo)
+		}
+		return cmp.Compare(a.number, b.number)
+	})
+	destRefs = slices.Compact(destRefs)
 	var matched []deliveryMergedPR
 	for _, pr := range delivered {
-		if !pr.Delivered {
-			continue
-		}
-		if prMatchesTask(t, req, pol, destRefs, sessionIDs, forgeRefs, evTexts, pr) {
+		if prMatchesTask(t, req, pol, destRefs, sessionIDs, forgeRefs, pr) {
 			matched = append(matched, pr)
 		}
+	}
+	if slices.ContainsFunc(matched, func(pr deliveryMergedPR) bool { return pr.Stage != "closed" }) {
+		matched = slices.DeleteFunc(matched, func(pr deliveryMergedPR) bool { return pr.Stage == "closed" })
 	}
 	if len(matched) == 0 {
 		return deliveryMergedPR{}, false
 	}
-	sort.Slice(matched, func(i, j int) bool {
-		if matched[i].MergedAt != matched[j].MergedAt {
-			return matched[i].MergedAt > matched[j].MergedAt
-		}
-		return matched[i].Number > matched[j].Number
-	})
+	if len(matched) > 1 || len(destRefs) > 1 {
+		// Keep an explicit decision for competing matches. No one member can stand for the others.
+		sort.Slice(matched, func(i, j int) bool { return matched[i].URL < matched[j].URL })
+		conflict := matched[0]
+		conflict.Stage, conflict.Delivered = "ambiguous", false
+		return conflict, true
+	}
 	return matched[0], true
+}
+
+func deliveryRepositoryAllowed(pol deliveryProjectPolicy, pr deliveryMergedPR) bool {
+	ref, err := url.Parse(pr.URL)
+	return err == nil && ref.Scheme == "https" && ref.User == nil && pol.repos[strings.ToLower(ref.Hostname()+"/"+pr.Repo)]
 }
 
 func prMatchesTask(
@@ -2268,15 +2432,24 @@ func prMatchesTask(
 	destRefs []deliveryPRRef,
 	sessionIDs []string,
 	forgeRefs []db.TaskDeliveryForgeRefsRow,
-	evRefs []deliveryPRRef,
 	pr deliveryMergedPR,
 ) bool {
-	for _, ref := range destRefs {
-		if strings.EqualFold(ref.repo, pr.Repo) && ref.number == pr.Number {
-			return true
-		}
+	if pr.Number <= 0 || !validCommitSHA(pr.HeadSHA) || pr.Delivered && !validCommitSHA(pr.MergeSHA) ||
+		!deliveryRepositoryAllowed(pol, pr) {
+		return false
 	}
-	if !pol.repos[strings.ToLower(pr.Repo)] {
+	if s, _ := req.PullRequest.(string); pr.URL == strings.TrimSpace(t.ResultDestination) || pr.URL == strings.TrimSpace(req.PrURL) || pr.URL == strings.TrimSpace(s) {
+		return true
+	}
+	if strings.HasPrefix(strings.TrimSpace(req.PrURL), "https://") && len(destRefs) == 0 {
+		return false
+	}
+	if len(destRefs) > 0 {
+		return strings.HasPrefix(pr.URL, "https://github.com/") && slices.ContainsFunc(destRefs, func(ref deliveryPRRef) bool {
+			return strings.EqualFold(ref.repo, pr.Repo) && ref.number == pr.Number
+		})
+	}
+	if (req.PrNumber != nil || req.PullRequest != nil) && len(pol.repos) != 1 {
 		return false
 	}
 	if req.PrNumber != nil && *req.PrNumber == pr.Number {
@@ -2293,7 +2466,7 @@ func prMatchesTask(
 		}
 	}
 	mergedAt, err := time.Parse(time.RFC3339, pr.MergedAt)
-	mergedAfterTask := err == nil && !mergedAt.Before(t.CreatedAt)
+	mergedAfterTask := pr.MergedAt == "" && !pr.Delivered || err == nil && !mergedAt.Before(t.CreatedAt)
 	if req.Branch != "" && pr.Branch == req.Branch && mergedAfterTask {
 		return true
 	}
@@ -2304,9 +2477,7 @@ func prMatchesTask(
 		if f.HeadSha != "" && pr.HeadSHA != "" && f.HeadSha == pr.HeadSHA {
 			return true
 		}
-		if f.Branch != "" && pr.Branch != "" && f.Branch == pr.Branch && mergedAfterTask {
-			return true
-		}
+
 	}
 	if !mergedAfterTask {
 		return false
@@ -2318,12 +2489,7 @@ func prMatchesTask(
 			}
 		}
 	}
-	for _, ref := range evRefs {
-		if strings.EqualFold(ref.repo, pr.Repo) && ref.number == pr.Number {
-			return true
-		}
-	}
-	return prTextMatchesTask(t.ID, t.Code, pr.Title, pr.Body)
+	return false
 }
 
 func prTextMatchesTask(taskID, code, title, body string) bool {
@@ -2380,107 +2546,6 @@ func explicitPRRefs(text string) []deliveryPRRef {
 	return out
 }
 
-func taskAllowsAutoAcceptance(q *Request, t db.Task, pr deliveryMergedPR) (bool, error) {
-	if !deliveryPolicyForProject(q, deref(t.ProjectID)).autoAccept {
-		return false, nil
-	}
-	var req taskCompletionReq
-	if len(t.CompletionRequirements) > 0 && json.Unmarshal(t.CompletionRequirements, &req) != nil {
-		return false, nil
-	}
-	acc := strings.TrimSpace(req.Acceptance)
-	if (req.RequireHumanAcceptance != nil && *req.RequireHumanAcceptance) ||
-		(req.ManualAcceptance != nil && *req.ManualAcceptance) ||
-		(req.AutoAccept != nil && !*req.AutoAccept) ||
-		strings.EqualFold(acc, "manual") || strings.EqualFold(acc, "human") {
-		return false, nil
-	}
-	needsLiveCheck := landingWaitPattern.MatchString(deref(t.ExpectedOutcome))
-	if !needsLiveCheck && req.LiveCheck != nil {
-		switch v := req.LiveCheck.(type) {
-		case bool:
-			needsLiveCheck = v
-		case string:
-			needsLiveCheck = strings.TrimSpace(v) != ""
-		default:
-			needsLiveCheck = true
-		}
-	}
-	if !needsLiveCheck {
-		return true, nil
-	}
-	deliveredAt, err := time.Parse(time.RFC3339, pr.DeliveredAt)
-	if err != nil {
-		return false, nil
-	}
-	evidence, err := q.db().TaskDeliveryEvidence(q.ctx(), []string{t.ID})
-	if err != nil {
-		return false, err
-	}
-	for _, ev := range evidence {
-		if ev.Source == "execution" && ev.Outcome == "succeeded" && ev.At != nil && !ev.At.Before(deliveredAt) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR) (bool, error) {
-	t, err := taskLoad(q, taskID)
-	if errors.Is(err, errNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if (t.State != db.TaskStateQueued && t.State != db.TaskStateInProgress && !taskAwaitsResult(t)) || t.AcceptedAt != nil {
-		return false, nil
-	}
-	if reason, err := waitReason(q, t.ID); err != nil || reason != "" {
-		return false, err
-	}
-	pending, err := q.db().TaskHasPendingWork(q.ctx(), &t.ID)
-	if err != nil || pending {
-		return false, err
-	}
-	// Read policy and verification in the same write transaction that answers the offer.
-	autoAccept, err := taskAllowsAutoAcceptance(q, t, pr)
-	if err != nil {
-		return false, err
-	}
-	selected, err := acceptanceResult(q, t.ID, false, false, autoAccept)
-	if err != nil {
-		var conflict *HTTPError
-		if errors.As(err, &conflict) && conflict.Code == 409 {
-			return false, nil
-		}
-		return false, err
-	}
-	rejected, err := deliveryRejectedEarlier(q, t.ID, selected.id, pr)
-	if err != nil || rejected {
-		return false, err
-	}
-	offerText := fmt.Sprintf("PR #%d (%s) merged and delivered. Accept the result of: %s", pr.Number, pr.Repo, t.Title)
-	if pr.Release != "" {
-		offerText = fmt.Sprintf("PR #%d (%s) merged and delivered (%s). Accept the result of: %s", pr.Number, pr.Repo, pr.Release, t.Title)
-	}
-	qid, err := requestAcceptanceWithDelivery(q, acceptTask{ID: t.ID, Title: t.Title, ProjectID: t.ProjectID}, nil, &offerText, deliveryActor, &pr)
-	if err != nil {
-		var conflict *HTTPError
-		if errors.As(err, &conflict) && conflict.Code == 409 {
-			return false, nil
-		}
-		return false, err
-	}
-	if !autoAccept {
-		return true, nil
-	}
-	if _, err := answerQuestion(q, qid, "accepted", deliveryActor, nil); err != nil {
-		return false, err
-	}
-	return true, audit(q, t.ID, "delivery_reconciled", nil, pr, auditExtra{ProjectID: t.ProjectID, Reason: "auto_accepted"})
-}
-
 func deliveryRejectedEarlier(q *Request, taskID, executionID string, pr deliveryMergedPR) (bool, error) {
 	rows, err := q.db().TaskDeliveryRejections(q.ctx(), &taskID)
 	if err != nil {
@@ -2490,14 +2555,16 @@ func deliveryRejectedEarlier(q *Request, taskID, executionID string, pr delivery
 		if executionID != "" && r.ExecutionID == executionID {
 			return true, nil
 		}
-		if len(r.Data) == 0 {
+		var data questionData
+		if json.Unmarshal(r.Data, &data) != nil || data.Delivery == nil {
+			mergedAt, err := time.Parse(time.RFC3339, pr.MergedAt)
+			if err != nil || r.AnsweredAt == nil || !mergedAt.After(*r.AnsweredAt) {
+				return true, nil // Older evidence cannot establish that the offered result is different.
+			}
 			continue
 		}
-		var data questionData
-		if json.Unmarshal(r.Data, &data) == nil && data.Delivery != nil {
-			if data.Delivery.Repo == pr.Repo && data.Delivery.Number == pr.Number && data.Delivery.HeadSHA == pr.HeadSHA {
-				return true, nil
-			}
+		if data.Delivery.Repo == pr.Repo && data.Delivery.Number == pr.Number && data.Delivery.HeadSHA == pr.HeadSHA {
+			return true, nil
 		}
 	}
 	return false, nil

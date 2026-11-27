@@ -791,8 +791,8 @@ func init() {
 			return contract.QuestionAnswerReply{"id": orNull(answered.ID), "state": orNull(answered.State), "answer": orNull(answered.Answer)}, nil
 		}
 		if v := projectQuestionOf(pq[0]); v.State == "answered" {
-			if deref(v.Answer) != r.Answer {
-				return contract.QuestionAnswerReply{}, fail(409, "Answer already recorded")
+			if _, err := answerQuestion(q, r.QuestionId, r.Answer, actor(q, "operator"), nil); err != nil {
+				return contract.QuestionAnswerReply{}, err
 			}
 			return recOf(v), nil
 		}

@@ -649,6 +649,14 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 	if err != nil || !ok {
 		return nil, err
 	}
+	var automaticDeadline time.Time
+	if cv.Kind == "start" {
+		allowed, deadline, err := taskAutomaticStartAllowed(wq, cv.ExecutionID)
+		if err != nil || !allowed {
+			return nil, err
+		}
+		automaticDeadline = deadline
+	}
 	if inList(stopWithheldKinds, cv.Kind) {
 		// This row lock is shared with stop. A committed poll may have
 		// reached the executor even when its HTTP response is lost.
@@ -700,6 +708,9 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 	}
 	if ok, err := handoffPipelineCommand(wq, e, cv.gate()); err != nil || !ok {
 		return nil, err
+	}
+	if !automaticDeadline.IsZero() && !time.Now().Before(automaticDeadline) {
+		return nil, nil
 	}
 	if cv.HandedOut != nil && !*cv.HandedOut {
 		if err := wq.db().CommandHandOut(wq.ctx(), cv.ID); err != nil {

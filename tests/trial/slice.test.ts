@@ -134,42 +134,43 @@ test('an answer continues the finished asking turn once (risk: a stalled task or
   await receipt('accepted');
   await receipt('started');
 
-  const ask = async (text: string) => {
+  const tool = async (name: string, args: object) => {
     const reply = ok(await h('/api/hosts/agent-tools', {
       hostId: 'trial-host', commandId, executionId, agentToolKey: randomUUID(),
-      request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
-        name: 'question_ask', arguments: {projectId: 'hello-world', requestId: randomUUID(), text},
-      }},
+      request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name, arguments: args}},
     }));
-    return JSON.parse(reply.result.content[0].text).id as string;
+    return JSON.parse(reply.result.content[0].text);
   };
+  const ask = async (text: string) =>
+    (await tool('question_ask', {projectId: 'hello-world', requestId: randomUUID(), text})).id as string;
   const answer = async (questionId: string, text: string) => {
     const reply = await op('question_answer', {questionId, answer: text});
     assert.deepEqual([reply.state, reply.answer], ['answered', text]);
   };
   const read = () => op('session_get', {sessionId});
-  await answer(await ask('While the asker is running?'), 'Keep running.');
+  const running = await ask('While the asker is running?');
+  await answer(running, 'Keep running.');
+  const seen = await tool('ask', {resume: running});
+  assert.equal(seen.answer, 'Keep running.');
   assert.equal((await read()).executions.length, 1);
 
   const finished = await ask('Proceed after this turn?');
-  const busy = await ask('Proceed if there is already a continuation?');
   await receipt('completed');
   assert.equal((await read()).executions[0].state, 'succeeded');
   assert.equal((await op('task_get', {taskId})).state, 'waiting');
   await Promise.all([answer(finished, 'Proceed after the answer.'), answer(finished, 'Proceed after the answer.')]);
-  await answer(busy, 'Use the existing turn.');
 
-  const {executions, messages, queued} = await read();
-  assert.equal(executions.length, 2);
-  const continuation = executions.find((e: any) => e.id !== executionId);
-  assert.ok((await op('task_get', {taskId})).executions.some((e: any) => e.id === continuation.id));
-  assert.equal(messages.length, 2);
-  assert.equal(messages[1].text, `Fleet reply to your question ${finished} ("Proceed after this turn?"):\nProceed after the answer.`);
-  assert.equal(messages[1].executionId, continuation.id);
-  assert.equal(queued.length, 0);
   const command = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, {
     platform: 'darwin', capabilities: [], stores: [], problems: [],
-  })), (c: any) => c.kind === 'start' && c.executionId === continuation.id);
+  })), (c: any) => c.kind === 'start' && c.sessionId === sessionId && c.executionId !== executionId);
+  assert.ok(command, 'the durable wake reaches the original session host');
+  const {executions, messages, queued} = await read();
+  assert.equal(executions.length, 2);
+  assert.ok((await op('task_get', {taskId})).executions.some((e: any) => e.id === command.executionId));
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].text, `Fleet reply to your question ${finished} ("Proceed after this turn?"):\nProceed after the answer.`);
+  assert.equal(messages[1].executionId, command.executionId);
+  assert.equal(queued.length, 0);
   assert.ok(command?.payload?.text.includes(messages[1].text), 'the host receives the answer in the continuation input');
 });
 

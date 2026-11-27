@@ -1146,6 +1146,16 @@ const providersJSON = `
     "inputSchema": {"type": "object", "required": ["owner"], "properties": {"owner": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$"}
    },
+   "compare_commits": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/compare/{base}...{head}?per_page=1",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Read whether the exact head contains an exact base commit.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "base", "head"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "base": {"type": "string"}, "head": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "base": "^[a-f0-9]{40}$", "head": "^[a-f0-9]{40}$"}
+   },
    "pulls_open": {
     "method": "GET",
     "path": "/repos/{owner}/{repo}/pulls?state=open&per_page=100",

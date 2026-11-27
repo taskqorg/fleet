@@ -56,7 +56,18 @@ func questionTransition(q *Request, id string, ev questionEvent) (bool, error) {
 	if err == nil { // an app or edge card's answer (apps.go)
 		err = appQuestionEnded(q, id, ev)
 	}
+	if err == nil && ev.To == "withdrawn" {
+		err = wakeAfterQuestionWithdrawal(q, id)
+	}
 	return err == nil, err
+}
+
+func wakeAfterQuestionWithdrawal(q *Request, id string) error {
+	taskID, err := q.db().TaskWakeQuestionTask(q.ctx(), id)
+	if err != nil || taskID == nil {
+		return err
+	}
+	return wakeTask(q, *taskID)
 }
 
 // questionsWithdraw withdraws the open questions of ids in one statement.
@@ -73,6 +84,9 @@ func questionsWithdraw(q *Request, ids []string) error {
 			return err
 		}
 		if err := appQuestionEnded(q, id, questionEvent{To: "withdrawn"}); err != nil {
+			return err
+		}
+		if err := wakeAfterQuestionWithdrawal(q, id); err != nil {
 			return err
 		}
 	}

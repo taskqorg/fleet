@@ -1991,6 +1991,22 @@ type Task struct {
 	HeldByName             *string
 }
 
+type TaskDeliveryResult struct {
+	TaskID          string
+	ProjectID       *string
+	Proof           []byte
+	VerificationKey string
+	StageSince      time.Time
+}
+
+type TaskDeliveryVerification struct {
+	VerificationKey string
+	TaskID          string
+	ProjectID       *string
+	ExecutionID     string
+	Deadline        time.Time
+}
+
 type TaskDependency struct {
 	TaskID          string
 	DependsOnTaskID string
@@ -2009,6 +2025,16 @@ type TaskDerived struct {
 	LastAgent     *string
 }
 
+type TaskRecovery struct {
+	TaskID      string
+	ProjectID   *string
+	Deadline    time.Time
+	Generation  int32
+	Turns       int32
+	ExecutionID *string
+	Progress    []string
+}
+
 type TaskView struct {
 	TaskID            *string
 	ProjectID         *string
@@ -2019,6 +2045,21 @@ type TaskView struct {
 	Totals            []byte
 	LatestResult      []byte
 	OpenQuestions     []byte
+}
+
+type TaskWake struct {
+	ID            string
+	Kind          string
+	SourceID      string
+	TaskID        *string
+	ProjectID     *string
+	Revision      int64
+	CreatedAt     time.Time
+	NextAttemptAt time.Time
+	Attempts      int32
+	LastError     *string
+	Disposition   *string
+	CursorID      *string
 }
 
 type TelegramHistory struct {

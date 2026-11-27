@@ -1176,6 +1176,9 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 				return nil
 			}
 		}
+		if allowed, _, err := taskAutomaticStartAllowed(q, id); err != nil || !allowed {
+			return err
+		}
 		if e.BotContext != nil {
 			botErr := verifyQueuedBotAuthority(q, e.BotContext.BotID, deref(e.projectID()), deref(e.DirectedBy))
 			var he *HTTPError

@@ -360,6 +360,7 @@ type agentExecution struct {
 	Report                *contract.WorkerReport `json:"report,omitempty"`
 	StopRequested         *bool                  `json:"stopRequested,omitempty"`
 	TaskStopRequested     *bool                  `json:"taskStopRequested,omitempty"`
+	AutomaticStop         string                 `json:"automaticStop,omitempty"`
 	StopDetail            string                 `json:"stopDetail,omitempty"`
 	Error                 string                 `json:"error,omitempty"`
 	Problem               string                 `json:"problem,omitempty"`
