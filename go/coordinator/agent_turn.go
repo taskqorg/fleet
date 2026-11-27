@@ -96,12 +96,18 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	if err != nil {
 		return none, err
 	}
-	// last: the host of the latest run that started. A run refused before it started (a preparation failure) ran
-	// nothing there, so it does not move the session's native session and worktree home.
+	// If a different host started a turn without reporting a replacement
+	// identity, the old native history cannot contain that turn.
 	last, lastAccount := "", ""
+	nativeHost, nativeStale := "", false
+	native := s.NativeSessions[s.continuationKey()]
 	for _, e := range es {
-		if h := deref(e.HostID); h != "" && jsonGiven(e.StartedAt) {
+		if h := deref(e.HostID); h != "" && jsonGiven(e.StartedAt) && e.Actor != "program-worker" {
 			last, lastAccount = h, effectiveAccountID(e.EffectiveAccount)
+			if s.NativeSessionID != "" && native.NativeSessionID == s.NativeSessionID && native.ExecutionID == e.ID {
+				nativeHost = h
+			}
+			nativeStale = nativeStale || nativeHost != "" && nativeHost != h
 		}
 	}
 	if host == "" {
@@ -133,7 +139,8 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	id := newID()
 	e := agentExecution{ID: id, ExecutionID: id, SessionID: s.ID, State: "preparing", CreatedAt: nowMs(), DirectedBy: s.DirectedBy, Model: contract.HarnessDefaultModel(s.harness()), Effort: jsonBytes("low"),
 		Dispatch: &agentDispatch{Harness: s.harness(), ProjectID: agentOpt(s.ProjectID), WorkingDirectory: agentOpt(s.WorkingDirectory), WorkspaceKey: agentOpt(s.WorkspaceKey), Account: agentOpt(s.Account),
-			Access: agentOpt(s.Access), Branch: s.Branch, Host: agentOpt(host), Last: agentOpt(last), LastAccount: agentOpt(lastAccount), Input: input, Payload: payloadRaw}}
+			Access: agentOpt(s.Access), Branch: s.Branch, Host: agentOpt(host), Last: agentOpt(last), LastAccount: agentOpt(lastAccount),
+			NativeStale: nativeStale, Input: input, Payload: payloadRaw}}
 	if hasProfile {
 		e.AgentConfig, e.ProfileSha256, e.Model, e.Effort = s.AgentConfig, frameHash(jsonValue(s.AgentConfig)), firstString(ac.Model, contract.HarnessDefaultModel(s.harness())), ac.Effort
 		ref, err := definitionRef(q, "agent", ac.ID, jsonValue(s.AgentConfig))

@@ -313,6 +313,10 @@ func (s *codexSession) turnRequest() M {
 	return M{"id": 3, "method": "turn/start", "params": params}
 }
 
+type codexResumeRejected string
+
+func (e codexResumeRejected) Error() string { return string(e) }
+
 func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]any, bool, error) {
 	f := typed[rpcFrame](v)
 	if f.request() {
@@ -325,6 +329,9 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 		}
 	}
 	if f.Error.Set {
+		if f.isID(2) && s.stage == 1 && s.resume != "" {
+			return nil, nil, false, codexResumeRejected("thread/resume rejected by Codex (RPC " + f.errorCode() + ")")
+		}
 		return nil, nil, false, fmt.Errorf("native protocol request failed: %s", f.errorCode())
 	}
 	instructions := launchOf(s.config()).Instructions
@@ -358,7 +365,7 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 		}
 		thread := *r.Thread.ID
 		if s.resume != "" && s.resume != thread {
-			return nil, nil, false, errors.New("resumed thread identity mismatch")
+			return nil, nil, false, codexResumeRejected("resumed thread identity mismatch")
 		}
 		s.thread, s.stage = thread, 2
 		next := []M{s.turnRequest()}

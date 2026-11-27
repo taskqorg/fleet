@@ -6,6 +6,40 @@ import (
 	"time"
 )
 
+// T-FLT-141: rejection of a start acknowledgement or a control receipt is
+// insufficient evidence to abandon a running worker.
+func TestReconcileRejectedWorkReceipt(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO session (id) VALUES ('terminal-session')`)
+	exec(`INSERT INTO execution (id,kind,state,observation,host_id,session_id,data)
+	 VALUES ('legacy','agent_run','running','confirmed','windows',NULL,'{}'),
+	        ('started','agent_run','running','confirmed','windows',NULL,'{}'),
+	        ('control','agent_run','running','confirmed','windows',NULL,'{}'),
+	        ('terminal','agent_run','running','confirmed','windows','terminal-session','{}')`)
+	exec(`INSERT INTO command (id,execution_id,host_id,kind,status)
+	 VALUES ('started-cmd','started','windows','start','started'),
+	        ('control-cmd','control','windows','steer','accepted'),
+	        ('terminal-cmd','terminal','windows','start','started')`)
+	exec(`INSERT INTO event (id,execution_id,delta,type,event_seq,payload)
+	 VALUES ('legacy-rejected','legacy',false,'outbox.failed',1,'{"data":{"route":"/api/hosts/receipts"}}'),
+	        ('start-rejected','started',false,'outbox.failed',1,'{"data":{"route":"/api/hosts/receipts","commandId":"started-cmd","receiptStatus":"started"}}'),
+	        ('steer-rejected','control',false,'outbox.failed',1,'{"data":{"route":"/api/hosts/receipts","commandId":"control-cmd","receiptStatus":"completed"}}'),
+	        ('work-rejected','terminal',false,'outbox.failed',1,'{"data":{"route":"/api/hosts/receipts","commandId":"terminal-cmd","receiptStatus":"failed"}}')`)
+	var rep struct {
+		Reconciled []string `json:"reconciled"`
+	}
+	e.opInto(t, "executions_reconcile", map[string]any{}, e.ownerHeaders(), &rep)
+	if !slices.Equal(rep.Reconciled, []string{"terminal"}) {
+		t.Fatalf("reconciled %v, want only the rejected terminal work receipt", rep.Reconciled)
+	}
+}
+
 func TestStalledTurnShutdownRequestsHostCleanupOnce(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	exec := func(sql string, args ...any) {

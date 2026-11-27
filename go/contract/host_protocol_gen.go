@@ -1958,13 +1958,20 @@ func (v *OkReply) Validate() error {
 
 // OutboxFailed: data of an outbox.failed event.
 type OutboxFailed struct {
-	Reason string `json:"reason"`
-	Route  string `json:"route"`
-	Status int64  `json:"status"`
+	CommandId     *string        `json:"commandId,omitempty"`
+	Reason        string         `json:"reason"`
+	ReceiptStatus *ReceiptStatus `json:"receiptStatus,omitempty"`
+	Route         string         `json:"route"`
+	Status        int64          `json:"status"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *OutboxFailed) Validate() error {
+	if v.ReceiptStatus != nil {
+		if err := Check(v.ReceiptStatus, "receiptStatus"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -2620,9 +2627,10 @@ func (v *ProjectWorktree) Validate() error {
 }
 
 type ProtocolFailed struct {
-	Error  string  `json:"error"`
-	Reason *string `json:"reason,omitempty"`
-	Type   *string `json:"type,omitempty"`
+	Error          string  `json:"error"`
+	Reason         *string `json:"reason,omitempty"`
+	ResumeRejected *bool   `json:"resumeRejected,omitempty"`
+	Type           *string `json:"type,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }

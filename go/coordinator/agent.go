@@ -303,6 +303,7 @@ type agentDispatch struct {
 	Host             *string         `json:"host"`
 	Last             *string         `json:"last"`
 	LastAccount      *string         `json:"lastAccount,omitempty"`
+	NativeStale      bool            `json:"nativeStale,omitempty"`
 	Input            string          `json:"input"`
 	Payload          json.RawMessage `json:"payload"`
 	rest             recordRest
@@ -350,6 +351,7 @@ type agentExecution struct {
 	Traceparent      string          `json:"traceparent,omitempty"`
 	TraceActor       string          `json:"traceActor,omitempty"`
 	ContinuationKey  string          `json:"continuationKey,omitempty"`
+	NativeSessionID  string          `json:"nativeSessionId,omitempty"`
 	// ReadinessOfSessionID: a readiness host job's caller session, which may read its result (execution_status).
 	ReadinessOfSessionID  string                 `json:"readinessOfSessionId,omitempty"`
 	ForkOfNativeSessionID string                 `json:"forkOfNativeSessionId,omitempty"`

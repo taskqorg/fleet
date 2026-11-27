@@ -933,6 +933,13 @@
         },
         "reason": {
           "type": "string"
+        },
+        "commandId": {
+          "$comment": "The command whose status receipt was rejected.",
+          "type": "string"
+        },
+        "receiptStatus": {
+          "$ref": "#/$defs/ReceiptStatus"
         }
       }
     },
@@ -1625,6 +1632,10 @@
         },
         "reason": {
           "type": "string"
+        },
+        "resumeRejected": {
+          "$comment": "The harness rejected native resume before any turn was sent.",
+          "type": "boolean"
         }
       },
       "required": [

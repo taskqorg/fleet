@@ -815,7 +815,7 @@ func publishingRecordRoute(q *Request, b *contract.PublishingHostRecord) (contra
 			// The publishing result and the status receipt travel separately. Either can land first.
 			if commandResult && outcome == "failed" && execution.Kind == db.ExecutionKindHostJob &&
 				execution.State != db.ExecutionStateSucceeded && execution.State != db.ExecutionStateCancelled {
-				if err := recordHostJobProblem(wq, execID, deref(b.Error)); err != nil {
+				if err := recordExecutionProblem(wq, execID, deref(b.Error)); err != nil {
 					return err
 				}
 			}

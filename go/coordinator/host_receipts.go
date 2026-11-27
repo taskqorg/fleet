@@ -282,14 +282,21 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	if cur == 3 { // a repeated terminal receipt (an outbox retry) changes nothing: the gate and onReceipt ran once
 		return contract.ReceiptReply{Ok: true}, "", nil
 	}
+	e, err := getExecution(q, b.ExecutionId)
+	if err != nil {
+		return nil, "", err
+	}
+	wasFinal, kind := e.terminal(), c.Kind
 	native := deref(b.NativeSessionId)
-	hasNative := native != ""
-	if hasNative {
-		e, err := getExecution(q, b.ExecutionId)
-		if err != nil {
-			return nil, "", err
+	if native != "" {
+		if len([]rune(native)) > 300 {
+			return nil, "", fail(400, "Invalid text")
 		}
-		known, err := agentKnownNative(q, &e)
+		var start *agentCommand
+		if kind == "start" {
+			start = &c
+		}
+		known, err := agentKnownNative(q, &e, start)
 		if err != nil {
 			return nil, "", err
 		}
@@ -297,16 +304,14 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 			return nil, "", fail(409, "Native identity conflict")
 		}
 	}
+	captureNative := !wasFinal && kind == "start" && native != "" && e.NativeSessionID == "" && (status == "started" || status == "completed")
+	if captureNative {
+		e.NativeSessionID = native
+	}
 	c.Status = status
 	if err := commandPut(q, &c); err != nil {
 		return nil, "", err
 	}
-	e, err := getExecution(q, b.ExecutionId)
-	if err != nil {
-		return nil, "", err
-	}
-	wasFinal := e.terminal()
-	kind := c.Kind
 	lost := false
 	confirmed := false
 	if !wasFinal && kind != "steer" && (kind != "stop" || status == "stopped") {
@@ -331,8 +336,8 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	if deref(b.Error) != "" {
 		e.Error = *b.Error
 	}
-	if !wasFinal && e.State == "failed" && e.Actor == "program-worker" {
-		if err := recordHostJobProblem(q, e.ID, deref(b.Error)); err != nil {
+	if !wasFinal && e.State == "failed" {
+		if err := recordExecutionProblem(q, e.ID, deref(b.Error)); err != nil {
 			return nil, "", err
 		}
 	}
@@ -368,10 +373,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 			return nil, "", err
 		}
 	}
-	if hasNative && kind == "start" {
-		if len([]rune(native)) > 300 {
-			return nil, "", fail(400, "Invalid text")
-		}
+	if captureNative {
 		if err := agentCaptureNative(q, &e, native); err != nil {
 			return nil, "", err
 		}
@@ -409,7 +411,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 }
 
 // Keep the first specific cause, even if the terminal receipt has already left an unreported failure.
-func recordHostJobProblem(q *Request, executionID, detail string) error {
+func recordExecutionProblem(q *Request, executionID, detail string) error {
 	problem := compactProblemDetail(detail, 180)
 	if problem == "" {
 		return nil
