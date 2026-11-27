@@ -483,8 +483,11 @@ func (e *executor) reconcileProcesses() error {
 	for _, x := range all {
 		wdir := workerDirFor(e.root, x.execution)
 		alive, _ := workerLockAlive(wdir)
-		_, hasExit, _ := readWorkerExit(wdir)
-		if alive || hasExit {
+		exit, hasExit, _ := readWorkerExit(wdir)
+		// An uncollected exit still needs its receipt. After that receipt is
+		// journaled, reconcile unresolved process ownership as a dead worker.
+		_, commandOpen := e.commandBody(x.command, true)
+		if alive || (hasExit && (!exit.ProcessesUnresolved || commandOpen)) {
 			if b, ok := e.commandBody(x.command, false); ok {
 				cmd := commandOf(b)
 				spec, _ := readWorkerSpec(wdir)

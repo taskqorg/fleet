@@ -256,6 +256,27 @@ SELECT EXISTS(SELECT 1 FROM execution WHERE execution.id = @id AND state IN ('pr
   )))
  FOR UPDATE SKIP LOCKED)::boolean;
 
+-- name: DispStalledTurnShutdowns :many
+-- A live executor still owns the run. Ask it to clean up before releasing the slot.
+SELECT e.id,e.host_id,e.project_id,e.session_id
+FROM execution e
+JOIN host_observation h ON h.id=e.host_id
+WHERE e.kind='agent_run' AND e.state='running' AND e.observation='confirmed'
+ AND (sqlc.narg(ids)::text[] IS NULL OR e.id=ANY(sqlc.narg(ids)::text[]))
+ AND e.harness IN ('codex','acp','antigravity')
+ AND e.last_seen_at < now() - make_interval(secs => @closed_grace_secs::float8)
+ AND h.last_seen_at > now() - interval '300 seconds'
+ AND h.payload->'activeExecutions' ? e.id
+ AND EXISTS (SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND NOT ev.delta AND ev.type='outbox.failed'
+  AND ev.payload->'data'->>'route'='/api/hosts/events')
+ AND EXISTS (SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND NOT ev.delta AND ev.type='turn.completed'
+  AND ev.payload->'data'->'fleetNormalized'->>'lifecycle'='turn.completed'
+  AND ev.updated_at < now() - make_interval(secs => @closed_grace_secs::float8))
+ AND NOT EXISTS (SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND NOT ev.delta AND ev.type='process.closed')
+ AND EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='start' AND c.status='started')
+ AND NOT EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='stop')
+ORDER BY e.seq;
+
 -- name: DispExecStates :many
 SELECT id, kind::text AS kind, state::text AS state, coalesce(data->>'waitReason','')::text AS wait_reason FROM execution WHERE id = ANY(@ids::text[]);
 

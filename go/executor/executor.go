@@ -519,11 +519,15 @@ func (e *executor) tickProcesses() error {
 			return err
 		}
 		if done {
-			if err := e.release(execution); err != nil {
-				return err
-			}
-			if l.worker != nil {
-				removeWorkerDir(e.root, execution)
+			// A terminal command can still need process reconciliation. Keep its
+			// launch fence and process identities for startup cleanup.
+			if l.workerExit == nil || !l.workerExit.ProcessesUnresolved {
+				if err := e.release(execution); err != nil {
+					return err
+				}
+				if l.worker != nil {
+					removeWorkerDir(e.root, execution)
+				}
 			}
 			delete(e.live, execution)
 		}

@@ -1,11 +1,212 @@
 package main
 
 import (
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
 	"time"
+
+	"fleet/contract"
+	"fleet/executor/supervise"
 )
+
+// A completed turn must release the worker and deliver a terminal receipt even
+// if a descendant keeps the harness stdout pipe open after the leader exits.
+func TestWorkerFinalizesCompletedTurnWithLiveDescendant(t *testing.T) {
+	t.Run("descendant keeps stdout open", func(t *testing.T) {
+		testCompletedTurnShutdown(t, "exit 0", "completed")
+	})
+	t.Run("server ignores stdin EOF", func(t *testing.T) {
+		testCompletedTurnShutdown(t, "wait", "unknown")
+	})
+}
+
+func testCompletedTurnShutdown(t *testing.T, afterEOF, wantReceipt string) {
+	t.Helper()
+	e, root := scriptExecutor(t)
+	defer e.db.Close()
+	const execution, cid, sid = "completed-turn", "start-command", "session"
+	dir := e.commandDir(sid, "")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	harness := filepath.Join(root, "fake-codex")
+	const fixture = `#!/bin/sh
+case "$1" in
+  --version) printf 'codex 0.0.0\n'; exit 0 ;;
+  app-server) ;;
+  *) exit 1 ;;
+esac
+read -r line
+printf '%s\n' '{"id":1,"result":{}}'
+read -r line
+read -r line
+printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread"}}}'
+read -r line
+sleep 60 &
+for arg do
+  case "$arg" in
+    mcp_servers.fixture.command=*) mcp_command=${arg#*=} ;;
+    mcp_servers.fixture.args=*) mcp_args=${arg#*=} ;;
+  esac
+done
+node -e 'const [command, args] = process.argv.slice(1).map(JSON.parse);
+  require("node:child_process").spawn(command, args, {stdio: ["pipe", "ignore", "ignore"]});' "$mcp_command" "$mcp_args" &
+printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn"}}}'
+while [ ! -f complete ]; do sleep 0.05; done
+printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}'
+read -r line
+`
+	if err := os.WriteFile(harness, []byte(fixture+afterEOF+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry := filepath.Join(root, "accounts.json")
+	home, nativeHome := filepath.Join(root, "home"), filepath.Join(root, "codex-home")
+	for _, path := range []string{home, nativeHome} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	account := M{"harness": "codex", "home": home, "nativeHome": nativeHome, "executable": harness,
+		"mcpServers": M{"fixture": M{"transport": "stdio", "command": exe(), "args": []string{"mcp-fixture", "inspect"}}}}
+	if err := os.WriteFile(registry, []byte(enc(M{"fixture": account})), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLEET_NATIVE_ACCOUNTS", registry)
+	grants := []any{M{"id": "fixture", "data": M{"tools": []string{"inspect"}}}}
+	payload := M{"agentConfig": M{"id": "baseline", "model": "gpt-6.1-sol", "effort": "low", "instructions": "profile", "mcpServers": grants, "fleetTools": false, "collaborationTools": false},
+		"model": "gpt-6.1-sol", "effort": "low", "account": "fixture", "text": "fixture", "readOnly": true}
+	if err := e.run(M{"id": cid, "executionId": execution, "sessionId": sid, "kind": "start", "payload": payload}); err != nil {
+		t.Fatal(err)
+	}
+	l := e.live[execution]
+	if l == nil {
+		t.Fatalf("harness did not start: %v", failureReasons(t, e, execution))
+	}
+	t.Cleanup(func() { _ = workerStop(l.worker.sock, "") })
+	var receivedMu sync.Mutex
+	var received []string
+	var harnessSeq, firstProtocolSeq int64
+	url, _ := serve(t, func(route string, body M) int {
+		receivedMu.Lock()
+		defer receivedMu.Unlock()
+		switch route {
+		case contract.RouteEvents.Path:
+			batch := typed[contract.HostEvents](body)
+			for _, event := range batch.Events {
+				if event.Type == string(contract.FleetEventTypeHarness) {
+					harnessSeq = event.Seq
+					return http.StatusConflict
+				}
+			}
+			for _, event := range batch.Events {
+				received = append(received, event.Type)
+				if event.Type == "protocol.write" && firstProtocolSeq == 0 {
+					firstProtocolSeq = event.Seq
+				}
+			}
+		case contract.RouteReceipts.Path:
+			received = append(received, jStr(body, "status"))
+		}
+		return http.StatusOK
+	})
+	for until := time.Now().Add(8 * time.Second); count(e.db, "owned") < 2 || count(e.db, "mcp_groups") == 0; {
+		if time.Now().After(until) {
+			t.Fatal("worker did not observe the harness descendant and register its MCP group")
+		}
+		if err := e.tick(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(tickEvery)
+	}
+	if err := flush(e.db, url, "invented-token", e.host); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "complete"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, e, execution)
+	if got := lastReceipt(e, cid); got != wantReceipt {
+		t.Fatalf("receipt = %q, want %q", got, wantReceipt)
+	}
+	for range 2 {
+		if err := flush(e.db, url, "invented-token", e.host); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receivedMu.Lock()
+	defer receivedMu.Unlock()
+	if harnessSeq == 0 || firstProtocolSeq <= harnessSeq {
+		t.Fatalf("event sequence overlap: harness=%d, first protocol write=%d", harnessSeq, firstProtocolSeq)
+	}
+	for _, marker := range []string{"outbox.failed", "turn.completed", "process.closed", wantReceipt} {
+		if !slices.Contains(received, marker) {
+			t.Fatalf("missing %q in delivered events and receipts %v", marker, received)
+		}
+	}
+	if active := e.activeExecutions(); len(active) != 0 {
+		t.Fatalf("completed execution still owns a host slot: %v", active)
+	}
+}
+
+func TestWorkerUnresolvedExitReleasesCommandAndKeepsOwnership(t *testing.T) {
+	e, root := scriptExecutor(t)
+	defer e.db.Close()
+	const execution, cid, sid = "unresolved-exit", "start-command", "session"
+	body := enc(M{"id": cid, "executionId": execution, "sessionId": sid, "kind": "start", "payload": M{"harness": "codex"}})
+	if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.launch(execution, cid, sid); err != nil {
+		t.Fatal(err)
+	}
+	// Model a worker that exhausted its cleanup grace while an owned process survived.
+	cmd := exec.Command("sleep", "60")
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { proc.Kill(); _ = proc.Wait() })
+	id, err := identity(proc.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := workerDirFor(root, execution)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "exit.json"), []byte(enc(workerExit{
+		Status: "unknown", Seq: 10, StdoutClosed: true, CleanupUnknown: true, ProcessesUnresolved: true,
+	})), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := &live{command: commandOf(body), worker: &liveWorker{dir: dir}, owned: map[int]string{proc.Pid: id}}
+	if err := e.own(execution, l); err != nil {
+		t.Fatal(err)
+	}
+	e.live[execution] = l
+	if err := e.tick(); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastReceipt(e, cid); got != "unknown" || len(e.live) != 0 || count(e.db, "launches") != 1 || count(e.db, "owned") != 1 {
+		t.Fatalf("got receipt=%q active=%d launches=%d owned=%d", got, len(e.live), count(e.db, "launches"), count(e.db, "owned"))
+	}
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.live) != 0 || count(e.db, "launches") != 0 || count(e.db, "owned") != 0 {
+		t.Fatal("restart reattached the terminal worker or retained its resolved ownership")
+	}
+	select {
+	case <-proc.Done():
+	case <-time.After(time.Second):
+		t.Fatal("recorded owned process survived reconciliation")
+	}
+}
 
 func TestWorkerReattachesAcrossPollerRestart(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())

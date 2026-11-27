@@ -1123,6 +1123,65 @@ func (q *Queries) DispRunningByHost(ctx context.Context) ([]DispRunningByHostRow
 	return items, nil
 }
 
+const dispStalledTurnShutdowns = `-- name: DispStalledTurnShutdowns :many
+SELECT e.id,e.host_id,e.project_id,e.session_id
+FROM execution e
+JOIN host_observation h ON h.id=e.host_id
+WHERE e.kind='agent_run' AND e.state='running' AND e.observation='confirmed'
+ AND ($1::text[] IS NULL OR e.id=ANY($1::text[]))
+ AND e.harness IN ('codex','acp','antigravity')
+ AND e.last_seen_at < now() - make_interval(secs => $2::float8)
+ AND h.last_seen_at > now() - interval '300 seconds'
+ AND h.payload->'activeExecutions' ? e.id
+ AND EXISTS (SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND NOT ev.delta AND ev.type='outbox.failed'
+  AND ev.payload->'data'->>'route'='/api/hosts/events')
+ AND EXISTS (SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND NOT ev.delta AND ev.type='turn.completed'
+  AND ev.payload->'data'->'fleetNormalized'->>'lifecycle'='turn.completed'
+  AND ev.updated_at < now() - make_interval(secs => $2::float8))
+ AND NOT EXISTS (SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND NOT ev.delta AND ev.type='process.closed')
+ AND EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='start' AND c.status='started')
+ AND NOT EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='stop')
+ORDER BY e.seq
+`
+
+type DispStalledTurnShutdownsParams struct {
+	Ids             []string
+	ClosedGraceSecs float64
+}
+
+type DispStalledTurnShutdownsRow struct {
+	ID        string
+	HostID    *string
+	ProjectID *string
+	SessionID *string
+}
+
+// A live executor still owns the run. Ask it to clean up before releasing the slot.
+func (q *Queries) DispStalledTurnShutdowns(ctx context.Context, arg DispStalledTurnShutdownsParams) ([]DispStalledTurnShutdownsRow, error) {
+	rows, err := q.db.Query(ctx, dispStalledTurnShutdowns, arg.Ids, arg.ClosedGraceSecs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DispStalledTurnShutdownsRow
+	for rows.Next() {
+		var i DispStalledTurnShutdownsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.HostID,
+			&i.ProjectID,
+			&i.SessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const dispStartNeverHandedOut = `-- name: DispStartNeverHandedOut :one
 SELECT EXISTS(SELECT 1 FROM command WHERE execution_id=$1 AND kind IN ('start','script') AND status='pending' AND handed_out=false)::boolean
 `
