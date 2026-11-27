@@ -426,8 +426,8 @@ func telemetryTrace(q *Request, r *contract.TelemetryTraceRequest) (contract.Tel
 		if r.TraceId != nil || r.ExecutionId != nil {
 			return out, fail(400, "Specify traceId, executionId, or deliveryWindow")
 		}
-		if w.FromMs < 0 || w.BeforeMs <= w.FromMs {
-			return out, fail(400, "deliveryWindow requires 0 <= fromMs < beforeMs")
+		if w.FromMs <= 0 || w.BeforeMs <= w.FromMs {
+			return out, fail(400, "deliveryWindow requires 0 < fromMs < beforeMs")
 		}
 		// Delivery is system telemetry and uses the same full-access boundary
 		// as a direct trace read. Do not expose even a trace ID outside it.
