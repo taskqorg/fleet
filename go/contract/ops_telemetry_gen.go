@@ -6,6 +6,17 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// DeliveryTraceWindow: A half-open delivery pass start window, in Unix milliseconds.
+type DeliveryTraceWindow struct {
+	BeforeMs int64 `json:"beforeMs"`
+	FromMs   int64 `json:"fromMs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryTraceWindow) Validate() error {
+	return nil
+}
+
 // Finding: One rule result of the last rules pass (fleet-telemetry.md section 6). since: when the rule first fired for this cause (RFC 3339). exemplars: trace ids. groupCause: the absence cause it folds into (no question of its own).
 type Finding struct {
 	Baseline    *float64 `json:"baseline,omitempty"`
@@ -341,14 +352,20 @@ func (v *TelemetryTraceReply) Validate() error {
 	return nil
 }
 
-// TelemetryTraceRequest: Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.
+// TelemetryTraceRequest: Specify traceId, executionId, or deliveryWindow. deliveryWindow finds the longest visible completed delivery pass whose start is in [fromMs, beforeMs). Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.
 type TelemetryTraceRequest struct {
-	ExecutionId *string `json:"executionId,omitempty"`
-	TraceId     *string `json:"traceId,omitempty"`
+	DeliveryWindow *DeliveryTraceWindow `json:"deliveryWindow,omitempty"`
+	ExecutionId    *string              `json:"executionId,omitempty"`
+	TraceId        *string              `json:"traceId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TelemetryTraceRequest) Validate() error {
+	if v.DeliveryWindow != nil {
+		if err := Check(v.DeliveryWindow, "deliveryWindow"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -379,7 +396,7 @@ func init() {
 		"telemetry_disk":     {Read: false, Long: true, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Daily maximum of each host.disk reading (docs/designs/fleet-host-cleanup.md#12-disk-readings); days defaults to 30.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"days\":{\"minimum\":1,\"type\":\"integer\"},\"host\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Telemetry findings, optionally of one project", InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "window defaults to 1h.", InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.", InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Specify traceId, executionId, or deliveryWindow. deliveryWindow finds the longest visible completed delivery pass whose start is in [fromMs, beforeMs). Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.", InputSchema: json.RawMessage("{\"$comment\":\"Specify traceId, executionId, or deliveryWindow. deliveryWindow finds the longest visible completed delivery pass whose start is in [fromMs, beforeMs). Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"deliveryWindow\":{\"$comment\":\"A half-open delivery pass start window, in Unix milliseconds.\",\"additionalProperties\":false,\"properties\":{\"beforeMs\":{\"minimum\":1,\"type\":\"integer\"},\"fromMs\":{\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"fromMs\",\"beforeMs\"],\"type\":\"object\"},\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

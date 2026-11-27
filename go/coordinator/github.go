@@ -68,8 +68,10 @@ var (
 // githubOnce: the cached reply of key when younger than ttl, else fetch's, stored when keep says so. Reads of one key
 // run one at a time (a concurrent miss waits and gets the first one's reply); different keys never wait on each other,
 // so a slow screen (Runners reads jobs run by run) does not hold up Delivery's pass.
-func githubOnce(key string, ttl time.Duration, fetch func() ([]byte, error), keep func(error) bool) ([]byte, error) {
+func githubOnce(ctx context.Context, key string, ttl time.Duration, fetch func() ([]byte, error), keep func(error) bool) ([]byte, error) {
+	_, wait := deliverySpan(ctx, "forge-cache-wait")
 	unlock := githubLocks.lock(key)
+	wait.End(nil)
 	defer unlock()
 	githubMu.Lock()
 	if len(githubCache) > 2000 {
@@ -125,6 +127,8 @@ func githubConnectionOf(q *Request, owner string) (name string, c *apiConnection
 // githubRead: the reply body of tool with args (the path fields, e.g. owner and repo) for project's access check. A
 // reply younger than 30 s (keyed) or 5 min (public) is served from the cache. keyed says which way it went.
 func githubRead(ctx context.Context, a *App, project, tool string, args map[string]string) (body []byte, keyed bool, err error) {
+	ctx, span := deliverySpan(ctx, "forge-read")
+	defer func() { span.End(err) }()
 	var connection string
 	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		connection, _, keyed, err = githubConnectionOf(q, args["owner"])
@@ -159,7 +163,7 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 	public := func() ([]byte, error) {
 		// A failed public read is kept too (a rate-limited address must not ask again before the cache expires), but
 		// not a caller that left: its cancelled read says nothing about GitHub.
-		return githubOnce("public "+path, 5*time.Minute, func() ([]byte, error) { return githubPublic(ctx, path) }, func(error) bool { return ctx.Err() == nil })
+		return githubOnce(ctx, "public "+path, 5*time.Minute, func() ([]byte, error) { return githubPublic(ctx, path) }, func(error) bool { return ctx.Err() == nil })
 	}
 	githubMu.Lock()
 	refused := time.Since(githubRefused[tool]) < 5*time.Minute
@@ -169,7 +173,7 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 		body, err = public()
 		return body, false, err
 	}
-	body, err = githubOnce(cacheKey, ttl, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
+	body, err = githubOnce(ctx, cacheKey, ttl, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
 	if errors.Is(err, errNotGranted) {
 		// A grant gap is the connection's settings, not a refused key: the keyless API would hide it behind its 60
 		// reads an hour (403 for hours, 2026-11-26). The call is recorded and problem problem:grant:<connection> names the fix.
@@ -190,7 +194,9 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 // githubReadKeyed: through the connection only, never the public fallback: the delivery history makes hundreds of
 // reads, which must not spend the shared keyless budget. A tool the connection does not grant fails with the
 // gateway's error (unknown-tool: connections_set_tools).
-func githubReadKeyed(ctx context.Context, a *App, project, tool string, args map[string]string) ([]byte, error) {
+func githubReadKeyed(ctx context.Context, a *App, project, tool string, args map[string]string) (_ []byte, err error) {
+	ctx, span := deliverySpan(ctx, "forge-read")
+	defer func() { span.End(err) }()
 	var connection string
 	var keyed bool
 	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
@@ -214,10 +220,12 @@ func githubReadKeyed(ctx context.Context, a *App, project, tool string, args map
 	if strings.Contains(path, "{") {
 		return nil, fmt.Errorf("github %s: a path field is missing", tool)
 	}
-	return githubOnce("key "+connection+" "+project+" "+path, 30*time.Second, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
+	return githubOnce(ctx, "key "+connection+" "+project+" "+path, 30*time.Second, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
 }
 
-func githubPublic(ctx context.Context, path string) ([]byte, error) {
+func githubPublic(ctx context.Context, path string) (_ []byte, err error) {
+	ctx, span := deliverySpan(ctx, "forge-request")
+	defer func() { span.End(err) }()
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com"+path, nil)
 	if err != nil {
 		return nil, err
@@ -384,15 +392,19 @@ func wakeReadTokens() {
 }
 
 // githubGateway: one call through the gateway with the connection's shared read token, recorded as a tool_run.
-func githubGateway(ctx context.Context, a *App, connection, project, tool string, args map[string]string) ([]byte, error) {
+func githubGateway(ctx context.Context, a *App, connection, project, tool string, args map[string]string) (_ []byte, err error) {
 	if gatewayURL() == "" {
 		return nil, fmt.Errorf("github %s: connection-unavailable", tool)
 	}
-	token, release, err := readTokenFor(ctx, a, connection, project)
+	tokenCtx, tokenSpan := deliverySpan(ctx, "forge-token")
+	token, release, err := readTokenFor(tokenCtx, a, connection, project)
+	tokenSpan.End(err)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+	ctx, request := deliverySpan(ctx, "forge-request")
+	defer func() { request.End(err) }()
 	line := gatewayCall(ctx, token, connection, tool, args, gatewayProviders["github"].Tools[tool].Idempotent)
 	if line.Outcome != contract.CallOutcomeOk && deref(line.ErrorCode) == "unknown-tool" {
 		return nil, fmt.Errorf("github %s: %w: connection %s lacks it (connections_set_tools)", tool, errNotGranted, connection)
@@ -437,7 +449,9 @@ func gitlabConnectionOf(q *Request, host, owner, repoConn string) (name string, 
 	return "gitlab", nil, false, nil
 }
 
-func gitlabRead(ctx context.Context, a *App, project, host, owner, repoConn, tool string, args map[string]string) ([]byte, error) {
+func gitlabRead(ctx context.Context, a *App, project, host, owner, repoConn, tool string, args map[string]string) (_ []byte, err error) {
+	ctx, span := deliverySpan(ctx, "forge-read")
+	defer func() { span.End(err) }()
 	var connection string
 	var keyed bool
 	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
@@ -461,15 +475,19 @@ func gitlabRead(ctx context.Context, a *App, project, host, owner, repoConn, too
 	if strings.Contains(path, "{") {
 		return nil, fmt.Errorf("gitlab %s: a path field is missing", tool)
 	}
-	return githubOnce("key "+connection+" "+project+" "+host+" "+path, 30*time.Second, func() ([]byte, error) {
+	return githubOnce(ctx, "key "+connection+" "+project+" "+host+" "+path, 30*time.Second, func() (_ []byte, err error) {
 		if gatewayURL() == "" {
 			return nil, fmt.Errorf("gitlab %s: connection-unavailable", tool)
 		}
-		token, release, err := readTokenFor(ctx, a, connection, project)
+		tokenCtx, tokenSpan := deliverySpan(ctx, "forge-token")
+		token, release, err := readTokenFor(tokenCtx, a, connection, project)
+		tokenSpan.End(err)
 		if err != nil {
 			return nil, err
 		}
 		defer release()
+		ctx, request := deliverySpan(ctx, "forge-request")
+		defer func() { request.End(err) }()
 		line := gatewayCall(ctx, token, connection, tool, args, gatewayProviders["gitlab"].Tools[tool].Idempotent)
 		if line.Outcome != contract.CallOutcomeOk {
 			return nil, fmt.Errorf("gitlab %s: %s %d", tool, deref(line.ErrorCode), line.Status)
