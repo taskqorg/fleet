@@ -880,12 +880,20 @@ func requestAcceptanceWithDelivery(q *Request, t acceptTask, artifactIDs []strin
 		if len(question.Data) > 0 {
 			decodeErr = json.Unmarshal(question.Data, &data)
 		}
-		if decodeErr == nil && deref(question.ExecutionID) == selected.id && data.EarlierResult == t.EarlierResult &&
-			slices.Equal(data.ArtifactIds, ids) && sameDeliveryRef(data.Delivery, delivery) {
-			if delivery != nil && deref(question.AskedBy) == deliveryActor {
-				return question.ID, nil
+		if decodeErr == nil && deref(question.ExecutionID) == selected.id && data.EarlierResult == t.EarlierResult {
+			if delivery != nil && selected.matches(data.ArtifactIds) {
+				if data.Delivery == nil {
+					return question.ID, q.db().TaskAcceptanceRecordDelivery(q.ctx(), db.TaskAcceptanceRecordDeliveryParams{
+						ID: question.ID, Delivery: jsonBytes(delivery),
+					})
+				}
+				if sameDeliveryRef(data.Delivery, delivery) {
+					return question.ID, nil
+				}
 			}
-			return question.ID, q.db().TaskAcceptanceAskAgain(q.ctx(), db.TaskAcceptanceAskAgainParams{ID: question.ID, Text: body, ArtifactIds: jsonBytes(ids), AskedBy: &askedBy})
+			if delivery == nil && slices.Equal(data.ArtifactIds, ids) {
+				return question.ID, q.db().TaskAcceptanceAskAgain(q.ctx(), db.TaskAcceptanceAskAgainParams{ID: question.ID, Text: body, ArtifactIds: jsonBytes(ids), AskedBy: &askedBy})
+			}
 		}
 		if err := questionsWithdraw(q, []string{question.ID}); err != nil {
 			return "", err
@@ -912,12 +920,6 @@ type questionData struct {
 }
 
 func sameDeliveryRef(a, b *deliveryMergedPR) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
 	return a.Repo == b.Repo && a.Number == b.Number && a.HeadSHA == b.HeadSHA && a.Release == b.Release && a.Stage == b.Stage
 }
 
@@ -2050,9 +2052,8 @@ type taskCompletionReq struct {
 }
 
 type taskDeliveryMatch struct {
-	taskID     string
-	pr         deliveryMergedPR
-	autoAccept bool
+	taskID string
+	pr     deliveryMergedPR
 }
 
 type deliveryPRRef struct {
@@ -2075,7 +2076,7 @@ func reconcileDeliveredTasks(ctx context.Context, a *App, delivered []deliveryMe
 	}
 	for _, m := range matches {
 		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-			_, err := reconcileTaskDelivery(q, m.taskID, m.pr, m.autoAccept)
+			_, err := reconcileTaskDelivery(q, m.taskID, m.pr)
 			return err
 		}); err != nil {
 			log.Printf("reconcile delivered task %s: %v", m.taskID, err)
@@ -2096,7 +2097,7 @@ func reconcileTaskDeliveryFromCache(q *Request, id string) (bool, error) {
 	}
 	for _, m := range matches {
 		if m.taskID == id {
-			return reconcileTaskDelivery(q, m.taskID, m.pr, m.autoAccept)
+			return reconcileTaskDelivery(q, m.taskID, m.pr)
 		}
 	}
 	return false, nil
@@ -2155,11 +2156,7 @@ func findTaskDeliveryMatches(q *Request, delivered []deliveryMergedPR) ([]taskDe
 		if !matched {
 			continue
 		}
-		matches = append(matches, taskDeliveryMatch{
-			taskID:     t.ID,
-			pr:         pr,
-			autoAccept: taskAllowsAutoAcceptance(t, pr, pol, evByTask[t.ID]),
-		})
+		matches = append(matches, taskDeliveryMatch{taskID: t.ID, pr: pr})
 	}
 	return matches, nil
 }
@@ -2363,27 +2360,22 @@ func explicitPRRefs(text string) []deliveryPRRef {
 	return out
 }
 
-func taskAllowsAutoAcceptance(t db.TaskDeliveryCandidatesRow, pr deliveryMergedPR, pol deliveryProjectPolicy, evidence []db.TaskDeliveryEvidenceRow) bool {
-	if !pol.autoAccept {
-		return false
+func taskAllowsAutoAcceptance(q *Request, t db.Task, pr deliveryMergedPR) (bool, error) {
+	if !deliveryPolicyForProject(q, deref(t.ProjectID)).autoAccept {
+		return false, nil
 	}
 	var req taskCompletionReq
-	if len(t.CompletionRequirements) > 0 && json.Unmarshal(t.CompletionRequirements, &req) == nil {
-		if req.RequireHumanAcceptance != nil && *req.RequireHumanAcceptance {
-			return false
-		}
-		if req.ManualAcceptance != nil && *req.ManualAcceptance {
-			return false
-		}
-		if req.AutoAccept != nil && !*req.AutoAccept {
-			return false
-		}
-		acc := strings.TrimSpace(req.Acceptance)
-		if strings.EqualFold(acc, "manual") || strings.EqualFold(acc, "human") {
-			return false
-		}
+	if len(t.CompletionRequirements) > 0 && json.Unmarshal(t.CompletionRequirements, &req) != nil {
+		return false, nil
 	}
-	needsLiveCheck := landingWaitPattern.MatchString(t.ExpectedOutcome)
+	acc := strings.TrimSpace(req.Acceptance)
+	if (req.RequireHumanAcceptance != nil && *req.RequireHumanAcceptance) ||
+		(req.ManualAcceptance != nil && *req.ManualAcceptance) ||
+		(req.AutoAccept != nil && !*req.AutoAccept) ||
+		strings.EqualFold(acc, "manual") || strings.EqualFold(acc, "human") {
+		return false, nil
+	}
+	needsLiveCheck := landingWaitPattern.MatchString(deref(t.ExpectedOutcome))
 	if !needsLiveCheck && req.LiveCheck != nil {
 		switch v := req.LiveCheck.(type) {
 		case bool:
@@ -2394,30 +2386,26 @@ func taskAllowsAutoAcceptance(t db.TaskDeliveryCandidatesRow, pr deliveryMergedP
 			needsLiveCheck = true
 		}
 	}
-	if needsLiveCheck {
-		ts := pr.DeliveredAt
-		if ts == "" {
-			ts = pr.MergedAt
-		}
-		deliveredAt, err := time.Parse(time.RFC3339, ts)
-		if err != nil {
-			return false
-		}
-		verified := false
-		for _, ev := range evidence {
-			if ev.Source == "execution" && ev.Outcome == "succeeded" && ev.At.Valid && !ev.At.Time.Before(deliveredAt) {
-				verified = true
-				break
-			}
-		}
-		if !verified {
-			return false
+	if !needsLiveCheck {
+		return true, nil
+	}
+	deliveredAt, err := time.Parse(time.RFC3339, pr.DeliveredAt)
+	if err != nil {
+		return false, nil
+	}
+	evidence, err := q.db().TaskDeliveryEvidence(q.ctx(), []string{t.ID})
+	if err != nil {
+		return false, err
+	}
+	for _, ev := range evidence {
+		if ev.Source == "execution" && ev.Outcome == "succeeded" && ev.At != nil && !ev.At.Before(deliveredAt) {
+			return true, nil
 		}
 	}
-	return true
+	return false, nil
 }
 
-func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR, autoAccept bool) (bool, error) {
+func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR) (bool, error) {
 	t, err := taskLoad(q, taskID)
 	if errors.Is(err, errNotFound) {
 		return false, nil
@@ -2435,7 +2423,12 @@ func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR, autoA
 	if err != nil || pending {
 		return false, err
 	}
-	selected, err := acceptanceResult(q, t.ID, false, false, false)
+	// Read policy and verification in the same write transaction that answers the offer.
+	autoAccept, err := taskAllowsAutoAcceptance(q, t, pr)
+	if err != nil {
+		return false, err
+	}
+	selected, err := acceptanceResult(q, t.ID, false, false, autoAccept)
 	if err != nil {
 		var conflict *HTTPError
 		if errors.As(err, &conflict) && conflict.Code == 409 {
