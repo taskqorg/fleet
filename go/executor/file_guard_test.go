@@ -76,7 +76,7 @@ func TestGuardRefuses(t *testing.T) {
 
 	for _, p := range []string{
 		filepath.Join(home, ".ssh/id_ed25519"), filepath.Join(home, ".aws/credentials"), filepath.Join(home, ".gnupg/private-keys-v1.d/k.key"),
-		filepath.Join(home, ".netrc"), filepath.Join(home, ".config/gh/hosts.yml"), filepath.Join(home, ".config/fleet/tokens/mac-claude"),
+		filepath.Join(home, ".netrc"), filepath.Join(home, ".config/ufobe-agents/site-access.env"), filepath.Join(home, ".config/gh/hosts.yml"), filepath.Join(home, ".config/fleet/tokens/mac-claude"),
 		filepath.Join(home, ".hermes/.env"), filepath.Join(home, "Library/Keychains/login.keychain-db"),
 		filepath.Join(home, ".claude/.credentials.json"), filepath.Join(home, ".codex/auth.json"),
 		filepath.Join(claudeDir, ".credentials.json"), filepath.Join(codexDir, "auth.json"),
@@ -107,7 +107,7 @@ func TestGuardRefuses(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		dataDefault = "Library/Application Support/Fleet/executor/journal.sqlite"
 	}
-	for _, p := range []string{filepath.Join(userHome, ".ssh/id_ed25519"), filepath.Join(userHome, ".config/fleet/host-secret"),
+	for _, p := range []string{filepath.Join(userHome, ".ssh/id_ed25519"), filepath.Join(userHome, ".config/ufobe-agents/site-access.env"), filepath.Join(userHome, ".config/fleet/host-secret"),
 		filepath.Join(data, "journal.sqlite"), write(t, filepath.Join(outside, "host-secret"), "s"),
 		filepath.Join(home, dataDefault), filepath.Join(home, ".local/share/fleet/gateway/state/spool/d.jsonl")} {
 		write(t, p, "secret")

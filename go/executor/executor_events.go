@@ -250,7 +250,7 @@ func platform() string {
 	return runtime.GOOS
 }
 
-func capabilities() []string {
+func capabilities(productionBrowserReady bool) []string {
 	c := []string{}
 	for _, x := range contract.CapabilityValues {
 		c = append(c, string(x))
@@ -309,7 +309,7 @@ func capabilities() []string {
 			}
 		}
 	}
-	if isFile(os.Getenv("FLEET_PLAYWRIGHT_MODULE")) && isFile(os.Getenv("FLEET_BROWSER_EXECUTABLE")) && private(os.Getenv("FLEET_BROWSER_BINDINGS")) == nil {
+	if browserRuntime() && (productionBrowserReady || private(os.Getenv("FLEET_BROWSER_BINDINGS")) == nil) {
 		c = append(c, contract.ToolCapability("browser"))
 	}
 	return c

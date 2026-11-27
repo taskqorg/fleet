@@ -117,7 +117,7 @@ func (e *executor) run(c M) error {
 		}
 		return e.finish(cmd, "failed", "")
 	case contract.CommandKindReadiness:
-		data := readiness(payload, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
+		data := e.readiness(payload, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
 		ok := data.Ok
 		if err := e.event(cmd, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err
@@ -387,10 +387,15 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	if r := projectRequirements(project, profile.Id); r != nil {
 		requirements = *r
 	}
+	var browserCfg M
+	var browserAccess *browserAuthority
 	for _, tool := range requirements.Tools {
 		var err error
 		if tool == "browser" {
-			err = browserReady(p, commandHome(cmd))
+			browserCfg, browserAccess, err = e.prepareBrowser(p, commandHome(cmd))
+			if err != nil {
+				return fail(1, "coding-tool-unready: browser ("+err.Error()+")")
+			}
 		} else {
 			err = codingTool(tool, commandHome(cmd))
 		}
@@ -408,21 +413,19 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			_ = os.Remove(filepath.Dir(captureDir))
 		}
 	}()
-	for _, tool := range requirements.Tools {
-		if tool == "browser" {
-			cfg, err := browserConfig(p)
-			if err != nil {
-				return fail(1, "browser-binding-unready")
-			}
-			dir := browserCaptureDir(e.root, execution)
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				return fail(1, "browser capture directory: "+err.Error())
-			}
-			captureDir = dir
-			cfg["captureDir"] = captureDir
-			codeReadRoots = append(codeReadRoots, captureDir)
-			servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", enc(cfg)}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "press", "drag", "emulate", "screenshot", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
+	if browserCfg != nil {
+		dir := browserCaptureDir(e.root, execution)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fail(1, "browser capture directory: "+err.Error())
 		}
+		captureDir = dir
+		browserCfg["captureDir"] = captureDir
+		codeReadRoots = append(codeReadRoots, captureDir)
+		arg := "managed"
+		if browserAccess == nil {
+			arg = enc(browserCfg)
+		}
+		servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", arg}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "press", "drag", "emulate", "screenshot", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
 	}
 	if env := requirements.Environment; env != nil {
 		if !hasW {
@@ -716,7 +719,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		UseMCP:       len(servers) > 0,
 		InitialSeq:   harnessLaunchSeq,
 	}
-	l, err := e.spawnWorker(c, spec)
+	l, err := e.spawnWorker(c, spec, browserAccess)
 	if err != nil {
 		removeWorkerDir(e.root, execution)
 		e.release(execution)
@@ -933,7 +936,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		Trial:      trial,
 		InitialSeq: 2,
 	}
-	l, err := e.spawnWorker(c, spec)
+	l, err := e.spawnWorker(c, spec, nil)
 	if err != nil {
 		removeWorkerDir(e.root, execution)
 		dropTrial()

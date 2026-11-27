@@ -8,7 +8,7 @@ import {
   AgeChip, Button, DetailSection, ErrorBanner, FigureTile, Icon, KvRow, Num, ProblemRow, Skeleton, cause, duration, money,
   type CostFigureLike,
 } from '../../../packages/ui/src/index.ts';
-import type { HostRow, RunnerRun } from '../../../contracts/generated/ops.ts';
+import type { HostProblem, HostRow, RunnerRun } from '../../../contracts/generated/ops.ts';
 import { op, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { prefsRead } from '../prefs.ts';
@@ -23,6 +23,14 @@ export const FINDING = 'A health check found something unusual';
 /** A provider's refusal can be a whole JSON body: the row keeps its first 140 characters; the connection has the rest. */
 const clip = (t: string) => t.length > 140 ? t.slice(0, 139) + '…' : t;
 const hostPath = (id: string) => `/hosts/${encodeURIComponent(id)}`;
+
+export function hostProblemTitle(p: HostProblem): string {
+  switch (p.kind) {
+    case 'browser-production-unready': return 'Production browser readiness';
+    case 'version-behind': return 'Executor version behind';
+    default: return `Edge answers ${p.route} with ${p.status}`;
+  }
+}
 
 export type Problem = {
   key: string; title: string; facts: string; severity: 'warning' | 'failure'; count: number;
@@ -82,8 +90,8 @@ export function readiness(input: {
     }
     if (h.pollError) out.push({ key: `host:${h.id}:poll`, severity: 'failure', count: 1, open, at: h.pollError.since,
       title: `${h.id}: polls failing`, facts: `coordinator answers ${h.pollError.status} (${h.pollError.reason}) since` });
-    for (const p of h.problems) out.push({ key: `host:${h.id}:edge:${p.route}`, severity: 'failure', count: 1, open,
-      title: `${h.id}: edge answers ${p.route} with ${p.status}`, facts: p.detail || p.location || '' });
+    for (const p of h.problems) out.push({ key: `host:${h.id}:${p.kind}:${p.route}`, severity: 'failure', count: 1, open,
+      title: `${h.id}: ${hostProblemTitle(p)}`, facts: p.detail || p.location || '' });
     for (const f of failures.get(h.id) ?? []) {
       const [title, fix] = firstSentence(f.text);
       out.push({ key: `host:${h.id}:cause:${f.cause}`, severity: 'failure', count: f.n, open, at: f.at, title: `${h.id}: ${title}`, facts: fix });

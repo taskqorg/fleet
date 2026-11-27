@@ -670,13 +670,7 @@ func mcpRun(args []string) error {
 		if len(args) != 2 {
 			return errors.New("browser context required")
 		}
-		cfg, err := dec(args[1])
-		if err != nil {
-			return err
-		}
-		cmd := browserCommand(cfg, os.Getenv("HOME"), false)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		return cmd.Run()
+		return serveProjectBrowser(args[1])
 	}
 
 	arg := func(i int, what string) (string, error) {

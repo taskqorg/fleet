@@ -578,6 +578,29 @@ func (v *BaseUpdatedCommand) Validate() error {
 	return nil
 }
 
+type BrowserAccessReply struct {
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BrowserAccessReply) Validate() error {
+	return nil
+}
+
+type BrowserAccessRequest struct {
+	HostId    *string `json:"hostId,omitempty"`
+	ProjectId string  `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BrowserAccessRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*BrowserAccessRequest) Closed() bool { return true }
+
 // Capability: A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.
 type Capability string
 
@@ -2018,23 +2041,24 @@ func (v *PollReply) Validate() error {
 }
 
 type PollRequest struct {
-	ActiveExecutions []string         `json:"activeExecutions"`
-	Capabilities     []string         `json:"capabilities"`
-	Diagnosis        *HostDiagnosis   `json:"diagnosis,omitempty"`
-	Drain            *DrainReport     `json:"drain,omitempty"`
-	ForgeLogins      []ForgeLogin     `json:"forgeLogins,omitempty"`
-	GitConnections   []string         `json:"gitConnections"`
-	HarnessVersions  []HarnessVersion `json:"harnessVersions,omitempty"`
-	HostId           string           `json:"hostId"`
-	Load             *HostLoad        `json:"load,omitempty"`
-	Platform         Platform         `json:"platform"`
-	Problems         []EdgeProblem    `json:"problems"`
-	ProjectRoots     []string         `json:"projectRoots"`
-	Stores           []StoreReport    `json:"stores"`
-	ToolVersions     []ToolVersion    `json:"toolVersions,omitempty"`
-	Update           *UpdateResult    `json:"update,omitempty"`
-	UtcOffsetMinutes *int64           `json:"utcOffsetMinutes,omitempty"`
-	Version          *string          `json:"version,omitempty"`
+	ActiveExecutions       []string         `json:"activeExecutions"`
+	BrowserProductionReady *bool            `json:"browserProductionReady,omitempty"`
+	Capabilities           []string         `json:"capabilities"`
+	Diagnosis              *HostDiagnosis   `json:"diagnosis,omitempty"`
+	Drain                  *DrainReport     `json:"drain,omitempty"`
+	ForgeLogins            []ForgeLogin     `json:"forgeLogins,omitempty"`
+	GitConnections         []string         `json:"gitConnections"`
+	HarnessVersions        []HarnessVersion `json:"harnessVersions,omitempty"`
+	HostId                 string           `json:"hostId"`
+	Load                   *HostLoad        `json:"load,omitempty"`
+	Platform               Platform         `json:"platform"`
+	Problems               []EdgeProblem    `json:"problems"`
+	ProjectRoots           []string         `json:"projectRoots"`
+	Stores                 []StoreReport    `json:"stores"`
+	ToolVersions           []ToolVersion    `json:"toolVersions,omitempty"`
+	Update                 *UpdateResult    `json:"update,omitempty"`
+	UtcOffsetMinutes       *int64           `json:"utcOffsetMinutes,omitempty"`
+	Version                *string          `json:"version,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2120,12 +2144,13 @@ func (v *PreparationFailed) Validate() error {
 type ProblemKind string
 
 const (
-	ProblemKindEdgeRedirect  ProblemKind = "edge-redirect"
-	ProblemKindVersionBehind ProblemKind = "version-behind"
+	ProblemKindEdgeRedirect             ProblemKind = "edge-redirect"
+	ProblemKindBrowserProductionUnready ProblemKind = "browser-production-unready"
+	ProblemKindVersionBehind            ProblemKind = "version-behind"
 )
 
 // ProblemKindValues lists every ProblemKind in schema order.
-var ProblemKindValues = []ProblemKind{ProblemKindEdgeRedirect, ProblemKindVersionBehind}
+var ProblemKindValues = []ProblemKind{ProblemKindEdgeRedirect, ProblemKindBrowserProductionUnready, ProblemKindVersionBehind}
 
 // Valid: v is one of the schema's values.
 func (v ProblemKind) Valid() bool {
@@ -3589,6 +3614,7 @@ var (
 	RouteArtifactsRenew          = HostRoute[ArtifactLeaseRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/renew", Long: true, Plain: false}
 	RouteArtifactsReserve        = HostRoute[ArtifactReserveRequest, ArtifactReserveReply]{Path: "/api/hosts/artifacts/reserve", Long: true, Plain: false}
 	RouteArtifactsVerified       = HostRoute[ArtifactVerifiedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/verified", Long: true, Plain: false}
+	RouteBrowserAccess           = HostRoute[BrowserAccessRequest, BrowserAccessReply]{Path: "/api/hosts/browser/access", Long: true, Plain: false}
 	RouteDelegations             = HostRoute[ChildReceipt, any]{Path: "/api/hosts/delegations", Long: true, Plain: false}
 	RouteEvents                  = HostRoute[HostEvents, OkReply]{Path: "/api/hosts/events", Long: true, Plain: true}
 	RouteForgeReview             = HostRoute[ForgeReviewRequest, ForgeReviewReply]{Path: "/api/hosts/forge/review", Long: true, Plain: false}
@@ -3618,6 +3644,7 @@ var HostRoutes = []string{
 	"/api/hosts/artifacts/renew",
 	"/api/hosts/artifacts/reserve",
 	"/api/hosts/artifacts/verified",
+	"/api/hosts/browser/access",
 	"/api/hosts/delegations",
 	"/api/hosts/events",
 	"/api/hosts/forge/review",

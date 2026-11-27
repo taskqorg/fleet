@@ -339,6 +339,9 @@ func (a *App) routes() http.Handler {
 
 // serve: credential check, body, the route's transaction, then JSON (or the raw writer) or the error.
 func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler) {
+	if hr.URL.Path == contract.RouteBrowserAccess.Path {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	q := &Request{r: hr, app: a}

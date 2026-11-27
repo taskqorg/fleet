@@ -46,7 +46,7 @@ func homeEntries(home string) []string {
 		return nil
 	}
 	list := dataStores(dataDirIn(home)) // the executor's default data folder
-	for _, rel := range []string{".config/fleet", ".local/share/fleet/gateway", ".ssh", ".aws", ".gnupg", ".netrc",
+	for _, rel := range []string{".config/fleet", ".config/ufobe-agents", ".local/share/fleet/gateway", ".ssh", ".aws", ".gnupg", ".netrc",
 		".config/gh", ".hermes/.env", "Library/Keychains", ".claude/.credentials.json", ".codex/auth.json",
 		".git-credentials", ".config/git/credentials", ".docker/config.json", ".kube/config", ".npmrc", ".pypirc",
 		".config/gcloud", ".gemini/oauth_creds.json", ".azure"} {
@@ -358,7 +358,7 @@ func executorStores() []string {
 			bindings, _ := all.(M)
 			for _, raw := range bindings {
 				// an entry or grant that is not an object names no file
-				list = append(list, typed[browserProduction](typed[browserBinding](raw).Production).AccessFile)
+				list = append(list, typed[browserBinding](raw).Production.AccessFile)
 			}
 		}
 	}

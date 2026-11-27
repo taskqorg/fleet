@@ -37,19 +37,19 @@ module.exports={chromium:{}};
 	t.Setenv("FLEET_BROWSER_EXECUTABLE", module)
 	// Normal signed StartPayload carries identity separately; normalized settings have no id.
 	payload := M{"projectId": "project", "project": M{"execution": M{"tools": []any{"browser"}}}}
-	cfg, err := browserConfig(payload)
+	cfg, err := browserConfig(payload, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg["marker"] = marker
-	if _, err := browserConfig(M{"projectId": "other", "project": M{"id": "project"}}); err == nil {
+	if _, err := browserConfig(M{"projectId": "other", "project": M{"id": "project"}}, false); err == nil {
 		t.Fatal("foreign authoritative identity accepted")
 	}
-	if _, err := browserConfig(M{"project": M{"id": "project"}}); err == nil {
+	if _, err := browserConfig(M{"project": M{"id": "project"}}, false); err == nil {
 		t.Fatal("settings identity granted browser without authoritative projectId")
 	}
 	for _, id := range []any{nil, "", false, 42, []any{"project"}, M{"id": "project"}} {
-		if _, err := browserConfig(M{"projectId": id, "project": M{"id": "project"}}); err == nil {
+		if _, err := browserConfig(M{"projectId": id, "project": M{"id": "project"}}, false); err == nil {
 			t.Fatalf("invalid authoritative identity accepted: %T", id)
 		}
 	}
@@ -70,11 +70,11 @@ module.exports={chromium:{}};
 		t.Fatalf("denied call attempted browser launch: %v", err)
 	}
 	os.WriteFile(binding, []byte(`{"project":{"previewOrigins":["http://127.0.0.1:4173/admin"]}}`), 0600)
-	if _, err := browserConfig(payload); err == nil {
+	if _, err := browserConfig(payload, false); err == nil {
 		t.Fatal("path accepted as origin")
 	}
 	os.WriteFile(binding, []byte(`{"project":{"production":{"origin":"https://other.invalid","accessFile":"/invented"}}}`), 0600)
-	if _, err := browserConfig(payload); err == nil {
+	if _, err := browserConfig(payload, false); err == nil {
 		t.Fatal("unauthorized production accepted")
 	}
 }
@@ -87,7 +87,8 @@ func TestProjectBrowserCloseRetry(t *testing.T) {
 	marker := filepath.Join(d, "removed-dir.txt")
 	if err := os.WriteFile(module, []byte(`
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),events=require('node:events');
-const {marker,failRm}=JSON.parse(process.argv[1]);
+const {marker,failRm,production}=JSON.parse(process.argv[1]);
+let socket, pending;
 let spawnedDir='';
 const origRm=fs.promises.rm.bind(fs.promises);
 fs.rmSync=target=>{
@@ -106,13 +107,23 @@ fs.promises.rm=async(target,opts)=>{
   fs.writeFileSync(marker,target);
 };
 class Socket {
-  constructor(){this.listeners={};queueMicrotask(()=>this.emit('open',{}));}
+  constructor(){socket=this;this.listeners={};queueMicrotask(()=>this.emit('open',{}));}
   addEventListener(name,fn){(this.listeners[name]??=[]).push(fn);}
   emit(name,event){for(const fn of this.listeners[name]??[])fn(event);}
   close(){}
   send(raw){
     const m=JSON.parse(raw);
     queueMicrotask(()=>this.emit('message',{data:JSON.stringify({id:m.id,result:{}})}));
+    if(m.method==='Fetch.continueRequest'){
+      const secret=m.params.headers.find(x=>x.name==='CF-Access-Client-Secret')?.value;
+      assert.equal(secret,m.params.requestId==='prod'?'invented-secret':undefined);
+      assert.equal(m.params.interceptResponse,m.params.requestId==='prod'?true:undefined);
+      pending();
+    }
+    if(m.method==='Fetch.continueResponse'){
+      assert.deepEqual(m.params.responseHeaders,[{name:'Content-Type',value:'text/event-stream'}]);
+      pending();
+    }
     if(m.method==='Target.setAutoAttach'&&!m.sessionId){
       queueMicrotask(()=>this.emit('message',{data:JSON.stringify({method:'Target.attachedToTarget',params:{sessionId:'page-session',targetInfo:{type:'page',targetId:'page-target'}}})}));
     }
@@ -129,7 +140,21 @@ require('node:child_process').spawn=(_exe,args)=>{
   child.kill=()=>{child.exitCode=0;queueMicrotask(()=>child.emit('exit',0));return true;};
   return child;
 };
-const page={setContent:async()=>{},title:async()=>'Fleet readiness'};
+const pause=params=>new Promise(resolve=>{
+  pending=resolve;
+  socket.emit('message',{data:JSON.stringify({method:'Fetch.requestPaused',sessionId:'page-session',params})});
+});
+const page={setContent:async()=>{},title:async()=>'Fleet readiness',evaluate:async()=>'site-agents',
+  goto:async url=>{
+    assert.equal(url,production.origin);
+    await pause({requestId:'prod',request:{url,headers:{}}});
+    await pause({requestId:'preview',request:{url:'http://127.0.0.1:4173',headers:{}}});
+    await pause({requestId:'prod',request:{url},responseStatusCode:200,responseHeaders:[
+      {name:'Content-Type',value:'text/event-stream'},
+      {name:'Set-Cookie',value:'CF_Authorization=invented-cookie; HttpOnly'},
+    ]});
+  }
+};
 const context={pages:()=>[page],routeWebSocket:async()=>{},close:async()=>{}};
 module.exports={chromium:{connectOverCDP:async()=>({contexts:()=>[context]})}};
 `), 0600); err != nil {
@@ -152,6 +177,21 @@ module.exports={chromium:{connectOverCDP:async()=>({contexts:()=>[context]})}};
 		}
 		if _, err := os.Stat(removedDir); !os.IsNotExist(err) {
 			t.Fatalf("profileDir %q still exists or unexpected stat error: %v", removedDir, err)
+		}
+	})
+
+	t.Run("attaches-production-credentials-and-strips-the-access-cookie", func(t *testing.T) {
+		cfg := M{"module": module, "executable": module, "previewOrigins": []any{"http://127.0.0.1:4173"}, "timeoutMs": 5000, "marker": marker,
+			"production": M{"origin": "https://fleet.ufobe.com"}}
+		c := browserCommand(cfg, d, true)
+		pipe, err := browserPipe(M{"clientId": "invented-id", "clientSecret": "invented-secret"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pipe.Close()
+		c.ExtraFiles = []*os.File{pipe}
+		if err := c.Run(); err != nil {
+			t.Fatal("production readiness fixture failed")
 		}
 	})
 
@@ -250,13 +290,15 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 	root := t.TempDir()
 	captureDir := browserCaptureDir(root, "fixture")
 	noErr(t, os.MkdirAll(captureDir, 0o700))
-	accessFile := filepath.Join(root, "invented.env")
-	noErr(t, os.WriteFile(accessFile, []byte("CF_ACCESS_CLIENT_ID=invented-access-id\nCF_ACCESS_CLIENT_SECRET="+accessSecret+"\n"), 0o600))
-	// The production test binding uses a second loopback origin so no real credential or external host is needed.
+	// Use a second loopback origin and invented credentials to exercise managed Access.
 	cfg := M{"module": module, "executable": executable, "previewOrigins": []string{preview.URL}, "timeoutMs": 5000,
-		"captureDir": captureDir, "production": M{"origin": production.URL, "accessFile": accessFile}}
+		"captureDir": captureDir, "production": M{"origin": production.URL}}
 	t.Setenv("TMPDIR", runTempDir(root, "fixture"))
+	access, err := browserPipe(M{"clientId": "invented-access-id", "clientSecret": accessSecret})
+	noErr(t, err)
+	defer access.Close()
 	c := browserCommand(cfg, root, false)
+	c.ExtraFiles = []*os.File{access}
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := c.StdinPipe()
 	if err != nil {
@@ -462,5 +504,72 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 	cleanupRun(root, "fixture")
 	if _, err := os.Stat(captureDir); !os.IsNotExist(err) {
 		t.Fatalf("execution cleanup left the capture directory: %v", err)
+	}
+}
+
+// A managed production-only execution requires no local binding file and ignores
+// obsolete Access bindings. The credentials travel through a private descriptor.
+func TestProjectBrowserManagedProduction(t *testing.T) {
+	d := t.TempDir()
+	module := filepath.Join(d, "playwright.cjs")
+	if err := os.WriteFile(module, []byte(`
+const assert=require('node:assert/strict');
+const secret='invented-production-secret';
+assert.equal(process.argv.some(arg=>arg.includes(secret)),false);
+assert.equal(Object.values(process.env).some(value=>value.includes(secret)),false);
+module.exports={chromium:{}};
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLEET_BROWSER_BINDINGS", "")
+	t.Setenv("FLEET_PLAYWRIGHT_MODULE", module)
+	t.Setenv("FLEET_BROWSER_EXECUTABLE", module)
+	cfg, err := browserConfig(M{"projectId": "fleet"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := browserConfig(M{"projectId": "another"}, true); err == nil {
+		t.Fatal("managed production granted to another project")
+	}
+	pipe, err := browserPipe(M{"clientId": "invented-id", "clientSecret": "invented-production-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pipe.Close()
+	cmd := browserCommand(cfg, d, false)
+	cmd.ExtraFiles = []*os.File{pipe}
+	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}` + "\n")
+	output, err := cmd.Output()
+	if err != nil || !strings.Contains(string(output), "https://fleet.ufobe.com") || strings.Contains(string(output), "invented-") {
+		t.Fatal("managed browser did not advertise its scoped origin without credential output")
+	}
+}
+
+// One in-flight refresh preserves current evidence. A first or overdue probe
+// leaves eligibility and the unknown problem to the coordinator.
+func TestProjectBrowserProductionObservationFreshness(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		last         time.Time
+		ready        bool
+		detail       string
+		wantObserved bool
+	}{
+		{name: "first"},
+		{name: "refreshing confirmed identity", last: time.Now().Add(-browserReadinessInterval - time.Second), ready: true, wantObserved: true},
+		{name: "ungranted", last: time.Now(), wantObserved: true},
+		{name: "unready", last: time.Now(), detail: "test probe failed", wantObserved: true},
+		{name: "overdue", last: time.Now().Add(-browserReadinessInterval - outboxClient.Timeout - probeWait - time.Second), ready: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &executor{browserHealth: productionBrowserHealth{busy: true, last: tc.last, ready: tc.ready, detail: tc.detail}}
+			ready, problems := e.productionBrowserStatus()
+			if (ready != nil) != tc.wantObserved || (ready != nil && *ready != tc.ready) {
+				t.Fatal("unexpected production observation")
+			}
+			if got := len(problems) > 0; got != (tc.detail != "") {
+				t.Fatalf("unexpected reported problems: %v", problems)
+			}
+		})
 	}
 }

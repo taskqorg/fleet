@@ -121,7 +121,8 @@ type accountView struct {
 	NativeHome jsonValue `json:"nativeHome"`
 }
 
-func readiness(payload any, host, registry string, forbidden ...[]string) contract.Readiness {
+func (e *executor) readiness(payload any, registry string, forbidden ...[]string) contract.Readiness {
+	host := e.host
 	pp, err := contractOf[contract.ProjectPayload](payload)
 	project, perr := projectContext(pp.Project)
 	if err != nil || perr != nil {
@@ -311,11 +312,11 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 			failed := ""
 			var err error
 			if tool == "browser" {
-				err = browserReady(payload, home)
-			} else {
-				err = codingTool(tool, home)
-			}
-			if err != nil {
+				_, _, err = e.prepareBrowser(payload, home)
+				if err != nil {
+					failed = "coding-tool-unready: " + err.Error()
+				}
+			} else if err = codingTool(tool, home); err != nil {
 				failed = "coding-tool-unready"
 			}
 			checks = append(checks, check("tool:"+tool, name, failed))
