@@ -52,12 +52,19 @@ type executor struct {
 
 // inTx runs fn with every journal write of the executor inside one transaction.
 func (e *executor) inTx(fn func() error) error {
+	if e.ex != nil && e.ex != e.db {
+		return fn()
+	}
 	tx, err := e.db.Begin()
 	if err != nil {
 		return err
 	}
+	prev := e.ex
+	if prev == nil {
+		prev = e.db
+	}
 	e.ex = tx
-	defer func() { e.ex = e.db }()
+	defer func() { e.ex = prev }()
 	if err := fn(); err != nil {
 		tx.Rollback()
 		return err

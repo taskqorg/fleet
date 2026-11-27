@@ -166,3 +166,51 @@ func TestSelfExecTargetFromAndBaseEnv(t *testing.T) {
 		t.Fatal("FLEET_PLAYWRIGHT_MODULE remained set after restore")
 	}
 }
+
+func TestWorkerSteerResultDoesNotDeadlock(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	db, err := openJournal(filepath.Join(root, "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	os.MkdirAll(filepath.Join(root, "spool"), 0o755)
+	e := &executor{db: db, ex: db, root: root, host: "fake", live: map[string]*live{}, sessions: filepath.Join(root, "sessions"), harnessCache: map[string]M{}}
+
+	runBody := enc(M{"id": "run-1", "executionId": "exec-1", "sessionId": "sess-1", "kind": "script", "payload": M{"command": "true"}})
+	steerBody := enc(M{"id": "steer-1", "executionId": "exec-1", "sessionId": "sess-1", "kind": "steer", "payload": M{"message": "ping"}})
+	for id, b := range map[string]string{"run-1": runBody, "steer-1": steerBody} {
+		if _, err := db.Exec("INSERT INTO commands(id,body,terminal) VALUES(?,?,0)", id, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("INSERT INTO launches(execution,command,session) VALUES(?,?,?)", "exec-1", runBody, "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+	l := &live{command: commandOf(runBody)}
+	e.live["exec-1"] = l
+
+	done := make(chan error, 1)
+	go func() {
+		done <- e.applyWorkerRecord("exec-1", l, workerRecord{Seq: 1, Kind: "steer_result", CommandId: "steer-1", Ok: true})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("applyWorkerRecord(steer_result) failed: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("applyWorkerRecord(steer_result) deadlocked on single-connection SQLite journal")
+	}
+	if got := lastReceipt(e, "steer-1"); got != "completed" {
+		t.Fatalf("steer receipt = %q, want completed", got)
+	}
+	var term int
+	if err := db.QueryRow("SELECT terminal FROM commands WHERE id='steer-1'").Scan(&term); err != nil || term != 1 {
+		t.Fatalf("commands.terminal = %d (err=%v), want 1", term, err)
+	}
+	var seq int
+	if err := db.QueryRow("SELECT worker_seq FROM launches WHERE execution='exec-1'").Scan(&seq); err != nil || seq != 1 {
+		t.Fatalf("launches.worker_seq = %d (err=%v), want 1", seq, err)
+	}
+}
