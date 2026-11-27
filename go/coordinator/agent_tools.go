@@ -933,7 +933,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 			return nil, err
 		}
 		a["projectId"] = jsonBytes(p)
-		if !jsonGiven(a["sourceExecutionId"]) && name != "publishing_capabilities" && name != "publishing_status" {
+		if !jsonGiven(a["sourceExecutionId"]) && name != "publishing_capabilities" && name != "publishing_status" && name != "publishing_ci_recovery" {
 			a["sourceExecutionId"] = jsonBytes(executionID)
 		}
 		if sid, ok := jsonText(a["sourceExecutionId"]); ok && sid != "" && sid != executionID {

@@ -34,10 +34,11 @@ type publishingProjectSettings struct {
 		BranchPrefix string `json:"branchPrefix"`
 	} `json:"worktree"`
 	Integration *struct {
-		Mode        string `json:"mode"`
-		AutoMerge   bool   `json:"autoMerge"`
-		AutoAccept  *bool  `json:"autoAccept"`
-		MergeMethod string `json:"mergeMethod"`
+		Mode        string                            `json:"mode"`
+		AutoMerge   bool                              `json:"autoMerge"`
+		AutoAccept  *bool                             `json:"autoAccept"`
+		MergeMethod string                            `json:"mergeMethod"`
+		CiRerun     *contract.PublishingCIRerunPolicy `json:"ciRerun"`
 	} `json:"integration"`
 }
 
@@ -320,6 +321,8 @@ func buildProjectPublishingCapabilities(q *Request, projectID, repoFilter string
 			return nil, err
 		}
 		eligible := []string{}
+		var ciHosts []string
+		ciPolicy := publishingCIPolicy(s, r.ID, ref)
 		restricted := envHosts[r.ID]
 		for _, h := range online {
 			if len(restricted) > 0 && !restricted[h.id] {
@@ -330,6 +333,9 @@ func buildProjectPublishingCapabilities(q *Request, projectID, repoFilter string
 			}
 			if hostCapsHaveRepo(h.caps, ref) {
 				eligible = append(eligible, h.id)
+				if ciPolicy != nil && publishingCIHost(h, ref, r.ID, s.Environments) {
+					ciHosts = append(ciHosts, h.id)
+				}
 			}
 		}
 		supported := forgeEnabled && len(eligible) > 0
@@ -344,6 +350,9 @@ func buildProjectPublishingCapabilities(q *Request, projectID, repoFilter string
 			reason = ptr("project execution.forge is disabled")
 		} else {
 			reason = ptr("no online eligible host reports publishing capability for " + ref.Host + "/" + ref.Slug)
+		}
+		if len(ciHosts) != 0 {
+			actions = append(actions, "rerun_failed")
 		}
 		defBranch := r.DefaultBranch
 		if defBranch == "" {
@@ -360,6 +369,8 @@ func buildProjectPublishingCapabilities(q *Request, projectID, repoFilter string
 			GitConnection:           optStr(r.Connection),
 			ForgeEnabled:            forgeEnabled,
 			AutoMergeGranted:        autoMerge,
+			CiRerunPolicy:           ciPolicy,
+			CiRerunHosts:            ciHosts,
 			MergeMethod:             mergeMethod,
 			ProviderFactsConfigured: factsReady,
 			PublicationSupported:    supported,
@@ -1101,8 +1112,14 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 		AutoMerge:         autoMerge,
 	}
 
+	cmdID, err = queuePublishingCommand(q, targetHost, payload)
+	return projectID, targetHost, cmdID, err
+}
+
+// queuePublishingCommand creates a host job and its typed command in the caller's transaction.
+func queuePublishingCommand(q *Request, targetHost string, payload contract.PublishingCommandPayload) (string, error) {
 	eid := newID() // a host job: no session
-	cmdID = newID()
+	cmdID := newID()
 	if err := executionWrite(q, struct {
 		ID          string `json:"id"`
 		ExecutionID string `json:"executionId"`
@@ -1111,21 +1128,21 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 		State       string `json:"state"`
 		CreatedAt   int64  `json:"createdAt"`
 		Actor       string `json:"actor"`
-	}{ID: eid, ExecutionID: eid, HostID: targetHost, ProjectID: projectID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
-		return "", "", "", err
+	}{ID: eid, ExecutionID: eid, HostID: targetHost, ProjectID: payload.ProjectId, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
+		return "", err
 	}
 	if err := commandPut(q, &agentCommand{
 		ID:          cmdID,
 		ExecutionID: eid,
 		HostID:      targetHost,
-		ProjectID:   projectID,
+		ProjectID:   payload.ProjectId,
 		Kind:        string(contract.CommandKindPublishing),
 		Status:      "pending",
 		Payload:     jsonBytes(payload),
 	}); err != nil {
-		return "", "", "", err
+		return "", err
 	}
-	return projectID, targetHost, cmdID, nil
+	return cmdID, nil
 }
 
 func runPublishingMutation[Rep any](q *Request, p publishingMutationParams) (Rep, error) {

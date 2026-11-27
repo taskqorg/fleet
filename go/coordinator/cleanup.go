@@ -307,6 +307,12 @@ var referenceMap = []objectRef{
 	{table: "upload", column: "id", mode: refNone},
 	{table: "upload", column: "project_id", kind: "project", mode: refOwn},
 	{table: "upload", column: "artifact_id", kind: "artifact", mode: refNone}, // the artifact a finished upload stored
+	{table: "publishing_ci_recovery", column: "id", mode: refNone},
+	{table: "publishing_ci_request", column: "id", mode: refNone},
+	{table: "publishing_ci_recovery", column: "project_id", kind: "project", mode: refOwn},
+	{table: "publishing_ci_recovery", column: "source_execution_id", mode: refNone},
+	{table: "publishing_ci_recovery", column: "command_id", mode: refNone},
+	{table: "publishing_ci_request", column: "project_id", kind: "project", mode: refOwn},
 	{table: "delivery_state", column: "id", mode: refNone},
 	{table: "delivery_state", column: "project_id", kind: "project", mode: refOwn},
 	{table: "delivery_sample", column: "project_id", kind: "project", mode: refOwn},
@@ -361,7 +367,7 @@ var referenceMap = []objectRef{
 
 // deliveryTables: the delivery tables (migration 82), each with a project and a tombstone.
 var deliveryTables = []string{"delivery_state", "delivery_sample", "delivery_pr", "delivery_run", "delivery_run_read", "delivery_release",
-	"delivery_baseline", "delivery_check", "delivery_settings", "delivery_history_state", "delivery_ui_seen"}
+	"delivery_baseline", "delivery_check", "delivery_settings", "delivery_history_state", "delivery_ui_seen", "publishing_ci_request", "publishing_ci_recovery"}
 
 // objectTables: the tables whose rows are objects of a kind; the cascade of a root is closed over their refOwn columns.
 var objectTables = []struct{ kind, table, filter string }{

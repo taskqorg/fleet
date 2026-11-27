@@ -1097,6 +1097,37 @@ CREATE TABLE project_write_request (
   "project_id" text NOT NULL,
   "result" jsonb NOT NULL
 );
+CREATE TABLE publishing_ci_recovery (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "round_key" text NOT NULL,
+  "released" boolean NOT NULL,
+  "repo" text NOT NULL,
+  "number" bigint NOT NULL,
+  "head_sha" text NOT NULL,
+  "run_number" bigint NOT NULL,
+  "original_attempt" bigint NOT NULL,
+  "source_execution_id" text NOT NULL,
+  "command_id" text,
+  "command_until" timestamp with time zone,
+  "state" text NOT NULL,
+  "dispatched" boolean NOT NULL,
+  "handoff" text,
+  "payload" jsonb NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE publishing_ci_request (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "recovery_id" text NOT NULL,
+  "payload" jsonb NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE purge_task (
   "id" text NOT NULL,
   "store_id" text,

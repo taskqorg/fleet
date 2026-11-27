@@ -1562,6 +1562,39 @@ type ProjectWriteRequest struct {
 	Result         []byte
 }
 
+type PublishingCiRecovery struct {
+	ID                string
+	ProjectID         string
+	RoundKey          string
+	Released          bool
+	Repo              string
+	Number            int64
+	HeadSha           string
+	RunNumber         int64
+	OriginalAttempt   int64
+	SourceExecutionID string
+	CommandID         *string
+	CommandUntil      *time.Time
+	State             string
+	Dispatched        bool
+	Handoff           *string
+	Payload           []byte
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	Attempts          int32
+	NextAttemptAt     time.Time
+	LastError         *string
+	TombstonedAt      *time.Time
+}
+
+type PublishingCiRequest struct {
+	ID           string
+	ProjectID    string
+	RecoveryID   string
+	Payload      []byte
+	TombstonedAt *time.Time
+}
+
 type PurgeTask struct {
 	ID        string
 	StoreID   *string

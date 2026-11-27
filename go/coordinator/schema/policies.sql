@@ -427,6 +427,20 @@ CREATE POLICY live ON project_recommendation AS RESTRICTIVE FOR SELECT TO public
 DROP POLICY IF EXISTS project_scope ON project_recommendation;
 CREATE POLICY project_scope ON project_recommendation FOR ALL TO public USING (fleet_visible(project_id));
 
+-- publishing_ci_recovery
+ALTER TABLE publishing_ci_recovery ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON publishing_ci_recovery;
+CREATE POLICY live ON publishing_ci_recovery AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON publishing_ci_recovery;
+CREATE POLICY project_scope ON publishing_ci_recovery FOR ALL TO public USING (fleet_visible(project_id));
+
+-- publishing_ci_request
+ALTER TABLE publishing_ci_request ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON publishing_ci_request;
+CREATE POLICY live ON publishing_ci_request AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON publishing_ci_request;
+CREATE POLICY project_scope ON publishing_ci_request FOR ALL TO public USING (fleet_visible(project_id));
+
 -- purge_task
 ALTER TABLE purge_task ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON purge_task;

@@ -48,6 +48,17 @@ func (v PublishingCIAnnotationStatus) Valid() bool {
 	return false
 }
 
+type PublishingCIFailedJob struct {
+	HeadSha string `json:"headSha"`
+	Id      int64  `json:"id"`
+	Name    string `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCIFailedJob) Validate() error {
+	return nil
+}
+
 type PublishingCIFailedStep struct {
 	Conclusion string `json:"conclusion"`
 	Name       string `json:"name"`
@@ -136,6 +147,55 @@ func (v *PublishingCILogsRequest) Validate() error {
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*PublishingCILogsRequest) Closed() bool { return true }
 
+// PublishingCIObservation: Only classified provider facts, without response bodies, logs or credential-bearing URLs.
+type PublishingCIObservation struct {
+	Attempt      *int64                  `json:"attempt,omitempty"`
+	FailedJobs   []PublishingCIFailedJob `json:"failedJobs,omitempty"`
+	OriginalJobs []PublishingCIFailedJob `json:"originalJobs,omitempty"`
+	Reason       string                  `json:"reason"`
+	RetryAt      *int64                  `json:"retryAt,omitempty"`
+	RunId        *int64                  `json:"runId,omitempty"`
+	State        PublishingCIState       `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCIObservation) Validate() error {
+	for i := range v.FailedJobs {
+		if err := Check(&v.FailedJobs[i], "failedJobs"); err != nil {
+			return err
+		}
+	}
+	for i := range v.OriginalJobs {
+		if err := Check(&v.OriginalJobs[i], "originalJobs"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// PublishingCIRerunPolicy: Approval for one exact GitHub workflow file revision in one repository.
+type PublishingCIRerunPolicy struct {
+	Profiles        []string `json:"profiles"`
+	RepoId          string   `json:"repoId"`
+	RequiredJobs    []string `json:"requiredJobs"`
+	Workflow        string   `json:"workflow"`
+	WorkflowBlobSha string   `json:"workflowBlobSha"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCIRerunPolicy) Validate() error {
+	if v.Profiles == nil {
+		return Missing("profiles")
+	}
+	if v.RequiredJobs == nil {
+		return Missing("requiredJobs")
+	}
+	return nil
+}
+
 type PublishingCIScanStatus string
 
 const (
@@ -156,6 +216,31 @@ var PublishingCIScanStatusValues = []PublishingCIScanStatus{PublishingCIScanStat
 // Valid: v is one of the schema's values.
 func (v PublishingCIScanStatus) Valid() bool {
 	for _, x := range PublishingCIScanStatusValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PublishingCIState string
+
+const (
+	PublishingCIStateRefused         PublishingCIState = "refused"
+	PublishingCIStateRateLimited     PublishingCIState = "rate_limited"
+	PublishingCIStateDispatchUnknown PublishingCIState = "dispatch_unknown"
+	PublishingCIStateDispatched      PublishingCIState = "dispatched"
+	PublishingCIStateObserving       PublishingCIState = "observing"
+	PublishingCIStatePassed          PublishingCIState = "passed"
+	PublishingCIStateHandoff         PublishingCIState = "handoff"
+)
+
+// PublishingCIStateValues lists every PublishingCIState in schema order.
+var PublishingCIStateValues = []PublishingCIState{PublishingCIStateRefused, PublishingCIStateRateLimited, PublishingCIStateDispatchUnknown, PublishingCIStateDispatched, PublishingCIStateObserving, PublishingCIStatePassed, PublishingCIStateHandoff}
+
+// Valid: v is one of the schema's values.
+func (v PublishingCIState) Valid() bool {
+	for _, x := range PublishingCIStateValues {
 		if v == x {
 			return true
 		}
@@ -297,26 +382,33 @@ func (v *PublishingCapabilitiesRequest) Validate() error {
 }
 
 type PublishingCapability struct {
-	AutoMergeGranted        bool               `json:"autoMergeGranted"`
-	DefaultBranch           string             `json:"defaultBranch"`
-	EligibleHosts           []string           `json:"eligibleHosts"`
-	ForgeEnabled            bool               `json:"forgeEnabled"`
-	GitConnection           *string            `json:"gitConnection,omitempty"`
-	Host                    string             `json:"host"`
-	MergeMethod             string             `json:"mergeMethod"`
-	ProjectId               string             `json:"projectId"`
-	Provider                PublishingProvider `json:"provider"`
-	ProviderFactsConfigured bool               `json:"providerFactsConfigured"`
-	PublicationSupported    bool               `json:"publicationSupported"`
-	Reason                  *string            `json:"reason,omitempty"`
-	Remote                  *string            `json:"remote,omitempty"`
-	Repo                    string             `json:"repo"`
-	RepoId                  string             `json:"repoId"`
-	SupportedActions        []string           `json:"supportedActions"`
+	AutoMergeGranted        bool                     `json:"autoMergeGranted"`
+	CiRerunHosts            []string                 `json:"ciRerunHosts,omitempty"`
+	CiRerunPolicy           *PublishingCIRerunPolicy `json:"ciRerunPolicy,omitempty"`
+	DefaultBranch           string                   `json:"defaultBranch"`
+	EligibleHosts           []string                 `json:"eligibleHosts"`
+	ForgeEnabled            bool                     `json:"forgeEnabled"`
+	GitConnection           *string                  `json:"gitConnection,omitempty"`
+	Host                    string                   `json:"host"`
+	MergeMethod             string                   `json:"mergeMethod"`
+	ProjectId               string                   `json:"projectId"`
+	Provider                PublishingProvider       `json:"provider"`
+	ProviderFactsConfigured bool                     `json:"providerFactsConfigured"`
+	PublicationSupported    bool                     `json:"publicationSupported"`
+	Reason                  *string                  `json:"reason,omitempty"`
+	Remote                  *string                  `json:"remote,omitempty"`
+	Repo                    string                   `json:"repo"`
+	RepoId                  string                   `json:"repoId"`
+	SupportedActions        []string                 `json:"supportedActions"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PublishingCapability) Validate() error {
+	if v.CiRerunPolicy != nil {
+		if err := Check(v.CiRerunPolicy, "ciRerunPolicy"); err != nil {
+			return err
+		}
+	}
 	if v.EligibleHosts == nil {
 		return Missing("eligibleHosts")
 	}
@@ -326,6 +418,33 @@ func (v *PublishingCapability) Validate() error {
 	if v.SupportedActions == nil {
 		return Missing("supportedActions")
 	}
+	return nil
+}
+
+type PublishingCiRecoveryReply struct {
+	Recoveries []PublishingRerunFailedReply `json:"recoveries"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCiRecoveryReply) Validate() error {
+	if v.Recoveries == nil {
+		return Missing("recoveries")
+	}
+	for i := range v.Recoveries {
+		if err := Check(&v.Recoveries[i], "recoveries"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PublishingCiRecoveryRequest struct {
+	ExpectedHeadSha *string `json:"expectedHeadSha,omitempty"`
+	ProjectId       string  `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCiRecoveryRequest) Validate() error {
 	return nil
 }
 
@@ -609,6 +728,49 @@ func (v *PublishingRequestMergeRequest) Validate() error {
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*PublishingRequestMergeRequest) Closed() bool { return true }
 
+type PublishingRerunFailedReply struct {
+	Attempt              int64                    `json:"attempt"`
+	DispatchAcknowledged bool                     `json:"dispatchAcknowledged"`
+	Evidence             *PublishingCIObservation `json:"evidence,omitempty"`
+	Handoff              *string                  `json:"handoff,omitempty"`
+	HeadSha              string                   `json:"headSha"`
+	Id                   string                   `json:"id"`
+	Number               int64                    `json:"number"`
+	ProjectId            string                   `json:"projectId"`
+	Repo                 string                   `json:"repo"`
+	RequestedAt          string                   `json:"requestedAt"`
+	RunId                int64                    `json:"runId"`
+	SourceExecutionId    string                   `json:"sourceExecutionId"`
+	State                string                   `json:"state"`
+	UpdatedAt            string                   `json:"updatedAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingRerunFailedReply) Validate() error {
+	if v.Evidence != nil {
+		if err := Check(v.Evidence, "evidence"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PublishingRerunFailedRequest struct {
+	Attempt           int64   `json:"attempt"`
+	ExpectedHeadSha   string  `json:"expectedHeadSha"`
+	Number            int64   `json:"number"`
+	ProjectId         *string `json:"projectId,omitempty"`
+	Reason            string  `json:"reason"`
+	RequestId         string  `json:"requestId"`
+	RunId             int64   `json:"runId"`
+	SourceExecutionId *string `json:"sourceExecutionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingRerunFailedRequest) Validate() error {
+	return nil
+}
+
 type PublishingStatusReply struct {
 	Capabilities []PublishingCapability `json:"capabilities"`
 	Error        *string                `json:"error,omitempty"`
@@ -697,10 +859,12 @@ func init() {
 	for n, o := range map[string]Operation{
 		"publishing_cancel_merge_request": {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Cancel an active auto-merge request, merge-when-pipeline-succeeds flag, or merge queue entry idempotently, fenced by optional expectedHeadSha.", InputSchema: json.RawMessage("{\"properties\":{\"branch\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"repo\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_capabilities":         {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Inspect project publishing capabilities per bound repository: detected provider (github or gitlab), host, repository slug, branch/integration policy, eligible hosts, provider facts readiness and publication support.", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"publishing_ci_recovery":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Read durable PR-head CI recovery records for a visible project, without invoking the provider.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"expectedHeadSha\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"publishing_mark_ready":           {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Mark a draft pull request or merge request ready for review idempotently, fenced by optional expectedHeadSha.", InputSchema: json.RawMessage("{\"properties\":{\"branch\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"repo\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_publish_draft":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Push the bound execution branch and open or reuse a draft pull request (GitHub) or draft merge request (GitLab). Enforces repository, branch, host and profile authority plus optional expectedHeadSha fencing.", InputSchema: json.RawMessage("{\"properties\":{\"body\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"title\",\"body\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_record_code_review":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Verify stored Fleet review evidence referencing expectedHeadSha, write an audit row, and post and read back the code-review commit status on the provider (GitHub or GitLab).", InputSchema: json.RawMessage("{\"properties\":{\"artifactId\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"expectedHeadSha\",\"artifactId\",\"description\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_request_merge":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Enable provider auto-merge / merge-when-pipeline-succeeds (or enqueue in merge queue) using project mergeMethod and autoMerge authority without admin bypass, fenced by optional expectedHeadSha.", InputSchema: json.RawMessage("{\"properties\":{\"branch\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"mergeMethod\":{\"enum\":[\"squash\",\"merge\",\"rebase\"],\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"repo\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"publishing_rerun_failed":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Request one policy-granted retry of verified failed CI on the source execution's current pull request head. Returns the durable recovery record.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"attempt\":{\"minimum\":1,\"type\":\"integer\"},\"expectedHeadSha\":{\"type\":\"string\"},\"number\":{\"minimum\":1,\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"minimum\":1,\"type\":\"integer\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"number\",\"expectedHeadSha\",\"runId\",\"attempt\",\"reason\"],\"type\":\"object\"}")},
 		"publishing_status":               {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Read unified publishing status across visible projects (GitHub pull requests and GitLab merge requests, including self-hosted GitLab): lifecycle stage, checks, review state, merge readiness, releases, host landing and project capabilities.", Changes: []string{"delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"branch\":{\"type\":\"string\"},\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"executionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"repoId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"$comment\":\"only the pull requests from branches of this task's sessions\",\"type\":\"string\"}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

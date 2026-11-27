@@ -281,8 +281,25 @@ var forgeTools = []any{
 	},
 }
 
+var ciRerunTool = M{
+	"name":        "rerun_failed",
+	"description": "Request one policy-granted retry for a verified transient PR-head CI failure. Keep the source execution active through dispatch and use ci_recovery to follow the durable record.",
+	"inputSchema": M{"type": "object", "additionalProperties": false,
+		"required": []string{"requestId", "number", "expectedHeadSha", "runId", "attempt", "reason"},
+		"properties": M{"requestId": M{"type": "string"}, "number": M{"type": "integer"}, "expectedHeadSha": M{"type": "string"},
+			"runId": M{"type": "integer"}, "attempt": M{"type": "integer"}, "reason": M{"type": "string"}}},
+	"annotations": M{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true},
+}
+
+var ciRecoveryTool = M{
+	"name":        "ci_recovery",
+	"description": "Read this project's durable PR-head rerun ledger and worker handoff evidence. Does not dispatch CI.",
+	"inputSchema": M{"type": "object", "additionalProperties": false, "properties": M{"expectedHeadSha": M{"type": "string"}}},
+	"annotations": M{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true},
+}
+
 var publishingTools = []any{
-	ciLogsTool,
+	ciLogsTool, ciRerunTool, ciRecoveryTool,
 	M{
 		"name":        "capabilities",
 		"description": "Read the bound repository publishing capabilities: provider (github or gitlab), host, repo, branch, baseBranch, mergeMethod, autoMerge, readOnly, and supported actions.",
@@ -1844,6 +1861,9 @@ func (e *executor) runPublishingCommand(cmd contract.Command, execution, cid str
 		return e.finish(cmd, "failed", "")
 	}
 	p := cmd.Publishing.Payload
+	if p.Action == "rerun_failed" && p.CiRecovery != nil {
+		return e.runCIRerunCommand(cmd, execution, cid)
+	}
 	store := os.Getenv("FLEET_FORGE_CONFIG_DIR")
 	var num int64
 	if p.Number != nil {

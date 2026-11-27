@@ -51,6 +51,10 @@ func rawText(raw json.RawMessage) string {
 	return s
 }
 
+func projectCIRerunSetting(settings json.RawMessage) json.RawMessage {
+	return recOf(recOf(settings)["integration"])["ciRerun"]
+}
+
 // projectWrite: a project_create or project_update; its reply JSON (a retry replays the recorded one).
 func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 	id := w.id
@@ -105,6 +109,16 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 			return nil, fail(409, "Project id belongs to an archived project")
 		}
 		return nil, fail(404, "Unknown project")
+	}
+	if q.agent != "" || !fullAccess(q.person) {
+		var previous json.RawMessage
+		if head != nil {
+			previous = projectCIRerunSetting(recOf(head.Content)["settings"])
+		}
+		next := projectCIRerunSetting(bundle["settings"])
+		if js(jsonValue(previous)) != js(jsonValue(next)) {
+			return nil, fail(403, "Only an owner-authorized person may change the CI rerun grant")
+		}
 	}
 	if create {
 		if head != nil {
