@@ -420,7 +420,7 @@
   },
   {
     "name": "artifact_save",
-    "description": "Store a file of your working area, of your temporary directory $TMPDIR or of your input folder $FLEET_INPUT_DIR (absolute path; a files_get download lands there), as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
+    "description": "Store a regular file with a link count of one as an artifact of this execution now. Pass a path relative to the working area (worktree), or an expanded absolute path under that area, the run's $TMPDIR or $FLEET_INPUT_DIR. Symlinks below these roots and .. path components are refused. If an ordinary /tmp path is refused, copy the file into the run's $TMPDIR and pass the resulting absolute path. A files_get download path works as returned. required=true makes the run wait for storage. FLEET_OUTPUT_DIR is collected when the run ends.",
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": false,
