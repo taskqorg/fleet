@@ -94,7 +94,7 @@ Manual acceptance is not required for every task. Project rules determine which 
 
 Task acceptance selects a specific eligible result. Automatic acceptance of an agent result requires confirmed successful execution and a successful work report.
 
-An exact task-linked delivery can supply a result independently when its required delivery stage, live check and artifacts are verified and there is no contradictory report or pending work. Human acceptance policy applies to both result sources.
+An exact task-linked delivery can supply a result independently when its required delivery stage, live check and artifacts are verified and there is no contradictory report or pending work. [Fleet release evidence](docs/designs/fleet-host-updates.md#delivery-evidence) defines how native and UI releases qualify. Human acceptance policy applies to both result sources.
 
 For an ordinary agent result, an explicit acceptance request can also offer a confirmed successful execution whose work report was not filed, unless incomplete work was reported.
 

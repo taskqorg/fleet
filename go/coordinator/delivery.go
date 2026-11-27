@@ -3,7 +3,7 @@
 // scripts/delivery-latency.sh and scripts/watch-landings.sh: PR CI (pull_request runs), merge queue (merge_group runs on
 // gh-readonly-queue/<base>/pr-<n>-<sha>), merged, release (the first v* or, in the fleet repository, UI-only release
 // whose target commit contains the merge; main is linear behind the merge queue, so "contains" is "merged no later than
-// the release's target"), installed on hosts (every host seen in the last hour runs that version or newer). A UI-only
+// the release's target"), installed on hosts (every live host runs the required executor part under release pacing). A UI-only
 // release (ui-<backend>-v<UI version>, release.yml) ships the web app alone: hosts install nothing, so it is installed
 // when the site serves that UI or newer. Fleet releases and installs only the fleet repository: in every other one (GitLab
 // repositories, external projects' GitHub repositories) merged is the last stage, listed for the day after the merge.
@@ -250,7 +250,6 @@ func deliveryPass(ctx context.Context, a *App) error {
 	byKey := map[string]*target{}
 	keyedRepo := map[string]bool{}
 	keyed := false // any repository read with a key
-	var versions []string
 	var rollout taskDeliveryRollout
 	var recordedUI []ghRelease
 	err := a.store.Read(preflightCtx, nil, func(q *Request) error {
@@ -311,9 +310,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 				targets = append(targets, key)
 			}
 		}
-		versions, err = liveHostVersions(q)
-		if err != nil || byKey[strings.ToLower(githubPublicRepo)] == nil {
-			return err
+		if byKey[strings.ToLower(githubPublicRepo)] == nil {
+			return nil
 		}
 		rollout, err = observeFleetTaskRollout(q, ui)
 		return err
@@ -463,7 +461,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			pinsViewPass(pinsCtx, a, g.open, g.closed)
 			pins.End(pinsErr)
 		}
-		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
+		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, rollout, now)
 		if strings.EqualFold(name, githubPublicRepo) {
 			if err := qualifyFleetTaskDeliveries(repoCtx, a, t.projects, merged, rollout); err != nil {
 				log.Printf("delivery %s task qualification: %v", name, err)
@@ -596,14 +594,9 @@ func snapshotDeliveredPRs() []deliveryMergedPR {
 	return out
 }
 
-// deliveryStages: each pull request's current stage. landing counts the pull requests a worker waits on (auto-merge on
-// or in the merge queue). versions: the hosts' executor versions; ui: the UI version the site serves (uiServed).
-func deliveryStages(project, repo string, g ghRepo, versions []string, ui string, now time.Time) ([]contract.DeliveryItem, int64) {
-	its, l, _ := deliveryStagesWithMerged(project, repo, g, versions, ui, now)
-	return its, l
-}
-
-func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string, ui string, now time.Time) ([]contract.DeliveryItem, int64, []deliveryMergedPR) {
+// deliveryStagesWithMerged classifies the pull requests using the observed Fleet rollout.
+// landing counts the pull requests with auto-merge on or in the merge queue.
+func deliveryStagesWithMerged(project, repo string, g ghRepo, rollout taskDeliveryRollout, now time.Time) ([]contract.DeliveryItem, int64, []deliveryMergedPR) {
 	item := func(p ghPull, s contract.DeliveryStage, since string) contract.DeliveryItem {
 		prov := string(contract.PublishingProviderGithub)
 		kind := string(contract.PublishingKindPullRequest)
@@ -750,8 +743,7 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 		}
 	}
 	type rel struct {
-		tag, version, covers, published, target string
-		uiOnly                                  bool
+		tag, covers, published, target string
 	}
 	var rels []rel
 	for _, r := range g.releases {
@@ -763,7 +755,7 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 		if c == "" {
 			continue // the target's merge time is unknown: guessing it could claim merges the release lacks
 		}
-		rels = append(rels, rel{r.Tag, releaseVersionOf(r.Tag), c, r.Published, r.Target, uiOnly})
+		rels = append(rels, rel{r.Tag, c, r.Published, r.Target})
 	}
 	sort.Slice(rels, func(i, j int) bool { return rels[i].published < rels[j].published })
 	day := now.Add(-24 * time.Hour).Format(time.RFC3339)
@@ -805,30 +797,29 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 				break
 			}
 		}
-		switch {
-		case r == nil:
+		if r == nil {
 			dm.Stage = string(contract.DeliveryStageReleasing)
-		case r.uiOnly && versionLess(ui, r.version), !r.uiOnly && !installed(r.version, versions):
-			dm.Stage = string(contract.DeliveryStageInstalling)
-			dm.Release = r.tag
-			dm.ReleaseTarget = r.target
+			out = append(out, item(p, contract.DeliveryStageReleasing, m))
+			merged = append(merged, dm)
+			continue
+		}
+		dm.Release, dm.ReleaseTarget = r.tag, r.target
+		dm.Stage = string(contract.DeliveryStageInstalling)
+		if len(rollout.installation(r.tag)) != 0 {
+			dm.Stage = string(contract.DeliveryStageInstalled)
+			dm.DeliveredAt = r.published
+			dm.Delivered = true
+		}
+
+		// Keep the display's live-host scope separate from the durable task's required observations.
+		if !rollout.displayedInstallation(r.tag) {
 			it := item(p, contract.DeliveryStageInstalling, r.published)
 			it.Release = &r.tag
 			out = append(out, it)
-		default:
-			dm.Stage = string(contract.DeliveryStageInstalled)
-			dm.Release = r.tag
-			dm.ReleaseTarget = r.target
-			dm.DeliveredAt = r.published
-			dm.Delivered = true
-			if m >= day && m >= rels[0].covers {
-				it := item(p, contract.DeliveryStageInstalled, r.published)
-				it.Release = &r.tag
-				out = append(out, it)
-			}
-		}
-		if dm.Stage == string(contract.DeliveryStageReleasing) {
-			out = append(out, item(p, contract.DeliveryStageReleasing, m))
+		} else if m >= day && m >= rels[0].covers {
+			it := item(p, contract.DeliveryStageInstalled, r.published)
+			it.Release = &r.tag
+			out = append(out, it)
 		}
 		merged = append(merged, dm)
 	}
@@ -853,8 +844,7 @@ func withReleases(read, recorded []ghRelease) []ghRelease {
 	return out
 }
 
-// liveHostVersions: the executor version of every host seen within the hour that reports one, the hosts a release
-// must reach to be installed (deliveryPass, the release card).
+// liveHostVersions returns the reported executor versions from the last hour for the release card.
 func liveHostVersions(q *Request) ([]string, error) {
 	obs, err := deliveryHostsSeen(q)
 	versions := []string{}

@@ -219,6 +219,15 @@ Once offered, the release installs as before: the executor drains, `fleet-update
 * `version-behind` is raised only when the host is older than `previous` and also older than `changedIn`: a host that skipped web and coordinator releases is not behind.
 * The landing watcher (`scripts/watch-landing.sh`) counts a host whose pacing state is `current` as landed: the release does not change it. A `deferred` host is still waited for, so a worker whose live check needs its executor change on every host now labels the pull request `release:now`.
 
+### Delivery evidence
+
+For a native release, the required executor version defaults to the release version. The healthy running coordinator's matching manifest can establish a lower requirement when the target lies between its `executor.changedIn` and the running coordinator version, inclusive. The lower requirement is `changedIn`. A missing, unmatched or older manifest retains the default wherever it cannot establish equivalence.
+
+- Delivery status and the full-access release card count executor versions from the last hour against the required version. At least one live version must be known and every counted host must meet the requirement for the release to show as installed.
+- Durable task proof requires the running coordinator's own healthy marker, its version at or above the target, and at least one observation of a configured executor. Removed hosts and executors with auto-update off or actively held are excluded from the required set. An expired hold returns the executor to that set. A stale or unknown required observation leaves proof unconfirmed. An eligible executor below the requirement still has to update. The selected release's commit must cover the pull request merge.
+- Retained proof records observed versions and any lower executor requirement used. A confirmed downgrade below a previously proven target's requirement invalidates the rollout proof. The full release version remains the coordinator and site requirement, and it applies to retained targets without a recorded lower requirement. Fleet retains prior proof when new observations are missing or unknown.
+- A UI-only release uses the UI version served by the site. [Task completion and human acceptance](../../fleet.md#work-management) apply independently of rollout proof.
+
 ### Compatibility
 
 * `utcOffsetMinutes` is an optional poll field; `pacing` an added `hosts_list` field. An older executor sends no offset (UTC window) and ignores nothing new.

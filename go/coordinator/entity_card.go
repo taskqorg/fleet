@@ -557,9 +557,9 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 			fact("Opened", contract.EntityFactTypeTime, x.Opened), fact("Merged", contract.EntityFactTypeTime, x.Merged))}, nil
 }
 
-// cardRelease: a release tag the delivery pass or history knows, or that a host or the site runs; installed as the
-// delivery pass decides it (delivery.go): every host seen within the hour that reports a version runs it or newer; a
-// UI-only release (ui-<backend>-v<UI>) installs on no host and is installed once the site serves that UI or newer.
+// cardRelease describes a release known to the delivery pass, history, a host or the site. For full access it
+// counts hosts seen in the last hour using the same executor floor as the delivery pass. A UI-only release
+// (ui-<backend>-v<UI>) is installed once the site serves that UI or newer.
 func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	tag := strings.TrimSpace(id)
 	if !deliveryReleaseTag(tag) || tag == "v" {
@@ -580,22 +580,22 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	if rec != nil {
 		_ = json.Unmarshal(*rec, &history)
 	}
-	version, known := releaseVersionOf(tag), prs > 0 || rec != nil
+	releaseVersion, known := releaseVersionOf(tag), prs > 0 || rec != nil
 	path := "/delivery?release=" + url.QueryEscape(tag)
 	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), State: ptr("installing"), Path: ptr(path)}
 	if uiOnlyRelease(tag) {
 		on := uiServed()
-		if !known && (on != version || !fullAccess(q.person)) {
+		if !known && (on != releaseVersion || !fullAccess(q.person)) {
 			return nil, nil
 		}
-		c.Title, c.Facts = "UI release "+version, facts(fact("Hosts", contract.EntityFactTypeText, "install nothing: the web app only"), fact("Site serves", contract.EntityFactTypeCode, on),
+		c.Title, c.Facts = "UI release "+releaseVersion, facts(fact("Hosts", contract.EntityFactTypeText, "install nothing: the web app only"), fact("Site serves", contract.EntityFactTypeCode, on),
 			fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
-		if on != "" && !versionLess(on, version) {
+		if on != "" && !versionLess(on, releaseVersion) {
 			c.State = ptr("installed")
 		}
 		return c, nil
 	}
-	c.Title = "Release " + version
+	c.Title = "Release " + releaseVersion
 	if !fullAccess(q.person) {
 		// A person sees only the hosts they hold: the state is the one the delivery pass gave this release's pull requests,
 		// else the delivery history's record of its install on the coordinator.
@@ -612,17 +612,19 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !known && !slices.Contains(versions, version) {
+	if !known && !slices.Contains(versions, releaseVersion) {
 		return nil, nil
 	}
+	healthy, rel := healthyRelease()
+	required := executorRolloutFloor(releaseVersion, version, deref(healthy) == version, rel)
 	on := 0
 	for _, v := range versions {
-		if !versionLess(v, version) {
+		if !versionLess(v, required) {
 			on++
 		}
 	}
 	c.Facts = facts(fact("Hosts", contract.EntityFactTypeText, fmt.Sprintf("%d of %d", on, len(versions))), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
-	if installed(version, versions) {
+	if installed(required, versions) {
 		c.State = ptr("installed")
 	}
 	return c, nil
