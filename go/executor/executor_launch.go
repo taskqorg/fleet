@@ -117,14 +117,7 @@ func (e *executor) run(c M) error {
 		}
 		return e.finish(cmd, "failed", "")
 	case contract.CommandKindReadiness:
-		productionReady, browserProblems := e.productionBrowserStatus()
-		data := readiness(payload, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), productionReady != nil && *productionReady, e.forbidden())
-		if browserProject(payload) == contract.ProductionBrowserProject {
-			for _, problem := range browserProblems {
-				data.Checks = append(data.Checks, check("browser-production", e.host, problem.Detail))
-				data.Ok = false
-			}
-		}
+		data := e.readiness(payload, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
 		ok := data.Ok
 		if err := e.event(cmd, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err

@@ -1506,7 +1506,7 @@ func (v *HostPollError) Validate() error {
 	return nil
 }
 
-// HostProblem: A problem the host reported in its last poll (host_poll.go hostProblems): an edge redirect on a route, or version-behind.
+// HostProblem: A host observation problem including edge redirects, production browser readiness and version drift. Route and status describe an edge response when kind is edge-redirect.
 type HostProblem struct {
 	Detail   string  `json:"detail"`
 	Kind     string  `json:"kind"`
