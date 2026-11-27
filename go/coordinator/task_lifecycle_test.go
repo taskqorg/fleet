@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,7 +169,7 @@ func TestTaskMissingResultRecovery(t *testing.T) {
 	// An owned running recovery keeps custody of its stop deadline even while paused.
 	lifecycleSQL(t, e, "UPDATE execution SET state='running' WHERE id=$1", *recovery.ExecutionID)
 	e.opInto(t, "task_update", doc{"taskId": taskID, "action": "pause"}, e.ownerHeaders(), &contract.TaskDetail{})
-	runLifecycleWake(t, e, "task:"+taskID, now.Add(2*time.Second))
+	runLifecycleWake(t, e, "task:"+taskID, time.Now().Add(time.Second))
 	var next time.Time
 	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT next_attempt_at FROM task_wake WHERE id=$1 AND disposition IS NULL", "task:"+taskID).Scan(&next); err != nil || !next.Equal(recovery.Deadline) {
 		t.Fatalf("paused recovery deadline custody %s, %v", next, err)
@@ -189,7 +192,7 @@ func TestTaskMissingResultRecovery(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	runLifecycleWake(t, e, "task:"+taskID, now.Add(time.Second))
+	runLifecycleWake(t, e, "task:"+taskID, time.Now().Add(time.Second))
 	var decision contract.QuestionsListReply
 	e.opInto(t, "questions_list", doc{"taskId": taskID, "state": "open", "kind": "operator_decision"}, e.ownerHeaders(), &decision)
 	if len(decision.Questions) != 1 {
@@ -239,6 +242,105 @@ func TestTaskRecoveryLimits(t *testing.T) {
 				t.Fatalf("disposition = %q, allowed=%t", got, tc.allowed)
 			}
 		})
+	}
+}
+
+func TestTaskRetryWithDifferentSessionDirector(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	taskID, sid, run, artifactID := newID(), newID(), newID(), newID()
+	lifecycleTask(t, e, taskID, sid, run, "succeeded")
+	lifecycleSQL(t, e, "UPDATE execution SET directed_by='invented-current-director' WHERE id=$1", run)
+	lifecycleSQL(t, e, `INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,task_id,state)
+		VALUES($1,'prod',$2,5,'text/plain','result.txt',$3,$4,'stored')`, artifactID, sha256hex([]byte("bytes")), run, taskID)
+
+	// Reproduce a legacy retry card already awaiting the owner when the new reducer starts.
+	if err := e.appStore.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		task, err := taskLoad(q, taskID)
+		if err != nil {
+			return err
+		}
+		if err := q.db().TaskRecoveryStart(q.ctx(), db.TaskRecoveryStartParams{TaskID: taskID, Deadline: time.Now().Add(recoveryWindow)}); err != nil {
+			return err
+		}
+		return askTaskRecovery(q, task, run, sid, "The previous session is unavailable.", "missing_result")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := e.ownerHeaders()
+	openQuestion := func(kind string) contract.QuestionRow {
+		t.Helper()
+		var result contract.QuestionsListReply
+		e.opInto(t, "questions_list", doc{"taskId": taskID, "state": "open", "kind": kind}, h, &result)
+		if len(result.Questions) != 1 {
+			t.Fatalf("want one open %s, got %+v", kind, result.Questions)
+		}
+		return result.Questions[0]
+	}
+	answer := func(id, option string) {
+		t.Helper()
+		e.opInto(t, "question_answer", doc{"questionId": id, "answer": option}, h, &contract.QuestionRow{})
+	}
+	reconcile := func() {
+		t.Helper()
+		if err := e.appStore.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error { return wakeTask(q, taskID) }); err != nil {
+			t.Fatal(err)
+		}
+		runLifecycleWake(t, e, "task:"+taskID, time.Now().Add(time.Second))
+	}
+	retry := openQuestion("operator_decision")
+	answer(retry.Id, idleRetryResult)
+	reconcile()
+	blocked := openQuestion("operator_decision")
+	var options []string
+	if err := json.Unmarshal(blocked.Options, &options); err != nil ||
+		!slices.Equal(options, []string{idleFail, idleOfferRetainedResult}) ||
+		!strings.Contains(blocked.Text, "different directing actors") {
+		t.Fatalf("want an actionable authority prerequisite, got %+v, %v", blocked, err)
+	}
+	answer(retry.Id, idleRetryResult)
+	reconcile()
+	if got := openQuestion("operator_decision"); got.Id != blocked.Id {
+		t.Fatalf("replay replaced the prerequisite: %s -> %s", blocked.Id, got.Id)
+	}
+
+	assertOfferBlocked := func() {
+		t.Helper()
+		code, got := e.callJSON(t, "POST", "/api/ops/question_answer", doc{"questionId": blocked.Id, "answer": idleOfferRetainedResult}, h)
+		if code != 409 {
+			t.Fatalf("want result offer refused, got %d %v", code, got)
+		}
+		if got := openQuestion("operator_decision"); got.Id != blocked.Id {
+			t.Fatalf("refused offer replaced the prerequisite: %s -> %s", blocked.Id, got.Id)
+		}
+	}
+	e.opInto(t, "task_update", doc{"taskId": taskID, "action": "pause"}, h, &contract.TaskDetail{})
+	assertOfferBlocked()
+	e.opInto(t, "task_update", doc{"taskId": taskID, "action": "resume"}, h, &contract.TaskDetail{})
+	lifecycleSQL(t, e, "UPDATE task SET expected_outcome='Landing: wait — live check: verify production' WHERE id=$1", taskID)
+	assertOfferBlocked()
+	lifecycleSQL(t, e, "UPDATE task SET expected_outcome=NULL WHERE id=$1", taskID)
+
+	answer(blocked.Id, idleOfferRetainedResult)
+	answer(blocked.Id, idleOfferRetainedResult)
+	reconcile()
+	offer := openQuestion("acceptance")
+	var artifacts []string
+	if err := json.Unmarshal(offer.ArtifactIds, &artifacts); err != nil || deref(offer.ExecutionId) != run ||
+		!slices.Equal(artifacts, []string{artifactID}) {
+		t.Fatalf("offer must identify the exact retained result: %+v, %v", offer, err)
+	}
+	var generation, turns, runs, decisions int
+	var acceptedAt *time.Time
+	if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT generation,turns,
+		(SELECT count(*) FROM execution WHERE task_id=$1 AND kind='agent_run'),
+		(SELECT count(*) FROM question WHERE task_id=$1 AND kind='operator_decision'),
+		(SELECT accepted_at FROM task WHERE id=$1)
+		FROM task_recovery WHERE task_id=$1`, taskID).Scan(&generation, &turns, &runs, &decisions, &acceptedAt); err != nil {
+		t.Fatal(err)
+	}
+	if generation != 2 || turns != 0 || runs != 1 || decisions != 2 || acceptedAt != nil {
+		t.Fatalf("want one renewed budget, no new work, one prerequisite, and an unaccepted offer, got generation=%d turns=%d runs=%d decisions=%d accepted=%v",
+			generation, turns, runs, decisions, acceptedAt)
 	}
 }
 

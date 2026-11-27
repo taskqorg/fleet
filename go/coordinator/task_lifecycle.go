@@ -21,6 +21,8 @@ const (
 	taskWakeCohort = 48
 	recoveryLimit  = 2
 	recoveryWindow = 90 * time.Minute
+
+	recoveryContinuationBlocked = "continuation_blocked"
 )
 
 func init() {
@@ -429,6 +431,10 @@ func decideTaskAction(q *Request, now time.Time, w db.TaskWake) (string, time.Ti
 }
 
 func recoverMissingTaskResult(q *Request, now time.Time, t db.Task, e *agentExecution, r db.TaskRecovery) (string, time.Time, error) {
+	s, err := taskContinuationSession(q, t, e)
+	if err != nil {
+		return blockedResultContinuation(q, t, e, err)
+	}
 	if r.TaskID == "" {
 		// The episode begins when the task is eligible. A dependency or operator hold cannot spend its first slot's time.
 		if err := q.db().TaskRecoveryStart(q.ctx(), db.TaskRecoveryStartParams{
@@ -436,7 +442,6 @@ func recoverMissingTaskResult(q *Request, now time.Time, t db.Task, e *agentExec
 		}); err != nil {
 			return "", time.Time{}, err
 		}
-		var err error
 		r, err = q.db().TaskRecoveryGet(q.ctx(), t.ID)
 		if err != nil {
 			return "", time.Time{}, err
@@ -451,19 +456,24 @@ func recoverMissingTaskResult(q *Request, now time.Time, t db.Task, e *agentExec
 	}
 	input := fmt.Sprintf("Fleet recovery for task %s. Turn %s ended without a completion report. Resume the existing task and worktree from retained work. Read back any uncertain external action before attempting it again. Finish outstanding acceptance checks and record the result with worker_done. Automatic recovery turn %d of %d.",
 		firstString(deref(t.Code), t.Title), e.ID, r.Turns+1, recoveryLimit)
-	continued, err := admitTaskContinuation(q, t, e, fmt.Sprintf("recover:%s:%d:%d", t.ID, r.Generation, r.Turns+1), input)
+	continued, err := submitTaskContinuation(q, s, fmt.Sprintf("recover:%s:%d:%d", t.ID, r.Generation, r.Turns+1), input)
 	if err != nil {
-		var he *HTTPError
-		if errors.As(err, &he) && he.Code < 500 {
-			return "recovery decision", time.Time{}, askTaskRecovery(q, t, e.ID, e.SessionID, he.Msg, "missing_result")
-		}
-		return "", time.Time{}, err
+		return blockedResultContinuation(q, t, e, err)
 	}
 	if continued == nil {
 		return "", now.Add(5 * time.Second), nil
 	}
 	err = q.db().TaskRecoveryAdmit(q.ctx(), db.TaskRecoveryAdmitParams{TaskID: t.ID, ExecutionID: &continued.ID, Progress: progress})
 	return "", now.Add(5 * time.Second), err
+}
+
+func blockedResultContinuation(q *Request, t db.Task, e *agentExecution, err error) (string, time.Time, error) {
+	var he *HTTPError
+	if errors.As(err, &he) && he.Code < 500 {
+		// The old execution remains the evidence link. The old session is not a recovery target.
+		return "continuation prerequisite", time.Time{}, askTaskRecovery(q, t, e.ID, "", he.Msg, recoveryContinuationBlocked)
+	}
+	return "", time.Time{}, err
 }
 
 func recoveryStopReason(now time.Time, r db.TaskRecovery, progress []string) string {
@@ -548,6 +558,14 @@ func stopAutomaticTurn(q *Request, now time.Time, id string, deadline time.Time,
 }
 
 func admitTaskContinuation(q *Request, t db.Task, e *agentExecution, requestID, input string) (*agentExecution, error) {
+	s, err := taskContinuationSession(q, t, e)
+	if err != nil {
+		return nil, err
+	}
+	return submitTaskContinuation(q, s, requestID, input)
+}
+
+func taskContinuationSession(q *Request, t db.Task, e *agentExecution) (*agentSession, error) {
 	if e == nil || e.SessionID == "" || !e.terminal() || e.unconfirmed() {
 		return nil, fail(409, "Fleet cannot prove ownership has ended for the previous task session.")
 	}
@@ -558,10 +576,23 @@ func admitTaskContinuation(q *Request, t db.Task, e *agentExecution, requestID, 
 	if err != nil {
 		return nil, err
 	}
-	if s == nil || !taskSessionAuthorized(q, s) || s.TaskID != t.ID || s.DeliveryID != "" && s.DeliveryID != t.ID ||
-		s.ProjectID != deref(t.ProjectID) || s.PipelineRunID != "" || s.BotID != "" || e.DirectedBy != s.DirectedBy {
-		return nil, fail(409, "The previous session is unavailable for a task-bound continuation under its original authority.")
+	if s == nil || s.ArchivedAt != nil {
+		return nil, fail(409, "The previous task session is missing or archived.")
 	}
+	if e.DirectedBy != s.DirectedBy {
+		return nil, fail(409, "The previous run and session have different directing actors.")
+	}
+	if !taskSessionAuthorized(q, s) {
+		return nil, fail(409, "The previous session's director lacks current authority for the project.")
+	}
+	if s.TaskID != t.ID || s.DeliveryID != "" && s.DeliveryID != t.ID ||
+		s.ProjectID != deref(t.ProjectID) || s.PipelineRunID != "" || s.BotID != "" {
+		return nil, fail(409, "The previous session's task or project scope cannot authorize this continuation.")
+	}
+	return s, nil
+}
+
+func submitTaskContinuation(q *Request, s *agentSession, requestID, input string) (*agentExecution, error) {
 	if busy, err := taskSessionBusy(q, s.ID); err != nil || busy {
 		return nil, err
 	}
@@ -587,6 +618,18 @@ func askTaskRecovery(q *Request, t db.Task, eid, sid, reason, kind string) error
 		options = append(options, idleRetryResult)
 		text = reason + " Choose “retry result” to authorize a new bounded recovery, or “fail task” to close without a result."
 	}
+	if kind == recoveryContinuationBlocked {
+		text = reason + " Have an authorized task operator continue in a session linked to this task with the required project access, or choose “fail task”."
+		if _, err := retainedRecoveryResult(q, t.ID, eid); err == nil {
+			options = append(options, idleOfferRetainedResult)
+			text += " If the retained result satisfies all task checks, choose “offer retained result” to send it for acceptance."
+		} else {
+			var conflict *HTTPError
+			if !errors.As(err, &conflict) || conflict.Code != 409 {
+				return err
+			}
+		}
+	}
 	_, err := askQuestionAs(q, questionAsk{
 		Kind: "operator_decision", TaskID: t.ID, ProjectID: deref(t.ProjectID), SessionID: strPtr(sid),
 		ExecutionID: strPtr(eid), AskedBy: ptr("fleet"), DirectToOwner: true, Text: text,
@@ -595,17 +638,40 @@ func askTaskRecovery(q *Request, t db.Task, eid, sid, reason, kind string) error
 	return err
 }
 
-func authorizeTaskResultRetry(q *Request, id string) error {
+func retainedRecoveryResult(q *Request, taskID, executionID string) (taskAcceptanceResult, error) {
+	pending, err := q.db().TaskHasPendingWork(q.ctx(), &taskID)
+	if err != nil {
+		return taskAcceptanceResult{}, err
+	}
+	result, err := eligibleTaskResult(q, taskID, false, pending, false, nil)
+	if err != nil {
+		return taskAcceptanceResult{}, err
+	}
+	if result.id != executionID || len(result.artifacts) == 0 {
+		return taskAcceptanceResult{}, fail(409, "The decision no longer matches an eligible retained result")
+	}
+	return result, nil
+}
+
+func taskRecoveryOperator(q *Request, id string) (db.Task, error) {
 	t, err := taskLoad(q, id)
 	if err != nil {
-		return err
+		return t, err
 	}
 	if q.person == nil || q.agent != "" || !mayAccessProjectID(q.person, deref(t.ProjectID)) ||
 		(!fullAccess(q.person) && q.person.Email != deref(t.DirectedBy)) {
-		return fail(403, "Only the task director or Fleet owner can authorize another recovery")
+		return t, fail(403, "Only the task director or Fleet owner can authorize result recovery")
 	}
 	if t.State == db.TaskStatePaused || !openTask[string(t.State)] {
-		return fail(409, "The task must be open and unpaused")
+		return t, fail(409, "The task must be open and unpaused")
+	}
+	return t, nil
+}
+
+func authorizeTaskResultRetry(q *Request, id string) error {
+	t, err := taskRecoveryOperator(q, id)
+	if err != nil {
+		return err
 	}
 	pending, err := q.db().TaskHasPendingWork(q.ctx(), &id)
 	if err != nil {
@@ -639,7 +705,7 @@ func withdrawResolvedTaskRecovery(q *Request, t db.Task, proof db.TaskDeliveryRe
 		}
 		var cleared []string
 		for _, decision := range decisions {
-			if decision.Cause == "missing_result" || decision.Cause == "result" {
+			if decision.Cause == "missing_result" || decision.Cause == "result" || decision.Cause == recoveryContinuationBlocked {
 				cleared = append(cleared, decision.ID)
 			}
 		}
@@ -656,7 +722,7 @@ func withdrawResolvedTaskRecovery(q *Request, t db.Task, proof db.TaskDeliveryRe
 	var resolved []string
 	for _, decision := range decisions {
 		switch decision.Cause {
-		case "missing_result", "result":
+		case "missing_result", "result", recoveryContinuationBlocked:
 			resolved = append(resolved, decision.ID)
 		case "delivery":
 			if !pr.Delivered {
