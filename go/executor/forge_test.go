@@ -169,3 +169,60 @@ func TestGlabCredentialUsesHostFlag(t *testing.T) {
 		t.Fatalf("usage text taken as token %q", got)
 	}
 }
+
+// Requirement: gitlabAdapter.requestMerge omits merge_when_pipeline_succeeds when the head pipeline is already
+// terminal or absent, and sends it only when the pipeline is actively running/pending. Risk: GitLab rejects
+// merging a green MR with 405/422 when merge_when_pipeline_succeeds=true is hardcoded (FLT-70).
+func TestGitlabRequestMergePipelineStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	bin := t.TempDir()
+	logFile := filepath.Join(bin, "glab.args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"" + logFile + "\"\necho '{\"iid\":46,\"state\":\"merged\"}'\n"
+	if err := os.WriteFile(filepath.Join(bin, "glab"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	ctx := forgeContext{
+		Provider: "gitlab",
+		Host:     "gitlab.ufobe.com",
+		Repo:     "gradus/dam",
+		Store:    t.TempDir(),
+	}
+	a := gitlabAdapter{host: "gitlab.ufobe.com"}
+
+	for _, status := range []string{"success", "", "manual", "skipped"} {
+		pr := pubView{Number: 46, HeadRefOid: "deadbeef", ChecksState: status}
+		if err := a.requestMerge(ctx, pr, "merge"); err != nil {
+			t.Fatalf("status=%q: %v", status, err)
+		}
+		got, err := os.ReadFile(logFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := string(got)
+		if strings.Contains(line, "merge_when_pipeline_succeeds") {
+			t.Fatalf("status=%q unexpectedly set merge_when_pipeline_succeeds: %s", status, line)
+		}
+		if !strings.Contains(line, "squash=false") || !strings.Contains(line, "sha=deadbeef") {
+			t.Fatalf("status=%q missing merge flags: %s", status, line)
+		}
+	}
+
+	for _, status := range []string{"running", "pending", "created", "preparing"} {
+		pr := pubView{Number: 46, HeadRefOid: "deadbeef", ChecksState: status}
+		if err := a.requestMerge(ctx, pr, "squash"); err != nil {
+			t.Fatalf("status=%q: %v", status, err)
+		}
+		got, err := os.ReadFile(logFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := string(got)
+		if !strings.Contains(line, "merge_when_pipeline_succeeds=true") || !strings.Contains(line, "squash=true") {
+			t.Fatalf("status=%q expected merge_when_pipeline_succeeds=true and squash=true, got: %s", status, line)
+		}
+	}
+}

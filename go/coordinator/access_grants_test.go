@@ -120,3 +120,52 @@ func TestRunConnectionsAddProjectAccess(t *testing.T) {
 		t.Fatalf("already listed: %v", got)
 	}
 }
+
+// Requirement: requesting "gitlab" in a profile's connections expands to active gitlab-provider connections
+// allowed for the run's project (such as gradus-gitlab on dam), and refuses "gitlab" on projects without
+// a grant (FLT-70).
+func TestAccessExpandGitlabProvider(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	h := e.ownerHeaders()
+	var ignore map[string]any
+	e.opInto(t, "connections_create", map[string]any{"name": "gradus-gitlab", "provider": "gitlab"}, h, &ignore)
+	e.opInto(t, "connections_set_access", map[string]any{
+		"connection": "gradus-gitlab",
+		"access":     map[string]any{"projects": []string{"dam"}},
+	}, h, &ignore)
+
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+		dam := "dam"
+		other := "fleet"
+		granted, err := mintSpecs(q, mintRun{ProjectID: &dam}, []string{"gitlab", "project-access"})
+		if err != nil {
+			return err
+		}
+		if len(granted.Connections) != 1 || granted.Connections[0].Name != "gradus-gitlab" {
+			t.Fatalf("dam connections = %+v, want gradus-gitlab", granted.Connections)
+		}
+		if len(granted.Refused) != 0 {
+			t.Fatalf("dam refused = %v, want empty", granted.Refused)
+		}
+		var toolNames []string
+		for _, tl := range granted.Connections[0].Tools {
+			toolNames = append(toolNames, tl.Name)
+		}
+		for _, want := range []string{"mr_merge", "pipeline_run"} {
+			if !strings.Contains(strings.Join(toolNames, ","), want) {
+				t.Fatalf("gradus-gitlab missing %s in %v", want, toolNames)
+			}
+		}
+
+		denied, err := mintSpecs(q, mintRun{ProjectID: &other}, []string{"gitlab"})
+		if err != nil {
+			return err
+		}
+		if len(denied.Connections) != 0 || strings.Join(denied.Refused, ",") != "gitlab" {
+			t.Fatalf("fleet got %+v refused=%v, want refused=[gitlab]", denied.Connections, denied.Refused)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

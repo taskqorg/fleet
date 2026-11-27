@@ -190,9 +190,10 @@ func hostHasProjectPublishingCapability(caps []string, settings runSettings, hos
 }
 
 type publishingHostView struct {
-	id     string
-	caps   []string
-	holder string
+	id          string
+	caps        []string
+	holder      string
+	forgeLogins *[]contract.ForgeLogin
 }
 
 func publishingOnlineHosts(q *Request) ([]publishingHostView, error) {
@@ -225,9 +226,26 @@ func publishingOnlineHosts(q *Request) ([]publishingHostView, error) {
 		if hr != nil && deref(hr.Holder) != "" {
 			holder = *hr.Holder
 		}
-		out = append(out, publishingHostView{id: r.ID, caps: *obs.Capabilities, holder: holder})
+		out = append(out, publishingHostView{id: r.ID, caps: *obs.Capabilities, holder: holder, forgeLogins: obs.ForgeLogins})
 	}
 	return out, nil
+}
+
+// publishingHostForgeRank scores a host for forge publishing on ref: 0 when it reports ok: true for (provider, host),
+// 1 when no login check was reported yet, and 2 when it explicitly reports ok: false.
+func publishingHostForgeRank(h publishingHostView, ref contract.RepoRef) int {
+	if h.forgeLogins == nil {
+		return 1
+	}
+	for _, l := range *h.forgeLogins {
+		if strings.EqualFold(l.Provider, ref.Provider) && strings.EqualFold(l.Host, ref.Host) {
+			if l.Ok {
+				return 0
+			}
+			return 2
+		}
+	}
+	return 1
 }
 
 func hostHolderAllowsProject(q *Request, holder, projectID string) bool {
@@ -1002,6 +1020,7 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 	if p.requireLocalHost && sourceExec != nil {
 		requireHost = deref(sourceExec.HostID)
 	}
+	bestRank := 3
 	for _, h := range online {
 		if requireHost != "" && h.id != requireHost {
 			continue
@@ -1013,8 +1032,13 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 			continue
 		}
 		if hostCapsHaveRepo(h.caps, chosenRef) {
-			targetHost = h.id
-			break
+			if rank := publishingHostForgeRank(h, chosenRef); rank < bestRank {
+				targetHost = h.id
+				bestRank = rank
+				if rank == 0 {
+					break
+				}
+			}
 		}
 	}
 	if targetHost == "" {

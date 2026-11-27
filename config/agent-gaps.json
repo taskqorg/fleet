@@ -38,7 +38,7 @@
     {"source": "agent", "match": "could not create shared memory segment", "class": "sandbox-shm"},
     {"source": "agent", "shell": false, "match": "Access to this API has been restricted\\. Use --allow-([\\w-]+)", "class": "sandbox-code"},
     {"source": "agent", "shell": false, "match": "\"code\":\"outside-worktree\"", "class": "sandbox-write"},
-    {"source": "agent", "match": "Permission denied \\(publickey|gh auth login|GH_TOKEN environment variable|could not read Username for|Authentication failed for|(?i)please run /login|invalid api key", "class": "auth-unready"},
+    {"source": "agent", "match": "Permission denied \\(publickey|gh auth login|glab auth login|GH_TOKEN environment variable|could not read Username for|Authentication failed for|invalid_grant|(?i)please run /login|invalid api key", "class": "auth-unready"},
     {"source": "agent", "match": "(?i)operation not permitted|read-only file system|EROFS", "class": "sandbox-write"},
     {"source": "agent", "match": "Could not resolve host|Temporary failure in name resolution|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|Network is unreachable|nodename nor servname", "class": "sandbox-network"},
     {"source": "agent", "match": "No such tool available: ([\\w-]+)", "class": "tool-unavailable:{1}"},

@@ -196,7 +196,7 @@ func grantsDrift(q *Request, history bool) (contract.ConnectionsDriftReply, erro
 			}
 		}
 		for _, p := range profiles {
-			if slices.Contains(p.Connections, c.Name) {
+			if slices.Contains(p.Connections, c.Name) || (c.Provider == "gitlab" && slices.Contains(p.Connections, "gitlab")) {
 				for _, t := range catalogue { // an agent may call any tool of a connection its profile lists
 					need(t, "profile "+p.ID)
 				}

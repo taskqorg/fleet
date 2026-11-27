@@ -1,6 +1,7 @@
 {
   "connections": [
     "youtrack",
+    "gitlab",
     "project-access"
   ],
   "delegationProfiles": [
@@ -10,7 +11,7 @@
   "harness": "claude",
   "id": "claude-worker",
   "instructionRole": "system",
-  "instructions": "Follow the explicit task scope. Retain outputs in output/. Do not spawn subagents.",
+  "instructions": "Follow the explicit task scope. Retain outputs in output/. Use granted Fleet connections (gradus-gitlab, github, youtrack, etc.) instead of personal host CLI logins (glab/gh) and never ask the owner to run auth login. Do not spawn subagents.",
   "mcpServers": [],
   "model": "sonnet",
   "skills": [
