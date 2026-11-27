@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/sys/unix"
+
 	"fleet/contract"
 )
 
@@ -20,40 +22,55 @@ func personalScriptJob(c contract.Command) bool {
 type scriptOutputs struct {
 	Names            []string
 	CollectionFailed bool
+	Reported         bool
 }
 
 type scriptQueueError struct{ error }
 
-// For a confirmed exit, snapshot the outputs before removing staging. Journal
-// the close event, cleanup evidence and terminal receipt together so a restart
-// can retry the cleanup without repeating notices or dropping declared outputs.
+func scriptExitUnconfirmed(ex *workerExit) bool {
+	return ex.Status == "unknown" || ex.CleanupUnknown || ex.ProcessesUnresolved
+}
+
+// Snapshot the outputs before retiring staging. Journal the close event,
+// cleanup evidence and terminal receipt together. The output summary survives
+// a restart between removing staging and writing those notices.
 func (e *executor) finishPersonalScriptRun(execution string, l *live, ex *workerExit, closed contract.ProcessClosed) error {
 	c := l.command
-	var terminal bool
-	if err := e.db.QueryRow("SELECT terminal FROM commands WHERE id=?", l.commandID()).Scan(&terminal); err != nil {
+	dir := e.sessionDir(execution)
+	result, captured, err := e.readScriptOutputs(execution)
+	if err != nil || result.Reported {
 		return err
 	}
-	if terminal {
-		return nil
-	}
-	dir := e.sessionDir(execution)
 	status := ex.Status
-	var result scriptOutputs
-	var cleanup *contract.ScriptPersonalCleanup
+	cleanup := contract.ScriptPersonalCleanup{}
 	var trial *contract.TrialRemoved
-	if status != "unknown" && !ex.CleanupUnknown && !ex.ProcessesUnresolved {
-		var err error
-		result, err = e.scriptOutputSummary(execution, dir)
-		if err != nil {
-			return err
+	if scriptExitUnconfirmed(ex) {
+		// Retain the existing best-effort upload of diagnostics and results.
+		// The launch fence keeps the staging available while ownership is unknown.
+		cleanup.Unconfirmed = new(true)
+		result.CollectionFailed = !e.insideDirs(dir) || e.artifacts(dir, []string{"output"}, execution, &result.Names) != nil
+	} else {
+		if !captured {
+			result, err = e.queuePersonalScriptOutputs(dir, execution)
+			if err != nil {
+				return err
+			}
+			if err := saveScriptOutputs(e.db, execution, result); err != nil {
+				return err
+			}
 		}
-		cleanup = e.scriptCleanup(dir, result.CollectionFailed)
 		if result.CollectionFailed {
 			status = "failed"
+		} else {
+			cleanup.Removed = e.removeScriptStaging(dir)
 		}
 		if l.trial != nil {
-			trial = &contract.TrialRemoved{Removed: removeTrial(l.trial[0], l.trial[1])}
+			// A replay may find the trial already removed.
+			trial = &contract.TrialRemoved{Removed: !exists(l.trial[1]) || removeTrial(l.trial[0], l.trial[1])}
 		}
+	}
+	if result.CollectionFailed {
+		cleanup.CollectionFailed = new(true)
 	}
 	e.workerDiagnostics(dir, execution, c, ex.Seq+1)
 	return e.inTx(func() error {
@@ -65,38 +82,42 @@ func (e *executor) finishPersonalScriptRun(execution string, l *live, ex *worker
 				return err
 			}
 		}
-		if cleanup != nil {
-			if err := e.event(c, ex.Seq+3, contract.FleetEventTypeScriptPersonalCleanup, *cleanup); err != nil {
-				return err
-			}
+		if err := e.event(c, ex.Seq+3, contract.FleetEventTypeScriptPersonalCleanup, cleanup); err != nil {
+			return err
+		}
+		result.Reported = true
+		if err := saveScriptOutputs(e.ex, execution, result); err != nil {
+			return err
 		}
 		e.declared = result.Names
 		return e.finish(c, status, l.native)
 	})
 }
 
-// A reattached exit can rebuild its terminal receipt after either directory has
-// gone. Jobs already queued during an interrupted collection are reused.
-func (e *executor) scriptOutputSummary(execution, dir string) (scriptOutputs, error) {
+func (e *executor) readScriptOutputs(execution string) (scriptOutputs, bool, error) {
 	var result scriptOutputs
 	var saved sql.NullString
 	if err := e.db.QueryRow("SELECT script_outputs FROM launches WHERE execution=?", execution).Scan(&saved); err != nil {
-		return result, err
+		return result, false, err
 	}
-	if saved.Valid {
-		err := json.Unmarshal([]byte(saved.String), &result)
-		return result, err
+	if !saved.Valid {
+		return result, false, nil
 	}
-	result, err := e.queuePersonalScriptOutputs(dir, execution)
-	if err != nil {
-		return result, err
-	}
-	_, err = e.db.Exec("UPDATE launches SET script_outputs=? WHERE execution=?", enc(result), execution)
-	return result, err
+	err := json.Unmarshal([]byte(saved.String), &result)
+	return result, true, err
+}
+
+func saveScriptOutputs(db execer, execution string, result scriptOutputs) error {
+	_, err := db.Exec("UPDATE launches SET script_outputs=? WHERE execution=?", enc(result), execution)
+	return err
 }
 
 func (e *executor) queuePersonalScriptOutputs(dir, execution string) (scriptOutputs, error) {
 	var result scriptOutputs
+	if !e.insideDirs(dir) {
+		result.CollectionFailed = true
+		return result, nil
+	}
 	rows, err := e.db.Query(`SELECT json_extract(body,'$.name') FROM transfers
 		WHERE kind='upload' AND json_extract(body,'$.scriptOutput')=1 AND json_extract(body,'$.executionId')=?
 		ORDER BY rowid`, execution)
@@ -127,25 +148,20 @@ func (e *executor) queuePersonalScriptOutputs(dir, execution string) (scriptOutp
 		return result, queueErr
 	}
 	result.CollectionFailed = err != nil
-	if len(result.Names) > 0 {
-		spool, err := os.Open(filepath.Join(e.root, "spool"))
-		if err != nil {
-			return result, err
-		}
-		defer spool.Close()
-		if err := spool.Sync(); err != nil {
-			return result, err
-		}
-	}
 	return result, nil
 }
 
-func (e *executor) scriptCleanup(dir string, collectionFailed bool) *contract.ScriptPersonalCleanup {
-	data := &contract.ScriptPersonalCleanup{Removed: e.removeScriptStaging(dir)}
-	if collectionFailed {
-		data.CollectionFailed = &collectionFailed
+// Persist the spool file and its directory entry before a transfer can claim it.
+func syncScriptOutput(out *os.File) error {
+	if err := out.Sync(); err != nil {
+		return err
 	}
-	return data
+	dir, err := os.Open(filepath.Dir(out.Name()))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return unix.Fsync(int(dir.Fd()))
 }
 
 func (e *executor) removeScriptStaging(dir string) bool {
@@ -162,8 +178,13 @@ func (e *executor) removeScriptStaging(dir string) bool {
 		if root.RemoveAll(name) == nil {
 			continue
 		}
-		// Match the host cleanup policy for read-only subdirectories while
-		// keeping all filesystem operations inside this job's directory.
+		// WalkDir stats its root, which would follow a link. Chmod only
+		// real staging directories when retrying read-only cleanup.
+		info, err := root.Lstat(name)
+		if err != nil || !info.IsDir() {
+			removed = false
+			continue
+		}
 		_ = fs.WalkDir(root.FS(), name, func(path string, entry fs.DirEntry, err error) error {
 			if entry != nil && entry.IsDir() {
 				_ = root.Chmod(path, 0o700)

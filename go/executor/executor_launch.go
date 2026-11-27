@@ -857,7 +857,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 			return err
 		}
 		if personal && staging {
-			if err := e.event(c, 2, contract.FleetEventTypeScriptPersonalCleanup, e.scriptCleanup(dir, false)); err != nil {
+			if err := e.event(c, 2, contract.FleetEventTypeScriptPersonalCleanup, contract.ScriptPersonalCleanup{Removed: e.removeScriptStaging(dir)}); err != nil {
 				return err
 			}
 		}

@@ -85,38 +85,49 @@ func TestLaunchWindowKeepsSessionUntilStop(t *testing.T) {
 // sees the directory busy only while the job is open. Risk: hosts refuse session-less jobs once the coordinator stops
 // creating a session per job.
 func TestHostJobWithoutSession(t *testing.T) {
-	e, _ := scriptExecutor(t)
-	if err := e.run(M{"id": "hj-ready", "executionId": "hj-ready-x", "kind": "readiness", "payload": M{"project": M{}}}); err != nil {
-		t.Fatal(err)
-	}
-	if r := lastReceipt(e, "hj-ready"); r != "completed" && r != "failed" {
-		t.Fatal("readiness receipt", r)
-	}
-	script := `printf %s "$FLEET_SESSION_ID" > "$FLEET_OUTPUT_DIR/sid"`
-	if err := e.run(M{"id": "hj", "executionId": "hj-x", "kind": "script", "payload": M{"command": script}}); err != nil {
-		t.Fatal(err)
-	}
-	var session string
-	if err := e.db.QueryRow("SELECT session FROM launches WHERE execution='hj-x'").Scan(&session); err != nil || session != "hj-x" {
-		t.Fatal("launch session", session, err)
-	}
-	if !e.sessionBusy("hj-x") {
-		t.Fatal("open host job not busy")
-	}
-	settle(t, e, "hj-x")
-	if r := lastReceipt(e, "hj"); r != "completed" {
-		t.Fatal("script receipt", r)
-	}
-	if b, err := os.ReadFile(filepath.Join(e.sessions, "hj-x", "output", "sid")); err != nil || len(b) != 0 {
-		t.Fatalf("FLEET_SESSION_ID %q %v", b, err)
-	}
-	var closed int
-	e.db.QueryRow(`SELECT count(*) FROM outbox WHERE route=? AND body LIKE '%"executionId":"hj-x"%' AND body LIKE '%process.closed%'`, contract.RouteEvents.Path).Scan(&closed)
-	if closed != 1 {
-		t.Fatal("process.closed events", closed)
-	}
-	if e.sessionBusy("hj-x") {
-		t.Fatal("finished host job still busy")
+	for _, class := range []string{"", "internal", "public"} {
+		t.Run(class, func(t *testing.T) {
+			e, _ := scriptExecutor(t)
+			if err := e.run(M{"id": "hj-ready", "executionId": "hj-ready-x", "kind": "readiness", "payload": M{"project": M{}}}); err != nil {
+				t.Fatal(err)
+			}
+			if r := lastReceipt(e, "hj-ready"); r != "completed" && r != "failed" {
+				t.Fatal("readiness receipt", r)
+			}
+			script := `printf %s "$FLEET_SESSION_ID" > "$FLEET_OUTPUT_DIR/sid"`
+			payload := M{"command": script}
+			if class != "" {
+				payload["project"] = M{"data": class}
+			}
+			if err := e.run(M{"id": "hj", "executionId": "hj-x", "kind": "script", "payload": payload}); err != nil {
+				t.Fatal(err)
+			}
+			var session string
+			if err := e.db.QueryRow("SELECT session FROM launches WHERE execution='hj-x'").Scan(&session); err != nil || session != "hj-x" {
+				t.Fatal("launch session", session, err)
+			}
+			if !e.sessionBusy("hj-x") {
+				t.Fatal("open host job not busy")
+			}
+			settle(t, e, "hj-x")
+			if r := lastReceipt(e, "hj"); r != "completed" {
+				t.Fatal("script receipt", r)
+			}
+			if b, err := os.ReadFile(filepath.Join(e.sessions, "hj-x", "output", "sid")); err != nil || len(b) != 0 {
+				t.Fatalf("FLEET_SESSION_ID %q %v", b, err)
+			}
+			var closed int
+			e.db.QueryRow(`SELECT count(*) FROM outbox WHERE route=? AND body LIKE '%"executionId":"hj-x"%' AND body LIKE '%process.closed%'`, contract.RouteEvents.Path).Scan(&closed)
+			if closed != 1 {
+				t.Fatal("process.closed events", closed)
+			}
+			if e.sessionBusy("hj-x") {
+				t.Fatal("finished host job still busy")
+			}
+			if !exists(filepath.Join(e.sessions, "hj-x", "input")) {
+				t.Fatal("legacy or non-personal input directory was removed")
+			}
+		})
 	}
 }
 
@@ -234,7 +245,7 @@ func assertScriptStagingGone(t *testing.T, dir string) {
 }
 
 // A late preparation refusal must remove inputs fetched earlier in that attempt.
-// A linked output directory is a collection failure and its target stays intact.
+// A failed collection keeps staging available and preserves any link target.
 func TestPersonalScriptCleansPreparationAndCollectionFailures(t *testing.T) {
 	e, root := scriptExecutor(t)
 	e.url = scriptInputServer(t).URL
@@ -265,12 +276,15 @@ func TestPersonalScriptCleansPreparationAndCollectionFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	settle(t, e, "collect")
-	assertScriptStagingGone(t, e.sessionDir("collect"))
+	collectDir := e.sessionDir("collect")
+	if _, err := os.Lstat(filepath.Join(collectDir, "output")); err != nil || !exists(filepath.Join(collectDir, "input")) {
+		t.Fatalf("staging was removed after failed collection: %v", err)
+	}
 	if got := lastReceipt(e, "bad-output"); got != "failed" {
 		t.Fatalf("collection receipt = %q", got)
 	}
 	var n int
-	if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE route=? AND json_extract(body,'$.events[0].type')='script.personal-cleanup' AND json_extract(body,'$.events[0].data.collectionFailed')=1 AND json_extract(body,'$.events[0].data.removed')=1`, contract.RouteEvents.Path).Scan(&n); err != nil || n != 1 {
+	if err := e.db.QueryRow(`SELECT count(*) FROM outbox WHERE route=? AND json_extract(body,'$.events[0].type')='script.personal-cleanup' AND json_extract(body,'$.events[0].data.collectionFailed')=1 AND json_extract(body,'$.events[0].data.removed')=0`, contract.RouteEvents.Path).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("collection failure notices = %d, err = %v", n, err)
 	}
 	if b, err := os.ReadFile(filepath.Join(outside, "marker")); err != nil || string(b) != "invented outside bytes" {
@@ -286,6 +300,15 @@ func TestPersonalScriptCompletionResumesAcrossJournalFailures(t *testing.T) {
 	dir := e.sessionDir(execution)
 	command := `printf fixture > "$FLEET_OUTPUT_DIR/result.txt"`
 	if err := e.run(M{"id": cid, "executionId": execution, "kind": "script", "payload": M{"command": command, "project": M{"data": "personal"}}}); err != nil {
+		t.Fatal(err)
+	}
+	// Model an unconfirmed start acknowledgement followed by a confirmed
+	// worker exit. The late exit must still collect and retire staging.
+	if err := e.finish(e.live[execution].command, "unknown", ""); err != nil {
+		t.Fatal(err)
+	}
+	e.live = map[string]*live{}
+	if err := e.reconcile(); err != nil {
 		t.Fatal(err)
 	}
 	mustExec := func(statement string) {
@@ -369,20 +392,50 @@ func TestPersonalScriptPreservesUnconfirmedStaging(t *testing.T) {
 	if err := os.MkdirAll(wdir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	exit := workerExit{Status: "unknown", Seq: 5, CleanupUnknown: true, ProcessesUnresolved: true}
+	exit := workerExit{Status: "unknown", Seq: 5, CleanupUnknown: true}
 	if err := os.WriteFile(filepath.Join(wdir, "exit.json"), []byte(enc(exit)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	e.live[execution] = &live{command: commandOf(body), worker: &liveWorker{dir: wdir}}
 	settle(t, e, execution)
-	if got := lastReceipt(e, cid); got != "unknown" || count(e.db, "launches") != 1 || count(e.db, "transfers") != 0 {
+	if got := lastReceipt(e, cid); got != "unknown" || count(e.db, "launches") != 1 || count(e.db, "transfers") != 1 {
 		t.Fatalf("uncertain exit: receipt=%q launches=%d uploads=%d", got, count(e.db, "launches"), count(e.db, "transfers"))
+	}
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if !e.sessionBusy(execution) || len(e.live) != 0 {
+		t.Fatal("restart lost the staging fence or reattached a reported exit")
 	}
 	for _, name := range []string{"input", "output"} {
 		if !exists(filepath.Join(dir, name, "fixture")) {
 			t.Errorf("unconfirmed %s staging removed", name)
 		}
 	}
+}
+
+// Recovery distinguishes interrupted staging from a worker that may have started.
+func TestPersonalScriptReconcilesInterruptedPreparation(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	const execution, cid = "interrupted-prep", "interrupted-cmd"
+	body := enc(M{"id": cid, "executionId": execution, "kind": "script", "payload": M{"command": "true", "project": M{"data": "personal"}}})
+	if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
+		t.Fatal(err)
+	}
+	dir := e.sessionDir(execution)
+	if err := os.MkdirAll(filepath.Join(dir, "input"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "input", "fixture"), []byte("invented"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastReceipt(e, cid); got != "failed" {
+		t.Fatalf("interrupted preparation receipt = %q", got)
+	}
+	assertScriptStagingGone(t, dir)
 }
 
 // Requirement: automatic output collection uploads only regular single-link files inside the output folder, the same

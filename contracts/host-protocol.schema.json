@@ -2289,7 +2289,8 @@
       "additionalProperties": false,
       "properties": {
         "removed": {"type": "boolean", "$comment": "Both run-owned staging directories are absent"},
-        "collectionFailed": {"type": "boolean", "$comment": "One or more outputs could not be queued"}
+        "collectionFailed": {"type": "boolean", "$comment": "One or more outputs could not be queued"},
+        "unconfirmed": {"type": "boolean", "$comment": "Process ownership is uncertain, so staging is retained"}
       },
       "required": ["removed"]
     },

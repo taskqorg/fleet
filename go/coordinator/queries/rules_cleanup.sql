@@ -30,7 +30,8 @@ GROUP BY r.subject;
 SELECT id::text AS host_id, (payload->'inventory')::jsonb AS inventory FROM host_observation WHERE payload ? 'inventory';
 
 -- name: RulesPersonalScriptFailures :many
--- Personal script jobs whose staging cleanup or original artifact upload failed.
+-- Recent failed uploads from ended personal script jobs, using the cleanup rules' one-day observation window.
+-- A failed reservation has no artifact row, so its observation time is the execution update time.
 SELECT e.project_id::text AS project_id, count(*)::bigint AS n
 FROM execution e
 WHERE e.kind='host_job' AND e.session_id IS NULL AND e.project_id IS NOT NULL
@@ -40,14 +41,11 @@ WHERE e.kind='host_job' AND e.session_id IS NULL AND e.project_id IS NOT NULL
       AND c.payload->'payload'->'project'->>'data'='personal'
   )
   AND (
-    (jsonb_typeof(e.data->'refusedArtifacts')='array' AND e.data->'refusedArtifacts'<>'[]'::jsonb)
+    (e.updated_at >= now() - interval '1 day'
+      AND jsonb_typeof(e.data->'refusedArtifacts')='array' AND e.data->'refusedArtifacts'<>'[]'::jsonb)
     OR EXISTS (
       SELECT 1 FROM artifact a WHERE a.execution_id=e.id AND a.role='original'
-        AND a.state='failed' AND a.tombstoned_at IS NULL
-    )
-    OR EXISTS (
-      SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND ev.type='script.personal-cleanup' AND NOT ev.delta
-        AND (ev.payload->'data'->>'removed'='false' OR ev.payload->'data'->>'collectionFailed'='true')
+        AND a.state='failed' AND a.tombstoned_at IS NULL AND a.updated_at >= now() - interval '1 day'
     )
   )
 GROUP BY e.project_id;

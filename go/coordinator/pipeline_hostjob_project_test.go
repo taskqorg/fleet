@@ -14,15 +14,17 @@ func TestPipelineScriptHostJobKeepsRunProject(t *testing.T) {
 	const project, host = "hello-world", "script-fixture"
 	headers := map[string]string{"Authorization": "Bearer " + e.registerHost(t, host)}
 	for _, tc := range []struct {
-		class    string
-		snapshot json.RawMessage
+		name, class string
+		snapshot    json.RawMessage
+		reserved    bool
 	}{
-		{"internal", nil},
-		{"personal", json.RawMessage(`{"data":"public","settings":{"data":"personal","repos":[{"id":"fixture"}]}}`)},
-		{"public", json.RawMessage(`{"settings":{"data":"public"}}`)},
+		{"default", "internal", nil, false},
+		{"personal", "personal", json.RawMessage(`{"data":"public","settings":{"data":"personal","repos":[{"id":"fixture"}]}}`), false},
+		{"legacy snapshot", "personal", json.RawMessage(`{"data":"personal"}`), true},
+		{"public", "public", json.RawMessage(`{"settings":{"data":"public"}}`), false},
 	} {
-		t.Run(tc.class, func(t *testing.T) {
-			run := &runRecord{ID: "hostjob-project-run-" + tc.class, ProjectID: new(project), ProjectSnapshot: tc.snapshot}
+		t.Run(tc.name, func(t *testing.T) {
+			run := &runRecord{ID: "hostjob-project-run-" + tc.name, ProjectID: new(project), ProjectSnapshot: tc.snapshot}
 			var id, commandID string
 			if err := e.app.store.Write(e.ctx, nil, nil, func(q *Request) error {
 				var err error
@@ -67,7 +69,15 @@ func TestPipelineScriptHostJobKeepsRunProject(t *testing.T) {
 				}
 			}
 			r := contract.ArtifactFailedRequest{HostId: host, ExecutionId: &id, ArtifactId: newID(), Name: new("fixture.txt"), Error: "invented transfer failure"}
-			if code, body := e.callJSON(t, "POST", contract.RouteArtifactsFailed.Path, r, headers); code != 200 {
+			if tc.reserved {
+				// A failed artifact row is the evidence after a successful reservation.
+				if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO artifact
+					(id, project_id, scope, content_hash, size, media_type, name, execution_id, state)
+					VALUES ($1, $2, 'prod', repeat('a', 64), 10, 'text/plain', 'fixture.txt', $3, 'failed')`,
+					r.ArtifactId, project, id); err != nil {
+					t.Fatal(err)
+				}
+			} else if code, body := e.callJSON(t, "POST", contract.RouteArtifactsFailed.Path, r, headers); code != 200 {
 				t.Fatalf("transfer failure: HTTP %d %v", code, body)
 			}
 		})
@@ -77,7 +87,7 @@ func TestPipelineScriptHostJobKeepsRunProject(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if len(rows) != 1 || rows[0].ProjectID != project || rows[0].N != 1 {
+		if len(rows) != 1 || rows[0].ProjectID != project || rows[0].N != 2 {
 			t.Fatalf("personal script failure rows: %+v", rows)
 		}
 		return nil

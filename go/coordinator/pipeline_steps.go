@@ -129,11 +129,19 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 			return "", err
 		}
 		if !settings.has("data") { // older runs may lack the normalized project snapshot
-			current, err := projectContext(q, pid)
-			if err != nil {
+			// Old snapshots may only retain the raw setting at the top level.
+			var legacy rawObject
+			if err := json.Unmarshal(orNull(run.ProjectSnapshot), &legacy); err != nil {
 				return "", err
 			}
-			settings = current.object("settings")
+			settings = legacy
+			if !settings.has("data") {
+				current, err := projectContext(q, pid)
+				if err != nil {
+					return "", err
+				}
+				settings = current.object("settings")
+			}
 		}
 		project = rawObject{"data": settings["data"]}
 	}

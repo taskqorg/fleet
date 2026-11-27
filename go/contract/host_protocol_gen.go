@@ -3134,6 +3134,7 @@ func (v *ScriptPayload) Validate() error {
 type ScriptPersonalCleanup struct {
 	CollectionFailed *bool `json:"collectionFailed,omitempty"`
 	Removed          bool  `json:"removed"`
+	Unconfirmed      *bool `json:"unconfirmed,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

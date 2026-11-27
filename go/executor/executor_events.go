@@ -552,14 +552,33 @@ func (e *executor) collect(d *os.File, rel, execution string, declared *[]string
 			f.Close()
 			continue
 		}
-		id := newUUID()
+		var id string
+		if scriptOutputs == nil {
+			id = newUUID()
+		} else {
+			// Reuse the spool path if the poller stopped after copying but
+			// before it journaled this file's transfer.
+			sum := sha256.Sum256([]byte(execution + "\x00" + name))
+			id = fmt.Sprintf("script-%x", sum[:16])
+		}
 		spool := filepath.Join(e.root, "spool", id)
-		out, err := os.Create(spool)
+		var out *os.File
+		if scriptOutputs != nil {
+			// The journal has no transfer for this name. Remove an abandoned
+			// spool entry by name and create exclusively, without following links.
+			if err = os.Remove(spool); err == nil || os.IsNotExist(err) {
+				out, err = os.OpenFile(spool, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			}
+		} else {
+			out, err = os.Create(spool)
+		}
 		if err == nil {
 			_, err = io.Copy(out, f)
 			if scriptOutputs != nil {
 				if err == nil {
-					err = out.Sync()
+					if syncErr := syncScriptOutput(out); syncErr != nil {
+						err = scriptQueueError{syncErr}
+					}
 				}
 				err = errors.Join(err, out.Close())
 				if err != nil {

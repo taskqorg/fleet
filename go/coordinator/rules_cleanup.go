@@ -100,11 +100,9 @@ func cleanupStateRules(ctx context.Context, a *App) ([]contract.Finding, error) 
 		if err != nil {
 			return err
 		}
+		failedUploads := make(map[string]int64, len(personalFailures))
 		for _, r := range personalFailures {
-			project := r.ProjectID
-			f := contract.Finding{Rule: "personal-output", Subject: project, Value: float64(r.N), Cause: "problem:project:" + project + ":personal-output", ProjectId: ptr(project), Exemplars: []string{}}
-			text(&f, fmt.Sprintf("%d personal script jobs in %s had an output upload or staging cleanup fail.", r.N, project))
-			out = append(out, f)
+			failedUploads[r.ProjectID] = r.N
 		}
 		invs, err := q.db().RulesInventories(q.ctx())
 		if err != nil {
@@ -135,9 +133,21 @@ func cleanupStateRules(ctx context.Context, a *App) ([]contract.Finding, error) 
 			}
 			for project, n := range s.Personal {
 				f := contract.Finding{Rule: "personal-output", Subject: project, Value: float64(n), Cause: "problem:project:" + project + ":personal-output", ProjectId: ptr(project), HostId: ptr(h), Exemplars: []string{}}
-				text(&f, fmt.Sprintf("%d worktrees of personal project %s on %s still hold run results (output/).", n, project, h))
+				msg := fmt.Sprintf("%d worktrees of personal project %s on %s still hold run results (output/).", n, project, h)
+				if failed := failedUploads[project]; failed > 0 {
+					msg += fmt.Sprintf(" Uploads failed for %d of the project's script jobs in the last day.", failed)
+					// The project-level upload finding remains visible if the host goes offline.
+					f.HostId = nil
+					delete(failedUploads, project)
+				}
+				text(&f, msg)
 				out = append(out, f)
 			}
+		}
+		for project, n := range failedUploads {
+			f := contract.Finding{Rule: "personal-output", Subject: project, Value: float64(n), Cause: "problem:project:" + project + ":personal-output", ProjectId: ptr(project), Exemplars: []string{}}
+			text(&f, fmt.Sprintf("Uploads failed for %d personal script jobs in %s in the last day.", n, project))
+			out = append(out, f)
 		}
 		failing, err := q.db().RulesCleanupFailing(q.ctx())
 		if err != nil {
