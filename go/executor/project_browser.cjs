@@ -369,6 +369,30 @@ async function call(req) {
   requireScopedPage(current);
   return {content:[{type:'text',text:redactedJSON({result:evaluated,url:current.url(),title,text:body})}]};
 }
+async function checkGenericProduction(grant) {
+  const {path,method,status,identityField,expectedIdentity} = readinessProbe;
+  const url = new URL(path, grant.origin);
+  if (url.protocol !== 'https:' || url.origin !== grant.origin) throw Error('browser production origin denied');
+  // A readiness request must not inherit the home page's access policy or CSP.
+  const headers = new Headers();
+  for (const {name,value} of authority.values()) headers.set(name,value);
+  const options = {method,headers,mode:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(timeout)};
+  if (method === 'POST') {
+    headers.set('Content-Type','application/json');
+    options.body = '{}';
+  }
+  const response = await fetch(url, options);
+  try {
+    if (identityField && (response.status === 401 || response.status === 403)) return false;
+    if (requestOrigin(response.url) !== grant.origin || (status ? response.status !== status : !response.ok)) return false;
+    if (!identityField) return true;
+    const body = await response.json();
+    return body !== null && typeof body === 'object' && !Array.isArray(body) &&
+      Object.hasOwn(body,identityField) && body[identityField] === expectedIdentity;
+  } finally {
+    if (!response.bodyUsed) await response.body?.cancel();
+  }
+}
 async function probeInPage({origin, readinessProbe, legacyFleet, reportReason}) {
   const outcome = reason => reportReason ? reason : reason === 'verified';
   if (location.origin !== origin) return outcome('probe_failed');
@@ -391,6 +415,10 @@ async function probeInPage({origin, readinessProbe, legacyFleet, reportReason}) 
   return outcome(matched ? 'verified' : 'identity_mismatch');
 }
 async function checkProduction(grant) {
+  if (!legacyFleet && !grant.managed) {
+    if (!await checkGenericProduction(grant)) throw Error('browser production unready');
+    return;
+  }
   await page.goto(grant.origin,{waitUntil:'domcontentloaded'});
   if (requestOrigin(page.url()) !== grant.origin) throw Error('browser production origin denied');
   const args={origin:grant.origin,readinessProbe,legacyFleet,reportReason:grant.managed};

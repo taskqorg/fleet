@@ -282,7 +282,8 @@ An environment provides:
   Fleet uses coordinator-managed site-agents credentials. Other projects may use a host-local binding or
   coordinator-managed credentials under the same project and host grant.
   Credentials travel only over the authenticated host channel where applicable and private process IPC.
-  Hosts probe production readiness before launches. Fleet's production check is also reported in host observations.
+  Hosts probe production readiness before launches. Generic file bindings send the configured same-origin
+  request directly and reject redirects. Fleet's navigation and identity check is also reported in host observations.
   Preview grants remain separate. See [coding execution](docs/configuration.md#coding-execution).
 - Access: available data, accounts and external services.
 - R-PROJECT-SITE-ACCESS. Project settings declare agent site-access intent by exact HTTPS origin, role and scope.
