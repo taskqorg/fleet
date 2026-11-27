@@ -250,7 +250,8 @@ export function Live(props: { wall: boolean }) {
   const projectRows = createMemo(() => {
     const t = now(), d = done(), open = openList();
     const groups = openTasks.data?.groups ?? [];
-    const totalOpen = groups.reduce((acc, g) => acc + sum(Object.values(g.counts ?? {})), 0);
+    // g.counts includes terminal states (completed, cancelled); sum only OPEN_TASK states to check whether openList() is untruncated.
+    const totalOpen = groups.reduce((acc, g) => acc + (g.counts?.in_progress ?? 0) + (g.counts?.waiting ?? 0) + (g.counts?.queued ?? 0) + (g.counts?.held ?? 0), 0);
     const exactActive = open.length >= totalOpen;
     const rows = groups.map(g => {
       const id = g.key === '~' ? null : g.key, c = g.counts ?? {};
