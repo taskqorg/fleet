@@ -62,7 +62,8 @@ func refusal(status int, outcome, code, reason string) *answer {
 
 // body is a provider request body: JSON bytes, or a file body (an upload's multipart) opened afresh for each send.
 type body struct {
-	data []byte
+	data                   []byte
+	uncertainOnServerError bool
 	// A file body: its reader, length and content type. stall bounds each read of it, answer the wait for the response
 	// headers after its last byte.
 	open          func() io.Reader
@@ -497,9 +498,8 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if status < 200 || status > 299 {
 			a.outcome, a.err = "error", fmt.Sprintf("provider-%d", status)
 		}
-		if status >= 500 && (b.open != nil || c.Provider == "anthropic" && t.Path == "/v1/messages") {
-			// A failing upload reply does not establish whether the provider saved the file, nor an Anthropic 5xx
-			// whether it ran the message.
+		if status >= 500 && (b.uncertainOnServerError || b.open != nil || c.Provider == "anthropic" && t.Path == "/v1/messages") {
+			// The provider may have completed the action before reporting a server error.
 			a.outcome = "unknown"
 		}
 		if status == 401 || (status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall)) || status == 432 || status == 433 {
@@ -632,13 +632,29 @@ func (g *gateway) serveJSON(w http.ResponseWriter, r *http.Request, q *request, 
 		json.Unmarshal(args[*t.UsageOnce], &v)
 		q.usageKey = q.connection + ":" + v
 	}
-	path, ok := fillPath(t, args)
-	if !ok {
-		return refusal(400, "error", "bad-request", "a path field is missing or not an id")
-	}
-	if q.c.Provider == "anthropic" {
-		if path, ok = anthropicPath(t.Path, args); !ok {
-			return refusal(400, "error", "bad-request", "Anthropic input is invalid or unsupported; only nonstreaming Messages and model pages are supported")
+	var path string
+	c := q.c
+	projectCreate := q.tool == "project_create" && (c.Provider == "youtrack" || c.Provider == "youtrack-legacy-attachments")
+	if projectCreate {
+		var err error
+		if path, err = youtrackProjectPath(t.Path, args); err != nil {
+			return refusal(400, "error", "bad-request", err.Error())
+		}
+		if c.KeyPolicy != nil {
+			// Project creation must neither replay after an HTTP reply nor cool down the shared key.
+			policy := *c.KeyPolicy
+			policy.FailoverStatuses = nil
+			c.KeyPolicy = &policy
+		}
+	} else {
+		var ok bool
+		if path, ok = fillPath(t, args); !ok {
+			return refusal(400, "error", "bad-request", "a path field is missing or not an id")
+		}
+		if c.Provider == "anthropic" {
+			if path, ok = anthropicPath(t.Path, args); !ok {
+				return refusal(400, "error", "bad-request", "Anthropic input is invalid or unsupported; only nonstreaming Messages and model pages are supported")
+			}
 		}
 	}
 	var sent []byte
@@ -652,7 +668,7 @@ func (g *gateway) serveJSON(w http.ResponseWriter, r *http.Request, q *request, 
 		}
 		return g.serveDownload(w, r, q, path, sent)
 	}
-	return g.call(r.Context(), q.connection, q.c, q.p, t, path, body{data: sent})
+	return g.call(r.Context(), q.connection, c, q.p, t, path, body{data: sent, uncertainOnServerError: projectCreate})
 }
 
 // line is the spool record of an answered call.
@@ -1329,6 +1345,46 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 		out.WriteString(value)
 		rest = rest[start+length+1:]
 	}
+}
+
+var (
+	youtrackProjectPrefix = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,30}$`)
+	youtrackUserID        = regexp.MustCompile(`^[0-9]+-[0-9]+$`)
+)
+
+// youtrackProjectPath validates the create request before moving its optional template to the query.
+func youtrackProjectPath(path string, args map[string]json.RawMessage) (string, error) {
+	var name, shortName string
+	if json.Unmarshal(args["name"], &name) != nil || strings.TrimSpace(name) == "" {
+		return "", errors.New("name must be a nonblank string")
+	}
+	if json.Unmarshal(args["shortName"], &shortName) != nil || !youtrackProjectPrefix.MatchString(shortName) {
+		return "", errors.New("shortName must start with a letter and contain at most 31 letters, digits or underscores")
+	}
+	var leader map[string]string
+	if json.Unmarshal(args["leader"], &leader) != nil || len(leader) != 1 || !youtrackUserID.MatchString(leader["id"]) {
+		return "", errors.New("leader must contain only id, a YouTrack user database ID")
+	}
+	for field, raw := range args {
+		switch field {
+		case "name", "shortName", "leader":
+		case "description":
+			var description *string
+			if json.Unmarshal(raw, &description) != nil || description == nil {
+				return "", errors.New("description must be a string")
+			}
+		case "template":
+			var template string
+			if json.Unmarshal(raw, &template) != nil || (template != "scrum" && template != "kanban") {
+				return "", errors.New("template must be scrum or kanban")
+			}
+			path += "&template=" + url.QueryEscape(template)
+		default:
+			return "", errors.New("project_create accepts only name, shortName, leader, description and template")
+		}
+	}
+	delete(args, "template")
+	return path, nil
 }
 
 // Anthropic's fixed native routes need no caller-selected URL or headers.
