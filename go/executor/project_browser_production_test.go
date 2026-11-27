@@ -292,6 +292,30 @@ func TestProjectBrowserManagedSiteProbe(t *testing.T) {
 			t.Fatalf("probe result %q, want %q", got, tc.want)
 		}
 	}
+	t.Run("preview survives revoked production authority", func(t *testing.T) {
+		const preview = "http://127.0.0.1:4173"
+		cfg["checkGeneration"] = true
+		cfg["generationCheckMs"] = 60000
+		cfg["revokeAfterProductionNavigation"] = true
+		pipe, err := browserPipe(access)
+		noErr(t, err)
+		defer pipe.Close()
+		cmd := browserCommand(cfg, d, false)
+		cmd.ExtraFiles = []*os.File{pipe}
+		requests := []string{}
+		for i, url := range []string{damBrowserOrigin, preview, damBrowserOrigin} {
+			requests = append(requests, enc(M{"id": i + 1, "method": "tools/call",
+				"params": M{"name": "navigate", "arguments": M{"url": url}}}))
+		}
+		cmd.Stdin = strings.NewReader(strings.Join(requests, "\n"))
+		out, err := cmd.CombinedOutput()
+		noErr(t, err)
+		replies := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(replies) != 3 || decM(replies[0])["result"] == nil ||
+			decM(replies[1])["result"] == nil || decM(replies[2])["error"] == nil {
+			t.Fatal("expected production success, independent preview success, and revoked production refusal")
+		}
+	})
 }
 
 const browserProductionFixture = `
@@ -311,6 +335,20 @@ const expected = legacy
   ? {'cf-access-client-id':'invented-fleet-id','cf-access-client-secret':'invented-fleet-secret'}
   : {'x-dam-verification-token':token, 'x-dam-aux':auxToken};
 let socket;
+let pageURL = origin + '/';
+let generationChecks = 0;
+if (cfg.revokeAfterProductionNavigation) {
+  require('node:net').createConnection = () => {
+    const connection = new EventEmitter();
+    connection.setTimeout = () => {};
+    connection.write = () => {
+      connection.emit('data', JSON.stringify({registered: ++generationChecks <= 3}));
+      connection.emit('close');
+    };
+    queueMicrotask(() => connection.emit('connect'));
+    return connection;
+  };
+}
 let requestID = 0;
 const intercepted = new Map();
 class Socket extends EventEmitter {
@@ -386,11 +424,22 @@ require('node:child_process').spawn = (_exe,args) => {
   return child;
 };
 const page = {
-  url: () => origin + '/',
+  url: () => pageURL,
   setContent: async () => {},
   title: async () => process.argv[2] === 'check' ? 'Fleet readiness' : token,
   locator: () => ({innerText:async()=>token+' '+auxToken+' '+cookie}),
   goto: async url => {
+    if (cfg.revokeAfterProductionNavigation) {
+      pageURL = url;
+      if (url === origin) await authenticated(url);
+      else {
+        assert.equal(url, cfg.previewOrigins[0]);
+        const preview = await request(url);
+        assert.equal(preview.method, 'Fetch.continueRequest');
+        assert.deepEqual(preview.values, {});
+      }
+      return;
+    }
     if (url === origin+'/protocol-loss') {
       socket.disconnect();
       return;

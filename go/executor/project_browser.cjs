@@ -82,9 +82,10 @@ function ownerGeneration() {
 }
 async function requireGeneration() {
   if(!cfg.checkGeneration)return;
+  const socket=control;
   generationCheck ??= ownerGeneration().catch(()=>false).finally(()=>{ generationCheck=undefined; });
   if(!await generationCheck) {
-    failClosed();
+    if(productionContext && control===socket)failClosed();
     throw Error('browser authority changed');
   }
 }
@@ -156,8 +157,9 @@ async function paused(sessionId,event) {
     })
     .map(([name,value])=>({name,value:String(value)}));
   if(production) {
+    const socket=control;
     await requireGeneration();
-    if(closing)return;
+    if(closing || control!==socket)return;
     usedProduction = true;
     requestHeaders.push(...privateHeaders);
   }
@@ -343,11 +345,11 @@ async function call(req) {
   const {name,arguments:a={}}=req.params;
   if(!tools.some(t=>t.name===name)) throw Error('unknown tool');
   if(name==='close') { await close(); return {content:[{type:'text',text:'Browser closed'}]}; }
-  if(productionContext && browser)await requireGeneration();
-  if(name==='emulate') return emulate(a);
-  if(name==='screenshot') return screenshot(page,a);
   if(name==='navigate' && !permitted(a.url)) throw Error('origin denied');
   const production = name === 'navigate' ? requestOrigin(a.url) === cfg.production?.origin : productionContext;
+  if(production && productionContext && browser)await requireGeneration();
+  if(name==='emulate') return emulate(a);
+  if(name==='screenshot') return screenshot(page,a);
   await open(production);
   for (const cookie of await context.cookies()) if(cookie.value) secrets.add(cookie.value);
   const current = page;
