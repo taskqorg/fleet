@@ -782,12 +782,14 @@ func publishingRecordRoute(q *Request, b *contract.PublishingHostRecord) (contra
 			return fail(403, "Publishing host project rejected")
 		}
 		sourceID := execID
+		commandResult := false
 		if cmdID != "" {
 			cmd, err := commandOf(wq, b.HostId, execID, cmdID, "Publishing record rejected")
 			if err != nil {
 				return err
 			}
 			if cmd.Kind == string(contract.CommandKindPublishing) {
+				commandResult = true
 				var payload contract.PublishingCommandPayload
 				if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 					return err
@@ -809,6 +811,13 @@ func publishingRecordRoute(q *Request, b *contract.PublishingHostRecord) (contra
 			}
 			if rec.ProjectId != "" && deref(execution.ProjectID) != rec.ProjectId {
 				return fail(403, "Publishing record project rejected")
+			}
+			// The publishing result and the status receipt travel separately. Either can land first.
+			if commandResult && outcome == "failed" && execution.Kind == db.ExecutionKindHostJob &&
+				execution.State != db.ExecutionStateSucceeded && execution.State != db.ExecutionStateCancelled {
+				if err := recordHostJobProblem(wq, execID, deref(b.Error)); err != nil {
+					return err
+				}
 			}
 		}
 		if err := audit(wq, "publishing:"+b.Repo, action, nil, b, auditExtra{

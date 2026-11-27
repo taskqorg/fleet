@@ -126,6 +126,42 @@ test('SL6 receipts move the execution forward only; a repeated terminal receipt 
   assert.equal((await other('/api/hosts/receipts', {commandId, executionId, status: 'started'})).status, 403, 'another host');
 });
 
+test('a failed host job retains the cause from its receipt or publishing record', async () => {
+  const projectId = 'trial-publishing-failure', hostId = 'trial-publishing-host';
+  const forgeHost = 'gitlab.example.test', repo = 'trial/example';
+  const op = (name: string, body: object) => browser('POST', '/api/ops/' + name, body);
+  ok(await op('project_create', {id: projectId, requestId: randomUUID(), content: {settings: {
+    id: projectId, name: 'Trial publishing failure', contextFiles: ['rules.md'], execution: {forge: true},
+    repos: [{id: 'main', remote: `git@${forgeHost}:${repo}.git`, forge: 'gitlab'}],
+    integration: {mode: 'pr', autoMerge: true}, environments: [{hostId, checkoutPath: '/tmp/trial-publishing'}],
+  }, contextFiles: [{path: 'rules.md', text: 'Test fixture.'}]}}));
+  const h = await host(hostId);
+  const poll = async (q = '') => ok(await h('/api/hosts/poll' + q, {
+    platform: 'linux', capabilities: [`publishing:gitlab:${forgeHost}:${repo}`], stores: [], problems: [],
+  }));
+  await poll();
+  for (const source of ['receipt', 'record before receipt', 'record after receipt']) {
+    const requestId = randomUUID();
+    const merge = op('publishing_request_merge', {projectId, hostId, requestId, number: 46});
+    const command = await hostCommand(poll, (c: any) => c.payload?.requestId === requestId);
+    assert.ok(command, 'the host receives the publishing command');
+    const commandId = command.id, executionId = command.executionId;
+    const cause = 'glab mr merge: HTTP 405 Merge blocked';
+    const error = '  glab mr merge:\n  HTTP 405 Merge blocked  ';
+    const record = async () => ok(await h('/api/hosts/publishing/record', {
+      commandId, executionId, projectId, requestId, action: 'request_merge', error,
+      provider: 'gitlab', host: forgeHost, repo, kind: 'merge_request', number: 46,
+      branch: '', headSha: '', isDraft: false, title: '', url: '', state: 'FAILED',
+    }));
+    if (source === 'record before receipt') await record();
+    ok(await h('/api/hosts/receipts', {commandId, executionId, status: 'failed', ...(source === 'receipt' ? {error} : {})}));
+    if (source === 'record after receipt') await record();
+    assert.equal((await merge).status, 502);
+    const row = ok(await op('executions_list', {projectId, system: 'include'})).executions.find((x: any) => x.id === executionId);
+    assert.deepEqual([row?.kind, row?.state, row?.problem], ['host_job', 'failed', cause], source);
+  }
+});
+
 test('SL7 host events are stored once, in seq order, with their data unchanged; a conflicting or invalid batch stores nothing (risk: renamed event field, partial batch)', async () => {
   const {h, executionId} = await started();
   const ev = (id: string, seq: number, data: object) => ({id, seq, type: 'item.completed', timestamp: 1, data});
