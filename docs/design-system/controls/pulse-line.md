@@ -20,13 +20,13 @@
 * A count opens [Conversations](../pages/conversations.md) with that state as the filter.
 * A blocker chip opens [Live](../pages/live.md) at that host or cause; the problems count and its pills open System › Problems ([system](../pages/system.md)), a pill at its first problem.
 * Values update in place with fixed-width figures ([OR-6](../owner-rules.md)); a new chip never moves the counts ([OR-23](../owner-rules.md)).
-* At phone width the line wraps; chips keep the cause and fold `×N` into the tooltip.
+* The line wraps as space runs out. The final link stays on one line at its full width. At phone width, chips keep the cause and fold `×N` into the tooltip.
 * The line never runs past its column: a cause longer than the line ends in an ellipsis inside its chip, and the chip's tooltip holds the full cause ([OR-20](../owner-rules.md)).
 
 **Keyboard.** Each count and chip is a link in reading order.
 
 **Accessibility.** `role="group"` named "Pulse"; each count is named "4 working"; a chip is named "Blocker: Codex cannot start on pds18-native, 22 times".
 
-**Do.** Keep the line one line at desktop width. **Don't.** Add arrows to show trends ([OR-7](../owner-rules.md)) or a chip per repeat.
+**Do.** Keep the line on one row when it fits. **Don't.** Add arrows to show trends ([OR-7](../owner-rules.md)) or a chip per repeat.
 
 **Used in.** [Home](../pages/home.md).

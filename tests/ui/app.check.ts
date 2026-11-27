@@ -5,6 +5,7 @@
 import { mkdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import type { HomeViewReply } from '../../contracts/generated/ops-people.ts';
 import { checkServer } from './seed.ts';
 import { layoutFindings } from './layout.check.ts';
 import { openWaiting } from './home-card.ts';
@@ -104,7 +105,54 @@ try {
   await openWaiting(page);
   const asked = await page.locator('[data-ui=question-card]').count();
   out.push(`home (OR-53): ${asked} question cards${asked < 5 ? '  MISSING QUESTIONS' : ''}`);
+  // T-FLT-129: an empty waiting group leaves active work next to the composer, even when the pulse is crowded.
+  const homeFixture: HomeViewReply = {
+    sessions: [{
+      id: 'home-working-fixture', code: null, title: 'Working fixture', state: 'running', harness: 'codex',
+      profileId: null, projectId: null, createdAt: null, activityAt: null, executions: 1, openQuestions: 0,
+      archivedAt: null, sortKey: [],
+    }],
+    bots: [{
+      id: 'home-asleep-fixture', projectId: 'fleet', name: 'Asleep fixture', purpose: 'Fixture bot', revision: 1,
+      paused: false, activeRunId: null, lastRunState: null, lastRunAt: null, needsYou: false, conversationId: null,
+    }],
+    questions: [], failures: [],
+    counts: { doneToday: 123, visitAt: Date.now(), doneSince: 0, mergedSince: 0, failedSince: 0 },
+    blockers: [1, 2, 3].map(n => ({
+      kind: 'run', cause: `home-fixture-${n}`, n, hostId: null, at: Date.now(),
+      text: 'A provider is waiting for capacity and no other worker is available to pick up this run '.repeat(2),
+    })),
+  };
+  await page.route('**/api/ops/home_view', route => route.fulfill({ json: homeFixture }));
+  await page.goto(origin + '/home');
+  await page.getByText('Working fixture', { exact: true }).waitFor();
+  await page.getByRole('region', { name: 'Asleep' }).getByText('Asleep fixture', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('region', { name: 'Waiting for you' }).count(), 0);
+  assert.equal(await page.getByText('Nothing needs you', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Open Live', exact: true }).count(), 0);
+  assert.equal(await page.locator('[data-ui=home] > [data-ui=composer] + section').getAttribute('aria-label'), 'Working');
+  const pulse = page.getByRole('group', { name: 'Pulse' });
+  const live = pulse.getByRole('link', { name: 'Live ›', exact: true });
+  assert.equal(await live.getAttribute('href'), '/live');
+  await page.evaluate(() => document.fonts.ready.then(() => {}));
+  for (const width of [1440, 1366, 1100, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.ok(await live.evaluate((link, desktop) => {
+      const range = document.createRange();
+      range.selectNodeContents(link);
+      const text = range.getBoundingClientRect();
+      const box = link.getBoundingClientRect();
+      const pulseRight = link.closest('[data-ui=pulse-line]')!.getBoundingClientRect().right;
+      const headerRight = link.closest('header')!.getBoundingClientRect().right;
+      return range.getClientRects().length === 1 && text.left >= box.left - 1
+        && text.right <= Math.min(box.right, pulseRight, innerWidth) + 1
+        && (!desktop || Math.abs(box.right - headerRight) <= 1);
+    }, width >= 1100), `PulseLine Live link clips or leaves the right edge at ${width}px`);
+  }
+  out.push('home: Working follows the composer when Waiting for you is empty, and the pulse Live label fits at 1440, 1366, 1100 and 390 px');
+  await page.unroute('**/api/ops/home_view');
   // OR-39: the task detail shows no total that is unknown (no empty tokens or cost fields).
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(origin + `/projects/tasks/${running}`); await page.waitForSelector('[data-ui=detail] .detail-title');
   const empty = await page.$$eval('[data-ui=detail] .totals .b-unavailable', els => els.length);
   out.push(`task detail (OR-39): ${empty ? empty + ' EMPTY TOTALS' : 'no empty totals'}`);
