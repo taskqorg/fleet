@@ -92,24 +92,25 @@ type workerControlResp struct {
 }
 
 type workerExit struct {
-	Status         string                            `json:"status"`
-	ExitCode       *int64                            `json:"exitCode,omitempty"`
-	StdoutClosed   bool                              `json:"stdoutClosed"`
-	CleanupUnknown bool                              `json:"cleanupUnknown"`
-	TimedOut       bool                              `json:"timedOut"`
-	Stopped        bool                              `json:"stopped"`
-	Completed      bool                              `json:"completed"`
-	Succeeded      bool                              `json:"succeeded"`
-	Native         string                            `json:"native,omitempty"`
-	Seq            uint64                            `json:"seq"`
-	Orphans        int                               `json:"orphans"`
-	MCPDir         string                            `json:"mcpDir,omitempty"`
-	StartedAt      time.Time                         `json:"startedAt"`
-	CPUSeconds     float64                           `json:"cpuSeconds"`
-	HasCPU         bool                              `json:"hasCpu"`
-	PeakRSS        uint64                            `json:"peakRss"`
-	Resources      *contract.ExecutionResourceSummary `json:"resources,omitempty"`
-	StderrTail     *string                           `json:"stderrTail,omitempty"`
+	Status              string                             `json:"status"`
+	ExitCode            *int64                             `json:"exitCode,omitempty"`
+	StdoutClosed        bool                               `json:"stdoutClosed"`
+	CleanupUnknown      bool                               `json:"cleanupUnknown"`
+	ProcessesUnresolved bool                               `json:"processesUnresolved,omitempty"`
+	TimedOut            bool                               `json:"timedOut"`
+	Stopped             bool                               `json:"stopped"`
+	Completed           bool                               `json:"completed"`
+	Succeeded           bool                               `json:"succeeded"`
+	Native              string                             `json:"native,omitempty"`
+	Seq                 uint64                             `json:"seq"`
+	Orphans             int                                `json:"orphans"`
+	MCPDir              string                             `json:"mcpDir,omitempty"`
+	StartedAt           time.Time                          `json:"startedAt"`
+	CPUSeconds          float64                            `json:"cpuSeconds"`
+	HasCPU              bool                               `json:"hasCpu"`
+	PeakRSS             uint64                             `json:"peakRss"`
+	Resources           *contract.ExecutionResourceSummary `json:"resources,omitempty"`
+	StderrTail          *string                            `json:"stderrTail,omitempty"`
 }
 
 type workerMCPStore struct {
@@ -271,9 +272,9 @@ func removeWorkerDir(root, execution string) {
 }
 
 type workerLogWriter struct {
-	mu   sync.Mutex
-	f    *os.File
-	seq  uint64
+	mu  sync.Mutex
+	f   *os.File
+	seq uint64
 }
 
 func (w *workerLogWriter) emit(rec workerRecord) error {
@@ -613,12 +614,17 @@ func runWorker(args []string) error {
 
 	var mu sync.Mutex
 	var closedSock atomic.Bool
+	mcpCleanupAttempted := false // protected by mu
 	killOwned := func() error {
 		if protocol {
-			// The worker loop cleans up MCP groups before killing individually
-			// tracked descendants, so a guardian can still signal its group.
+			if l.observe() != nil {
+				l.cleanupUnknown = true
+			}
 			proc.Kill()
-			return nil
+			if !mcpCleanupAttempted {
+				// The worker loop first gives each guardian a chance to end its group.
+				return nil
+			}
 		}
 		return l.cleanup()
 	}
@@ -742,7 +748,7 @@ func runWorker(args []string) error {
 		return protocol && (kind == "turn.completed" || kind == "turn.failed" || kind == string(contract.FleetEventTypeProtocolFailed))
 	}
 
-	cleanup := func() {
+	cleanup := func() bool {
 		var closeErr, groupErr error
 		if mcp != nil {
 			closeErr = mcp.close()
@@ -753,12 +759,12 @@ func runWorker(args []string) error {
 			}
 		}
 		mu.Lock()
-		if groupErr == nil && l.cleanup() != nil {
-			l.cleanupUnknown = true
-		}
-		l.cleanupUnknown = l.cleanupUnknown || closeErr != nil || groupErr != nil
+		mcpCleanupAttempted = true
+		ownedErr := l.cleanup()
+		l.cleanupUnknown = l.cleanupUnknown || closeErr != nil || groupErr != nil || ownedErr != nil
 		mu.Unlock()
 		l.orphans = cleanupRun(spec.DataDir, spec.Execution)
+		return groupErr == nil
 	}
 
 	beat := time.NewTicker(tickEvery)
@@ -780,8 +786,20 @@ func runWorker(args []string) error {
 	const shutdownGrace = 5 * time.Second
 	var shutdownC <-chan time.Time
 	stdoutInterrupted := false
+	processesSettled, processesUnresolved := false, false
+	checkProcesses := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		alive, err := l.aliveOwned()
+		var unknown identityUnknown
+		if err == nil {
+			processesSettled = !alive
+		} else if !protocol && !errors.As(err, &unknown) {
+			processesSettled, l.cleanupUnknown = true, true
+		}
+	}
 	for {
-		if exitedSent && l.eof {
+		if exitedSent && l.eof && processesSettled {
 			break
 		}
 		var lc <-chan string
@@ -806,38 +824,21 @@ func runWorker(args []string) error {
 			shutdownC = nil
 			if protocol {
 				// Descendants can keep stdout open or await their MCP owner.
-				cleanup()
-				if !l.eof {
-					shutdownC = time.After(shutdownGrace)
-				}
+				processesUnresolved = !cleanup()
+				shutdownC = time.After(shutdownGrace)
 			}
-			for {
-				mu.Lock()
-				alive, aerr := l.aliveOwned()
-				mu.Unlock()
-				var unknown identityUnknown
-				if errors.As(aerr, &unknown) {
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
-				if aerr != nil {
-					mu.Lock()
-					l.cleanupUnknown = true
-					mu.Unlock()
-					break
-				}
-				if !alive {
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
+			checkProcesses()
 		case <-shutdownC:
 			shutdownC = nil
 			mu.Lock()
 			if exitedSent {
-				stdoutInterrupted = true
-				l.cleanupUnknown = true
-				_ = pr.Close()
+				if !l.eof {
+					stdoutInterrupted = true
+					_ = pr.Close()
+				}
+				processesUnresolved = processesUnresolved || !processesSettled
+				processesSettled = true
+				l.cleanupUnknown = l.cleanupUnknown || processesUnresolved || stdoutInterrupted
 			} else if !l.exitedNow() {
 				l.cleanupUnknown = true
 				_ = killOwned()
@@ -857,6 +858,9 @@ func runWorker(args []string) error {
 			mu.Unlock()
 		case <-beat.C:
 			recordOwned()
+			if exitedSent && !processesSettled {
+				checkProcesses()
+			}
 		}
 	}
 
@@ -871,6 +875,10 @@ func runWorker(args []string) error {
 	}
 	if !protocol {
 		cleanup()
+	}
+	if processesUnresolved {
+		// Retain any identities learned during cleanup for a later startup retry.
+		recordOwned()
 	}
 	var code *int64
 	if l.state() != nil && l.state().Exited() {
@@ -901,24 +909,25 @@ func runWorker(args []string) error {
 	}
 	l.seq++
 	ex := workerExit{
-		Status:         status,
-		ExitCode:       code,
-		StdoutClosed:   l.eof && !stdoutInterrupted,
-		CleanupUnknown: cleanupUnknown,
-		TimedOut:       timedOut,
-		Stopped:        stopped,
-		Completed:      completed,
-		Succeeded:      l.state() != nil && l.state().Success(),
-		Native:         l.native,
-		Seq:            l.seq,
-		Orphans:        l.orphans,
-		MCPDir:         mcpDir,
-		StartedAt:      l.started,
-		CPUSeconds:     cpu,
-		HasCPU:         len(l.cpu) > 0,
-		PeakRSS:        l.peakRSS,
-		Resources:      res,
-		StderrTail:     stderrTail(spec.Dir, spec.Execution, code),
+		Status:              status,
+		ExitCode:            code,
+		StdoutClosed:        l.eof && !stdoutInterrupted,
+		CleanupUnknown:      cleanupUnknown,
+		ProcessesUnresolved: processesUnresolved,
+		TimedOut:            timedOut,
+		Stopped:             stopped,
+		Completed:           completed,
+		Succeeded:           l.state() != nil && l.state().Success(),
+		Native:              l.native,
+		Seq:                 l.seq,
+		Orphans:             l.orphans,
+		MCPDir:              mcpDir,
+		StartedAt:           l.started,
+		CPUSeconds:          cpu,
+		HasCPU:              len(l.cpu) > 0,
+		PeakRSS:             l.peakRSS,
+		Resources:           res,
+		StderrTail:          stderrTail(spec.Dir, spec.Execution, code),
 	}
 	tmpExit := filepath.Join(workerDir, "exit.json.tmp")
 	if err := os.WriteFile(tmpExit, []byte(enc(ex)), 0o600); err != nil {
@@ -1004,8 +1013,8 @@ func (e *executor) spawnWorker(c contract.Command, spec workerSpec) (*live, erro
 		group:     rep.Grp,
 		trial:     spec.Trial,
 		worker: &liveWorker{
-			dir:  wdir,
-			sock: readWorkerSockPath(wdir),
+			dir:   wdir,
+			sock:  readWorkerSockPath(wdir),
 			trial: spec.Trial,
 		},
 	}

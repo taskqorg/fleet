@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/executor/supervise"
 )
 
 // A completed turn must release the worker and deliver a terminal receipt even
@@ -148,6 +150,61 @@ read -r line
 	}
 	if active := e.activeExecutions(); len(active) != 0 {
 		t.Fatalf("completed execution still owns a host slot: %v", active)
+	}
+}
+
+func TestWorkerUnresolvedExitReleasesCommandAndKeepsOwnership(t *testing.T) {
+	e, root := scriptExecutor(t)
+	defer e.db.Close()
+	const execution, cid, sid = "unresolved-exit", "start-command", "session"
+	body := enc(M{"id": cid, "executionId": execution, "sessionId": sid, "kind": "start", "payload": M{"harness": "codex"}})
+	if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.launch(execution, cid, sid); err != nil {
+		t.Fatal(err)
+	}
+	// Model a worker that exhausted its cleanup grace while an owned process survived.
+	cmd := exec.Command("sleep", "60")
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { proc.Kill(); _ = proc.Wait() })
+	id, err := identity(proc.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := workerDirFor(root, execution)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "exit.json"), []byte(enc(workerExit{
+		Status: "unknown", Seq: 10, StdoutClosed: true, CleanupUnknown: true, ProcessesUnresolved: true,
+	})), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := &live{command: commandOf(body), worker: &liveWorker{dir: dir}, owned: map[int]string{proc.Pid: id}}
+	if err := e.own(execution, l); err != nil {
+		t.Fatal(err)
+	}
+	e.live[execution] = l
+	if err := e.tick(); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastReceipt(e, cid); got != "unknown" || len(e.live) != 0 || count(e.db, "launches") != 1 || count(e.db, "owned") != 1 {
+		t.Fatalf("got receipt=%q active=%d launches=%d owned=%d", got, len(e.live), count(e.db, "launches"), count(e.db, "owned"))
+	}
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.live) != 0 || count(e.db, "launches") != 0 || count(e.db, "owned") != 0 {
+		t.Fatal("restart reattached the terminal worker or retained its resolved ownership")
+	}
+	select {
+	case <-proc.Done():
+	case <-time.After(time.Second):
+		t.Fatal("recorded owned process survived reconciliation")
 	}
 }
 
