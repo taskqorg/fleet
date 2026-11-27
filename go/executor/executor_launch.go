@@ -400,13 +400,28 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	}
 	observed := e.observeHarness(cmd, name)
 	servers := mcpAtRoot(selectedMCP, work)
+	codeReadRoots := []string{work, inputDir}
+	captureDir, launched := "", false
+	defer func() {
+		if captureDir != "" && !launched {
+			_ = os.Remove(captureDir)
+			_ = os.Remove(filepath.Dir(captureDir))
+		}
+	}()
 	for _, tool := range requirements.Tools {
 		if tool == "browser" {
 			cfg, err := browserConfig(p)
 			if err != nil {
 				return fail(1, "browser-binding-unready")
 			}
-			servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", enc(cfg)}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "press", "drag", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
+			dir := browserCaptureDir(e.root, execution)
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return fail(1, "browser capture directory: "+err.Error())
+			}
+			captureDir = dir
+			cfg["captureDir"] = captureDir
+			codeReadRoots = append(codeReadRoots, captureDir)
+			servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", enc(cfg)}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "press", "drag", "emulate", "screenshot", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
 		}
 	}
 	if env := requirements.Environment; env != nil {
@@ -503,7 +518,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	// Granted connections: one `<executor> mcp connection` server each, calling fleet-gateway with this run's token. The
 	// token and gateway URL reach the servers through the private run file below, never the harness environment or argv.
 	var connectionTools []string
-	runFile, launched := "", false
+	runFile := ""
 	defer func() {
 		if runFile != "" && !launched {
 			os.Remove(runFile) // K2-6: a launch that failed never needs its run token
@@ -589,7 +604,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		}
 	}
 	if codeMode != "" {
-		auth := codeAuthorityFor(name, cfg, work, []string{work, inputDir}, gitRoots, sp.GitNetwork != nil && *sp.GitNetwork, sp.ReadOnly != nil && *sp.ReadOnly, e.root)
+		auth := codeAuthorityFor(name, cfg, work, codeReadRoots, gitRoots, sp.GitNetwork != nil && *sp.GitNetwork, sp.ReadOnly != nil && *sp.ReadOnly, e.root)
 		auth.env = M{"FLEET_INPUT_DIR": inputDir, "FLEET_OUTPUT_DIR": outputDir}
 		if sp.Project != nil {
 			auth.gitEnv = anyStrings(gitAccess)
@@ -706,6 +721,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		removeWorkerDir(e.root, execution)
 		e.release(execution)
 		if errors.Is(err, errWorkerStartUnknown) {
+			captureDir = "" // Keep staging for a worker that may still start.
 			return e.finish(c, "unknown", native)
 		}
 		return fail(1, err.Error())

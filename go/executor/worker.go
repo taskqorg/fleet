@@ -428,6 +428,9 @@ func runWorker(args []string) error {
 		}
 		if as, ok := sess.(*acpSession); ok {
 			as.readRoots = []string{spec.InputDir}
+			if has(spec.Servers, "project-browser") {
+				as.readRoots = append(as.readRoots, browserCaptureDir(spec.DataDir, spec.Execution))
+			}
 		}
 	} else {
 		if mcp != nil {

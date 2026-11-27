@@ -4,6 +4,8 @@ package main
 // Risk: a missing binding or cross-origin navigation launches an unscoped host browser.
 import (
 	"encoding/json"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +23,14 @@ func TestProjectBrowserScope(t *testing.T) {
 	d := t.TempDir()
 	binding := filepath.Join(d, "bindings.json")
 	module := filepath.Join(d, "mock.cjs")
-	os.WriteFile(module, []byte(`module.exports={chromium:{launch(){throw Error('must not launch')}}}`), 0600)
+	marker := filepath.Join(d, "spawned")
+	noErr(t, os.WriteFile(module, []byte(`
+require('node:child_process').spawn=()=>{
+  require('node:fs').writeFileSync(JSON.parse(process.argv[1]).marker,'spawned');
+  throw Error('unexpected launch');
+};
+module.exports={chromium:{}};
+`), 0600))
 	os.WriteFile(binding, []byte(`{"":{"previewOrigins":["http://127.0.0.1:4173"]},"project":{"previewOrigins":["http://127.0.0.1:4173"]}}`), 0600)
 	t.Setenv("FLEET_BROWSER_BINDINGS", binding)
 	t.Setenv("FLEET_PLAYWRIGHT_MODULE", module)
@@ -32,6 +41,7 @@ func TestProjectBrowserScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg["marker"] = marker
 	if _, err := browserConfig(M{"projectId": "other", "project": M{"id": "project"}}); err == nil {
 		t.Fatal("foreign authoritative identity accepted")
 	}
@@ -44,13 +54,20 @@ func TestProjectBrowserScope(t *testing.T) {
 		}
 	}
 	c := browserCommand(cfg, d, false)
-	c.Stdin = strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"navigate\",\"arguments\":{\"url\":\"http://127.0.0.1:9999/admin\"}}}\n")
+	c.Stdin = strings.NewReader(`
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"navigate","arguments":{"url":"http://127.0.0.1:9999/admin"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"screenshot"}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"emulate","arguments":{"viewport":"20000x20000","colorScheme":"dark"}}}
+`)
 	out, err := c.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), `"error"`) || strings.Contains(string(out), "must not launch") {
+	if strings.Count(string(out), `"error"`) != 3 {
 		t.Fatalf("unsafe result: %s", out)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("denied call attempted browser launch: %v", err)
 	}
 	os.WriteFile(binding, []byte(`{"project":{"previewOrigins":["http://127.0.0.1:4173/admin"]}}`), 0600)
 	if _, err := browserConfig(payload); err == nil {
@@ -147,10 +164,11 @@ module.exports={chromium:{connectOverCDP:async()=>({contexts:()=>[context]})}};
 	})
 }
 
-// Requirement: scoped MCP actions deliver real input to browser controls.
-// Risk: synthetic events cannot capture the pointer or drive trusted keyboard gestures.
+// Requirements: real trusted input and Chromium preview capture through scoped MCP.
+// Risks: synthetic input, scaled rather than reflowed layout, incorrect PNGs and export of authenticated pixels.
 func TestProjectBrowserTrustedInput(t *testing.T) {
 	const cookieValue = "invented-project-browser-cookie"
+	const accessSecret = "invented-access-secret"
 	module, executable := os.Getenv("FLEET_PLAYWRIGHT_MODULE"), os.Getenv("FLEET_BROWSER_EXECUTABLE")
 	if module == "" && executable == "" {
 		t.Skip("requires the project-browser Playwright module and Chromium executable")
@@ -163,17 +181,37 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 		deniedRequests.Add(1)
 	}))
 	defer denied.Close()
+	var authenticated atomic.Bool
+	production := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("CF-Access-Client-Id") == "invented-access-id" &&
+			r.Header.Get("CF-Access-Client-Secret") == accessSecret {
+			authenticated.Store(true)
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<title>Authenticated fixture</title><body>"+accessSecret+"</body>")
+	}))
+	defer production.Close()
 	preview := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/redirect" {
 			http.Redirect(w, r, denied.URL, http.StatusFound)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
+		if r.URL.Path == "/with-production" {
+			_, _ = io.WriteString(w, `<body><iframe src="`+production.URL+`"></iframe></body>`)
+			return
+		}
 		http.SetCookie(w, &http.Cookie{Name: "fixture", Value: cookieValue, Path: "/"})
 		_, _ = io.WriteString(w, `<!doctype html>
 <title>Trusted input fixture</title>
-<style>button { display: block; width: 140px; height: 60px; user-select: none; }</style>
+<style>
+  button { display: block; width: 140px; height: 60px; user-select: none; }
+  #swatch { width: 200px; height: 40px; background: #fff; }
+  @media (max-width: 500px) { #swatch { width: 100px; } }
+  @media (prefers-color-scheme: dark) { #swatch { background: #000; } }
+</style>
 <main><button id="a">A</button><button id="b">B</button></main>
+<div id="swatch"></div>
 <output>`+cookieValue+`</output>
 <script>
   const list = document.querySelector('main');
@@ -209,8 +247,16 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 	}))
 	defer preview.Close()
 
-	cfg := M{"module": module, "executable": executable, "previewOrigins": []string{preview.URL}, "timeoutMs": 5000}
-	c := browserCommand(cfg, t.TempDir(), false)
+	root := t.TempDir()
+	captureDir := browserCaptureDir(root, "fixture")
+	noErr(t, os.MkdirAll(captureDir, 0o700))
+	accessFile := filepath.Join(root, "invented.env")
+	noErr(t, os.WriteFile(accessFile, []byte("CF_ACCESS_CLIENT_ID=invented-access-id\nCF_ACCESS_CLIENT_SECRET="+accessSecret+"\n"), 0o600))
+	// The production test binding uses a second loopback origin so no real credential or external host is needed.
+	cfg := M{"module": module, "executable": executable, "previewOrigins": []string{preview.URL}, "timeoutMs": 5000,
+		"captureDir": captureDir, "production": M{"origin": production.URL, "accessFile": accessFile}}
+	t.Setenv("TMPDIR", runTempDir(root, "fixture"))
+	c := browserCommand(cfg, root, false)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := c.StdinPipe()
 	if err != nil {
@@ -259,8 +305,8 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 		if failed != wantError {
 			t.Fatalf("%s: failed = %v, want %v", name, failed, wantError)
 		}
-		if strings.Contains(enc(reply), cookieValue) {
-			t.Fatalf("%s: fixture cookie leaked in MCP reply", name)
+		if rendered := enc(reply); strings.Contains(rendered, cookieValue) || strings.Contains(rendered, accessSecret) {
+			t.Fatalf("%s: fixture credential leaked in MCP reply", name)
 		}
 		return reply
 	}
@@ -272,8 +318,8 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 	for _, tool := range listing["tools"].([]any) {
 		names[tool.(map[string]any)["name"].(string)] = true
 	}
-	if !names["press"] || !names["drag"] {
-		t.Fatalf("input tools missing: %v", names)
+	if !names["press"] || !names["drag"] || !names["emulate"] || !names["screenshot"] {
+		t.Fatalf("browser tools missing: %v", names)
 	}
 	dragArgs := M{"source": "#a", "target": "#b", "steps": 7}
 	call("press", M{"key": "Escape"}, true)
@@ -288,13 +334,16 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 	call("press", M{"key": "Shift+ArrowDown"}, false)
 	call("press", M{"key": "Escape"}, false)
 	call("press", M{"key": "Enter"}, false)
-	evaluate := func(expression string, result any) {
+	decodeResult := func(reply M, result any) {
 		t.Helper()
-		reply := call("evaluate", M{"expression": expression}, false)
 		content := reply["content"].([]any)[0].(map[string]any)["text"].(string)
 		if err := json.Unmarshal([]byte(content), result); err != nil {
 			t.Fatal(err)
 		}
+	}
+	evaluate := func(expression string, result any) {
+		t.Helper()
+		decodeResult(call("evaluate", M{"expression": expression}, false), result)
 	}
 	var keyboard struct {
 		Result struct {
@@ -325,5 +374,93 @@ func TestProjectBrowserTrustedInput(t *testing.T) {
 	call("drag", dragArgs, true) // The failed drag closed the scoped page.
 	call("navigate", M{"url": preview.URL}, false)
 	call("press", M{"key": "Space", "selector": "button"}, true)
+
+	checkCapture := func(args M, width, height int) color.Color {
+		t.Helper()
+		var got struct {
+			Path          string
+			Width, Height int
+		}
+		decodeResult(call("screenshot", args, false), &got)
+		parts := insideParts(runTempDir(root, "fixture"), pathParts(got.Path))
+		if !strings.HasPrefix(got.Path, captureDir+string(filepath.Separator)) || len(parts) == 0 {
+			t.Fatalf("screenshot outside capture root: %q", got.Path)
+		}
+		f, err := openInside(runTempDir(root, "fixture"), parts)
+		noErr(t, err)
+		defer f.Close()
+		info, err := f.Stat()
+		noErr(t, err)
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Sys().(*syscall.Stat_t).Nlink != 1 {
+			t.Fatalf("screenshot is not a private regular file with one link: %v", info.Mode())
+		}
+		img, err := png.Decode(f)
+		noErr(t, err)
+		if got.Width != width || got.Height != height || img.Bounds().Dx() != width || img.Bounds().Dy() != height {
+			t.Fatalf("screenshot dimensions = %dx%d, PNG bounds = %v, want %dx%d", got.Width, got.Height, img.Bounds(), width, height)
+		}
+		return img.At(width/2, height/2)
+	}
+	call("emulate", M{"viewport": "desktop", "colorScheme": "dark"}, false)
+	call("navigate", M{"url": preview.URL}, false)
+	for _, size := range []struct {
+		name                  string
+		width, height, swatch int
+	}{{"desktop", 1440, 900, 200}, {"mobile", 390, 844, 100}} {
+		for _, scheme := range []string{"dark", "light"} {
+			call("emulate", M{"viewport": size.name, "colorScheme": scheme}, false)
+			var layout struct {
+				Result struct {
+					Width, Height, Scale, Swatch float64
+					Dark, Reduced                bool
+				}
+			}
+			evaluate(`({width:innerWidth,height:innerHeight,scale:devicePixelRatio,
+				swatch:document.querySelector('#swatch').getBoundingClientRect().width,
+				dark:matchMedia('(prefers-color-scheme: dark)').matches,
+				reduced:matchMedia('(prefers-reduced-motion: reduce)').matches})`, &layout)
+			if got := layout.Result; got.Width != float64(size.width) || got.Height != float64(size.height) ||
+				got.Scale != 1 || got.Swatch != float64(size.swatch) || got.Dark != (scheme == "dark") || !got.Reduced {
+				t.Fatalf("%s %s layout: %+v", size.name, scheme, got)
+			}
+			checkCapture(M{}, size.width, size.height)
+			r, g, b, a := checkCapture(M{"selector": "#swatch"}, size.swatch, 40).RGBA()
+			var shade uint32 = 0
+			if scheme == "light" {
+				shade = 0xffff
+			}
+			if r != shade || g != shade || b != shade || a != 0xffff {
+				t.Fatalf("%s %s swatch PNG: rgba16 %x,%x,%x,%x", size.name, scheme, r, g, b, a)
+			}
+		}
+	}
+	call("screenshot", M{"selector": "button"}, true)
+	call("screenshot", M{}, true) // The failed capture closed the scoped page.
+	call("navigate", M{"url": preview.URL}, false)
+	call("screenshot", M{"path": filepath.Join(root, "override.png")}, true)
+	call("navigate", M{"url": preview.URL + "/with-production"}, false)
+	call("evaluate", M{"expression": "document.readyState === 'complete' || new Promise(resolve => addEventListener('load', () => resolve(true), {once:true}))"}, false)
+	if !authenticated.Load() {
+		t.Fatal("production fixture did not receive its authentication headers")
+	}
+	call("screenshot", M{}, true) // A preview that embedded authenticated content cannot export pixels.
+	call("navigate", M{"url": production.URL}, false)
+	call("screenshot", M{}, true)
+	call("navigate", M{"url": preview.URL}, false)
+	call("screenshot", M{"selector": "#missing"}, true) // Deadline leaves no PNG.
 	call("close", M{}, false)
+	entries, err := os.ReadDir(runTempDir(root, "fixture"))
+	noErr(t, err)
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(captureDir) {
+		t.Fatalf("browser profile remains after close: %v", entries)
+	}
+	captures, err := os.ReadDir(captureDir)
+	noErr(t, err)
+	if len(captures) != 8 {
+		t.Fatalf("expected 8 successful captures and no files from failures, got %d", len(captures))
+	}
+	cleanupRun(root, "fixture")
+	if _, err := os.Stat(captureDir); !os.IsNotExist(err) {
+		t.Fatalf("execution cleanup left the capture directory: %v", err)
+	}
 }

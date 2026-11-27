@@ -12,6 +12,10 @@ import (
 //go:embed project_browser.cjs
 var projectBrowserScript string
 
+func browserCaptureDir(root, execution string) string {
+	return filepath.Join(runTempDir(root, execution), "browser-captures")
+}
+
 // browserBinding: one project's entry of FLEET_BROWSER_BINDINGS.
 type browserBinding struct {
 	PreviewOrigins jsonValue `json:"previewOrigins"`

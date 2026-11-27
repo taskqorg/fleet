@@ -21,8 +21,8 @@ type acpSession struct {
 	profile                 M
 	servers                 M
 	promptStartedAtMs       int64
-	// readRoots: folders outside the workspace whose files the agent may read (the run's FLEET_INPUT_DIR, where its
-	// staged inputs are); a read_file request for a path inside one is granted once, any other path is refused.
+	// readRoots: the run's staged inputs and, with a browser grant, staged captures. A read_file request for a path
+	// inside one is granted once, any other path is refused.
 	readRoots []string
 }
 
@@ -187,7 +187,7 @@ func (s *acpSession) selectModel(result acpResult, model string) (M, error) {
 // allow_once only for explicitly injected Code Mode MCP tools (when codeMode is
 // enabled), other Fleet-injected s.servers MCP tools, or run_command (kind
 // "execute") when the session runs in sandboxed accept-edits mode, or read_file (kind "read") of a file inside one of
-// readRoots, the run's staged inputs.
+// readRoots, the run's staged inputs and browser captures.
 func (s *acpSession) permission(params acpParams) string {
 	if pharness(s.profile) != "antigravity" || s.stage != 5 || s.session == "" || params.SessionID != s.session {
 		return ""
