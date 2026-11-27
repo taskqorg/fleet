@@ -448,7 +448,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			a.key = id
 			return a
 		}
-		if status == 401 || status == 402 {
+		if (status == 401 && !isInsufficientScope401(response, data)) || status == 402 {
 			if b.open == nil && hasNext && c.KeyPolicy != nil && len(c.KeyPolicy.FailoverStatuses) > 0 {
 				g.onDisabled(id, status, attemptedAt)
 				g.advanceCurrent(name)
@@ -502,7 +502,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			// whether it ran the message.
 			a.outcome = "unknown"
 		}
-		if (status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall)) || status == 432 || status == 433 {
+		if status == 401 || (status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall)) || status == 432 || status == 433 {
 			// Redact over the whole body first, so a key cut at the 500-character mark cannot leave a prefix behind.
 			message := []rune(strings.ReplaceAll(strings.ToValidUTF8(string(data), "\ufffd"), value, "[key]"))
 			text := string(message[:min(len(message), 500)])
@@ -511,6 +511,18 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		return a
 	}
 	return refusal(502, "error", "provider-unreachable", "no key reached the provider; last failure: "+lastFailure)
+}
+
+func isInsufficientScope401(resp *http.Response, body []byte) bool {
+	if resp != nil {
+		if www := strings.ToLower(resp.Header.Get("WWW-Authenticate")); strings.Contains(www, "insufficient_scope") {
+			return true
+		}
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "insufficient_scope") ||
+		strings.Contains(lower, "insufficient scope") ||
+		strings.Contains(lower, "requires higher privileges")
 }
 
 func (g *gateway) onDisabled(id string, status int, attemptedAt int64) {

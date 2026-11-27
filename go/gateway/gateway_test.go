@@ -1647,3 +1647,70 @@ func TestGitLabMutationToolsCatalogue(t *testing.T) {
 		t.Fatalf("unexpected pipeline_run body: %s", gotBody)
 	}
 }
+
+// Requirement: HTTP 401 with insufficient_scope does not disable a key that works for other endpoints (reads
+// keep succeeding and keyProblem records the 401 scope message), while non-scope 401 still disables the key (FLT-70).
+func TestGateway401InsufficientScopePreservesKey(t *testing.T) {
+	prov := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="GitLab", error="insufficient_scope", scope="api"`)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write([]byte(`{"error":"insufficient_scope","error_description":"The request requires higher privileges than provided by the access token."}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer prov.Close()
+
+	f := newFixture(t, prov.URL, "k-1")
+	key := "glpat-read-only-key"
+	os.MkdirAll(filepath.Join(f.dir, "keys", "gradus-gitlab"), 0o700)
+	if err := os.WriteFile(filepath.Join(f.dir, "keys", "gradus-gitlab", fp(key)), []byte(key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.write(map[string]any{
+		"schema":       2,
+		"generated_ms": 3,
+		"providers": map[string]any{
+			"gitlab": map[string]any{
+				"baseUrl": prov.URL,
+				"tools": map[string]any{
+					"mrs_open": map[string]any{"method": "GET", "path": "/api/v4/projects/{project_id}/merge_requests", "unit": "requests", "idempotent": true, "pathPatterns": map[string]string{"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}},
+					"mr_merge": map[string]any{"method": "PUT", "path": "/api/v4/projects/{project_id}/merge_requests/{mr_iid}/merge", "unit": "requests", "idempotent": false, "pathPatterns": map[string]string{"project_id": "^[A-Za-z0-9_.%-]{1,200}$", "mr_iid": "^[0-9]{1,12}$"}},
+				},
+			},
+		},
+		"connections": map[string]any{
+			"gradus-gitlab": map[string]any{
+				"provider": "gitlab",
+				"tools":    []string{"mrs_open", "mr_merge"},
+				"intake":   "all",
+				"keys":     []map[string]any{{"id": fp(key), "state": "active"}},
+				"blocked":  []string{},
+			},
+		},
+		"tokens":           []map[string]any{{"sha256": sha(testToken), "executionId": "ex-1", "projectId": "dam", "connections": []string{"gradus-gitlab"}}},
+		"usageTokenSha256": sha("usage-token"),
+	})
+
+	var status int
+	var resp map[string]any
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(15 * time.Millisecond) {
+		status, _, resp = f.raw("POST", "/v1/call/gradus-gitlab/mr_merge", "Bearer "+testToken, `{"project_id":"gradus%2Fdam","mr_iid":"46"}`)
+		if status == 401 {
+			break
+		}
+	}
+	expect(t, status, 401, "insufficient_scope 401 passes through as 401, not key-disabled 502")
+	expect(t, resp["error"], "insufficient_scope", "insufficient_scope body preserved")
+
+	readStatus, _, _ := f.raw("POST", "/v1/call/gradus-gitlab/mrs_open", "Bearer "+testToken, `{"project_id":"gradus%2Fdam"}`)
+	expect(t, readStatus, 200, "key remains active for read calls after insufficient_scope 401")
+
+	lines, _ := f.spool()
+	lastMerge := lines[len(lines)-2]
+	expect(t, lastMerge["disabled"], nil, "insufficient_scope did not disable key")
+	expect(t, field(lastMerge, "keyProblem", "status"), float64(401), "keyProblem records 401")
+}

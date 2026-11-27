@@ -45,7 +45,8 @@ func TestResolvePublishingTargetPrefersVerifiedForgeLogin(t *testing.T) {
 					{"hostId": "owner-mac", "checkoutPath": "/tmp/dam"},
 					{"hostId": "pds18-native", "checkoutPath": "/tmp/dam"},
 				},
-				"execution": map[string]any{"forge": true},
+				"execution":   map[string]any{"forge": true},
+				"integration": map[string]any{"mode": "pr", "autoMerge": true, "mergeMethod": "squash"},
 			},
 			"contextFiles": []map[string]any{{"path": "rules.md", "text": "Rules."}},
 		},
@@ -110,8 +111,75 @@ func TestResolvePublishingTargetPrefersVerifiedForgeLogin(t *testing.T) {
 		if target != "pds18-native" {
 			t.Fatalf("targetHost = %q, want pds18-native over unverified host", target)
 		}
+		// Explicit hostId overrides ranking.
+		_, pinned, _, err := resolvePublishingTarget(q, publishingMutationParams{
+			action:    "request_merge",
+			requestID: "req-pinned-mac",
+			projectID: ptr("dam"),
+			number:    ptr(int64(46)),
+			hostID:    ptr("owner-mac"),
+		})
+		if err != nil {
+			return err
+		}
+		if pinned != "owner-mac" {
+			t.Fatalf("pinned targetHost = %q, want owner-mac", pinned)
+		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	// Both hosts report ok: true -> owner-mac is tried first, fails, and runPublishingMutation fails over to pds18-native.
+	putHost("owner-mac", &[]contract.ForgeLogin{{Provider: "gitlab", Host: "gitlab.ufobe.com", Ok: true}})
+	done := make(chan struct{})
+	var seenHosts []string
+	go func() {
+		defer close(done)
+		handled := map[string]bool{}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			pubMu.Lock()
+			var ids []string
+			for id := range pubCmdWaiters {
+				if !handled[id] {
+					ids = append(ids, id)
+				}
+			}
+			pubMu.Unlock()
+			for _, id := range ids {
+				var hostID string
+				if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT host_id FROM command WHERE id = $1`, id).Scan(&hostID); err != nil {
+					continue
+				}
+				handled[id] = true
+				seenHosts = append(seenHosts, hostID)
+				pubMu.Lock()
+				if hostID == "owner-mac" {
+					pubCmdOutcomes[id] = publishingCmdOutcome{outcome: "failed", errMsg: "project-delivery-unconfirmed: 401"}
+				} else {
+					pubCmdOutcomes[id] = publishingCmdOutcome{
+						outcome: "completed",
+						result:  json.RawMessage(`{"requestId":"req-failover","provider":"gitlab","host":"gitlab.ufobe.com","repo":"gradus/dam","branch":"fix/x","kind":"merge_request","number":46,"url":"https://gitlab.ufobe.com/gradus/dam/-/merge_requests/46","requested":true,"autoMergeEnabled":true}`),
+					}
+				}
+				pubMu.Unlock()
+				publishingWakeCommand(id)
+				if hostID != "owner-mac" {
+					return
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	var reply contract.PublishingRequestMergeReply
+	e.opInto(t, "publishing_request_merge", map[string]any{
+		"requestId": "req-failover",
+		"projectId": "dam",
+		"number":    46,
+	}, h, &reply)
+	<-done
+	if !reply.Requested || reply.Number != 46 || len(seenHosts) != 2 || seenHosts[0] != "owner-mac" || seenHosts[1] != "pds18-native" {
+		t.Fatalf("failover hosts=%v reply=%+v, want [owner-mac pds18-native]", seenHosts, reply)
 	}
 }

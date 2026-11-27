@@ -307,6 +307,7 @@
         "repo": {"type": "string"},
         "number": {"type": "integer"},
         "branch": {"type": "string"},
+        "hostId": {"type": "string"},
         "sourceExecutionId": {"type": "string"},
         "expectedHeadSha": {"type": "string"}
       }
@@ -342,6 +343,7 @@
         "repo": {"type": "string"},
         "number": {"type": "integer"},
         "branch": {"type": "string"},
+        "hostId": {"type": "string"},
         "sourceExecutionId": {"type": "string"},
         "expectedHeadSha": {"type": "string"},
         "mergeMethod": {"$ref": "#/$defs/MergeMethod"}
@@ -378,6 +380,7 @@
         "repo": {"type": "string"},
         "number": {"type": "integer"},
         "branch": {"type": "string"},
+        "hostId": {"type": "string"},
         "sourceExecutionId": {"type": "string"},
         "expectedHeadSha": {"type": "string"}
       }

@@ -169,7 +169,7 @@ func forgeCommand(ctx forgeContext, name string, args ...string) *exec.Cmd {
 			"HOME=" + ctx.Home,
 			"GLAB_CONFIG_DIR=" + glabDir,
 			"GITLAB_HOST=https://" + host,
-			"NO_PROMPT=1",
+			"GLAB_NO_PROMPT=1",
 			"GIT_TERMINAL_PROMPT=0",
 			"GIT_CONFIG_NOSYSTEM=1",
 			"GIT_CONFIG_GLOBAL=/dev/null",
@@ -216,7 +216,7 @@ func forgeCredential(ctx forgeContext, provider, host string) string {
 			"HOME=" + ctx.CredentialHome,
 			"GLAB_CONFIG_DIR=" + glabDir,
 			"GITLAB_HOST=https://" + host,
-			"NO_PROMPT=1",
+			"GLAB_NO_PROMPT=1",
 		}
 	} else {
 		credential = exec.Command("gh", "auth", "token", "--hostname", host)
@@ -519,7 +519,7 @@ func forgeRun(cmd *exec.Cmd) ([]byte, string, error) {
 }
 
 func forgeSanitizeErr(prefix, stderr string, err error) error {
-	line := ""
+	line, fallback := "", ""
 	for _, raw := range strings.Split(stderr, "\n") {
 		t := strings.TrimSpace(raw)
 		if t == "" {
@@ -534,8 +534,17 @@ func forgeSanitizeErr(prefix, stderr string, err error) error {
 			strings.Contains(lower, "bearer ") {
 			continue
 		}
+		if fallback == "" {
+			fallback = t
+		}
+		if strings.HasPrefix(lower, "deprecation warning:") {
+			continue
+		}
 		line = t
 		break
+	}
+	if line == "" {
+		line = fallback
 	}
 	if line == "" && err != nil {
 		line = strings.TrimSpace(err.Error())
