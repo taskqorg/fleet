@@ -2,6 +2,7 @@ package main
 
 import (
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,9 +31,22 @@ func TestProjectEnvCallNeedsCommand(t *testing.T) {
 }
 
 func TestProjectEnvToolTimeoutWired(t *testing.T) {
+	root := t.TempDir()
+	fleet, err := delegationServer(M{"operations": []any{M{"name": "board_read"}}}, "", filepath.Join(root, "fleet.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers, err := wrapMCPServers(M{"fleet": fleet, "project-env": M{
+		"command": "x", "args": []any{}, "tools": []any{"env_exec"}, "toolTimeoutSec": 5400,
+	}}, "fixture.sock", root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("codex")
-	harness{name: "codex"}.WireMCP(cmd, map[string]any{}, map[string]any{"project-env": map[string]any{"command": "x", "args": []any{}, "tools": []any{"env_exec"}, "toolTimeoutSec": 5400}}, nil)
-	if !strings.Contains(strings.Join(cmd.Args, " "), "mcp_servers.project-env.tool_timeout_sec=5400") {
-		t.Fatalf("args %v", cmd.Args)
+	harness{name: "codex"}.WireMCP(cmd, M{}, servers, nil)
+	for _, want := range []string{"mcp_servers.project-env.tool_timeout_sec=5400", "mcp_servers.fleet.tool_timeout_sec=75"} {
+		if !strings.Contains(strings.Join(cmd.Args, " "), want) {
+			t.Errorf("missing %s in %v", want, cmd.Args)
+		}
 	}
 }
