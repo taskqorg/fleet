@@ -416,6 +416,17 @@ func (e *executor) ownGroup(execution string, grp int, l *live) error {
 // releaseLaunchWindow: a stop for an execution whose launch never recorded a process is the explicit decision to
 // accept that uncertainty; the session is admitted again. The stop's result stays unknown.
 func (e *executor) releaseLaunchWindow(execution, session string) error {
+	var command, body string
+	err := e.db.QueryRow(`SELECT l.command, c.body FROM launches l JOIN commands c ON c.id=l.command
+		WHERE l.execution=? AND l.session=?`, execution, session).Scan(&command, &body)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && personalScriptJob(commandOf(body)) {
+		if err := e.holdScriptStaging(command, true); err != nil {
+			return err
+		}
+	}
 	res, err := e.db.Exec("DELETE FROM launches WHERE execution=? AND session=? AND NOT EXISTS (SELECT 1 FROM owned WHERE execution=?) AND NOT EXISTS (SELECT 1 FROM mcp_groups WHERE execution=?)", execution, session, execution, execution)
 	if err != nil {
 		return err
@@ -471,6 +482,7 @@ func (e *executor) reconcileProcesses() error {
 		l                  *live
 		survived           bool
 		err                error
+		personalScript     bool
 	}
 	var all []*launch
 	rs, err := e.db.Query("SELECT execution,command,grp,COALESCE(worker_seq,0) FROM launches")
@@ -495,47 +507,58 @@ func (e *executor) reconcileProcesses() error {
 		wdir := workerDirFor(e.root, x.execution)
 		alive, _ := workerLockAlive(wdir)
 		exit, hasExit, _ := readWorkerExit(wdir)
-		// An uncollected exit still needs its receipt. After that receipt is
-		// journaled, reconcile unresolved process ownership as a dead worker.
+		b, hasCommand := e.commandBody(x.command, false)
+		cmd := commandOf(b)
+		x.personalScript = personalScriptJob(cmd)
 		_, commandOpen := e.commandBody(x.command, true)
-		if alive || (hasExit && (!exit.ProcessesUnresolved || commandOpen)) {
-			if b, ok := e.commandBody(x.command, false); ok {
-				cmd := commandOf(b)
-				spec, _ := readWorkerSpec(wdir)
-				native := ""
-				if sid, serr := workOf(cmd); serr == nil {
-					_ = e.db.QueryRow("SELECT native FROM sessions WHERE id=?", sid).Scan(&native)
-				}
-				if native == "" && spec != nil {
-					native = spec.Native
-				}
-				var openStops int
-				_ = e.db.QueryRow("SELECT COUNT(*) FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop' AND terminal=0", x.execution).Scan(&openStops)
-				var trial *[2]string
-				if spec != nil {
-					trial = spec.Trial
-				}
-				e.live[x.execution] = &live{
-					command:   cmd,
-					native:    native,
-					seq:       2,
-					completed: spec != nil && spec.Kind == "script",
-					stopped:   openStops > 0,
-					owned:     readWorkerPIDLines(filepath.Join(wdir, "owned.jsonl")),
-					journaled: map[int]bool{},
-					started:   time.Now(),
-					group:     groups[x],
-					trial:     trial,
-					worker: &liveWorker{
-						dir:     wdir,
-						sock:    readWorkerSockPath(wdir),
-						trial:   trial,
-						lastSeq: x.workerSeq,
-					},
-				}
-				unresolved[x.execution] = true
-				continue
+		// A confirmed exit can supersede an earlier unknown start receipt.
+		// An already reported unconfirmed exit keeps its launch fence.
+		uncertainExit := hasExit && (exit.ProcessesUnresolved || x.personalScript && scriptExitUnconfirmed(exit))
+		needsExit := hasExit && (!uncertainExit || commandOpen)
+		if x.personalScript && uncertainExit && !commandOpen {
+			// An unknown start receipt may precede the worker's first
+			// exit report. Reattach once to collect that report.
+			result, _, err := e.readScriptOutputs(x.execution)
+			if err != nil {
+				return err
 			}
+			needsExit = !result.Reported
+		}
+		if hasCommand && (alive || needsExit) {
+			spec, _ := readWorkerSpec(wdir)
+			native := ""
+			if sid, serr := workOf(cmd); serr == nil {
+				_ = e.db.QueryRow("SELECT native FROM sessions WHERE id=?", sid).Scan(&native)
+			}
+			if native == "" && spec != nil {
+				native = spec.Native
+			}
+			var openStops int
+			_ = e.db.QueryRow("SELECT COUNT(*) FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop' AND terminal=0", x.execution).Scan(&openStops)
+			var trial *[2]string
+			if spec != nil {
+				trial = spec.Trial
+			}
+			e.live[x.execution] = &live{
+				command:   cmd,
+				native:    native,
+				seq:       2,
+				completed: spec != nil && spec.Kind == "script",
+				stopped:   openStops > 0,
+				owned:     readWorkerPIDLines(filepath.Join(wdir, "owned.jsonl")),
+				journaled: map[int]bool{},
+				started:   time.Now(),
+				group:     groups[x],
+				trial:     trial,
+				worker: &liveWorker{
+					dir:     wdir,
+					sock:    readWorkerSockPath(wdir),
+					trial:   trial,
+					lastSeq: x.workerSeq,
+				},
+			}
+			unresolved[x.execution] = true
+			continue
 		}
 		if _, err := e.db.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", x.execution); err != nil {
 			return err
@@ -616,6 +639,13 @@ func (e *executor) reconcileProcesses() error {
 			unresolved[x.execution] = true
 			continue
 		}
+		if x.personalScript {
+			// Preserve staging when there is no confirmed exit. The
+			// separate command flag lets ordinary process cleanup proceed.
+			if err := e.holdScriptStaging(x.command, true); err != nil {
+				return err
+			}
+		}
 		if err := e.release(x.execution); err != nil {
 			return err
 		}
@@ -670,10 +700,45 @@ func (e *executor) reconcile() error {
 	rs.Close()
 	for _, b := range bodies {
 		cmd := commandOf(b)
-		if ex, err := idOf(cmd, "executionId"); err == nil && e.live[ex] != nil {
+		execution, err := idOf(cmd, "executionId")
+		if err == nil && e.live[execution] != nil {
 			continue
 		}
-		if err := e.finish(cmd, "unknown", ""); err != nil {
+		if personalScriptJob(cmd) {
+			var launched bool
+			cid, err := idOf(cmd, "id")
+			if err != nil {
+				return err
+			}
+			if err := e.db.QueryRow("SELECT script_staging_held OR EXISTS(SELECT 1 FROM launches WHERE execution=?) FROM commands WHERE id=?", execution, cid).Scan(&launched); err != nil {
+				return err
+			}
+			if !launched {
+				// Staging precedes the durable launch. An open personal
+				// script without a launch never started a worker.
+				dir := e.sessionDir(execution)
+				seq := uint64(nowMs())
+				if err := e.event(cmd, seq, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "executor restarted before script launch"}); err != nil {
+					return err
+				}
+				if e.insideDirs(dir) {
+					cleanup := contract.ScriptPersonalCleanup{Removed: e.removeScriptStaging(dir)}
+					if err := e.event(cmd, seq+1, contract.FleetEventTypeScriptPersonalCleanup, cleanup); err != nil {
+						return err
+					}
+				}
+				if err := e.finish(cmd, "failed", ""); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if personalScriptJob(cmd) {
+			err = e.finishUnconfirmedScript(cmd)
+		} else {
+			err = e.finish(cmd, "unknown", "")
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -713,12 +778,18 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			_ = l.cleanup()
 			cleanupRun(e.root, execution)
 			removeRunFiles(e.root, execution)
-			if l.trial != nil {
+			if l.trial != nil && !personalScriptJob(l.command) {
 				removeTrial(l.trial[0], l.trial[1])
 			}
 			l.cleanupUnknown = true
-			if err := e.finish(l.command, "unknown", l.native); err != nil {
-				return false, err
+			var finishErr error
+			if personalScriptJob(l.command) {
+				finishErr = e.finishUnconfirmedScript(l.command)
+			} else {
+				finishErr = e.finish(l.command, "unknown", l.native)
+			}
+			if finishErr != nil {
+				return false, finishErr
 			}
 			rs, rerr := e.db.Query("SELECT body FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop' AND terminal=0", execution)
 			if rerr == nil {

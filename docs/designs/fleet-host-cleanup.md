@@ -36,7 +36,7 @@ Process ownership has gaps. The executor tracks a run's descendants by parent li
 7.  Each cleanup pass records what it removed (`host.cleanup` span); each execution span carries `fleet.orphans`.
 8.  Tests never run `initdb` per run and never leave a cluster behind.
 9.  A host keeps only the releases rollback needs, and a session directory goes once it holds no worktree and nothing uses it.
-10. Every run kind's worktree goes once its session is settled, not only delivered ones; a run's outputs never stay in a worktree after they are stored, and a `personal` project's outputs and inputs never stay on disk.
+10. Every run kind's worktree goes once its session is settled, not only delivered ones; a run's outputs never stay in a worktree after they are stored, and a `personal` project's run-local staging goes at confirmed run end after its outputs are queued.
 11. A worktree the coordinator does not know, or no longer needs, is found and removed without a person.
 12. Fleet's disk use on every host is telemetry: bytes by category and by project, with trends.
 13. Leaving or taking too much space, failing to clean up, and starting work too often raise problems owned by a bot (HAL0 by default).
@@ -112,7 +112,7 @@ Audit of 2026-11-25: owner-mac `~/releases` 1.3 GB and its sessions root 1399 di
 *   **Session directories.** On owner-mac 1334 of the 1399 held no worktree (3.5 GB: per-session Go caches, raw native logs, inputs); 65 held one (1.3 GB). The hourly pass of section 3 runs on every host (not only with `FLEET_TMP_SWEEP`) and removes a directory under `FLEET_SESSIONS_ROOT` (and the legacy `<data>/sessions`) when all hold:
     *   no `worktree*` entry in it or under `workspaces/*`: a worktree, or a copy set aside by `setAsideStale`, stays until teardown on delivery or archive removes it under `keepWhen` ([system management](fleet-system-management.md));
     *   nothing in it changed within two levels for `FLEET_TMP_SWEEP_AGE_HOURS` (24), and it holds no socket;
-    *   the journal holds no open command (accepted, maybe preparing) and no launch of that session. It is asked last; the directory is then renamed to `.sweep-<session>` before removal, so a command accepted after the check prepares into a fresh directory.
+    *   the journal holds no open command, launch or personal script staging hold for that directory. This check comes last. The directory is then renamed to `.sweep-<session>` before removal, so a command accepted after the check prepares into a fresh directory.
 
     What goes is rebuilt by the next turn: per-run logs were already sent, inputs are fetched per run, caches refill. Native transcripts live in the native home, outside the session directory. The pass is one more source in the `host.cleanup` span (`trigger: sweep`).
 
@@ -130,6 +130,8 @@ A session is **settled** when it has no live or unconfirmed execution, no pendin
 | Project chat without task | Idle archive: no turn, message or execution for `sessions.idleArchiveDays` (default 7, owner decision 2026-11-26), no live execution and no open question; the session is archived as `session_archive` does it, by Fleet (`actor.kind = system`), and unarchive brings it back |
 
 **Outputs are not work.** A teardown removes `worktree/output` before the `keepWhen` checks: the coordinator sends it only when every artifact of the session is stored, so the results are in the store. For a project with `data: personal` ([project access](fleet-project-access.md#personal-data)) the run's `output/` and its fetched inputs are removed at run end, after the upload is queued, whatever the upload's outcome: a failed upload is a `personal-output` problem, not a copy left on disk. A `personal` project's step worktree goes at step end even when `keepWhen` would keep it for `uncommitted`, since steps write no tracked work.
+
+A sessionless script job uses the data class from the pipeline's project snapshot. Once the job's exit is confirmed and its outputs are queued from independent spool copies, the executor removes the job's `input/` and `output/`. An unconfirmed exit or incomplete output collection keeps staging under a journal hold that survives launch release and the sweep. An interrupted preparation with no launch can remove staged inputs. Cleanup evidence records the outcome without file contents.
 
 ### 11. Inventory reconcile
 
@@ -164,7 +166,7 @@ Each is a row of the [rules pass](fleet-telemetry.md#6-rules); every number is a
 |---|---|---|
 | `disk-growth` | a host's Fleet bytes (sum of section 12) grew by more than `rules.diskGrowth.share` (0.5) and more than `rules.diskGrowth.bytes` (5 GB) over 24 hours | `problem:host:<id>:disk-growth` |
 | `leftovers` | the latest inventory of a host has worktrees answered `teardown` or `unknown` in two inventories in a row, or `keep` for a settled session over `rules.leftovers.hours` (24); value: count and bytes | `problem:host:<id>:leftovers` |
-| `personal-output` | a `personal` project's run ended with an upload that failed, or the inventory finds a `personal` project worktree with an `output/` | `problem:project:<id>:personal-output` |
+| `personal-output` | a `personal` project's run ended with an upload that failed, or the inventory finds a `personal` project worktree with an `output/`. The script upload check uses the last day of observed failures | `problem:project:<id>:personal-output` |
 | `cleanup-failing` | a teardown answered `teardown-failed`, or the same directory failed removal in two passes | `problem:host:<id>:cleanup-failing` |
 | `orphan` | as designed in [telemetry](fleet-telemetry.md#6-rules) | `problem:execution:<id>:orphans` |
 | `run-frequency` | executions started by one pipeline, trigger or bot within an hour above `rules.runFrequency.factor` (5) times its 7-day hourly median and above `rules.runFrequency.min` (50) | `problem:frequency:<subject>` |

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -495,6 +496,12 @@ func buildExecutionResourceSummary(l *live) *contract.ExecutionResourceSummary {
 // uploaded, and queued with its relative path as name. Links and hard-linked files are skipped, the same policy as
 // artifact_save. A missing folder collects nothing.
 func (e *executor) artifacts(dir string, parts []string, execution string, declared *[]string) error {
+	return e.collectArtifacts(dir, parts, execution, declared, nil)
+}
+
+// A non-nil scriptOutputs contains the personal script outputs already
+// journaled by an earlier completion attempt.
+func (e *executor) collectArtifacts(dir string, parts []string, execution string, declared *[]string, scriptOutputs map[string]bool) error {
 	root, err := openInside(dir, parts)
 	if err != nil {
 		if _, serr := os.Lstat(filepath.Join(append([]string{dir}, parts...)...)); os.IsNotExist(serr) {
@@ -502,10 +509,10 @@ func (e *executor) artifacts(dir string, parts []string, execution string, decla
 		}
 		return errors.New("artifact folder is a link or unreadable")
 	}
-	return e.collect(root, "", execution, declared)
+	return e.collect(root, "", execution, declared, scriptOutputs)
 }
 
-func (e *executor) collect(d *os.File, rel, execution string, declared *[]string) error {
+func (e *executor) collect(d *os.File, rel, execution string, declared *[]string, scriptOutputs map[string]bool) error {
 	defer d.Close()
 	if st, err := d.Stat(); err != nil || !st.IsDir() {
 		return errors.New("artifact folder is not a directory")
@@ -533,7 +540,7 @@ func (e *executor) collect(d *os.File, rel, execution string, declared *[]string
 			f.Close()
 			return err
 		case st.IsDir():
-			if err := e.collect(f, name, execution, declared); err != nil {
+			if err := e.collect(f, name, execution, declared, scriptOutputs); err != nil {
 				return err
 			}
 			continue
@@ -541,18 +548,60 @@ func (e *executor) collect(d *os.File, rel, execution string, declared *[]string
 			f.Close()
 			continue
 		}
-		id := newUUID()
+		if scriptOutputs[name] {
+			f.Close()
+			continue
+		}
+		var id string
+		if scriptOutputs == nil {
+			id = newUUID()
+		} else {
+			// Reuse the spool path if the poller stopped after copying but
+			// before it journaled this file's transfer.
+			sum := sha256.Sum256([]byte(execution + "\x00" + name))
+			id = fmt.Sprintf("script-%x", sum[:16])
+		}
 		spool := filepath.Join(e.root, "spool", id)
-		out, err := os.Create(spool)
+		var out *os.File
+		if scriptOutputs != nil {
+			// The journal has no transfer for this name. Remove an abandoned
+			// spool entry by name and create exclusively, without following links.
+			if err = os.Remove(spool); err == nil || os.IsNotExist(err) {
+				out, err = os.OpenFile(spool, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			}
+		} else {
+			out, err = os.Create(spool)
+		}
 		if err == nil {
 			_, err = io.Copy(out, f)
-			out.Close()
+			if scriptOutputs != nil {
+				if err == nil {
+					err = syncScriptOutput(out)
+				}
+				err = errors.Join(err, out.Close())
+				if err != nil {
+					_ = os.Remove(spool)
+				}
+			} else {
+				out.Close()
+			}
 		}
 		f.Close()
 		if err != nil {
 			return err
 		}
-		if err := enqueue(e.db, id, "upload", M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mediaType(name), "executionId": execution, "required": false}); err != nil {
+		job := M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mediaType(name), "executionId": execution, "required": false}
+		if scriptOutputs != nil {
+			job["scriptOutput"] = true
+		}
+		if err := enqueue(e.db, id, "upload", job); err != nil {
+			if scriptOutputs != nil {
+				var present int
+				if lookupErr := e.db.QueryRow("SELECT 1 FROM transfers WHERE id=?", id).Scan(&present); errors.Is(lookupErr, sql.ErrNoRows) {
+					_ = os.Remove(spool)
+				}
+				return scriptQueueError{err}
+			}
 			return err
 		}
 		*declared = append(*declared, name)

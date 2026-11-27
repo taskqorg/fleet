@@ -266,7 +266,7 @@ func (e *executor) startSweep() {
 func (e *executor) sessionBusy(session string) bool {
 	var n int
 	err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches WHERE session=?1) +
-		(SELECT count(*) FROM commands WHERE terminal=0 AND coalesce(nullif(json_extract(body,'$.sessionId'),''),json_extract(body,'$.executionId'))=?1)`, session).Scan(&n)
+		(SELECT count(*) FROM commands WHERE (terminal=0 OR script_staging_held=1) AND coalesce(nullif(json_extract(body,'$.sessionId'),''),json_extract(body,'$.executionId'))=?1)`, session).Scan(&n)
 	return err != nil || n > 0
 }
 

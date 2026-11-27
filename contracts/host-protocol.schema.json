@@ -1522,6 +1522,7 @@
         "teardown",
         "script.started",
         "script.timeout",
+        "script.personal-cleanup",
         "trial.removed",
         "process.closed",
         "process.reconciled",
@@ -2282,6 +2283,16 @@
       "required": [
         "timeoutMs"
       ]
+    },
+    "ScriptPersonalCleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "removed": {"type": "boolean", "$comment": "Both run-owned staging directories are absent"},
+        "collectionFailed": {"type": "boolean", "$comment": "One or more outputs could not be queued"},
+        "unconfirmed": {"type": "boolean", "$comment": "Process ownership is uncertain, so staging is retained"}
+      },
+      "required": ["removed"]
     },
     "TrialRemoved": {
       "type": "object",

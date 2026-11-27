@@ -850,9 +850,16 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	if !e.insideDirs(dir) {
 		return e.finish(c, "failed", "")
 	}
+	personal := personalScriptJob(c)
+	staging := false
 	refuse := func(reason string) error {
 		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: reason}); err != nil {
 			return err
+		}
+		if personal && staging {
+			if err := e.event(c, 2, contract.FleetEventTypeScriptPersonalCleanup, contract.ScriptPersonalCleanup{Removed: e.removeScriptStaging(dir)}); err != nil {
+				return err
+			}
 		}
 		return e.finish(c, "failed", "")
 	}
@@ -869,12 +876,15 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 			return refuse("timeout_ms must be a positive integer")
 		}
 	}
+	staging = true
 	output, input := filepath.Join(dir, "output"), filepath.Join(dir, "input")
-	if err := os.MkdirAll(output, 0o755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(input, 0o755); err != nil {
-		return err
+	for _, path := range []string{output, input} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			if personal {
+				return refuse("create script staging: " + err.Error())
+			}
+			return err
+		}
 	}
 	if err := e.stageArtifactInputs(sp.Inputs, input, execution); err != nil {
 		return refuse(err.Error())
@@ -915,6 +925,9 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	cid, _ := idOf(c, "id")
 	if err := e.launch(execution, cid, session); err != nil {
 		dropTrial()
+		if personal {
+			return refuse("journal script launch: " + err.Error())
+		}
 		return err
 	}
 	spec := workerSpec{
@@ -938,6 +951,9 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	}
 	l, err := e.spawnWorker(c, spec, nil)
 	if err != nil {
+		if personal && errors.Is(err, errWorkerStartUnknown) {
+			return e.finishUnconfirmedScript(c)
+		}
 		removeWorkerDir(e.root, execution)
 		dropTrial()
 		e.release(execution)

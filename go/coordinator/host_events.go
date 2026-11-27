@@ -522,6 +522,10 @@ func eventProblem(kind string, data any, script bool) string {
 		return "preparation failed: " + firstString(d.text("reason"), "no reason given")
 	case contract.FleetEventTypeProtocolFailed:
 		return "harness protocol failed: " + firstString(d.text("reason"), firstString(d.text("error"), "no reason given"))
+	case contract.FleetEventTypeScriptPersonalCleanup:
+		if failed, _ := jsonBool(d["collectionFailed"]); failed {
+			return "script output collection failed"
+		}
 	case contract.FleetEventTypeProcessClosed:
 		code, ok := jsonNumber(d["exitCode"])
 		if !ok || code == 0 {

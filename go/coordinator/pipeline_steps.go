@@ -64,6 +64,7 @@ type pipelineHostJob struct {
 type pipelineScriptPayload struct {
 	Command   string          `json:"command"`
 	Inputs    []fileRef       `json:"inputs"`
+	Project   rawObject       `json:"project,omitempty"`
 	TimeoutMs json.RawMessage `json:"timeout_ms,omitempty"`
 }
 
@@ -115,6 +116,35 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 		}
 		hostID = h
 	}
+	// Use the server's project settings, like agent dispatch. Send only the data
+	// class: scripts use other project fields to select a repository.
+	var project rawObject
+	if pid := run.project(); pid != "" {
+		var frozen projectSnapshot
+		if err := json.Unmarshal(orNull(run.ProjectSnapshot), &frozen); err != nil {
+			return "", err
+		}
+		var settings rawObject
+		if err := json.Unmarshal(orNull(frozen.Settings), &settings); err != nil {
+			return "", err
+		}
+		if !settings.has("data") { // older runs may lack the normalized project snapshot
+			// Old snapshots may only retain the raw setting at the top level.
+			var legacy rawObject
+			if err := json.Unmarshal(orNull(run.ProjectSnapshot), &legacy); err != nil {
+				return "", err
+			}
+			settings = legacy
+			if !settings.has("data") {
+				current, err := projectContext(q, pid)
+				if err != nil {
+					return "", err
+				}
+				settings = current.object("settings")
+			}
+		}
+		project = rawObject{"data": settings["data"]}
+	}
 	id := newID()
 	e := pipelineHostJob{ID: id, ExecutionID: id, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", PipelineStepID: stepExecutionID,
 		PipelineRunID: run.ID, ProjectID: run.project(), ProjectSnapshot: orNull(run.ProjectSnapshot), DirectedBy: dir, ExperimentID: run.ExperimentID}
@@ -124,7 +154,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	if inputs == nil {
 		inputs = []fileRef{}
 	}
-	payload := pipelineScriptPayload{Command: command, Inputs: inputs}
+	payload := pipelineScriptPayload{Command: command, Inputs: inputs, Project: project}
 	if !isNull(timeout) {
 		payload.TimeoutMs = timeout
 	}

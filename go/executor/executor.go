@@ -523,7 +523,9 @@ func (e *executor) tickProcesses() error {
 		if done {
 			// A terminal command can still need process reconciliation. Keep its
 			// launch fence and process identities for startup cleanup.
-			if l.workerExit == nil || !l.workerExit.ProcessesUnresolved {
+			retainScript := personalScriptJob(l.command) && (l.cleanupUnknown ||
+				(l.workerExit != nil && scriptExitUnconfirmed(l.workerExit)))
+			if !retainScript && (l.workerExit == nil || !l.workerExit.ProcessesUnresolved) {
 				if err := e.release(execution); err != nil {
 					return err
 				}

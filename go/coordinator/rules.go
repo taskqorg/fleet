@@ -107,7 +107,7 @@ func rulesPass(ctx context.Context, a *App) error {
 			txt = *f.Text
 		}
 		data := ruleProblemData{Exemplars: f.Exemplars, Value: f.Value, HostID: f.HostId, StoreID: f.StoreId, ExecutionID: f.ExecutionId}
-		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, RefreshText: f.Rule == "resource-failing", Data: data}
+		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, RefreshText: f.Rule == "resource-failing" || f.Rule == "personal-output", Data: data}
 		if f.ProjectId != nil {
 			p.ProjectID = *f.ProjectId
 		}
