@@ -38,8 +38,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/go
-      # One build cache for every event: a pull request restores main's, a miss saves its own.
-      - uses: actions/cache@v4
+      # Restore on every event. Only main refreshes the shared build cache, so short-lived refs don't fill the cache store.
+      - uses: actions/cache/restore@v4
+        id: go-build-cache
         with:
           path: |
             ~/.cache/go-build
@@ -49,7 +50,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: scripts/check.sh go
+      - name: Run scripts/check.sh go (cache ${{ steps.go-build-cache.outputs.cache-hit == 'true' && 'exact hit' || steps.go-build-cache.outputs.cache-matched-key != '' && 'prefix hit' || 'miss' }})
+        run: scripts/check.sh go
+      - uses: actions/cache/save@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go-build-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.go-build-cache.outputs.cache-primary-key }}
   # A dispatched run's check runs belong to no pull request, so the ruleset never counts them (#1055 stayed BLOCKED with
   # go and app green on its head). On a pins proposal or a queue branch the run reports both jobs' results as commit
   # statuses on the commit it tested, which the ruleset counts like code-review.
