@@ -5,9 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
 
 type laneServer struct {
@@ -138,5 +141,105 @@ func TestNewRowLeavesWhileAnotherLaneDelivers(t *testing.T) {
 	}
 	if err := flush(db, srv.URL, "invented-token", "fixture-host"); err != nil || count(db, "outbox") != 0 {
 		t.Fatalf("err=%v pending=%d, want the busy lane's new row delivered on its next run", err, count(db, "outbox"))
+	}
+}
+
+// A waiting board read must not hold the same execution's immediate read, post, or second waiting read.
+// The fixture releases the first read after the other calls finish, without waiting for the advertised 45 seconds.
+func TestWaitingBoardReadLeavesExecutionLaneAvailable(t *testing.T) {
+	resetRetryRows(t)
+	db := journal(t)
+	defer db.Close()
+	waiting := make(chan struct{})
+	release := make(chan struct{})
+	releaseRead := sync.OnceFunc(func() { close(release) })
+	dispatched := sync.OnceFunc(func() { close(waiting) })
+	var mu sync.Mutex
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		key := jStr(decM(string(b)), "agentToolKey")
+		mu.Lock()
+		got = append(got, key)
+		mu.Unlock()
+		if key == "first" {
+			dispatched()
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"result":{"key":%q}}`, key)
+	}))
+	defer server.Close()
+
+	queueCall := func(key, name string, args M) {
+		t.Helper()
+		args["scopeKind"], args["scopeId"] = "session", "fixture"
+		body := M{"hostId": "host", "commandId": "cmd", "executionId": "caller", "agentToolKey": key,
+			"request": M{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+				"params": M{"name": name, "arguments": args}}}
+		if err := journalOnce(db, key, enc(body), contract.RouteAgentTools.Path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queueCall("first", "board_read", M{"waitSeconds": 45})
+	wait, err := startFlush(db, server.URL, "invented-token", "host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait = sync.OnceValue(wait)
+	defer func() {
+		releaseRead()
+		wait()
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiting read was not dispatched")
+	}
+	queueCall("second", "board_read", M{"waitSeconds": 25})
+	queueCall("immediate", "board_read", M{})
+	queueCall("post", "board_post", M{"projectId": "fixture", "authorMember": "tester", "text": "matching post"})
+	if err := flush(db, server.URL, "invented-token", "host"); err != nil {
+		t.Fatal(err)
+	}
+	releaseRead()
+	if err := wait(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 || got[0] != "first" || !slices.Contains(got, "second") ||
+		slices.Index(got, "immediate") < 0 || slices.Index(got, "post") <= slices.Index(got, "immediate") {
+		t.Fatalf("dispatch order %v, want all calls dispatched and the immediate read ordered before the post", got)
+	}
+	for _, key := range []string{"first", "second", "immediate", "post"} {
+		var response string
+		err := db.QueryRow("SELECT response FROM delegation_requests WHERE id=?", key).Scan(&response)
+		if err != nil || jStr(decM(response), "result", "key") != key {
+			t.Fatalf("request %s response %q, error %v", key, response, err)
+		}
+	}
+}
+
+// The agent deadline must include the coordinator wait, and HTTP must outlast that wait at the upper boundary.
+func TestBoardReadWaitBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args M
+		wait int
+		http time.Duration
+	}{
+		{"board_read", M{}, 0, 35 * time.Second},
+		{"board_read", M{"waitSeconds": 25}, 25, 35 * time.Second},
+		{"board_read", M{"waitSeconds": 45}, 45, 55 * time.Second},
+		{"board_read", M{"waitSeconds": 60}, 45, 55 * time.Second},
+		{"board_post", M{"waitSeconds": 45}, 0, 35 * time.Second},
+	} {
+		wait := boardReadWaitSeconds(tc.name, tc.args)
+		if got := outboxDeliveryClient(wait).Timeout; wait != tc.wait || got != tc.http {
+			t.Errorf("%s %v: wait=%d, HTTP deadline=%s, want %d and %s", tc.name, tc.args, wait, got, tc.wait, tc.http)
+		}
 	}
 }

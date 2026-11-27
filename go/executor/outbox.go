@@ -340,6 +340,15 @@ var pollClient = httpClient(35 * time.Second)
 // behind it, the terminal receipt included.
 var deliveryClient = httpClient(pollClient.Timeout)
 
+var boardReadDeliveryClient = httpClient(contract.BoardReadMaxWaitSeconds*time.Second + boardReadHTTPMargin)
+
+func outboxDeliveryClient(boardWait int) *http.Client {
+	if boardWait > 0 && time.Duration(boardWait)*time.Second+boardReadHTTPMargin > deliveryClient.Timeout {
+		return boardReadDeliveryClient
+	}
+	return deliveryClient
+}
+
 func postJSON(c *http.Client, url, token string, v any) (*http.Response, error) {
 	return postJSONCtx(context.Background(), c, url, token, v)
 }
@@ -432,9 +441,11 @@ func retryDone(n int64) {
 // contracts/host-protocol.schema.json HostEvents), so an agent tool, delegation or project request waits only behind
 // its own execution's earlier rows, never behind other executions' event backlog (17 Nov 2026: with 10-20 executions
 // per host their event rows interleaved, went one request each, and agent tool calls waited minutes behind them).
+// Each waiting board read has its own lane so it cannot delay a matching post or another read.
 type outboxRow struct {
 	n                          int64
 	route, body, execution, ln string
+	boardWait                  int
 	loaded                     bool // its body was read: still queued
 }
 
@@ -552,7 +563,14 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	laneMu.Lock()
 	// A span batch (up to 1000 spans) has no execution: its body is not parsed on every scan.
 	rs, err := db.Query(`SELECT rowid,route,CASE WHEN route=? THEN '' WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
-		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END FROM outbox ORDER BY rowid`, contract.RouteSpans.Path)
+		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END,
+		CASE WHEN route=? AND json_valid(body) THEN CASE
+			WHEN json_extract(body,'$.request.method')='tools/call'
+			AND json_extract(body,'$.request.params.name')='board_read'
+			AND typeof(json_extract(body,'$.request.params.arguments.waitSeconds'))='integer'
+			THEN max(0,min(?,json_extract(body,'$.request.params.arguments.waitSeconds')))
+			ELSE 0 END ELSE 0 END
+		FROM outbox ORDER BY rowid`, contract.RouteSpans.Path, contract.RouteAgentTools.Path, contract.BoardReadMaxWaitSeconds)
 	if err != nil {
 		laneMu.Unlock()
 		return nil, err
@@ -562,14 +580,16 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	empty := true
 	for rs.Next() {
 		var r outboxRow
-		if err := rs.Scan(&r.n, &r.route, &r.execution); err != nil {
+		if err := rs.Scan(&r.n, &r.route, &r.execution, &r.boardWait); err != nil {
 			rs.Close()
 			laneMu.Unlock()
 			return nil, err
 		}
 		empty = false
 		r.ln = "route " + r.route
-		if r.execution != "" {
+		if r.boardWait > 0 {
+			r.ln = "board read " + rowKey(r.n)
+		} else if r.execution != "" {
 			r.ln = "execution " + r.execution
 		}
 		if laneBusy[laneID{db, r.ln}] {
@@ -738,7 +758,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			hold(false)
 			return nil
 		}
-		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
+		a := sendWithClient(context.Background(), outboxDeliveryClient(r.boardWait), p.url, p.token, r.route, r.route, value)
 		// A span batch the telemetry store refuses for now (429, 503) holds only its own lane, never the coordinator as a
 		// whole; it says nothing about the coordinator either, so a probe it was stays open for the next request.
 		busy := a.kind == answerRetry && (a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)

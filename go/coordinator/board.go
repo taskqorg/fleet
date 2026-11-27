@@ -781,8 +781,6 @@ func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostRepl
 	return out, nil
 }
 
-const boardReadMaxWaitSeconds = 45
-
 func boardRead(q *Request, r *contract.BoardReadRequest) (contract.BoardReadReply, error) {
 	var out contract.BoardReadReply
 	scopeID, err := boardNormalizeScope(r.ScopeKind, r.ScopeId)
@@ -801,7 +799,7 @@ func boardRead(q *Request, r *contract.BoardReadRequest) (contract.BoardReadRepl
 		if *r.WaitSeconds < 0 {
 			return out, fail(400, "Invalid waitSeconds")
 		}
-		waitSeconds = min(*r.WaitSeconds, boardReadMaxWaitSeconds)
+		waitSeconds = min(*r.WaitSeconds, contract.BoardReadMaxWaitSeconds)
 	}
 	limit := 100
 	if r.Limit != nil {

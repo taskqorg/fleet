@@ -34,6 +34,9 @@ import (
 //go:generate go run ../gen ../../contracts/profile.schema.json contract profile_gen.go
 //go:generate go run ../gen ../../contracts/vocabulary.json contract vocabulary_gen.go
 
+// BoardReadMaxWaitSeconds is the board_read waitSeconds cap in contracts/ops-board.schema.json.
+const BoardReadMaxWaitSeconds = 45
+
 // Operation is one entry of an "operations" list in contracts/ops-<domain>.schema.json: a read snapshot or a write, long (no surrounding
 // transaction), the status codes its handler returns besides 401, 403 and 500, who may call it (Auth: person, project:<path>
 // of the project id in the request, holder:<kind> of the named object, architect, owner or system), how a host agent calls

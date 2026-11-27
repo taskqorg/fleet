@@ -214,8 +214,9 @@ func wrapMCPServers(servers M, socket, root string, receiptDir ...string) (M, er
 		// open JSON: the server spec passes on whole to the MCP guardian; only its command and tools are read here.
 		server, _ := jClone(raw).(M)
 		launch := typed[struct {
-			Command string    `json:"command"`
-			Tools   jsonValue `json:"tools"`
+			Command        string    `json:"command"`
+			Tools          jsonValue `json:"tools"`
+			ToolTimeoutSec int       `json:"toolTimeoutSec"`
 		}](server)
 		if server == nil || launch.Command == "" {
 			return nil, errors.New("MCP launch command missing")
@@ -227,7 +228,7 @@ func wrapMCPServers(servers M, socket, root string, receiptDir ...string) (M, er
 			server["receiptPath"] = filepath.Join(receiptDir[0], "mcp-lifecycle-"+sha([]byte(name)))
 		}
 		// These are already authoritative runtime specs, not commands supplied by an agent profile.
-		wrapped[name] = M{"command": exe(), "args": []any{"mcp", "stdio", socket, enc(server), root}, "tools": launch.Tools.V, "env": []any{"HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "PATH"}}
+		wrapped[name] = M{"command": exe(), "args": []any{"mcp", "stdio", socket, enc(server), root}, "tools": launch.Tools.V, "env": []any{"HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "PATH"}, "toolTimeoutSec": launch.ToolTimeoutSec}
 	}
 	return wrapped, nil
 }

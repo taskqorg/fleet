@@ -258,13 +258,36 @@ func mcpToolNames(discovery any) []any {
 	return out
 }
 
+const (
+	agentToolReplySeconds = 20 // outbox scheduling, HTTP setup and journaling beyond any server wait
+	boardReadHTTPMargin   = 10 * time.Second
+)
+
+// boardReadWaitSeconds sizes the transport only. The coordinator validates the original arguments and board scope.
+func boardReadWaitSeconds(name string, args any) int {
+	if name != "board_read" {
+		return 0
+	}
+	r := typed[contract.BoardReadRequest](args)
+	if r.WaitSeconds == nil || *r.WaitSeconds <= 0 {
+		return 0
+	}
+	return int(min(*r.WaitSeconds, contract.BoardReadMaxWaitSeconds))
+}
+
 // The context goes in a file (@path), never in argv: a director's operation list with schemas outgrows Linux's
 // 128 KiB limit for one argument (MAX_ARG_STRLEN) once the MCP wrappers escape it, and the harness then cannot start.
 func delegationServer(ctx any, journal, contextFile string) (M, error) {
 	if err := os.WriteFile(contextFile, []byte(enc(ctx)), 0o600); err != nil {
 		return nil, err
 	}
-	return M{"command": exe(), "args": []any{"mcp", "delegation", journal, "@" + contextFile}, "tools": mcpToolNames(mcpTools(ctx))}, nil
+	names := mcpToolNames(mcpTools(ctx))
+	server := M{"command": exe(), "args": []any{"mcp", "delegation", journal, "@" + contextFile}, "tools": names}
+	if slices.Contains(names, any("board_read")) {
+		// Keep Codex's native MCP call open through the maximum journal wait, with time for the local handoff.
+		server["toolTimeoutSec"] = contract.BoardReadMaxWaitSeconds + agentToolReplySeconds + 10
+	}
+	return server, nil
 }
 
 // unreadReply marks a stored host reply that does not decode: the request was journaled, so its outcome is unknown.
@@ -343,7 +366,7 @@ func reply(db *sql.DB, table, key string, artifact bool) (*hostReply, bool, erro
 	var state string
 	err := db.QueryRow(q, key).Scan(&raw, &state)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, false, dbe(err)
+		return nil, false, dbe(fmt.Errorf("read stored reply: %w", err))
 	}
 	if err != nil || raw.String == "" {
 		return nil, false, nil
@@ -393,7 +416,7 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 			return mcpText(M{"error": "Unknown request"}, &yes), nil
 		}
 		if err != nil {
-			return nil, dbe(err)
+			return nil, dbe(fmt.Errorf("read original request: %w", err))
 		}
 		journaled, err := dec(body)
 		if err != nil {
@@ -520,7 +543,7 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 	}
 	seconds := 8
 	if agent {
-		seconds = 20
+		seconds = agentToolReplySeconds + boardReadWaitSeconds(name, q)
 	}
 	r, err := wait(db, "delegation_requests", key, seconds, false)
 	if err != nil {
@@ -555,11 +578,11 @@ func journalOnce(db *sql.DB, key, body, route string) error {
 	ctx := context.Background()
 	c, err := db.Conn(ctx)
 	if err != nil {
-		return dbe(err)
+		return dbe(fmt.Errorf("open request journal connection: %w", err))
 	}
 	defer c.Close()
 	if _, err := c.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return dbe(err)
+		return dbe(fmt.Errorf("begin request journal transaction: %w", err))
 	}
 	fail := func(err error) error { c.ExecContext(ctx, "ROLLBACK"); return err }
 	var old string
@@ -572,16 +595,18 @@ func journalOnce(db *sql.DB, key, body, route string) error {
 		}
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := c.ExecContext(ctx, "INSERT INTO delegation_requests(id,body) VALUES(?,?)", key, body); err != nil {
-			return fail(dbe(err))
+			return fail(dbe(fmt.Errorf("insert journal request: %w", err)))
 		}
 		if _, err := c.ExecContext(ctx, "INSERT INTO outbox(route,body) VALUES(?,?)", route, body); err != nil {
-			return fail(dbe(err))
+			return fail(dbe(fmt.Errorf("insert request outbox row: %w", err)))
 		}
 	default:
-		return fail(dbe(err))
+		return fail(dbe(fmt.Errorf("read journal request identity: %w", err)))
 	}
-	_, err = c.ExecContext(ctx, "COMMIT")
-	return dbe(err)
+	if _, err := c.ExecContext(ctx, "COMMIT"); err != nil {
+		return fail(dbe(fmt.Errorf("commit request journal transaction: %w", err)))
+	}
+	return nil
 }
 
 var designRulesTools = []any{M{"name": "get_design_rules", "description": "Read project website design rules.",
