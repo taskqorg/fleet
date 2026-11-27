@@ -1328,7 +1328,7 @@ func verifyCodeReviewEvidence(ctx forgeContext, ref contract.RepoRef, adapter pu
 	if sourceExecID != "" {
 		req.SourceExecutionId = &sourceExecID
 	}
-	if err := journalOnce(db, key, enc(req), contract.RouteForgeReview.Path); err != nil {
+	if err := journalOnce(db, key, enc(req), contract.RouteForgeReview.Path, ""); err != nil {
 		return nil, err
 	}
 	r, err := wait(db, "delegation_requests", key, 20, false)
@@ -1462,7 +1462,7 @@ func recordPublishingToJournal(ctx forgeContext, ref contract.RepoRef, adapter p
 		Result:            json.RawMessage(enc(rawResult)),
 	}
 	key := "pub:" + ctx.CommandId + ":" + newID()
-	_ = journalOnce(db, key, enc(rec), contract.RoutePublishingRecord.Path)
+	_ = journalOnce(db, key, enc(rec), contract.RoutePublishingRecord.Path, "")
 }
 
 func firstStr(a, b string) string {

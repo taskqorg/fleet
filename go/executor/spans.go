@@ -110,6 +110,142 @@ func queueSpans(db *sql.DB) {
 
 var spansRoute = contract.RouteSpans.Path
 
+func durationMs(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) }
+
+func toolSpanContext(db *sql.DB, command, execution string) context.Context {
+	if command == "" || execution == "" {
+		return nil
+	}
+	var bound, tp string
+	if db.QueryRow(`SELECT json_extract(body,'$.executionId'), json_extract(body,'$.traceparent')
+		FROM commands WHERE id=?`, command).Scan(&bound, &tp) != nil || bound != execution {
+		return nil
+	}
+	if _, _, ok := obs.ParseTraceparent(tp); !ok {
+		return nil
+	}
+	return obs.WithRun(obs.WithRemote(context.Background(), tp), obs.Run{ExecutionID: execution})
+}
+
+func setToolAttrs(s *obs.Span, route, operation, key string) {
+	s.Set("http.route", route)
+	if _, known := contract.Operations[operation]; known {
+		s.Set("fleet.operation", operation)
+	}
+	// Project requests can use a caller-supplied id. Correlate without sending that value to telemetry.
+	s.Set("fleet.request", wakeName(key))
+}
+
+func toolDeliverySpan(db *sql.DB, r outboxRow, body M) (context.Context, *obs.Span) {
+	if r.route != contract.RouteAgentTools.Path && r.route != contract.RouteProjectOperations.Path {
+		return context.Background(), nil
+	}
+	b := typed[struct {
+		CommandId string `json:"commandId"`
+		AgentKey  string `json:"agentToolKey"`
+		Request   struct {
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		} `json:"request"`
+		Delegation struct {
+			Operation string `json:"operation"`
+			RequestId string `json:"requestId"`
+		} `json:"delegation"`
+	}](body)
+	var operation, key string
+	switch r.route {
+	case contract.RouteAgentTools.Path:
+		operation, key = b.Request.Params.Name, b.AgentKey
+	case contract.RouteProjectOperations.Path:
+		operation, key = b.Delegation.Operation, b.CommandId+":"+b.Delegation.RequestId
+	}
+	if parent := toolSpanContext(db, b.CommandId, r.execution); parent != nil {
+		ctx, s := obs.Start(parent, "fleet.tool.delivery", obs.KindClient)
+		setToolAttrs(s, r.route, operation, key)
+		if age := nowMs() - r.queuedAt.Int64; r.queuedAt.Valid && age >= 0 {
+			s.Set("fleet.queue_ms", strconv.FormatInt(age, 10))
+		} else {
+			s.Set("missing.queue_ms", "enqueue time unavailable")
+		}
+		if r.queuedBehind.Valid {
+			s.Set("fleet.queued_behind_execution_row", strconv.FormatBool(r.queuedBehind.Bool))
+		}
+		return ctx, s
+	}
+	return context.Background(), nil
+}
+
+func observeToolAnswer(s *obs.Span, a answer, route string, elapsed time.Duration) {
+	s.Set("fleet.http_ms", durationMs(elapsed))
+	if a.status != 0 {
+		s.Set("http.response.status_code", strconv.Itoa(a.status))
+	}
+	switch a.kind {
+	case answerOK:
+		s.Set("fleet.transport", "answered")
+		reply := typedRaw[struct {
+			Error  jsonValue `json:"error"`
+			Result struct {
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		}](a.value)
+		if (reply.Error.Set && reply.Error.V != nil) || route == contract.RouteAgentTools.Path && reply.Result.IsError {
+			s.Set("fleet.tool_outcome", "error")
+		} else {
+			s.Set("fleet.tool_outcome", "result")
+		}
+	case answerReject:
+		s.Set("fleet.transport", "rejected")
+		s.Outcome, s.ErrorClass = obs.HTTPOutcome(a.status, a.status == 403 || a.status == 409)
+	case answerEdge:
+		s.Set("fleet.transport", "edge")
+		s.Fail("network")
+	case answerRetry:
+		s.Set("fleet.transport", "retry")
+		switch {
+		case a.timeout:
+			s.Fail("timeout")
+		case a.status == 0:
+			s.Fail("network")
+		default:
+			s.Outcome, s.ErrorClass = obs.HTTPOutcome(a.status, false)
+		}
+	}
+}
+
+// An MCP process records a deadline independently of the delivery lane, including when the row has yet to send.
+// Publish a complete pending file for the host's span spool to pick up. A telemetry failure cannot change the reply.
+func recordToolPending(db *sql.DB, host, command, execution, route, operation, key string, started time.Time) {
+	ctx := toolSpanContext(db, command, execution)
+	if ctx == nil {
+		return
+	}
+	_, s := obs.StartAt(ctx, "fleet.tool.wait", obs.KindInternal, started)
+	s.Service, s.HostID, s.Version = "executor", host, version
+	setToolAttrs(s, route, operation, key)
+	s.Set("fleet.wait", "pending")
+	s.Fail("timeout")
+	s.End(nil)
+	line, err := json.Marshal(s)
+	if err != nil {
+		return
+	}
+	dir := journalDir(db)
+	if dir == "" {
+		return
+	}
+	f, err := os.CreateTemp(filepath.Join(dir, "spans"), "tool-*")
+	if err != nil {
+		return
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(append(line, '\n'))
+	if closeErr := f.Close(); err == nil && closeErr == nil {
+		os.Rename(f.Name(), filepath.Join(filepath.Dir(f.Name()), "pending-"+filepath.Base(f.Name())+".jsonl"))
+	}
+}
+
 func spanBatches(file string) ([]contract.SpanBatchRequest, error) {
 	fh, err := os.Open(file)
 	if err != nil {

@@ -118,6 +118,18 @@ func hostService(s string) bool {
 	return s == "executor" || s == "gateway" || s == "fleet-update" || strings.HasPrefix(s, "harness:")
 }
 
+// Attribute the HTTP span only after the host's command/execution binding has been proved.
+func bindToolHTTPSpan(q *Request, execution, project, operation string) {
+	s := obs.From(q.ctx())
+	if s == nil || execution == "" {
+		return
+	}
+	s.ExecutionID, s.ProjectID = &execution, agentOpt(project)
+	if _, known := contract.Operations[operation]; known {
+		s.Set("fleet.operation", operation)
+	}
+}
+
 // spanName: the server span name of a request, after the mux served it: the operation name for /api/ops/{name} when it
 // exists, else the matched route pattern; "" for an unmatched path.
 func spanName(r *http.Request) string {

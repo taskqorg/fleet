@@ -232,6 +232,7 @@ func projectReceiptIn(q *Request, b *contract.ProjectReceipt) (any, error) {
 	if s.ProjectID == "" || d.ProjectId != s.ProjectID {
 		return nil, fail(403, "Project grant rejected")
 	}
+	bindToolHTTPSpan(q, b.ExecutionId, s.ProjectID, string(d.Operation))
 	args := recOf(d.Arguments)
 	args["projectId"] = jsonBytes(s.ProjectID)
 	return projectReceipt(q, string(d.Operation), args, b.ExecutionId, s)

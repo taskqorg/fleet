@@ -149,6 +149,10 @@ type gapFailure struct {
 // classify answers the failure's class and decisive line; ok is false when it is no gap (a skip rule, or a shell
 // command no rule names: its exit status is the program's answer, not something the agent lacks).
 func (r *gapRules) classify(f gapFailure) (class, line string, ok bool) {
+	if f.Source == "agent" && f.Tool == "agent_tool_result" && (f.Connection == "" || f.Connection == "fleet") &&
+		strings.Contains(f.Text, "Outcome unknown; inspect this request again.") {
+		return "", "", false // a pending local lookup observes the original request
+	}
 	shell := f.Source == "agent" && r.shell.MatchString(f.Tool)
 	for _, x := range r.Rules {
 		if x.Source != f.Source || (x.Shell != nil && *x.Shell != shell) {
@@ -278,9 +282,44 @@ func eventFailures(data rawObject) []indexedFailure {
 		if text == "" {
 			text = errorText(data["error"])
 		}
+		if (server == "code" || server == "fleet-code" || server == "") && (tool == "code" || tool == "poll") {
+			if inner, result := codeFleetDeliveryFailure(text); inner != "" {
+				tool, server, text = inner, "fleet", result
+			}
+		}
 		out = append(out, indexedFailure{i, gapFailure{Source: "agent", Tool: tool, Connection: server, Text: text}})
 	}
 	return out
+}
+
+// codeFleetDeliveryFailure reads the Code Mode reply's final metadata part, shared by code and poll.
+// Only delegation statuses with the transport's envelope are attributed to a nested Fleet tool.
+func codeFleetDeliveryFailure(text string) (tool, result string) {
+	const prefix = "\n[code] "
+	text = "\n" + text
+	at := strings.LastIndex(text, prefix)
+	if at < 0 {
+		return "", ""
+	}
+	raw, _, _ := strings.Cut(text[at+len(prefix):], "\n")
+	var meta struct {
+		Error struct {
+			Tool, Code, Outcome string
+			Output              rawObject
+		}
+	}
+	if json.Unmarshal([]byte(raw), &meta) != nil {
+		return "", ""
+	}
+	e := meta.Error
+	switch {
+	case e.Code == "pending" && e.Outcome == "unknown" && e.Output.text("status") == "pending" &&
+		strings.HasPrefix(e.Output.text("instruction"), "Outcome unknown; "):
+	case e.Code == "tool-error" && e.Outcome == "error" && e.Output.text("error") == "Coordinator rejected delegation":
+	default:
+		return "", ""
+	}
+	return e.Tool, string(jsonBytes(e.Output))
 }
 
 type indexedFailure struct {
@@ -356,7 +395,16 @@ func recordEventGaps(q *Request, r *gapRules, executionID string, projectID *str
 		if !ok {
 			continue
 		}
-		if err := q.db().AgentGapPut(q.ctx(), db.AgentGapPutParams{ID: eventID + "#" + strconv.Itoa(f.index), ExecutionID: executionID, ProjectID: projectID,
+		id := eventID + "#" + strconv.Itoa(f.index)
+		if gapFamilyOf(class) == "fleet-unconfirmed" {
+			var pending struct{ Status, RequestKey, Instruction string }
+			if json.Unmarshal([]byte(f.Text), &pending) == nil && pending.Status == "pending" && pending.RequestKey != "" {
+				digest := sha256.Sum256([]byte(pending.RequestKey))
+				id = "pending:" + executionID + ":" + hex.EncodeToString(digest[:10])
+				line = pending.Instruction
+			}
+		}
+		if err := q.db().AgentGapPut(q.ctx(), db.AgentGapPutParams{ID: id, ExecutionID: executionID, ProjectID: projectID,
 			Source: "agent", At: gapTime(at), Class: class, Family: gapFamilyOf(class), Tool: gapToolName(f.gapFailure), Line: line, Rules: r.digest}); err != nil {
 			return len(fs), n, err
 		}

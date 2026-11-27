@@ -175,17 +175,25 @@ func TestWaitingBoardReadLeavesExecutionLaneAvailable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	queueCall := func(key, name string, args M) {
+	queueCall := func(key, name string, args M, wantPredecessor bool) {
 		t.Helper()
 		args["scopeKind"], args["scopeId"] = "session", "fixture"
 		body := M{"hostId": "host", "commandId": "cmd", "executionId": "caller", "agentToolKey": key,
 			"request": M{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 				"params": M{"name": name, "arguments": args}}}
-		if err := journalOnce(db, key, enc(body), contract.RouteAgentTools.Path); err != nil {
+		laneExecution := "caller"
+		if boardReadWaitSeconds(name, args) > 0 {
+			laneExecution = ""
+		}
+		if err := journalOnce(db, key, enc(body), contract.RouteAgentTools.Path, laneExecution); err != nil {
 			t.Fatal(err)
 		}
+		var predecessor bool
+		if err := db.QueryRow("SELECT tool_queued_behind FROM outbox WHERE json_extract(body,'$.agentToolKey')=?", key).Scan(&predecessor); err != nil || predecessor != wantPredecessor {
+			t.Fatalf("%s predecessor observed = %v, want %v (%v)", key, predecessor, wantPredecessor, err)
+		}
 	}
-	queueCall("first", "board_read", M{"waitSeconds": 45})
+	queueCall("first", "board_read", M{"waitSeconds": 45}, false)
 	wait, err := startFlush(db, server.URL, "invented-token", "host")
 	if err != nil {
 		t.Fatal(err)
@@ -200,9 +208,9 @@ func TestWaitingBoardReadLeavesExecutionLaneAvailable(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("waiting read was not dispatched")
 	}
-	queueCall("second", "board_read", M{"waitSeconds": 25})
-	queueCall("immediate", "board_read", M{})
-	queueCall("post", "board_post", M{"projectId": "fixture", "authorMember": "tester", "text": "matching post"})
+	queueCall("second", "board_read", M{"waitSeconds": 25}, false)
+	queueCall("immediate", "board_read", M{}, false)
+	queueCall("post", "board_post", M{"projectId": "fixture", "authorMember": "tester", "text": "matching post"}, true)
 	if err := flush(db, server.URL, "invented-token", "host"); err != nil {
 		t.Fatal(err)
 	}

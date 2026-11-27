@@ -244,8 +244,8 @@ func runExecutor() error {
 	if err != nil {
 		return err
 	}
-	spawnOutbox(odb, url, token, host)
 	startTelemetry(root, odb, host)
+	spawnOutbox(odb, url, token, host)
 	if err := os.MkdirAll(sessions, 0o700); err != nil {
 		return err
 	}

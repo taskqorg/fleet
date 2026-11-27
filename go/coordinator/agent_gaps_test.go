@@ -119,6 +119,37 @@ func TestAgentGapEventFailures(t *testing.T) {
 	if c, _, _ := r.classify(got[0].gapFailure); c != "fleet-refused:task_page" {
 		t.Fatalf("claude class %q", c)
 	}
+	const original = `{"status":"pending","requestKey":"invented-request","instruction":"Outcome unknown; use agent_tool_result with this requestKey. Do not repeat the mutation."}`
+	const lookup = `{"status":"pending","requestKey":"invented-request","instruction":"Outcome unknown; inspect this request again. Do not repeat the mutation."}`
+	const rejected = `{"error":"Coordinator rejected delegation","statusCode":403}`
+	for _, tc := range []struct{ outer, inner, code, outcome, reply, want string }{
+		{"mcp__fleet__task_get", "", "", "", original, "fleet-unconfirmed:task_get"},
+		{"mcp__fleet__agent_tool_result", "", "", "", lookup, ""},
+		{"mcp__code__code", "task_get", "pending", "unknown", original, "fleet-unconfirmed:task_get"},
+		{"mcp__code__poll", "pipeline_history", "pending", "unknown", original, "fleet-unconfirmed:pipeline_history"},
+		{"mcp__code__code", "agent_tool_result", "pending", "unknown", lookup, ""},
+		{"mcp__code__poll", "agent_tool_result", "pending", "unknown", lookup, ""},
+		{"mcp__code__poll", "task_get", "tool-error", "error", rejected, "fleet-refused:task_get"},
+		{"mcp__fleet__agent_tool_result", "", "", "", `{"error":"Request belongs to another command"}`, "fleet-refused:agent_tool_result"},
+	} {
+		reply := tc.reply
+		if tc.inner != "" {
+			reply = fmt.Sprintf(`printed output
+[code] {"status":"failed","error":{"tool":%q,"code":%q,"outcome":%q,"output":%s}}`, tc.inner, tc.code, tc.outcome, reply)
+		}
+		var event rawObject
+		if err := json.Unmarshal([]byte(fmt.Sprintf(`{"fleetNormalized":{"blocks":[{"kind":"tool","name":%q,"state":"failed","output":{"content":[{"type":"text","text":%s}]}}]}}`,
+			tc.outer, jsonBytes(reply))), &event); err != nil {
+			t.Fatal(err)
+		}
+		got := eventFailures(event)
+		if len(got) != 1 {
+			t.Fatalf("%s: failures %+v", tc.outer, got)
+		}
+		if class, _, _ := r.classify(got[0].gapFailure); class != tc.want {
+			t.Errorf("%s / %s: class %q, want %q", tc.outer, tc.inner, class, tc.want)
+		}
+	}
 }
 
 // Requirement: the read counts each class per day over the whole window (zero days included), compares it with the
