@@ -567,6 +567,31 @@ func ciRecordObservation(q *Request, row db.PublishingCiRecovery, p ciRecoveryPa
 	if err := ciRecoverySave(q, row, p); err != nil {
 		return err
 	}
+	if err := observeCIRecoveryBlockers(q, row, p, observation); err != nil {
+		return err
+	}
+	if reason := ciRecoveryBlockerReason(observation); reason != "" {
+		task, err := taskLoad(q, p.Task)
+		if err != nil && !errors.Is(err, errNotFound) {
+			return err
+		}
+		if err == nil && deliveryTaskActive(task.State) {
+			mediator := ""
+			if q.host != nil {
+				mediator = q.hostID()
+			}
+			d := deliveryBlocker{Provider: p.Target.Provider, Host: p.Target.Host, Repo: row.Repo, Branch: deref(p.Target.Branch),
+				Number: row.Number, Head: row.HeadSha, Run: row.RunNumber, Attempt: max(row.OriginalAttempt, valueOr(observation.Attempt)),
+				Task: p.Task, Session: p.Session, Execution: row.SourceExecutionID, Operation: "rerun_failed",
+				Reason: reason, Recovery: row.ID, Observation: observation.Reason, Mediator: mediator}
+			if observation.RunId != nil {
+				d.Run = *observation.RunId
+			}
+			if _, err := raiseDeliveryBlocker(q, row.ProjectID, deref(task.Code), d); err != nil {
+				return err
+			}
+		}
+	}
 	if string(jsonBytes(previous)) != string(jsonBytes(observation)) {
 		if err := audit(q, "publishing-ci:"+row.ID, "observation", previous, observation, auditExtra{ProjectID: &row.ProjectID}); err != nil {
 			return err
@@ -576,6 +601,25 @@ func ciRecordObservation(q *Request, row db.PublishingCiRecovery, p ciRecoveryPa
 		return err
 	}
 	return kitNotify(q, ciRecoveryQueue)
+}
+
+// Only terminal operational outcomes signal duty. Second red still goes to the worker.
+func ciRecoveryBlockerReason(o contract.PublishingCIObservation) string {
+	if o.State != contract.PublishingCIStateRefused && o.State != contract.PublishingCIStateHandoff {
+		return ""
+	}
+	switch o.Reason {
+	case "host_ci_grant_unavailable", "provider_dispatch_denied", "provider_read_denied_or_missing":
+		return "access_unavailable"
+	case "provider_jobs_unverified":
+		return "diagnostics_unavailable"
+	case "dispatch_window_elapsed":
+		return "provider_unavailable"
+	case "provider_outcome_unconfirmed", "replacement_required_jobs_unconfirmed":
+		return "outcome_unconfirmed"
+	default:
+		return ""
+	}
 }
 
 func ciRecoveryHandoff(q *Request, row db.PublishingCiRecovery, p ciRecoveryPayload) error {

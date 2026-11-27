@@ -831,6 +831,9 @@ func publishingRecordRoute(q *Request, b *contract.PublishingHostRecord) (contra
 				}
 			}
 		}
+		if err := observePublishingBlockers(wq, b); err != nil {
+			return err
+		}
 		if err := audit(wq, "publishing:"+b.Repo, action, nil, b, auditExtra{
 			ProjectID: b.ProjectId,
 			Holder:    wq.host.Holder,

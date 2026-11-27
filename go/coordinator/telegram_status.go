@@ -386,7 +386,7 @@ func telegramNeeds(q *Request, row *db.TelegramUpdate, room db.TelegramRoom, tp 
 	if room.Kind == "private" {
 		// A private chat shows the person's whole Needs you: every open question of their projects (owner-tester F9).
 		p := q.app.peopleSnapshot().person(tp.Email)
-		all, err := q.db().TelegramNeedsAll(q.ctx())
+		all, err := q.db().TelegramNeedsAll(q.ctx(), p != nil && p.Owner)
 		if err != nil {
 			return 0, err
 		}
@@ -506,6 +506,17 @@ func telegramWatch(ctx context.Context, a *App) error {
 				return err
 			}
 		}
+		if owner := ownerEmail(q); owner != "" {
+			cards, err := q.db().TelegramDeliveryAuthorityToPush(q.ctx(), owner)
+			if err != nil {
+				return err
+			}
+			for _, x := range cards {
+				if err := telegramQuestionMessage(q, "q:"+x.ID, x.ID, x.Kind, x.Text, x.Language, x.ChatID, 0, "", deref(x.SessionID), nil); err != nil {
+					return err
+				}
+			}
+		}
 		ended, err := q.db().TelegramQuestionsEnded(q.ctx())
 		if err != nil {
 			return err
@@ -532,7 +543,7 @@ func telegramWatch(ctx context.Context, a *App) error {
 				}
 				line = "✓ " + who + ": " + clip(answer, 300)
 			}
-			if err := telegramOutbox(q, db.TelegramOutboxAddParams{ID: "qend:" + x.ID, ChatID: x.ChatID, Kind: "edit", EditMessageID: x.TelegramMessageID,
+			if err := telegramOutbox(q, db.TelegramOutboxAddParams{ID: x.EditID, ChatID: x.ChatID, Kind: "edit", EditMessageID: x.TelegramMessageID,
 				Text: body + "\n" + line}); err != nil {
 				return err
 			}
@@ -737,6 +748,12 @@ func telegramQuestionTap(q *Request, c *kitClaim, row *db.TelegramUpdate, cb *tg
 	}
 	choices := tgChoices(qr.Options)
 	i, err := strconv.Atoi(n)
+	if qr.State == "withdrawn" && cb.Message != nil {
+		room := db.TelegramRoom{ChatID: cb.Message.Chat.ID, ThreadID: cb.Message.thread()}
+		if err := telegramNotice(q, room, cb.Message.MessageID, "stale:"+row.ID, tp.Language, "withdrawn", ""); err != nil {
+			return err
+		}
+	}
 	if qr.State != "open" || err != nil || i < 0 || i >= len(choices) {
 		return telegramDone(q, row.ID, "tap-stale", "")
 	}

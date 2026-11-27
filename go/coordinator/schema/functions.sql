@@ -230,6 +230,8 @@ BEGIN
    det := jsonb_build_object('from', OLD.state);
   END IF;
  ELSIF TG_TABLE_NAME = 'question' THEN
+  -- Owner authority stays on the question. Work history is visible to the project.
+  IF r.data ? 'deliveryAuthority' THEN RETURN NULL; END IF;
   IF TG_OP = 'UPDATE' AND OLD.state = r.state THEN RETURN NULL; END IF;
   k := 'question'; subj := 'question:' || r.id; gk := subj; tid := r.task_id; sid := r.session_id;
   -- A coordinator problem question (a cause: stuck run, no host, failing resource) is system upkeep, one per run or

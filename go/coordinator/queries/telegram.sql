@@ -219,16 +219,31 @@ FROM question q
 JOIN telegram_work w ON w.session_id = q.session_id AND w.closed_at IS NULL
 JOIN telegram_room r ON r.id = w.room_id
 WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
+  AND NOT (q.data ? 'deliveryAuthority')
   AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
+LIMIT 50;
+
+-- name: TelegramDeliveryAuthorityToPush :many
+-- Only the owner's linked private chat receives delivery authority cards, including bot conversations without Telegram work.
+SELECT q.id, q.kind::text AS kind, q.text, q.session_id, r.chat_id, p.language
+FROM question q
+JOIN telegram_person p ON p.email = @owner::text
+JOIN telegram_room r ON r.chat_id = p.telegram_user_id AND r.kind = 'private' AND r.thread_id = 0
+WHERE q.state = 'open' AND q.data ? 'deliveryAuthority'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
+ORDER BY q.asked_at
 LIMIT 50;
 
 -- name: TelegramQuestionsEnded :many
 -- Questions sent to Telegram that were answered or withdrawn since, whose message does not say so yet.
 SELECT q.id, q.state::text AS state, coalesce(q.answer, '')::text AS answer, coalesce(q.answered_by, '')::text AS answered_by, q.text,
-  o.chat_id, o.telegram_message_id
-FROM telegram_outbox o JOIN question q ON o.id = 'q:' || q.id
-WHERE o.state = 'sent' AND o.telegram_message_id IS NOT NULL AND q.state <> 'open'
-  AND NOT EXISTS (SELECT 1 FROM telegram_outbox e WHERE e.id = 'qend:' || q.id)
+  o.chat_id, o.telegram_message_id,
+  (CASE WHEN o.id LIKE 'qn:%' THEN 'qend:' || o.id ELSE 'qend:' || q.id END)::text AS edit_id
+FROM telegram_outbox o JOIN question q ON q.id = split_part(o.id, ':', 2)
+WHERE (o.id = 'q:' || q.id OR (o.id LIKE 'qn:%' AND q.data ? 'deliveryAuthority'))
+  AND o.state = 'sent' AND o.telegram_message_id IS NOT NULL AND q.state <> 'open'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox e WHERE e.id =
+    CASE WHEN o.id LIKE 'qn:%' THEN 'qend:' || o.id ELSE 'qend:' || q.id END)
 LIMIT 50;
 
 -- name: TelegramQuestionMessage :one
@@ -248,7 +263,7 @@ SELECT id, code, title, state::text AS state, wait_reason, project_id FROM task 
 -- Open questions of a group room's work items, or (private) of the work items the person opened (their private
 -- chat's current conversation included), oldest first (/needs).
 SELECT q.id, q.kind::text AS kind, q.text, q.session_id FROM question q
-WHERE q.state = 'open' AND q.session_id IN (
+WHERE q.state = 'open' AND NOT (q.data ? 'deliveryAuthority') AND q.session_id IN (
   SELECT w.session_id FROM telegram_work w WHERE w.closed_at IS NULL
     AND ((NOT @private::boolean AND w.room_id = @room_id) OR (@private::boolean AND w.created_by = @email)))
 ORDER BY q.asked_at LIMIT 10;
@@ -291,7 +306,8 @@ SELECT coalesce(title, '')::text FROM session WHERE id = $1;
 -- name: TelegramNeedsAll :many
 -- Every open question, newest first, for a person's /needs in a private chat (filtered by their projects in Go).
 SELECT id, kind::text AS kind, text, session_id, coalesce(project_id, '')::text AS project_id FROM question
-WHERE state = 'open' ORDER BY asked_at DESC LIMIT 100;
+WHERE state = 'open' AND (@include_delivery_authority::boolean OR NOT (data ? 'deliveryAuthority'))
+ORDER BY asked_at DESC LIMIT 100;
 
 -- name: TelegramAuthorRecentWork :one
 -- The work item the author's last routed message in this room went to, within the window: a follow-up of theirs

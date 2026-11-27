@@ -27,6 +27,55 @@ func (v MergeMethod) Valid() bool {
 	return false
 }
 
+type PublishingBlockerOperation string
+
+const (
+	PublishingBlockerOperationCiLogs           PublishingBlockerOperation = "ci_logs"
+	PublishingBlockerOperationRerunFailed      PublishingBlockerOperation = "rerun_failed"
+	PublishingBlockerOperationStatus           PublishingBlockerOperation = "status"
+	PublishingBlockerOperationPublishDraft     PublishingBlockerOperation = "publish_draft"
+	PublishingBlockerOperationRecordCodeReview PublishingBlockerOperation = "record_code_review"
+	PublishingBlockerOperationMarkReady        PublishingBlockerOperation = "mark_ready"
+	PublishingBlockerOperationRequestMerge     PublishingBlockerOperation = "request_merge"
+	PublishingBlockerOperationRelease          PublishingBlockerOperation = "release"
+	PublishingBlockerOperationHostLanding      PublishingBlockerOperation = "host_landing"
+)
+
+// PublishingBlockerOperationValues lists every PublishingBlockerOperation in schema order.
+var PublishingBlockerOperationValues = []PublishingBlockerOperation{PublishingBlockerOperationCiLogs, PublishingBlockerOperationRerunFailed, PublishingBlockerOperationStatus, PublishingBlockerOperationPublishDraft, PublishingBlockerOperationRecordCodeReview, PublishingBlockerOperationMarkReady, PublishingBlockerOperationRequestMerge, PublishingBlockerOperationRelease, PublishingBlockerOperationHostLanding}
+
+// Valid: v is one of the schema's values.
+func (v PublishingBlockerOperation) Valid() bool {
+	for _, x := range PublishingBlockerOperationValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PublishingBlockerReason string
+
+const (
+	PublishingBlockerReasonAccessUnavailable      PublishingBlockerReason = "access_unavailable"
+	PublishingBlockerReasonDiagnosticsUnavailable PublishingBlockerReason = "diagnostics_unavailable"
+	PublishingBlockerReasonProviderUnavailable    PublishingBlockerReason = "provider_unavailable"
+	PublishingBlockerReasonOutcomeUnconfirmed     PublishingBlockerReason = "outcome_unconfirmed"
+)
+
+// PublishingBlockerReasonValues lists every PublishingBlockerReason in schema order.
+var PublishingBlockerReasonValues = []PublishingBlockerReason{PublishingBlockerReasonAccessUnavailable, PublishingBlockerReasonDiagnosticsUnavailable, PublishingBlockerReasonProviderUnavailable, PublishingBlockerReasonOutcomeUnconfirmed}
+
+// Valid: v is one of the schema's values.
+func (v PublishingBlockerReason) Valid() bool {
+	for _, x := range PublishingBlockerReasonValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type PublishingCIAnnotationStatus string
 
 const (
@@ -675,6 +724,31 @@ func (v *PublishingRecordCodeReviewRequest) Validate() error {
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*PublishingRecordCodeReviewRequest) Closed() bool { return true }
 
+type PublishingReportBlockerReply = ProblemGetReply
+
+type PublishingReportBlockerRequest struct {
+	Attempt           *int64                     `json:"attempt,omitempty"`
+	ExpectedHeadSha   *string                    `json:"expectedHeadSha,omitempty"`
+	JobId             *int64                     `json:"jobId,omitempty"`
+	Number            *int64                     `json:"number,omitempty"`
+	Operation         PublishingBlockerOperation `json:"operation"`
+	ProjectId         *string                    `json:"projectId,omitempty"`
+	Reason            PublishingBlockerReason    `json:"reason"`
+	RunId             *int64                     `json:"runId,omitempty"`
+	SourceExecutionId *string                    `json:"sourceExecutionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingReportBlockerRequest) Validate() error {
+	if err := Check(&v.Operation, "operation"); err != nil {
+		return err
+	}
+	if err := Check(&v.Reason, "reason"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type PublishingRequestMergeReply struct {
 	AutoMergeEnabled bool               `json:"autoMergeEnabled"`
 	Branch           string             `json:"branch"`
@@ -863,6 +937,7 @@ func init() {
 		"publishing_mark_ready":           {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Mark a draft pull request or merge request ready for review idempotently, fenced by optional expectedHeadSha.", InputSchema: json.RawMessage("{\"properties\":{\"branch\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"repo\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_publish_draft":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Push the bound execution branch and open or reuse a draft pull request (GitHub) or draft merge request (GitLab). Enforces repository, branch, host and profile authority plus optional expectedHeadSha fencing.", InputSchema: json.RawMessage("{\"properties\":{\"body\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"title\",\"body\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_record_code_review":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Verify stored Fleet review evidence referencing expectedHeadSha, write an audit row, and post and read back the code-review commit status on the provider (GitHub or GitLab).", InputSchema: json.RawMessage("{\"properties\":{\"artifactId\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"expectedHeadSha\",\"artifactId\",\"description\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"publishing_report_blocker":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Report a persistent publishing access, diagnostic or provider blocker to Problems duty. Use for operational blockers after checking available evidence, never ask a person to fetch logs or rerun CI. No log text, credential values or human question.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"attempt\":{\"minimum\":1,\"type\":\"integer\"},\"expectedHeadSha\":{\"type\":\"string\"},\"jobId\":{\"minimum\":1,\"type\":\"integer\"},\"number\":{\"minimum\":1,\"type\":\"integer\"},\"operation\":{\"enum\":[\"ci_logs\",\"rerun_failed\",\"status\",\"publish_draft\",\"record_code_review\",\"mark_ready\",\"request_merge\",\"release\",\"host_landing\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"enum\":[\"access_unavailable\",\"diagnostics_unavailable\",\"provider_unavailable\",\"outcome_unconfirmed\"],\"type\":\"string\"},\"runId\":{\"minimum\":1,\"type\":\"integer\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"operation\",\"reason\"],\"type\":\"object\"}")},
 		"publishing_request_merge":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Enable provider auto-merge / merge-when-pipeline-succeeds (or enqueue in merge queue) using project mergeMethod and autoMerge authority without admin bypass, fenced by optional expectedHeadSha.", InputSchema: json.RawMessage("{\"properties\":{\"branch\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"mergeMethod\":{\"enum\":[\"squash\",\"merge\",\"rebase\"],\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"repo\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_rerun_failed":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Request one policy-granted retry of verified failed CI on the source execution's current pull request head. Returns the durable recovery record.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"attempt\":{\"minimum\":1,\"type\":\"integer\"},\"expectedHeadSha\":{\"type\":\"string\"},\"number\":{\"minimum\":1,\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"minimum\":1,\"type\":\"integer\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"number\",\"expectedHeadSha\",\"runId\",\"attempt\",\"reason\"],\"type\":\"object\"}")},
 		"publishing_status":               {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Read unified publishing status across visible projects (GitHub pull requests and GitLab merge requests, including self-hosted GitLab): lifecycle stage, checks, review state, merge readiness, releases, host landing and project capabilities.", Changes: []string{"delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"branch\":{\"type\":\"string\"},\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"executionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"repoId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"$comment\":\"only the pull requests from branches of this task's sessions\",\"type\":\"string\"}},\"type\":\"object\"}")},

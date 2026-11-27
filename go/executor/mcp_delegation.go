@@ -31,7 +31,7 @@ var (
 		}
 		return out
 	}()
-	agentTools    = []string{"session_start", "session_presets", "session_transition", "session_fork", "session_resume", "session_handoffs", "session_rename", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status"}
+	agentTools    = []string{"session_start", "session_presets", "session_transition", "session_fork", "session_resume", "session_handoffs", "session_rename", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "publishing_report_blocker"}
 	artifactTools = []string{"artifact_save", "artifact_list", "artifact_get"}
 )
 
@@ -219,11 +219,14 @@ func mcpTools(ctx any) M {
 				continue
 			}
 			jAt(entry, "inputSchema", "properties", "profileId").(M)["enum"] = c.profiles() // the static entry's own shape
-		} else if slices.Contains(projectTools, t.Name) && str0(c.ProjectId) == "" || slices.Contains(artifactTools, t.Name) && str0(c.Workdir) == "" {
+		} else if (slices.Contains(projectTools, t.Name) || t.Name == "publishing_report_blocker") && str0(c.ProjectId) == "" || slices.Contains(artifactTools, t.Name) && str0(c.Workdir) == "" {
 			continue
 		}
 		if _, ok := entry["description"]; !ok {
 			entry["description"] = contract.Operations[t.Name].Description
+		}
+		if _, ok := entry["inputSchema"]; !ok {
+			entry["inputSchema"] = contract.Operations[t.Name].InputSchema
 		}
 		out, names = append(out, entry), append(names, t.Name)
 	}

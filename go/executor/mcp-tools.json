@@ -226,6 +226,14 @@
     }
   },
   {
+    "name": "publishing_report_blocker",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "question_ask",
     "annotations": {
       "readOnlyHint": false,
@@ -233,7 +241,7 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Ask the project's people a question. Reuse requestId on retry; the answer appears in question_history.",
+    "description": "Report persistent CI and publishing access or diagnostic blockers with publishing_report_blocker. Ask project questions here. Reuse requestId on retry and read the answer with question_history.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -699,7 +707,7 @@
   },
   {
     "name": "ask",
-    "description": "Ask a fresh question with question and requestId. Include taskId for an existing-task blocker. To read an existing answer, pass only resume with the question ID. Never combine the modes or put continuation prose in resume.",
+    "description": "Report persistent CI and publishing access or diagnostic blockers with publishing_report_blocker. To ask a person, use question and requestId. Include taskId for an existing-task blocker. To read an existing answer, pass only resume with the question ID. Never combine the modes or put continuation prose in resume.",
     "inputSchema": {
       "type": "object",
       "properties": {

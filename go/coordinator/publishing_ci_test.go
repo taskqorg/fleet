@@ -205,6 +205,30 @@ func TestCIRerunDurableCoordinator(t *testing.T) {
 	callClaim(b1, 409)
 	callClaim(b2, 200)
 
+	// An unavailable recovery capability goes to Problems. The verified
+	// second-red handoff above belongs only to the worker.
+	blocked := submit(request("no-host-grant", "2"))
+	advance(blocked.Id, time.Now())
+	denied, _ := loadCommand(readRow(blocked.Id))
+	report(denied, false, contract.PublishingCIObservation{State: "refused", Reason: "host_ci_grant_unavailable"})
+	write(func(q *Request) error {
+		rows, err := q.db().OpenDeliveryProblems(q.ctx(), db.OpenDeliveryProblemsParams{ProjectID: &proj})
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 {
+			t.Fatalf("expected one operational recovery problem, got %+v", rows)
+		}
+		var problem publishingBlockerData
+		if err := json.Unmarshal(rows[0].Data, &problem); err != nil {
+			return err
+		}
+		if problem.Delivery.Recovery != blocked.Id || problem.Delivery.Observation != "host_ci_grant_unavailable" || rows[0].QuestionID != nil {
+			t.Fatalf("missing recovery evidence or unexpected question: %s", rows[0].Data)
+		}
+		return nil
+	})
+
 	wrongRun := submit(request("queue-run", "f"))
 	advance(wrongRun.Id, time.Now())
 	wrong, _ := loadCommand(readRow(wrongRun.Id))

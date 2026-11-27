@@ -3,7 +3,7 @@
 // typed answer, an offline browser or an unknown outcome is silent, a refusal leaves no reason.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { answerLabels, answerChoices, useAnswer, type AnswerIO } from '../../packages/ui/src/answer.ts';
+import { answerLabels, answerChoices, deliveryAuthorityContent, useAnswer, type AnswerIO } from '../../packages/ui/src/answer.ts';
 
 test('answerLabels: strings, objects by label or value, acceptance, key request', () => {
   assert.deepEqual(answerLabels({ options: ['yes', 'no'] }), ['yes', 'no']);
@@ -53,4 +53,24 @@ test('useAnswer: a key goes to addKey only, never to the answer write', async ()
 
 test('answerLabels: an acceptance with an empty option list still has its two answers', () => {
   assert.deepEqual(answerLabels({ kind: 'acceptance', options: [] }), ['accepted', 'rejected']);
+});
+
+// T-FLT-143. The evidence and recommended button stay consistent when a
+// conversation carries plain labels and other views use the stored decision options.
+test('delivery authority keeps scoped evidence and choices in each card shape', () => {
+  const text = 'Allow the project to read failed checks?\n\nT-FLT-143 · P-6 · HAL0 → Fleet owner\nWaiting: worker diagnosis\nhttps://gitlab.example.test/team/repo/-/merge_requests/7';
+  const choices = ['Keep the current grant', 'Approve the read scope'];
+  const record = { kind: 'operator_decision', text, options: { deliveryAuthority: true, choices } };
+  const conversation = { ...record, deliveryAuthority: true, options: choices };
+  for (const card of [record, conversation]) {
+    assert.deepEqual(answerChoices(card), [
+      { label: choices[0], primary: true },
+      { label: choices[1], primary: false },
+    ]);
+    const show = deliveryAuthorityContent(card);
+    assert.equal(show?.title, 'Allow the project to read failed checks?');
+    assert.match(show?.evidence ?? '', /T-FLT-143 · P-6 · HAL0/);
+    assert.match(show?.evidence ?? '', /\[Delivery evidence\]\(https:\/\/gitlab\.example\.test\/team\/repo\/-\/merge_requests\/7\)/);
+  }
+  assert.equal(deliveryAuthorityContent({ text: 'Routine diagnostic blocker', options: null }), undefined);
 });

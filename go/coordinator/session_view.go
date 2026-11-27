@@ -114,8 +114,13 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 	}
 	out.Questions = make([]contract.SessionViewQuestion, 0, len(qs))
 	for _, x := range qs {
-		opts := choiceLabels(x.Options)
-		out.Questions = append(out.Questions, contract.SessionViewQuestion{Id: x.ID, SessionId: x.SessionID, Kind: x.Kind, Text: x.Text, Options: opts, ExecutionId: x.ExecutionID})
+		question := contract.SessionViewQuestion{Id: x.ID, SessionId: x.SessionID, Kind: x.Kind, Text: x.Text,
+			Options: choiceLabels(x.Options), ExecutionId: x.ExecutionID}
+		var authority deliveryAuthorityOptions
+		if json.Unmarshal(x.Options, &authority) == nil && authority.DeliveryAuthority {
+			question.Options, question.DeliveryAuthority = authority.Choices, ptr(true)
+		}
+		out.Questions = append(out.Questions, question)
 	}
 
 	if out.Triggers, err = triggerList(q, &contract.TriggerListRequest{SessionId: &sid}); err != nil {

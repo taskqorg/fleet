@@ -170,7 +170,7 @@ func refreshRequestAccess(q *Request) error {
 	}
 	q.person = p
 	if q.tx != nil {
-		sc := scopeOf(p)
+		sc := databaseScopeOf(p)
 		ids, person := "*", ""
 		if sc != nil {
 			ids, person = sc.ProjectIDs, sc.Person

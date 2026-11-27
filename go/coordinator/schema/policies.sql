@@ -455,6 +455,8 @@ CREATE POLICY project_scope ON purged_hash FOR ALL TO public USING (fleet_visibl
 
 -- question
 ALTER TABLE question ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS delivery_authority ON question;
+CREATE POLICY delivery_authority ON question AS RESTRICTIVE FOR SELECT TO public USING (((NOT (data ? 'deliveryAuthority'::text)) OR ((current_setting('fleet.project_ids'::text, true) = '*'::text) AND (COALESCE(current_setting('fleet.person'::text, true), ''::text) = ''::text))));
 DROP POLICY IF EXISTS live ON question;
 CREATE POLICY live ON question AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
 DROP POLICY IF EXISTS project_scope ON question;

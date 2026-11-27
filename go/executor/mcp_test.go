@@ -118,6 +118,26 @@ func TestProjectToolSchemas(t *testing.T) {
 	}
 }
 
+// T-FLT-143: coding workers should be able to route a blocker without the
+// optional director operations list or a working project-publishing mediator.
+func TestPublishingBlockerInDefaultFleetTools(t *testing.T) {
+	const name = "publishing_report_blocker"
+	ctx := M{"projectId": "p1", "hostId": "h", "commandId": "c", "executionId": "e"}
+	tools := mcpTools(ctx)["tools"].([]any)
+	idx := slices.IndexFunc(tools, func(tool any) bool { return jStr(tool, "name") == name })
+	if idx < 0 || !slices.Contains(agentTools, name) {
+		t.Fatal("ordinary workers cannot call the bound blocker operation")
+	}
+	wire := decM(enc(tools[idx]))
+	if !strings.Contains(enc(wire["inputSchema"]), `"required":["operation","reason"]`) {
+		t.Fatalf("missing generated blocker schema: %v", wire["inputSchema"])
+	}
+	delete(ctx, "projectId")
+	if slices.ContainsFunc(mcpTools(ctx)["tools"].([]any), func(tool any) bool { return jStr(tool, "name") == name }) {
+		t.Fatal("a projectless session saw the blocker operation")
+	}
+}
+
 // R1; risk: an opaque rejection prevents correction of invalid model arguments.
 // A coordinator validation refusal must survive the actual outbox instead of becoming an opaque grant error.
 func TestAgentRejectionKeepsValidation(t *testing.T) {

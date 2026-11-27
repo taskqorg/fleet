@@ -8,7 +8,7 @@ import {
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
   type TreeNode, type Harness, type StateOf, type Stat, states as states_, isFinished, openStates,
-  type Tone, life, keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
+  type Tone, life, keyConnection, answerChoices, deliveryAuthorityContent, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, online } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -408,23 +408,30 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
           />
         </Show>
         <For each={openQs()}>
-          {q => (<>
-            <DecisionBlock
-              question={q.text}
-              askedBy={actor(q.askedBy) || q.kind}
-              addressedTo="you"
-              since={ms(q.askedAt) ?? now()}
-              now={now()}
-              context={<TaskQuestionContext question={q} />}
-              typed={typedAnswer(q)}
-              options={answerChoices(q).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
-              answered={answers.answered(q.id) ? { by: 'you', answer: answers.answered(q.id)!.answer, at: answers.answered(q.id)!.at, delivered: true } : undefined}
-              answering={answers.answering(q.id)}
-              onAnswer={a => answers.send(q, a)}
-              onSecret={keyConnection(q.options) ? v => answers.addKey(q, v) : undefined}
-            />
-            <AnswerNote answers={answers} id={q.id} />
-          </>)}
+          {q => {
+            const authority = () => deliveryAuthorityContent(q);
+            return (
+              <>
+                <DecisionBlock
+                  question={authority()?.title ?? q.text}
+                  askedBy={actor(q.askedBy) || q.kind}
+                  addressedTo="you"
+                  since={ms(q.askedAt) ?? now()}
+                  now={now()}
+                  context={authority()
+                    ? <Markdown text={authority()!.evidence} />
+                    : <TaskQuestionContext question={q} />}
+                  typed={typedAnswer(q)}
+                  options={answerChoices(q).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
+                  answered={answers.answered(q.id) ? { by: 'you', answer: answers.answered(q.id)!.answer, at: answers.answered(q.id)!.at, delivered: true } : undefined}
+                  answering={answers.answering(q.id)}
+                  onAnswer={a => answers.send(q, a)}
+                  onSecret={keyConnection(q.options) ? v => answers.addKey(q, v) : undefined}
+                />
+                <AnswerNote answers={answers} id={q.id} />
+              </>
+            );
+          }}
         </For>
         <Show when={causeOf(latestExecution()?.failure, latestExecution()?.problem)} keyed>
           {c => (

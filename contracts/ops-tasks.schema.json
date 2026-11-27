@@ -10,7 +10,7 @@
     "project_list": {"read": true, "errors": [404], "auth": "person", "agent": "tool", "changes": ["definition"], "description": "Projects you can reach with their codes"},
     "project_readiness": {"read": false, "errors": [400,404,409], "auth": "person", "agent": "bound:session", "description": "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status"},
     "question_answer": {"read": false, "errors": [400,403,409], "auth": "person", "agent": "tool", "description": "Answers a project question, or any other question by id."},
-    "question_ask": {"read": false, "errors": [400,404,409], "auth": "project:projectId", "agent": "tool", "description": "Ask a project question (projectId, requestId, text); read its answer with question_history"},
+    "question_ask": {"read": false, "errors": [400,404,409], "auth": "project:projectId", "agent": "tool", "description": "Ask a project question (projectId, requestId, text); read its answer with question_history. Report persistent CI or delivery access and diagnostic blockers with publishing_report_blocker"},
     "question_history": {"read": true, "errors": [404], "auth": "project:projectId", "agent": "tool", "description": "Questions asked in a project (projectId) with their answers"},
     "questions": {"read": true, "errors": [], "auth": "person", "agent": "bound:session", "description": "List questions"},
     "questions_answer": {"read": false, "errors": [400,403,409], "auth": "person", "agent": "tool", "description": "Answer a question (questionId, answer, optional artifactIds)"},
@@ -39,7 +39,7 @@
     "problem_get": {"read": true, "errors": [400, 404], "auth": "person", "agent": "tool", "changes": ["problem"], "description": "Get one problem. When given a P-code (such as P-12) or problem UUID, pass it as id and omit cause. A cause lookup requires the exact stored cause key of a currently open problem visible to you. Raw execution errors are diagnostic text only. A cause lookup returns HTTP 404 when there is no visible open match. Use problems_list or agent_gaps to discover existing problem records."},
     "problem_update": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "tool", "description": "The owner bot (or the owner) sets a problem's phase, note or linked work, or closes it as fixed or as a duplicate of another problem."},
     "problem_talk": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "no", "description": "A person writes to the bot that owns a problem, in that problem's conversation (created on the first message). This is how a person reacts to an anomaly; there is no Investigate button."},
-    "problem_escalate": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "tool", "description": "The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look."}
+    "problem_escalate": {"read": false, "errors": [400, 403, 404, 409], "auth": "person", "agent": "tool", "description": "For a CI or delivery problem, supply deliveryAuthority and a genuine owner-only choice. The owner bot asks the owner one question about a problem: kind only-you (a key, account, money, vendor act), product (no requirement picks between outcomes) or authority (irreversible, deletes data, overrides the owner's setting). Never to ask whether to look."}
   },
   "$defs": {
     "ResourceAnchor": {"type":"string","enum":["start","end"]},
@@ -185,7 +185,26 @@
     "ProblemUpdateReply": {"type": "object", "required": ["problem"], "properties": {"problem": {"$ref": "#/$defs/ProblemRow"}}},
     "ProblemTalkRequest": {"type": "object", "unevaluatedProperties": false, "required": ["id", "text"], "properties": {"id": {"type": "string", "$comment": "an id or a code (P-12)"}, "text": {"type": "string"}, "requestId": {"type": "string"}}},
     "ProblemTalkReply": {"type": "object", "required": ["problem", "sessionId", "admitted"], "properties": {"problem": {"$ref": "#/$defs/ProblemRow"}, "sessionId": {"type": "string"}, "admitted": {"type": "boolean"}}},
-    "ProblemEscalateRequest": {"type": "object", "unevaluatedProperties": false, "required": ["id", "kind", "text"], "properties": {"id": {"type": "string", "$comment": "an id or a code (P-12)"}, "kind": {"$ref": "#/$defs/ProblemEscalationKind"}, "text": {"type": "string", "$comment": "the diagnosis in one line, what was tried, what only the owner can give and the recommendation"}, "options": {"type": "array", "items": {"type": "string"}, "$comment": "at most 4"}}},
+    "DeliveryAuthorityKind": {"type": "string", "enum": ["project_grant", "project_policy", "external_authority", "product_decision"]},
+    "DeliveryAuthorityChoice": {
+      "type": "object", "additionalProperties": false, "required": ["label", "consequence"],
+      "properties": {"label": {"type": "string"}, "consequence": {"type": "string"}}
+    },
+    "DeliveryAuthorityDecision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authority", "check", "diagnosis", "attempts", "uncertainty", "waiting", "choices", "recommendation"],
+      "properties": {
+        "authority": {"$ref": "#/$defs/DeliveryAuthorityKind"},
+        "check": {"type": "string", "$comment": "The affected check or delivery operation, in plain words."},
+        "diagnosis": {"type": "string"},
+        "attempts": {"type": "string"},
+        "uncertainty": {"type": "string"},
+        "waiting": {"type": "string"},
+        "choices": {"type": "array", "items": {"$ref": "#/$defs/DeliveryAuthorityChoice"}},
+        "recommendation": {"type": "string", "$comment": "The recommended choice's label."}
+      }
+    },
+    "ProblemEscalateRequest": {"type": "object", "unevaluatedProperties": false, "required": ["id", "kind", "text"], "properties": {"id": {"type": "string", "$comment": "an id or a code (P-12)"}, "kind": {"$ref": "#/$defs/ProblemEscalationKind"}, "text": {"type": "string", "$comment": "the precise choice when deliveryAuthority is set; otherwise diagnosis, attempts and recommendation"}, "options": {"type": "array", "items": {"type": "string"}, "$comment": "at most 4; omit when deliveryAuthority is set"}, "deliveryAuthority": {"$ref": "#/$defs/DeliveryAuthorityDecision"}}},
     "ProblemEscalateReply": {"type": "object", "required": ["problem", "questionId"], "properties": {"problem": {"$ref": "#/$defs/ProblemRow"}, "questionId": {"type": "string"}}}
   }
 }

@@ -2,6 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations and host CI diagnostics for unified project publishing (GitHub PR + GitLab MR parity).",
   "operations": {
+    "publishing_report_blocker": {
+      "read": false,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Report a persistent publishing access, diagnostic or provider blocker to Problems duty. Use for operational blockers after checking available evidence, never ask a person to fetch logs or rerun CI. No log text, credential values or human question."
+    },
     "publishing_rerun_failed": {
       "read": false,
       "errors": [400, 403, 404, 409],
@@ -73,6 +80,25 @@
     }
   },
   "$defs": {
+    "PublishingBlockerOperation": {"type": "string", "enum": ["ci_logs", "rerun_failed", "status", "publish_draft", "record_code_review", "mark_ready", "request_merge", "release", "host_landing"]},
+    "PublishingBlockerReason": {"type": "string", "enum": ["access_unavailable", "diagnostics_unavailable", "provider_unavailable", "outcome_unconfirmed"]},
+    "PublishingReportBlockerRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "reason"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "operation": {"$ref": "#/$defs/PublishingBlockerOperation"},
+        "reason": {"$ref": "#/$defs/PublishingBlockerReason"},
+        "number": {"type": "integer", "minimum": 1},
+        "expectedHeadSha": {"type": "string"},
+        "runId": {"type": "integer", "minimum": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "jobId": {"type": "integer", "minimum": 1}
+      }
+    },
+    "PublishingReportBlockerReply": {"$ref": "ops-tasks.schema.json#/$defs/ProblemGetReply"},
     "PublishingRerunFailedRequest": {
       "type": "object",
       "additionalProperties": false,
