@@ -175,7 +175,7 @@ Watch mode now runs on triggers ([fleet-triggers.md](fleet-triggers.md)): a watc
     2.  On `resync` (cursor pruned), set `cursor` to head and queue one message "Fleet: change history after your last wake was pruned; re-read your focus with task_page."
     3.  Keep changes whose project is in focus and whose kind is in `kinds`.
     4.  Drop changes whose `actor` is an execution of this session (one lookup of the session's execution IDs). Drop changes whose `sessionId` is a child of this session: their finish already wakes the PM through `wake()`.
-    5.  Classify each change by its current row (table below). The row may have moved on; the message says "now <state>", which is what the PM needs.
+    5.  Classify each change using the table below. The PM can read the current row when it needs the latest state.
     6.  If a `watch:` or `timer:` message for this session is still queued (PM busy), skip steps 7-8 and keep the cursor: the next pass sends one message covering everything.
     7.  If anything remains, `submit({sessionId, requestId: "watch:"+id+":"+cursor, text})`, then advance `cursor`, count `wakes`, set `lastWakeAt`. The request ID makes a retried pass collapse into one message.
     8.  Timer: if `nextWakeAt <= now`, submit `requestId: "timer:"+id+":"+nextWakeAt` and set `nextWakeAt = now + timerMs`. The stored time survives restarts.
@@ -183,7 +183,7 @@ Watch mode now runs on triggers ([fleet-triggers.md](fleet-triggers.md)): a watc
 
 | `kinds` value | Change rows | Classified by |
 | --- | --- | --- |
-| `task` | `kind='task'` | current `task.state` (`held` for a held pause) |
+| `task` | `kind='task'` | recorded task state (`held` for a held pause), with [legacy handling](fleet-triggers.md#pass) |
 | `question` | `kind='question'`, op `I` | open question row |
 | `execution` | `kind='execution'` | current state `failed` or `unknown` only |
 | `host` | `kind='host'` | `host-observation` problems (owner only) |

@@ -396,7 +396,8 @@ CREATE TABLE change (
   "actor" text,
   "holder" text,
   "setting_target" text,
-  "execution_watch_signal" text
+  "execution_watch_signal" text,
+  "task_watch_state" text
 );
 CREATE TABLE closed_delta_identity (
   "id" text NOT NULL,

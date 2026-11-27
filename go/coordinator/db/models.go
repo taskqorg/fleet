@@ -804,6 +804,7 @@ type Change struct {
 	Holder               *string
 	SettingTarget        *string
 	ExecutionWatchSignal *string
+	TaskWatchState       *string
 }
 
 type ClosedDeltaIdentity struct {

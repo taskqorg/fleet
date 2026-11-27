@@ -27,41 +27,52 @@ func TestTaskWatchStateOnlyStateChanges(t *testing.T) {
 	if _, err := conn.Exec(ctx, "SET fleet.project_ids = '*'"); err != nil {
 		t.Fatal(err)
 	}
-	seqAfter := func(sql string) int64 {
+	seqsAfter := func(sql string) []int64 {
 		t.Helper()
-		var s int64
 		tx, err := conn.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer tx.Rollback(ctx)
 		if _, err := tx.Exec(ctx, sql); err != nil {
 			t.Fatal(err)
 		}
-		if err := tx.QueryRow(ctx, "SELECT max(seq) FROM change WHERE kind='task' AND id='t1'").Scan(&s); err != nil {
+		rows, err := tx.Query(ctx, "SELECT seq FROM change WHERE kind='task' AND id='t1' AND xid=pg_current_xact_id()")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seqs, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+		if err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
-		return s
+		return seqs
 	}
 	q := db.New(conn)
-	// Each step checks the change it wrote against the row as a trigger pass right after it would read it.
+	// A write can also produce derived rows for the same task in the same transaction.
 	for _, c := range []struct {
 		sql  string
-		want bool
+		want int
 	}{
-		{"INSERT INTO task(id, title) VALUES ('t1', 'one')", true},
-		{"UPDATE task SET title='two' WHERE id='t1'", false},
-		{"UPDATE task SET state='in_progress' WHERE id='t1'", true},
-		{"UPDATE task SET title='three' WHERE id='t1'", false},
+		{"INSERT INTO task(id, title) VALUES ('t1', 'one')", 1},
+		{"UPDATE task SET title='two' WHERE id='t1'", 0},
+		{"UPDATE task SET state='in_progress' WHERE id='t1'", 1},
+		{"UPDATE task SET title='three' WHERE id='t1'", 0},
 	} {
-		r, err := q.TaskWatchState(ctx, db.TaskWatchStateParams{Seq: seqAfter(c.sql), ID: "t1"})
-		if err != nil {
-			t.Fatal(err)
+		changed := 0
+		for _, seq := range seqsAfter(c.sql) {
+			r, err := q.TaskWatchState(ctx, db.TaskWatchStateParams{Seq: seq, ID: "t1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.StateChanged {
+				changed++
+			}
 		}
-		if r.StateChanged != c.want {
-			t.Errorf("%s: state changed %v, want %v", c.sql, r.StateChanged, c.want)
+		if changed != c.want {
+			t.Errorf("%s: %d state changes, want %d", c.sql, changed, c.want)
 		}
 	}
 }
