@@ -285,6 +285,11 @@ An environment provides:
   Hosts probe production readiness before launches. Generic file bindings send the configured same-origin
   request directly and reject redirects. Fleet's navigation and identity check is also reported in host observations.
   Preview grants remain separate. See [coding execution](docs/configuration.md#coding-execution).
+- The DAM project grant for `https://revilio.com` applies the
+  [DAM verification contract](https://gitlab.ufobe.com/gradus/dam/-/blob/d0ea9ef91e4480c7063de4e6cb26a0ac7499d914/deploy/README.md#agent-verification)
+  to browser tool calls. Production results contain only fixed boolean or aggregate checks. Only
+  approved top-level GET routes receive authority. Same-origin script and stylesheet requests
+  carry no authority. Media, downloads and other requests are denied, including across redirects.
 - Access: available data, accounts and external services.
 - R-PROJECT-SITE-ACCESS. Project settings declare agent site-access intent by exact HTTPS origin, role and scope.
   An independent owner grant binds the intended principal and probe to private credentials. Live access requires that

@@ -5,6 +5,8 @@ const readline = require('node:readline');
 const net = require('node:net');
 const cfg = JSON.parse(process.argv[1]);
 const {chromium} = require(cfg.module);
+const damOrigin = cfg.damVerification && cfg.production?.origin === 'https://revilio.com'
+  ? cfg.production.origin : undefined;
 let browser, context, page, launched;
 const timeout=cfg.timeoutMs || 60000;
 function bounded(promise) {
@@ -59,6 +61,68 @@ function requestOrigin(url) {
   } catch {}
 }
 function permitted(url) { return allowed.has(requestOrigin(url)); }
+let damFrame;
+const damPages = new Map([
+  ['/site/verification', []],
+  ['/review/index', ['project_id', 'model_id', 'person_id']],
+  ['/review/view', ['id', 'project_id', 'model_id']],
+  ['/model/list', []],
+  ['/video/view', ['id', 'verification_producer_id']],
+  ['/project/view', ['id', 'verification_producer_id']],
+  ['/project/missing', ['id', 'verification_producer_id']],
+]);
+function damURL(raw) {
+  if (!damOrigin || typeof raw !== 'string' || !raw.startsWith(damOrigin + '/')) return;
+  const url = new URL(raw);
+  // Admit only literal paths and queries, including before Chromium normalizes navigation input.
+  if (raw !== damOrigin + url.pathname + url.search || /[%\\]/.test(raw)) return;
+  return url;
+}
+function damPage(raw) {
+  const url = damURL(raw);
+  const keys = damPages.get(url?.pathname);
+  if (!keys) return;
+  const seen = new Set();
+  if (url.search) {
+    for (const field of url.search.slice(1).split('&')) {
+      const match = /^([a-z_]+)=([1-9][0-9]*)$/.exec(field);
+      if (!match || !keys.includes(match[1]) || seen.has(match[1])) return;
+      seen.add(match[1]);
+    }
+  }
+  if (keys[0] === 'id' && !seen.has('id')) return;
+  if (url.pathname.startsWith('/project/') && !seen.has('verification_producer_id')) return;
+  return url;
+}
+function damRequestKind(sessionId, event, raw = event.request.url) {
+  if (event.request.method !== 'GET' || sessionId !== primarySession || event.frameId !== damFrame) return;
+  const type = event.resourceType;
+  if (type === 'Document' && damPage(raw)) return 'document';
+  const url = damURL(raw);
+  if (!url || url.search) return;
+  const asset = /^\/assets\/[a-f0-9]+\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(css|js)$/.exec(url.pathname)?.[1];
+  if (type === 'Stylesheet' && (asset === 'css' || url.pathname === '/css/site.css')) return 'style';
+  if (type === 'Script' && (asset === 'js' || url.pathname === '/js/review.js')) return 'script';
+}
+function damResponseAllowed(kind, sessionId, event) {
+  if (event.responseErrorReason) return false;
+  const headers = event.responseHeaders ?? [];
+  if (headers.some(({name,value}) => name.toLowerCase() === 'content-disposition' && !/^inline(?:\s*;|\s*$)/i.test(value))) return false;
+  if ([301,302,303,307,308].includes(event.responseStatusCode)) {
+    const locations = headers.filter(({name}) => name.toLowerCase() === 'location');
+    if (locations.length !== 1) return false;
+    const target = locations[0].value;
+    const absolute = target.startsWith('/') ? damOrigin + target : target;
+    return damRequestKind(sessionId, event, absolute) === kind;
+  }
+  const types = headers.filter(({name}) => name.toLowerCase() === 'content-type');
+  if (types.length !== 1) return false;
+  const mime = types[0].value.split(';')[0].trim().toLowerCase();
+  if (kind === 'document') return mime === 'text/html' ||
+    (mime === 'text/plain' && damPage(event.request.url)?.pathname === '/site/verification');
+  if (kind === 'style') return mime === 'text/css';
+  return ['text/javascript','application/javascript','application/x-javascript'].includes(mime);
+}
 let control, primaryTarget, primarySession, profileDir, initialResolve, initialReject, closing, nextCommand = 0;
 let usedProduction = false;
 let productionContext = false;
@@ -134,16 +198,25 @@ async function paused(sessionId,event) {
   const request=event.request;
   const origin = requestOrigin(request.url);
   const production = origin === cfg.production?.origin;
-  if(!allowed.has(origin) || (cfg.production?.managed && production !== productionContext))
-    return targetSend(sessionId,'Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});
+  const blocked = () => targetSend(sessionId,'Fetch.failRequest',{requestId:event.requestId,errorReason:'BlockedByClient'});
+  if(!allowed.has(origin) || ((cfg.production?.managed || damOrigin) && production !== productionContext))
+    return blocked();
+  let kind;
+  if (damOrigin && production) {
+    kind = damRequestKind(sessionId,event);
+    if (!kind) return blocked();
+  }
+  const response = event.responseStatusCode || event.responseErrorReason;
+  if (kind && response && !damResponseAllowed(kind,sessionId,event)) return blocked();
+  const authenticated = production && (!kind || kind === 'document');
   const privateHeaders = [...authority.values()];
   const containsAuthority = (name,value) => privateHeaders.some(secret => name.includes(secret.value) || String(value).includes(secret.value));
-  if(event.responseStatusCode || event.responseErrorReason) {
+  if(response) {
     const original = event.responseHeaders ?? [];
     const responseHeaders = original.filter(({name,value})=>{
       const lower = name.toLowerCase();
       return !lower.startsWith('cf-access-') && !authority.has(lower) && !containsAuthority(name,value) &&
-        !(lower==='set-cookie' && /^\s*CF_Authorization=/i.test(value));
+        !(lower==='set-cookie' && (kind || /^\s*CF_Authorization=/i.test(value)));
     });
     if(responseHeaders.length===original.length)
       return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId});
@@ -153,7 +226,8 @@ async function paused(sessionId,event) {
     .filter(([name,value])=>{
       const lower = name.toLowerCase();
       if(lower.startsWith('cf-access-client-') || authority.has(lower)) return false;
-      return production || !containsAuthority(name,value);
+      if (kind && ['authorization','cookie','referer','range'].includes(lower)) return false;
+      return (production && !kind) || !containsAuthority(name,value);
     })
     .map(([name,value])=>({name,value:String(value)}));
   if(production) {
@@ -161,7 +235,7 @@ async function paused(sessionId,event) {
     await requireGeneration();
     if(closing || control!==socket)return;
     usedProduction = true;
-    requestHeaders.push(...privateHeaders);
+    if(authenticated) requestHeaders.push(...privateHeaders);
   }
   // CDP overrides only this request; redirected requests are paused and checked again.
   await targetSend(sessionId,'Fetch.continueRequest',{requestId:event.requestId,headers:requestHeaders,...(production?{interceptResponse:true}:{})});
@@ -177,6 +251,10 @@ async function attached(event) {
   }
   // Children (including out-of-process frames/workers) must be intercepted before resuming.
   await targetSend(sessionId,'Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
+  if (damOrigin && productionContext && targetInfo.targetId === primaryTarget) {
+    const {frameTree} = await targetSend(sessionId,'Page.getFrameTree');
+    damFrame = frameTree.frame.id;
+  }
   if(cfg.production && ['page','iframe'].includes(targetInfo.type))await targetSend(sessionId,'Network.setCacheDisabled',{cacheDisabled:true});
   await targetSend(sessionId,'Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]});
   await targetSend(sessionId,'Runtime.runIfWaitingForDebugger');
@@ -200,7 +278,7 @@ function failClosed() {
 }
 async function open(production = false) {
   if(closing)await closing;
-  if(browser && cfg.production?.managed && production !== productionContext)await close();
+  if(browser && (cfg.production?.managed || damOrigin) && production !== productionContext)await close();
   if(browser)return;
   productionContext=production;
   if(production && cfg.checkGeneration) {
@@ -209,6 +287,7 @@ async function open(production = false) {
     generationTimer=setInterval(()=>{requireGeneration().catch(()=>{});},cfg.generationCheckMs);
   }
   primaryTarget=primarySession=undefined;
+  damFrame=undefined;
   usedProduction=false;
   profileDir=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'fleet-browser-'));
   const owned=Boolean(process.env.FLEET_MCP_GENERATION);
@@ -260,6 +339,77 @@ const tools = [
   {name:'screenshot',description:'Capture a granted loopback preview viewport or an optional unique Playwright locator as PNG. Use a fresh browser after production. Returns a run-private path and pixel dimensions for artifact_save.',inputSchema:{type:'object',properties:{selector:{type:'string',minLength:1}},additionalProperties:false}},
   {name:'close',description:'Close the owned browser and clean its temporary profile.',inputSchema:{type:'object',properties:{},additionalProperties:false}}
 ];
+const damChecks = new Map([
+  ['reviewQueue', ['/review/index','/review/view']],
+  ['modelsHeading', ['/model/list']],
+  ['sceneDossier', ['/video/view']],
+  ['missingBadge', ['/project/view']],
+  ['openChecklist', ['/project/view']],
+  ['missingModels', ['/project/missing']],
+  ['participantPrompt', ['/video/view']],
+  ['focusModels', ['/video/view']],
+]);
+const damTools = [
+  {...tools[0], description:'Open a granted URL. DAM production navigation returns only a boolean.'},
+  {name:'assert', description:'Run a fixed DAM verification check on the current page. Use reviewQueue for card counts, modelsHeading or sceneDossier for panel visibility, missingBadge then openChecklist and missingModels for the producer checklist, and participantPrompt or focusModels for the producer scene.',
+    inputSchema:{type:'object',properties:{check:{enum:[...damChecks.keys()]}},required:['check'],additionalProperties:false}},
+  tools.find(tool=>tool.name==='close'),
+];
+const projectTools = !damOrigin ? tools : previews.size ? [damTools[0],...tools.slice(1),damTools[1]] : damTools;
+const missingLink = 'a.btn[href^="/project/missing?"]';
+const participantPrompt = '#scene-participant-prompt';
+async function damNavigate(current, url) {
+  const response = await current.goto(url,{waitUntil:'domcontentloaded',timeout});
+  if (!response?.ok() || !damPage(current.url())) throw Error('DAM navigation failed');
+  return {loaded:true};
+}
+async function damAssert(current, args) {
+  const url = damPage(current.url());
+  const routes = damChecks.get(args.check);
+  if (Object.keys(args).length !== 1 || !routes?.includes(url?.pathname)) throw Error('DAM check denied');
+  const producer = url.searchParams.has('verification_producer_id');
+  switch (args.check) {
+  case 'reviewQueue': {
+    const cards = await current.locator('.review-list > a').count();
+    const checkCards = await current.locator('.review-list > a .dossier-dot[title="check"]').count();
+    return {cards,checkCards,matches:cards > 0 && cards === checkCards};
+  }
+  case 'modelsHeading':
+    return {visible:await current.getByRole('heading',{name:'Models',exact:true}).isVisible()};
+  case 'sceneDossier':
+    if (producer) throw Error('DAM check denied');
+    return {visible:await current.locator('.dossier-panel').isVisible()};
+  case 'missingBadge': {
+    if (!await current.locator(missingLink).isVisible()) throw Error('DAM checklist link unavailable');
+    const badge = current.locator(missingLink+' .badge');
+    if (!await badge.isVisible()) return {visible:false,count:0};
+    const text = (await badge.innerText({timeout})).trim();
+    const count = Number(text);
+    if (!/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(count)) throw Error('DAM checklist badge invalid');
+    return {visible:true,count};
+  }
+  case 'openChecklist': {
+    const link = await current.locator(missingLink).getAttribute('href',{timeout});
+    const destination = damPage(damOrigin + link);
+    if (destination?.pathname !== '/project/missing' ||
+        ['id','verification_producer_id'].some(key=>destination.searchParams.get(key) !== url.searchParams.get(key)))
+      throw Error('DAM checklist link denied');
+    return damNavigate(current,destination.href);
+  }
+  case 'missingModels': {
+    const red = await current.locator('table.table > tbody .dossier-dot.bg-danger').count();
+    const yellow = await current.locator('table.table > tbody .dossier-dot.bg-warning').count();
+    return {red,yellow,count:red+yellow};
+  }
+  case 'participantPrompt':
+    if (!producer) throw Error('DAM check denied');
+    return {visible:await current.locator(participantPrompt).isVisible()};
+  case 'focusModels':
+    if (!producer) throw Error('DAM check denied');
+    await current.locator(participantPrompt+' button[aria-controls="scene-models"]').click({timeout});
+    return {focused:await current.locator('.select2-search__field[aria-labelledby="scene-models-label"]:focus').isVisible()};
+  }
+}
 function requireScopedPage(current) {
   if (!current || current !== page || !permitted(current.url())) throw Error('page outside scope');
 }
@@ -340,14 +490,34 @@ async function screenshot(current, args) {
 }
 async function call(req) {
   if(req.method==='initialize') return {protocolVersion:req.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'project-browser',version:'1'},instructions:'Use these tools for browser checks. Shell Chromium is unsupported in the native sandbox. Granted origins: '+[...allowed].join(', ')};
-  if(req.method==='tools/list') return {tools};
+  if(req.method==='tools/list') return {tools:projectTools};
   if(req.method!=='tools/call') throw Error('unsupported method');
   const {name,arguments:a={}}=req.params;
-  if(!tools.some(t=>t.name===name)) throw Error('unknown tool');
-  if(name==='close') { await close(); return {content:[{type:'text',text:'Browser closed'}]}; }
+  if(name==='close') {
+    await close();
+    if (damOrigin && (productionContext || !previews.size)) return textResult({closed:true});
+    return {content:[{type:'text',text:'Browser closed'}]};
+  }
   if(name==='navigate' && !permitted(a.url)) throw Error('origin denied');
   const production = name === 'navigate' ? requestOrigin(a.url) === cfg.production?.origin : productionContext;
   if(production && productionContext && browser)await requireGeneration();
+  if (damOrigin && production) {
+    if (name !== 'navigate' && name !== 'assert') throw Error('DAM tool denied');
+    if (name === 'navigate') {
+      if (!damPage(a.url) || Object.keys(a).length !== 1) throw Error('DAM route denied');
+      await open(true);
+    }
+    if (!page) throw Error('DAM page unavailable');
+    const current = page;
+    const url = current.url();
+    const result = await (name === 'navigate' ? damNavigate(current,a.url) : damAssert(current,a));
+    await requireGeneration();
+    if (current !== page || !damPage(current.url()) ||
+        (name === 'assert' && a.check !== 'openChecklist' && current.url() !== url))
+      throw Error('DAM page changed');
+    return textResult(result);
+  }
+  if(!tools.some(t=>t.name===name)) throw Error('unknown tool');
   if(name==='emulate') return emulate(a);
   if(name==='screenshot') return screenshot(page,a);
   await open(production);
