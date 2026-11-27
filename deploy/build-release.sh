@@ -40,7 +40,8 @@ for target in "$@"; do
     mv "$stage/release.json.tmp" "$stage/release.json"
   fi
   file="fleet-$version-$os-$arch.tgz"
-  COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/$file" -C "$stage" .
+  # Level 3 shortens the serialized release build while keeping the same gzip archive format.
+  COPYFILE_DISABLE=1 tar --no-xattrs --use-compress-program='gzip -3' -cf "$out/$file" -C "$stage" .
   if tar -tzf "$out/$file" | grep -q '\(^\|/\)\._'; then echo "AppleDouble files in $file" >&2; exit 1; fi
   (cd "$out" && { shasum -a 256 "$file" 2>/dev/null || sha256sum "$file"; } | tee -a SHA256SUMS)
   step=$((step + 1))
