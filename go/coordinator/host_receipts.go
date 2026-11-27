@@ -330,6 +330,11 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	if deref(b.Error) != "" {
 		e.Error = *b.Error
 	}
+	if !wasFinal && e.State == "failed" && e.Actor == "program-worker" {
+		if err := recordHostJobProblem(q, e.ID, deref(b.Error)); err != nil {
+			return nil, "", err
+		}
+	}
 	if (kind == "start" || kind == "script") && status == "completed" && !wasFinal {
 		// Every declaration reaches the gate: a dropped one would let a required output go unwaited.
 		gate, err := artifactGate(q, e.ID, b.Artifacts)
@@ -400,6 +405,15 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 		ended = e.ID
 	}
 	return contract.ReceiptReply{Ok: true}, ended, nil
+}
+
+// Keep the first specific cause, even if the terminal receipt has already left an unreported failure.
+func recordHostJobProblem(q *Request, executionID, detail string) error {
+	problem := compactProblemDetail(detail, 180)
+	if problem == "" {
+		return nil
+	}
+	return q.db().EventsExecutionProblem(q.ctx(), db.EventsExecutionProblemParams{ID: executionID, Problem: &problem})
 }
 
 // agentAccountList: the subscriptions a native agent's work may use (its director's, or taken for its project), without
