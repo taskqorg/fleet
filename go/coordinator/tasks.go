@@ -33,6 +33,12 @@ var listStates = append([]string{"held"}, taskStates...)
 
 var openTask = map[string]bool{"queued": true, "in_progress": true, "waiting": true, "paused": true}
 
+const awaitingResult = "awaiting result"
+
+func taskAwaitsResult(t db.Task) bool {
+	return t.State == db.TaskStateWaiting && deref(t.WaitReason) == awaitingResult
+}
+
 type taskRule struct {
 	from []string
 	to   string
@@ -43,7 +49,7 @@ type taskRule struct {
 var taskTransitions = map[string][]string{
 	"queued":      {"in_progress", "waiting", "paused", "completed", "cancelled"},
 	"in_progress": {"in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
-	"waiting":     {"in_progress", "waiting", "paused", "failed", "cancelled"},
+	"waiting":     {"in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
 	"paused":      {"queued", "in_progress", "waiting", "cancelled"},
 	"completed":   nil,
 	"failed":      nil,
@@ -54,7 +60,7 @@ var taskRules = map[string]taskRule{
 	"first_execution": {[]string{"queued"}, "in_progress"},
 	"blocked":         {[]string{"queued", "in_progress", "waiting"}, "waiting"},
 	"unblocked":       {[]string{"waiting"}, "in_progress"},
-	"accepted":        {[]string{"queued", "in_progress"}, "completed"},
+	"accepted":        {[]string{"queued", "in_progress", "waiting"}, "completed"},
 	"operator_fail":   {[]string{"in_progress", "waiting"}, "failed"},
 	"pause":           {[]string{"queued", "in_progress", "waiting"}, "paused"},
 	"hold":            {[]string{"queued"}, "paused"},
@@ -280,6 +286,9 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 		}
 	}
 	if trigger == "accepted" {
+		if t.State == db.TaskStateWaiting && !taskAwaitsResult(t) {
+			return "", fail(409, "Task is still blocked")
+		}
 		dep, err := openDependency(q, id)
 		if err != nil {
 			return "", err
@@ -470,6 +479,17 @@ func settleTask(q *Request, id, target string) (string, error) {
 		}
 		return state, err
 	}
+	if reason == "" && target == "" {
+		if state == "queued" {
+			if err := step("first_execution", ""); err != nil || state == "queued" {
+				return state, err
+			}
+		}
+		reason, err = taskResultWait(q, id)
+		if err != nil {
+			return "", err
+		}
+	}
 	if reason != "" || target == "waiting" {
 		if state != "waiting" || reason != "" && deref(t.WaitReason) != reason {
 			if reason == "" {
@@ -488,6 +508,22 @@ func settleTask(q *Request, id, target string) (string, error) {
 		err = step("first_execution", "")
 	}
 	return state, err
+}
+
+func taskResultWait(q *Request, id string) (string, error) {
+	latest, err := q.db().TaskAcceptanceExecution(q.ctx(), db.TaskAcceptanceExecutionParams{TaskID: &id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil || latest.Kind != db.ExecutionKindAgentRun || latest.State != db.ExecutionStateSucceeded ||
+		latest.Observation != db.ObservationConfirmed || latest.Outcome == "failed" {
+		return "", err
+	}
+	pending, err := q.db().TaskHasPendingWork(q.ctx(), &id)
+	if err != nil || pending {
+		return "", err
+	}
+	return awaitingResult, nil
 }
 
 func takeTask(q *Request, id, taker, from string) error {
@@ -1766,7 +1802,7 @@ func init() {
 		if err != nil {
 			return none, err
 		}
-		if t.State != db.TaskStateInProgress {
+		if t.State != db.TaskStateInProgress && !taskAwaitsResult(t) {
 			if t.State != db.TaskStateQueued {
 				return none, fail(409, "Task is not in progress")
 			}
@@ -2386,7 +2422,7 @@ func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR, autoA
 	if err != nil {
 		return false, err
 	}
-	if (t.State != db.TaskStateQueued && t.State != db.TaskStateInProgress) || t.AcceptedAt != nil {
+	if (t.State != db.TaskStateQueued && t.State != db.TaskStateInProgress && !taskAwaitsResult(t)) || t.AcceptedAt != nil {
 		return false, nil
 	}
 	if reason, err := waitReason(q, t.ID); err != nil || reason != "" {

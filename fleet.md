@@ -86,7 +86,7 @@ Own work from task creation to an accepted result:
 
 The queue advances automatically when dependencies, a suitable executor and environment, granted access and resource limits permit. Human decisions or project rules may require a pause.
 
-A task may have multiple executions for creation, review and rework. Later executions preserve earlier results and checks.
+A task may have multiple executions for creation, review and rework. Later executions preserve earlier results and checks. Task attempt counts include only task-bound agent turns (`agent_run`).
 
 Created tasks continue without an open PM session; closing a session window does not cancel the task. An agent finishing does not establish task acceptance.
 
@@ -98,7 +98,7 @@ Required artifacts must be stored for that execution and the acceptance identifi
 
 An operator may reject an open offer after its result loses eligibility. The rejection applies to the offered result. Missing completion evidence leaves the task open without a generated question. A failed execution or explicit report of incomplete work can require an operator decision.
 
-Task details show an informational note when the latest task-bound agent run ended with confirmed success and has no completion report. The note clears when work continues, an explicit offer covers it, or valid completion evidence is available. It leaves task state and decisions independent.
+Task details show an informational note when the latest task-bound agent run ended with confirmed success and has no completion report. The note clears when work continues, an explicit offer covers it, or valid completion evidence is available. An idle task whose latest primary execution is a confirmed successful agent turn waits for its result to settle, including any missing completion evidence or result acceptance. New work resumes progression. Live In work omits this wait while no execution or delivery is in flight.
 
 #### Task states
 

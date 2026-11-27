@@ -83,7 +83,7 @@ CREATE OR REPLACE TRIGGER session_summary_event_upd AFTER UPDATE ON event REFERE
 CREATE OR REPLACE TRIGGER execution_activity AFTER INSERT OR UPDATE OF started_at, ended_at, state ON execution FOR EACH ROW EXECUTE FUNCTION fleet_activity();
 CREATE OR REPLACE TRIGGER execution_app BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION fleet_inherit_app();
 CREATE OR REPLACE TRIGGER execution_change AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION fleet_change();
-CREATE OR REPLACE TRIGGER execution_derived AFTER INSERT OR DELETE OR UPDATE OF task_id, state, host_id, harness, started_at, seq ON execution FOR EACH ROW EXECUTE FUNCTION fleet_task_derived_touch();
+CREATE OR REPLACE TRIGGER execution_derived AFTER INSERT OR DELETE OR UPDATE OF task_id, state, host_id, harness, started_at, seq, kind, tombstoned_at ON execution FOR EACH ROW EXECUTE FUNCTION fleet_task_derived_touch();
 CREATE OR REPLACE TRIGGER execution_spend_exec_del AFTER DELETE ON execution REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_del();
 CREATE OR REPLACE TRIGGER execution_spend_exec_ins AFTER INSERT ON execution REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_ins();
 CREATE OR REPLACE TRIGGER execution_spend_exec_upd AFTER UPDATE ON execution REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_upd();
