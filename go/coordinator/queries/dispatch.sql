@@ -262,6 +262,7 @@ SELECT e.id,e.host_id,e.project_id,e.session_id
 FROM execution e
 JOIN host_observation h ON h.id=e.host_id
 WHERE e.kind='agent_run' AND e.state='running' AND e.observation='confirmed'
+ AND (sqlc.narg(ids)::text[] IS NULL OR e.id=ANY(sqlc.narg(ids)::text[]))
  AND e.harness IN ('codex','acp','antigravity')
  AND e.last_seen_at < now() - make_interval(secs => @closed_grace_secs::float8)
  AND h.last_seen_at > now() - interval '300 seconds'
@@ -274,8 +275,7 @@ WHERE e.kind='agent_run' AND e.state='running' AND e.observation='confirmed'
  AND NOT EXISTS (SELECT 1 FROM event ev WHERE ev.execution_id=e.id AND NOT ev.delta AND ev.type='process.closed')
  AND EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='start' AND c.status='started')
  AND NOT EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='stop')
-ORDER BY e.seq
-FOR UPDATE OF e SKIP LOCKED;
+ORDER BY e.seq;
 
 -- name: DispExecStates :many
 SELECT id, kind::text AS kind, state::text AS state, coalesce(data->>'waitReason','')::text AS wait_reason FROM execution WHERE id = ANY(@ids::text[]);

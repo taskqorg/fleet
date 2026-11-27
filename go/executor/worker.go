@@ -508,7 +508,7 @@ func runWorker(args []string) error {
 
 	var ident string
 	var identErr error
-	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, KillLeftovers: true, Started: func(pid int) { ident, identErr = identity(pid) }})
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, KillLeftovers: protocol, Started: func(pid int) { ident, identErr = identity(pid) }})
 	if err != nil {
 		if pw != nil {
 			pw.Close()
@@ -538,6 +538,9 @@ func runWorker(args []string) error {
 		metrics:   newRunMetrics(spec.GatewayConns),
 		started:   time.Now(),
 		timeoutMs: spec.TimeoutMs,
+	}
+	if !protocol {
+		l.group = proc.Pid
 	}
 	if spec.Kind == "harness" && NewBlocks != nil {
 		l.blocks = NewBlocks()
@@ -611,7 +614,12 @@ func runWorker(args []string) error {
 	var mu sync.Mutex
 	var closedSock atomic.Bool
 	killOwned := func() error {
-		proc.Kill() // the supervisor fences group signals against the leader's reap
+		if protocol {
+			// The worker loop cleans up MCP groups before killing individually
+			// tracked descendants, so a guardian can still signal its group.
+			proc.Kill()
+			return nil
+		}
 		return l.cleanup()
 	}
 	errtrack.Go("worker.sock", func() {
@@ -734,6 +742,25 @@ func runWorker(args []string) error {
 		return protocol && (kind == "turn.completed" || kind == "turn.failed" || kind == string(contract.FleetEventTypeProtocolFailed))
 	}
 
+	cleanup := func() {
+		var closeErr, groupErr error
+		if mcp != nil {
+			closeErr = mcp.close()
+			groupErr = cleanupMCPPIDs(mcpStore.snapshot(), nil)
+			if groupErr != nil {
+				l.seq++
+				_ = lw.emit(workerRecord{Kind: "fleet_event", EventSeq: l.seq, EventType: "mcp.cleanup_unknown", Data: json.RawMessage(enc(M{"reason": groupErr.Error(), "ownershipRetained": true}))})
+			}
+		}
+		mu.Lock()
+		if groupErr == nil && l.cleanup() != nil {
+			l.cleanupUnknown = true
+		}
+		l.cleanupUnknown = l.cleanupUnknown || closeErr != nil || groupErr != nil
+		mu.Unlock()
+		l.orphans = cleanupRun(spec.DataDir, spec.Execution)
+	}
+
 	beat := time.NewTicker(tickEvery)
 	defer beat.Stop()
 	var deadlineC <-chan time.Time
@@ -752,6 +779,7 @@ func runWorker(args []string) error {
 	// time to shut it down before forcing an unconfirmed process outcome.
 	const shutdownGrace = 5 * time.Second
 	var shutdownC <-chan time.Time
+	stdoutInterrupted := false
 	for {
 		if exitedSent && l.eof {
 			break
@@ -776,19 +804,13 @@ func runWorker(args []string) error {
 		case <-ex:
 			exitedSent = true
 			shutdownC = nil
-			// Owned descendants can keep stdout open or await the MCP owner.
-			// Close ownership and clean up before waiting for either of them.
-			if mcp != nil && mcp.close() != nil {
-				mu.Lock()
-				l.cleanupUnknown = true
-				mu.Unlock()
+			if protocol {
+				// Descendants can keep stdout open or await their MCP owner.
+				cleanup()
+				if !l.eof {
+					shutdownC = time.After(shutdownGrace)
+				}
 			}
-			mu.Lock()
-			if l.cleanup() != nil {
-				l.cleanupUnknown = true
-			}
-			mu.Unlock()
-			l.orphans = cleanupRun(spec.DataDir, spec.Execution)
 			for {
 				mu.Lock()
 				alive, aerr := l.aliveOwned()
@@ -811,12 +833,16 @@ func runWorker(args []string) error {
 			}
 		case <-shutdownC:
 			shutdownC = nil
-			if !l.exitedNow() {
-				mu.Lock()
+			mu.Lock()
+			if exitedSent {
+				stdoutInterrupted = true
+				l.cleanupUnknown = true
+				_ = pr.Close()
+			} else if !l.exitedNow() {
 				l.cleanupUnknown = true
 				_ = killOwned()
-				mu.Unlock()
 			}
+			mu.Unlock()
 		case <-deadlineC:
 			deadlineC = nil
 			mu.Lock()
@@ -843,27 +869,21 @@ func runWorker(args []string) error {
 		}
 		l.wire.mu.Unlock()
 	}
-	if mcpStore != nil {
-		if err := cleanupMCPPIDs(mcpStore.snapshot(), nil); err != nil {
-			mu.Lock()
-			l.cleanupUnknown = true
-			mu.Unlock()
-			l.seq++
-			_ = lw.emit(workerRecord{Kind: "fleet_event", EventSeq: l.seq, EventType: "mcp.cleanup_unknown", Data: json.RawMessage(enc(M{"reason": err.Error(), "ownershipRetained": true}))})
-		}
+	if !protocol {
+		cleanup()
 	}
 	var code *int64
 	if l.state() != nil && l.state().Exited() {
 		c := int64(l.state().ExitCode())
 		code = &c
 	}
+	mu.Lock()
 	_ = l.observe()
 	res := buildExecutionResourceSummary(l)
 	var cpu float64
 	for _, c := range l.cpu {
 		cpu += c
 	}
-	mu.Lock()
 	cleanupUnknown := l.cleanupUnknown
 	timedOut := l.timedOut
 	stopped := l.stopped
@@ -883,7 +903,7 @@ func runWorker(args []string) error {
 	ex := workerExit{
 		Status:         status,
 		ExitCode:       code,
-		StdoutClosed:   l.eof,
+		StdoutClosed:   l.eof && !stdoutInterrupted,
 		CleanupUnknown: cleanupUnknown,
 		TimedOut:       timedOut,
 		Stopped:        stopped,
@@ -1224,10 +1244,14 @@ func (e *executor) finishWorkerRun(execution string, l *live, ex *workerExit) (b
 	l.workerExit = ex
 	removeRunFiles(e.root, execution)
 	executionSpan(execution, l)
+	var ownedRemaining *bool
+	if !ex.CleanupUnknown {
+		ownedRemaining = new(bool)
+	}
 	if err := e.event(l.command, ex.Seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{
 		ExitCode:                        ex.ExitCode,
 		StdoutClosed:                    ex.StdoutClosed,
-		ObservedOwnedProcessesRemaining: new(bool),
+		ObservedOwnedProcessesRemaining: ownedRemaining,
 		CleanupUnknown:                  ex.CleanupUnknown,
 		Resources:                       ex.Resources,
 		StderrTail:                      ex.StderrTail,

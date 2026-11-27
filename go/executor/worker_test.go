@@ -34,6 +34,11 @@ func testCompletedTurnShutdown(t *testing.T, afterEOF, wantReceipt string) {
 	}
 	harness := filepath.Join(root, "fake-codex")
 	const fixture = `#!/bin/sh
+case "$1" in
+  --version) printf 'codex 0.0.0\n'; exit 0 ;;
+  app-server) ;;
+  *) exit 1 ;;
+esac
 read -r line
 printf '%s\n' '{"id":1,"result":{}}'
 read -r line
@@ -41,6 +46,14 @@ read -r line
 printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread"}}}'
 read -r line
 sleep 60 &
+for arg do
+  case "$arg" in
+    mcp_servers.fixture.command=*) mcp_command=${arg#*=} ;;
+    mcp_servers.fixture.args=*) mcp_args=${arg#*=} ;;
+  esac
+done
+node -e 'const [command, args] = process.argv.slice(1).map(JSON.parse);
+  require("node:child_process").spawn(command, args, {stdio: ["pipe", "ignore", "ignore"]});' "$mcp_command" "$mcp_args" &
 printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn"}}}'
 while [ ! -f complete ]; do sleep 0.05; done
 printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}'
@@ -49,26 +62,33 @@ read -r line
 	if err := os.WriteFile(harness, []byte(fixture+afterEOF+"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := enc(M{"id": cid, "executionId": execution, "sessionId": sid, "kind": "start", "payload": M{"harness": "codex"}})
-	if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
+	registry := filepath.Join(root, "accounts.json")
+	home, nativeHome := filepath.Join(root, "home"), filepath.Join(root, "codex-home")
+	for _, path := range []string{home, nativeHome} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	account := M{"harness": "codex", "home": home, "nativeHome": nativeHome, "executable": harness,
+		"mcpServers": M{"fixture": M{"transport": "stdio", "command": exe(), "args": []string{"mcp-fixture", "inspect"}}}}
+	if err := os.WriteFile(registry, []byte(enc(M{"fixture": account})), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.launch(execution, cid, sid); err != nil {
+	t.Setenv("FLEET_NATIVE_ACCOUNTS", registry)
+	grants := []any{M{"id": "fixture", "data": M{"tools": []string{"inspect"}}}}
+	payload := M{"agentConfig": M{"id": "baseline", "model": "gpt-6.1-sol", "effort": "low", "instructions": "profile", "mcpServers": grants, "fleetTools": false, "collaborationTools": false},
+		"model": "gpt-6.1-sol", "effort": "low", "account": "fixture", "text": "fixture", "readOnly": true}
+	if err := e.run(M{"id": cid, "executionId": execution, "sessionId": sid, "kind": "start", "payload": payload}); err != nil {
 		t.Fatal(err)
 	}
-	c := commandOf(body)
-	l, err := e.spawnWorker(c, workerSpec{Kind: "harness", Harness: "codex", Execution: execution, CommandId: cid, Session: sid, Work: sid, DataDir: root, Dir: dir, Root: dir,
-		CmdPath: harness, CmdDir: dir, CmdArgs: []string{harness}, CmdEnv: os.Environ(), Profile: M{"readOnly": true}, InitialSeq: 3})
-	if err != nil {
-		t.Fatal(err)
+	l := e.live[execution]
+	if l == nil {
+		t.Fatalf("harness did not start: %v", failureReasons(t, e, execution))
 	}
-	e.live[execution] = l
 	t.Cleanup(func() { _ = workerStop(l.worker.sock, "") })
-	if err := e.event(c, l.seq, contract.FleetEventTypeHarness, M{}); err != nil {
-		t.Fatal(err)
-	}
 	var receivedMu sync.Mutex
 	var received []string
+	var harnessSeq, firstProtocolSeq int64
 	url, _ := serve(t, func(route string, body M) int {
 		receivedMu.Lock()
 		defer receivedMu.Unlock()
@@ -77,20 +97,24 @@ read -r line
 			batch := typed[contract.HostEvents](body)
 			for _, event := range batch.Events {
 				if event.Type == string(contract.FleetEventTypeHarness) {
+					harnessSeq = event.Seq
 					return http.StatusConflict
 				}
 			}
 			for _, event := range batch.Events {
 				received = append(received, event.Type)
+				if event.Type == "protocol.write" && firstProtocolSeq == 0 {
+					firstProtocolSeq = event.Seq
+				}
 			}
 		case contract.RouteReceipts.Path:
 			received = append(received, jStr(body, "status"))
 		}
 		return http.StatusOK
 	})
-	for until := time.Now().Add(4 * time.Second); count(e.db, "owned") < 2; {
+	for until := time.Now().Add(8 * time.Second); count(e.db, "owned") < 2 || count(e.db, "mcp_groups") == 0; {
 		if time.Now().After(until) {
-			t.Fatal("worker did not observe the harness descendant")
+			t.Fatal("worker did not observe the harness descendant and register its MCP group")
 		}
 		if err := e.tick(); err != nil {
 			t.Fatal(err)
@@ -114,6 +138,9 @@ read -r line
 	}
 	receivedMu.Lock()
 	defer receivedMu.Unlock()
+	if harnessSeq == 0 || firstProtocolSeq <= harnessSeq {
+		t.Fatalf("event sequence overlap: harness=%d, first protocol write=%d", harnessSeq, firstProtocolSeq)
+	}
 	for _, marker := range []string{"outbox.failed", "turn.completed", "process.closed", wantReceipt} {
 		if !slices.Contains(received, marker) {
 			t.Fatalf("missing %q in delivered events and receipts %v", marker, received)

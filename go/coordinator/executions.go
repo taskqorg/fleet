@@ -1482,8 +1482,24 @@ func reconcileLostExecutions(ctx context.Context, a *App) error {
 // session queue. Older workers cannot install the shutdown fix while they hold
 // an execution open, so let their stop handler clean up and report the result.
 func requestStalledTurnShutdowns(ctx context.Context, a *App) error {
+	args := db.DispStalledTurnShutdownsParams{ClosedGraceSecs: lostClosedGrace().Seconds()}
+	var candidates []db.DispStalledTurnShutdownsRow
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		var err error
+		candidates, err = q.db().DispStalledTurnShutdowns(q.ctx(), args)
+		return err
+	}); err != nil || len(candidates) == 0 {
+		return err
+	}
 	return a.store.Write(ctx, nil, []string{GLOBAL, DISPATCH}, func(q *Request) error {
-		rows, err := q.db().DispStalledTurnShutdowns(q.ctx(), lostClosedGrace().Seconds())
+		args.Ids = make([]string, 0, len(candidates))
+		for _, row := range candidates {
+			if err := q.db().DispExecLock(q.ctx(), row.ID); err != nil {
+				return err
+			}
+			args.Ids = append(args.Ids, row.ID)
+		}
+		rows, err := q.db().DispStalledTurnShutdowns(q.ctx(), args)
 		if err != nil {
 			return err
 		}
