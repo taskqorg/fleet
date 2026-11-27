@@ -21,7 +21,7 @@ SELECT state FROM task WHERE id=$1 FOR SHARE;
 SELECT EXISTS (SELECT 1 FROM question WHERE task_id=$1 AND state='open' AND kind IN ('operator_decision','agent_question','secret'))::boolean;
 
 -- name: TaskHasOpenDependency :one
-SELECT EXISTS (SELECT 1 FROM task_dependency d JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1 AND d.kind='blocks' AND t.state<>'completed')::boolean;
+SELECT EXISTS (SELECT 1 FROM task_dependency d LEFT JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1 AND d.kind='blocks' AND t.state IS DISTINCT FROM 'completed')::boolean;
 
 -- name: TaskHasStartedExecution :one
 SELECT EXISTS (SELECT 1 FROM execution WHERE task_id=$1 AND state<>'preparing')::boolean;
@@ -84,7 +84,13 @@ SELECT (
 -- The caller has already checked for pending work.
 SELECT t.id,t.title,t.project_id,coalesce(l.id,'')::text AS latest_id,coalesce(l.state::text,'')::text AS latest,l.session_id AS latest_session
 FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id FROM execution x
- WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') ORDER BY x.seq DESC LIMIT 1) l ON true
+ WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run')
+ AND NOT (x.state='cancelled' AND (
+  coalesce(x.data->>'automaticStop','')='superseded'
+  OR (coalesce(x.data->>'automaticStop','')='deadline' AND EXISTS (
+   SELECT 1 FROM task_recovery r WHERE r.task_id=x.task_id AND r.generation>1 AND r.execution_id IS DISTINCT FROM x.id
+  ))
+ )) ORDER BY x.seq DESC LIMIT 1) l ON true
 WHERE t.id=$1 AND (t.state='in_progress' OR (t.state='waiting' AND t.wait_reason='awaiting result'))
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance'
@@ -99,8 +105,14 @@ SELECT coalesce(array_agg(id),'{}')::text[] FROM question WHERE task_id=$1 AND s
 
 -- name: TaskAcceptanceExecution :one
 -- The task's latest primary run; with earlier, its latest run with a confirmed success.
-SELECT id,kind,state,observation,problem,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution
- WHERE task_id= @task_id AND kind NOT IN ('child_agent','tool_run')
+SELECT id,kind,state,observation,problem,session_id,ended_at,directed_by,coalesce(data->>'automaticStop','')::text AS automatic_stop,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution x
+ WHERE x.task_id= @task_id AND x.kind NOT IN ('child_agent','tool_run')
+ AND NOT (x.state='cancelled' AND (
+  coalesce(x.data->>'automaticStop','')='superseded'
+  OR (coalesce(x.data->>'automaticStop','')='deadline' AND EXISTS (
+   SELECT 1 FROM task_recovery r WHERE r.task_id=x.task_id AND r.generation>1 AND r.execution_id IS DISTINCT FROM x.id
+  ))
+ ))
  AND (NOT @earlier::boolean OR (state='succeeded' AND observation='confirmed'
  AND coalesce(data->'report'->>'outcome',CASE WHEN kind='agent_run' THEN '' ELSE 'succeeded' END)='succeeded'))
 ORDER BY seq DESC LIMIT 1;
@@ -327,7 +339,7 @@ SELECT id,coalesce(code,'')::text AS code,coalesce(project_id,'')::text AS proje
  coalesce(expected_outcome,'')::text AS expected_outcome,state::text AS state,
  completion_requirements,coalesce(result_destination,'')::text AS result_destination,created_at
 FROM task
-WHERE (state IN ('queued','in_progress') OR (state='waiting' AND wait_reason='awaiting result'))
+WHERE state IN ('queued','in_progress','waiting','paused')
  AND accepted_at IS NULL AND tombstoned_at IS NULL
 ORDER BY created_at;
 
@@ -348,23 +360,8 @@ FROM audit_log
 WHERE split_part(target,':',1)='forge' AND field='code-review' AND (value->>'taskId') = ANY( @task_ids::text[])
 ORDER BY seq DESC;
 
--- name: TaskDeliveryEvidence :many
--- Confirmed worker reports and done board posts referencing PRs or post-delivery verification.
-SELECT 'execution'::text AS source,e.task_id::text AS task_id,
- coalesce(e.data->'report'->>'outcome','')::text AS outcome,
- coalesce(e.data->'report'->>'summary','')::text AS text,
- e.ended_at AS at
-FROM execution e
-WHERE e.task_id = ANY( @task_ids::text[]) AND e.kind NOT IN ('child_agent','tool_run')
- AND e.state='succeeded' AND e.observation='confirmed' AND coalesce(e.data->'report'->>'outcome','') <> 'failed'
- AND (coalesce(e.data->'report'->>'outcome','')='succeeded' OR coalesce(e.data->'report'->>'summary','') <> '')
-UNION ALL
-SELECT 'board'::text AS source,b.scope_id::text AS task_id,''::text AS outcome,b.text,b.created_at AS at
-FROM board_message b
-WHERE b.scope_kind='task' AND b.scope_id = ANY( @task_ids::text[]) AND b.kind='done' AND b.tombstoned_at IS NULL;
-
 -- name: TaskDeliveryRejections :many
-SELECT coalesce(execution_id,'')::text AS execution_id,data
+SELECT coalesce(execution_id,'')::text AS execution_id,data,answered_at
 FROM question
 WHERE task_id=$1 AND kind='acceptance' AND state='answered' AND answer='rejected';
 

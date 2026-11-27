@@ -113,6 +113,12 @@ The three independent fixed-header reads use one ordered batch under the same pr
 - Reads, writes, copies and deletes S3-compatible objects through [`S3`](./s3.go). Artifact deletion and retention routines keep tombstones and avoid deletion while a verified copy is unreachable.
 - [`runChecks`](./lab.go) executes approved Lab check commands in a temporary directory; on Unix it kills the check process group after completion or cancellation.
 
+## Task lifecycle
+
+The task transition owner and question answer paths retain wake records in PostgreSQL. A blocker wake fans out through the reverse dependency index. Delivery snapshots retain exact task correlations in the same transaction. Confirmed terminal agent turns record their wake before compatibility settlement. The task lifecycle work kit resolves the current facts and admits an ordinary session message, updates a delivery watch, opens an offer, or records a recovery decision.
+
+`task_get` exposes the current next action. `task_lifecycle_check` reports scoped wake health and a bounded sample of missing obligations. The independent periodic audit repairs missing wakes through the same work kit. An affirmative delivery verification reports the exact `worker_done.liveCheck` key and observed evidence. Automatic recovery retains its episode, deadline and admitted work in PostgreSQL. Dispatch and host handout recheck the deadline and task fences.
+
 ## Verification
 
 - Run: `cd go && go test ./coordinator`: the design rules, pure logic and two schema drift checks on the machine's test PostgreSQL (`TestMigrationSqlcSchema` writes `db/schema.sql` with `FLEET_UPDATE_SQLC_SCHEMA=1`, `TestMigrationSchemaFiles` the deparsed `schema/*.sql` with `FLEET_UPDATE_SCHEMA_FILES=1`); a few seconds. `FLEET_REQUIRE_PG=1` fails them instead of skipping when PostgreSQL cannot run. The smoke of the built binary is `node tests/trial/run.ts`; every check of a change is `scripts/check.sh` ([checks per change](../../docs/designs/fleet-delivery-pipeline.md#checks-per-change)).

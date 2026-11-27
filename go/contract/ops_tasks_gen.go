@@ -2377,6 +2377,7 @@ type TaskCreateReply = TaskDetail
 
 // TaskCreateRequest: held: the task waits for task_release (always for an agent).
 type TaskCreateRequest struct {
+	BlocksTaskId           *string         `json:"blocksTaskId,omitempty"`
 	BotId                  *string         `json:"botId,omitempty"`
 	CompletionRequirements json.RawMessage `json:"completionRequirements,omitempty"`
 	DependsOn              []string        `json:"dependsOn,omitempty"`
@@ -2481,6 +2482,7 @@ type TaskDetail struct {
 	History                 []TaskConversation    `json:"history,omitempty"`
 	Id                      string                `json:"id"`
 	LatestResult            json.RawMessage       `json:"latestResult"`
+	NextAction              *TaskNextAction       `json:"nextAction,omitempty"`
 	OpenQuestions           json.RawMessage       `json:"openQuestions"`
 	PauseReason             *string               `json:"pauseReason"`
 	Priority                string                `json:"priority"`
@@ -2541,6 +2543,11 @@ func (v *TaskDetail) Validate() error {
 	}
 	if v.LatestResult == nil {
 		return Missing("latestResult")
+	}
+	if v.NextAction != nil {
+		if err := Check(v.NextAction, "nextAction"); err != nil {
+			return err
+		}
 	}
 	if v.OpenQuestions == nil {
 		return Missing("openQuestions")
@@ -2622,6 +2629,23 @@ func (v *TaskHoldRequest) UnmarshalJSON(b []byte) error {
 func (v *TaskHoldRequest) Validate() error {
 	return nil
 }
+
+type TaskLifecycleCheckReply struct {
+	Failing           int64   `json:"failing"`
+	MissingReplyWakes int64   `json:"missingReplyWakes"`
+	MissingTaskWakes  int64   `json:"missingTaskWakes"`
+	ObservedAt        string  `json:"observedAt"`
+	OldestDueAt       *string `json:"oldestDueAt,omitempty"`
+	Pending           int64   `json:"pending"`
+	SampleLimit       int64   `json:"sampleLimit"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskLifecycleCheckReply) Validate() error {
+	return nil
+}
+
+type TaskLifecycleCheckRequest = map[string]json.RawMessage
 
 type TaskListItem struct {
 	AcceptedArtifactIds    []string        `json:"acceptedArtifactIds"`
@@ -2713,6 +2737,51 @@ func (v *TaskListRequest) UnmarshalJSON(b []byte) error {
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskListRequest) Validate() error {
 	return nil
+}
+
+type TaskNextAction struct {
+	Attempts         *int64             `json:"attempts,omitempty"`
+	Error            *string            `json:"error,omitempty"`
+	Kind             TaskNextActionKind `json:"kind"`
+	NextAttemptAt    *string            `json:"nextAttemptAt,omitempty"`
+	Owner            string             `json:"owner"`
+	Reference        string             `json:"reference"`
+	ReleaseCondition string             `json:"releaseCondition"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskNextAction) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type TaskNextActionKind string
+
+const (
+	TaskNextActionKindPause      TaskNextActionKind = "pause"
+	TaskNextActionKindRun        TaskNextActionKind = "run"
+	TaskNextActionKindDispatch   TaskNextActionKind = "dispatch"
+	TaskNextActionKindQuestion   TaskNextActionKind = "question"
+	TaskNextActionKindDependency TaskNextActionKind = "dependency"
+	TaskNextActionKindDelivery   TaskNextActionKind = "delivery"
+	TaskNextActionKindAcceptance TaskNextActionKind = "acceptance"
+	TaskNextActionKindReconcile  TaskNextActionKind = "reconcile"
+	TaskNextActionKindUnknown    TaskNextActionKind = "unknown"
+)
+
+// TaskNextActionKindValues lists every TaskNextActionKind in schema order.
+var TaskNextActionKindValues = []TaskNextActionKind{TaskNextActionKindPause, TaskNextActionKindRun, TaskNextActionKindDispatch, TaskNextActionKindQuestion, TaskNextActionKindDependency, TaskNextActionKindDelivery, TaskNextActionKindAcceptance, TaskNextActionKindReconcile, TaskNextActionKindUnknown}
+
+// Valid: v is one of the schema's values.
+func (v TaskNextActionKind) Valid() bool {
+	for _, x := range TaskNextActionKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 type TaskPageReply struct {
@@ -2920,12 +2989,14 @@ type TaskUpdateReply = TaskDetail
 
 // TaskUpdateRequest: action pause, resume, cancel or fail; the other fields replace the stored value when present.
 type TaskUpdateRequest struct {
-	Action            *string `json:"action,omitempty"`
-	ExpectedOutcome   *string `json:"expectedOutcome,omitempty"`
-	Priority          *string `json:"priority,omitempty"`
-	ResultDestination *string `json:"resultDestination,omitempty"`
-	TaskId            string  `json:"taskId"`
-	Title             *string `json:"title,omitempty"`
+	Action              *string `json:"action,omitempty"`
+	ExpectedOutcome     *string `json:"expectedOutcome,omitempty"`
+	Priority            *string `json:"priority,omitempty"`
+	ReplaceDependencyId *string `json:"replaceDependencyId,omitempty"`
+	ResultDestination   *string `json:"resultDestination,omitempty"`
+	TaskId              string  `json:"taskId"`
+	Title               *string `json:"title,omitempty"`
+	WaiveDependencyId   *string `json:"waiveDependencyId,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -2979,16 +3050,17 @@ func init() {
 		"questions_list":          {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Questions by project, task, state or kind", Changes: []string{"question"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"botId\":{\"type\":\"string\"},\"excludeProjectIds\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); '-' is no project (an empty id or null is a 400); applied after projectIds, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"forPeople\":{\"$comment\":\"only questions to people: leaves out those addressed to a bot (a question in a task a bot manages), as Home and Needs you count\",\"type\":\"boolean\"},\"kind\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"state\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"questions_withdraw":      {Read: false, Long: false, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner or full access: withdraw open questions that no longer need anyone (ids up to 1000, reason); one audit row each; skipped lists ids not open", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: withdraws open questions that no longer need anyone; one setting-change audit row per question.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
 		"task_cancel":             {Read: false, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Cancel a task (taskId): no further work starts and running work is asked to stop", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
-		"task_create":             {Read: false, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:focus", Description: "held: the task waits for task_release (always for an agent).", InputSchema: json.RawMessage("{\"$comment\":\"held: the task waits for task_release (always for an agent).\",\"additionalProperties\":true,\"properties\":{\"botId\":{\"type\":\"string\"},\"completionRequirements\":{},\"dependsOn\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"expectedOutcome\":{\"type\":\"string\"},\"held\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"string\"},\"projectId\":{\"type\":[\"string\",\"null\"]},\"resultDestination\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}")},
+		"task_create":             {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:focus", Description: "held: the task waits for task_release (always for an agent).", InputSchema: json.RawMessage("{\"$comment\":\"held: the task waits for task_release (always for an agent).\",\"additionalProperties\":true,\"properties\":{\"blocksTaskId\":{\"$comment\":\"Atomically make this task a prerequisite of the named open task in the same project.\",\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"completionRequirements\":{},\"dependsOn\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"expectedOutcome\":{\"type\":\"string\"},\"held\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"string\"},\"projectId\":{\"type\":[\"string\",\"null\"]},\"resultDestination\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}")},
 		"task_derived_check":      {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Check that stored task states match the states derived from their executions", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"task_get":                {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Read a task with its executions, questions and results. Pass the task UUID (id from a search task hit or a task_page row) as taskId. If you have a task code such as T-FLT-42, look it up with search or task_page first.", Changes: []string{"task", "execution", "question", "artifact"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"$comment\":\"Task UUID from the id field of a search task hit or task_page row. Display codes such as T-FLT-42 are only for lookup.\",\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_hold":               {Read: false, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Hold a task (taskId): no new work starts until task_release", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
+		"task_lifecycle_check":    {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Read task lifecycle wake health and a bounded sample of missing task and question wakes under the caller's access.", InputSchema: json.RawMessage("{\"properties\":{},\"type\":\"object\"}")},
 		"task_list":               {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Tasks, optionally of one project or state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"task_page":               {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:focus", Description: "A page of tasks by filter, group and sort, with group counts, paged with after and limit", Changes: []string{"task", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"after\":{\"items\":{},\"type\":\"array\"},\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived, botId, subject, room, origin and listed apply to sessions only, where projectId matches a conversation's project or its project set. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"botId\":{\"$comment\":\"sessions: conversations of these bots\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"listed\":{\"$comment\":\"sessions: false lists the hidden conversations (pipeline and Lab agent steps) instead of the listed ones; absent: listed only\",\"type\":\"boolean\"},\"origin\":{\"$comment\":\"sessions: conversations that began this way\",\"items\":{\"$comment\":\"How a conversation began, derived from its columns (sql_builder.go sessionOrigin; fleet-conversations.md#entities): lab and pipeline for agent steps of a trial or a pipeline run, fork for session_fork, trigger for a bot's subject conversation (a firing opens it), bot for a bot's conversation without a subject, telegram for a start from a Telegram message, task for a start by task autostart or by an agent for a task, person otherwise.\",\"enum\":[\"person\",\"trigger\",\"task\",\"telegram\",\"fork\",\"pipeline\",\"lab\",\"bot\"],\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"room\":{\"$comment\":\"sessions: conversations bound to these Telegram rooms (telegram_room ids)\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"subject\":{\"$comment\":\"sessions: conversations about these subjects (task:\\u003cid\\u003e, pr:\\u003crepo\\u003e#\\u003cn\\u003e, ...)\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"type\":\"string\"},\"groupCounts\":{\"type\":\"boolean\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"$comment\":\"order inside a group: changed or created, - before it is descending; default -changed (recently changed first)\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"task_release":            {Read: false, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Release a held task (taskId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_request_acceptance": {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "No artifactIds: the task's stored originals.", InputSchema: json.RawMessage("{\"$comment\":\"No artifactIds: the task's stored originals.\",\"additionalProperties\":true,\"properties\":{\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_take":               {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Take a task (taskId) onto your own subscription", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
-		"task_update":             {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "action pause, resume, cancel or fail; the other fields replace the stored value when present.", InputSchema: json.RawMessage("{\"$comment\":\"action pause, resume, cancel or fail; the other fields replace the stored value when present.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"expectedOutcome\":{\"type\":\"string\"},\"priority\":{\"type\":\"string\"},\"resultDestination\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
+		"task_update":             {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "action pause, resume, cancel or fail; the other fields replace the stored value when present.", InputSchema: json.RawMessage("{\"$comment\":\"action pause, resume, cancel or fail; the other fields replace the stored value when present.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"expectedOutcome\":{\"type\":\"string\"},\"priority\":{\"type\":\"string\"},\"replaceDependencyId\":{\"type\":\"string\"},\"resultDestination\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"waiveDependencyId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

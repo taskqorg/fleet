@@ -51,19 +51,24 @@ type deliveryRepo struct {
 
 // deliveryMergedPR records a merged pull request snapshot and whether its delivery/deployment has completed.
 type deliveryMergedPR struct {
-	Repo        string `json:"repo"`
-	Number      int64  `json:"number"`
-	Title       string `json:"title"`
-	Body        string `json:"-"`
-	URL         string `json:"url"`
-	Branch      string `json:"branch,omitempty"`
-	HeadSHA     string `json:"headSha,omitempty"`
-	MergeSHA    string `json:"mergeSha,omitempty"`
-	MergedAt    string `json:"mergedAt"`
-	Stage       string `json:"stage"`
-	Release     string `json:"release,omitempty"`
-	DeliveredAt string `json:"deliveredAt,omitempty"`
-	Delivered   bool   `json:"-"`
+	Repo              string                  `json:"repo"`
+	Number            int64                   `json:"number"`
+	Title             string                  `json:"title"`
+	Body              string                  `json:"-"`
+	URL               string                  `json:"url"`
+	Branch            string                  `json:"branch,omitempty"`
+	HeadSHA           string                  `json:"headSha,omitempty"`
+	MergeSHA          string                  `json:"mergeSha,omitempty"`
+	MergedAt          string                  `json:"mergedAt"`
+	Stage             string                  `json:"stage"`
+	Release           string                  `json:"release,omitempty"`
+	DeliveredAt       string                  `json:"deliveredAt,omitempty"`
+	Delivered         bool                    `json:"-"`
+	ReleaseTarget     string                  `json:"releaseTarget,omitempty"`
+	ObservedOn        []taskDeliveryHostProof `json:"-"`
+	RollbackConfirmed bool                    `json:"rollbackConfirmed,omitempty"`
+	ReleaseCovered    bool                    `json:"releaseCovered,omitempty"`
+	InstalledOn       []taskDeliveryHostProof `json:"installedOn,omitempty"`
 }
 
 var (
@@ -246,6 +251,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	keyedRepo := map[string]bool{}
 	keyed := false // any repository read with a key
 	var versions []string
+	var rollout taskDeliveryRollout
 	var recordedUI []ghRelease
 	err := a.store.Read(preflightCtx, nil, func(q *Request) error {
 		ids, err := projectIDs(q)
@@ -306,6 +312,10 @@ func deliveryPass(ctx context.Context, a *App) error {
 			}
 		}
 		versions, err = liveHostVersions(q)
+		if err != nil || byKey[strings.ToLower(githubPublicRepo)] == nil {
+			return err
+		}
+		rollout, err = observeFleetTaskRollout(q, ui)
 		return err
 	})
 	if err != nil {
@@ -454,6 +464,11 @@ func deliveryPass(ctx context.Context, a *App) error {
 			pins.End(pinsErr)
 		}
 		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
+		if strings.EqualFold(name, githubPublicRepo) {
+			if err := qualifyFleetTaskDeliveries(repoCtx, a, t.projects, merged, rollout); err != nil {
+				log.Printf("delivery %s task qualification: %v", name, err)
+			}
+		}
 		return collection{repo: &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged, ci: githubDeliveryFacts(g, now)}, fresh: true}, nil
 	})
 	for i, result := range results {
@@ -532,7 +547,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	// fence even while withdrawal is pending, without coupling snapshot writes
 	// to a successful task or Problem transition.
 	snapshotCtx, snapshot := deliverySpan(ctx, "snapshot")
-	err = a.store.Write(snapshotCtx, nil, nil, func(q *Request) error { return deliverySave(q, next) })
+	err = a.store.Write(snapshotCtx, nil, []string{GLOBAL}, func(q *Request) error { return deliverySave(q, next) })
 	snapshot.End(err)
 	if err != nil {
 		log.Printf("delivery snapshot: %v", err)
@@ -543,22 +558,6 @@ func deliveryPass(ctx context.Context, a *App) error {
 		return reconcileDeliveryAuthority(q)
 	}); err != nil {
 		log.Printf("delivery authority reconciliation: %v", err)
-	}
-	var delivered []deliveryMergedPR
-	for _, r := range repos {
-		for _, pr := range r.delivered {
-			if pr.Delivered {
-				delivered = append(delivered, pr)
-			}
-		}
-	}
-	if len(delivered) > 0 {
-		reconcileCtx, reconcile := deliverySpan(ctx, "task-reconcile")
-		err := reconcileDeliveredTasks(reconcileCtx, a, delivered)
-		reconcile.End(err)
-		if err != nil {
-			log.Printf("delivery task reconcile: %v", err)
-		}
 	}
 	return nil
 }
@@ -571,6 +570,9 @@ func mergedSessionIDs() map[string]bool {
 	out := map[string]bool{}
 	for _, r := range deliveryLast.repos {
 		for _, pr := range r.delivered {
+			if pr.MergedAt == "" {
+				continue
+			}
 			if i := strings.LastIndexByte(pr.Branch, '/'); i >= 0 && len(pr.Branch)-i-1 == 36 {
 				out[pr.Branch[i+1:]] = true
 			}
@@ -748,8 +750,8 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 		}
 	}
 	type rel struct {
-		tag, version, covers, published string
-		uiOnly                          bool
+		tag, version, covers, published, target string
+		uiOnly                                  bool
 	}
 	var rels []rel
 	for _, r := range g.releases {
@@ -761,13 +763,15 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 		if c == "" {
 			continue // the target's merge time is unknown: guessing it could claim merges the release lacks
 		}
-		rels = append(rels, rel{r.Tag, releaseVersionOf(r.Tag), c, r.Published, uiOnly})
+		rels = append(rels, rel{r.Tag, releaseVersionOf(r.Tag), c, r.Published, r.Target, uiOnly})
 	}
 	sort.Slice(rels, func(i, j int) bool { return rels[i].published < rels[j].published })
 	day := now.Add(-24 * time.Hour).Format(time.RFC3339)
 	var merged []deliveryMergedPR
 	for _, p := range g.closed {
 		if p.MergedAt == nil {
+			merged = append(merged, deliveryMergedPR{Repo: repo, Number: p.Number, URL: p.URL,
+				Branch: p.Head.Ref, HeadSHA: p.Head.SHA, Stage: "closed"})
 			continue
 		}
 		m := *p.MergedAt
@@ -807,12 +811,14 @@ func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string,
 		case r.uiOnly && versionLess(ui, r.version), !r.uiOnly && !installed(r.version, versions):
 			dm.Stage = string(contract.DeliveryStageInstalling)
 			dm.Release = r.tag
+			dm.ReleaseTarget = r.target
 			it := item(p, contract.DeliveryStageInstalling, r.published)
 			it.Release = &r.tag
 			out = append(out, it)
 		default:
 			dm.Stage = string(contract.DeliveryStageInstalled)
 			dm.Release = r.tag
+			dm.ReleaseTarget = r.target
 			dm.DeliveredAt = r.published
 			dm.Delivered = true
 			if m >= day && m >= rels[0].covers {
@@ -903,6 +909,7 @@ type glMR struct {
 	UpdatedAt                 string        `json:"updated_at"`
 	MergedAt                  *string       `json:"merged_at"`
 	MergeCommitSHA            string        `json:"merge_commit_sha"`
+	SquashCommitSHA           string        `json:"squash_commit_sha"`
 	SHA                       string        `json:"sha"`
 	SourceBranch              string        `json:"source_branch"`
 	TargetBranch              string        `json:"target_branch"`
@@ -1020,7 +1027,7 @@ func gitlabDeliveryStages(project, host, repo string, g glRepo, now time.Time) (
 			URL:         m.WebURL,
 			Branch:      m.SourceBranch,
 			HeadSHA:     m.SHA,
-			MergeSHA:    m.MergeCommitSHA,
+			MergeSHA:    firstString(m.MergeCommitSHA, m.SquashCommitSHA, m.SHA),
 			MergedAt:    mergedAt,
 			Stage:       string(contract.DeliveryStageMerged),
 			DeliveredAt: mergedAt,

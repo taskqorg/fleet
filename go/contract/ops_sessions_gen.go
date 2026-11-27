@@ -2381,6 +2381,7 @@ func (v *WorkerDoneReply) Validate() error {
 // WorkerDoneRequest: outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.
 type WorkerDoneRequest struct {
 	ExecutionId     string          `json:"executionId"`
+	LiveCheck       *string         `json:"liveCheck,omitempty"`
 	NativeSessionId *string         `json:"nativeSessionId,omitempty"`
 	Outcome         json.RawMessage `json:"outcome,omitempty"`
 	Summary         json.RawMessage `json:"summary,omitempty"`
@@ -2409,9 +2410,10 @@ func (v *WorkerDoneRequest) Validate() error {
 }
 
 type WorkerReport struct {
-	At      int64   `json:"at"`
-	Outcome string  `json:"outcome"`
-	Summary *string `json:"summary"`
+	At        int64   `json:"at"`
+	LiveCheck *string `json:"liveCheck,omitempty"`
+	Outcome   string  `json:"outcome"`
+	Summary   *string `json:"summary"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2457,7 +2459,7 @@ func init() {
 		"trigger_list":            {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "The triggers of a session (sessionId) or a bot (botId): what each sends, when (every, daily, manual), its change condition (ifChanged), state (next time, fires, quiet checks since the last fire, last error), whether you may manage them, and the presets (config/triggers).", Changes: []string{"trigger", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"trigger_run":             {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Fire a trigger (id) now, whatever its time and change condition say.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"trigger_save":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create (baseRevision 0, a new UUID id, sessionId or botId) or change a trigger. settings fields left out come from the preset (presetId) on create, else stay. A trigger puts its text into the session, or wakes the bot, at its time (when: every everyMs, daily dailyTime dailyZone, manual); with ifChanged (task, question, execution, host, limits) it fires only when something in its focus changed since it last fired and otherwise only counts a quiet check. Pause: enabled false.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"minimum\":0,\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"presetId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"settings\":{\"$comment\":\"A field left out comes from the preset on create, else keeps its value.\",\"additionalProperties\":false,\"properties\":{\"dailyTime\":{\"type\":\"string\"},\"dailyZone\":{\"type\":\"string\"},\"enabled\":{\"type\":\"boolean\"},\"everyMs\":{\"minimum\":1,\"type\":\"integer\"},\"ifChanged\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"when\":{\"enum\":[\"every\",\"daily\",\"manual\"],\"type\":\"string\"}},\"type\":\"object\"}},\"required\":[\"id\",\"baseRevision\"],\"type\":\"object\"}")},
-		"worker_done":             {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Report the current execution done (checked against the current execution; captures native session)", InputSchema: json.RawMessage("{\"$comment\":\"outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"nativeSessionId\":{\"type\":\"string\"},\"outcome\":{},\"summary\":{}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
+		"worker_done":             {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Report the current execution done (checked against the current execution; captures native session)", InputSchema: json.RawMessage("{\"$comment\":\"outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"liveCheck\":{\"$comment\":\"Exact delivery verification key from Fleet; include affirmative check evidence in summary.\",\"type\":\"string\"},\"nativeSessionId\":{\"type\":\"string\"},\"outcome\":{},\"summary\":{}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

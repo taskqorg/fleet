@@ -83,8 +83,14 @@ func (q *Queries) TaskAcceptanceAskAgain(ctx context.Context, arg TaskAcceptance
 }
 
 const taskAcceptanceExecution = `-- name: TaskAcceptanceExecution :one
-SELECT id,kind,state,observation,problem,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution
- WHERE task_id= $1 AND kind NOT IN ('child_agent','tool_run')
+SELECT id,kind,state,observation,problem,session_id,ended_at,directed_by,coalesce(data->>'automaticStop','')::text AS automatic_stop,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution x
+ WHERE x.task_id= $1 AND x.kind NOT IN ('child_agent','tool_run')
+ AND NOT (x.state='cancelled' AND (
+  coalesce(x.data->>'automaticStop','')='superseded'
+  OR (coalesce(x.data->>'automaticStop','')='deadline' AND EXISTS (
+   SELECT 1 FROM task_recovery r WHERE r.task_id=x.task_id AND r.generation>1 AND r.execution_id IS DISTINCT FROM x.id
+  ))
+ ))
  AND (NOT $2::boolean OR (state='succeeded' AND observation='confirmed'
  AND coalesce(data->'report'->>'outcome',CASE WHEN kind='agent_run' THEN '' ELSE 'succeeded' END)='succeeded'))
 ORDER BY seq DESC LIMIT 1
@@ -96,12 +102,16 @@ type TaskAcceptanceExecutionParams struct {
 }
 
 type TaskAcceptanceExecutionRow struct {
-	ID          string
-	Kind        ExecutionKind
-	State       ExecutionState
-	Observation Observation
-	Problem     *string
-	Outcome     string
+	ID            string
+	Kind          ExecutionKind
+	State         ExecutionState
+	Observation   Observation
+	Problem       *string
+	SessionID     *string
+	EndedAt       *time.Time
+	DirectedBy    *string
+	AutomaticStop string
+	Outcome       string
 }
 
 // The task's latest primary run; with earlier, its latest run with a confirmed success.
@@ -114,6 +124,10 @@ func (q *Queries) TaskAcceptanceExecution(ctx context.Context, arg TaskAcceptanc
 		&i.State,
 		&i.Observation,
 		&i.Problem,
+		&i.SessionID,
+		&i.EndedAt,
+		&i.DirectedBy,
+		&i.AutomaticStop,
 		&i.Outcome,
 	)
 	return i, err
@@ -299,7 +313,7 @@ SELECT id,coalesce(code,'')::text AS code,coalesce(project_id,'')::text AS proje
  coalesce(expected_outcome,'')::text AS expected_outcome,state::text AS state,
  completion_requirements,coalesce(result_destination,'')::text AS result_destination,created_at
 FROM task
-WHERE (state IN ('queued','in_progress') OR (state='waiting' AND wait_reason='awaiting result'))
+WHERE state IN ('queued','in_progress','waiting','paused')
  AND accepted_at IS NULL AND tombstoned_at IS NULL
 ORDER BY created_at
 `
@@ -336,56 +350,6 @@ func (q *Queries) TaskDeliveryCandidates(ctx context.Context) ([]TaskDeliveryCan
 			&i.CompletionRequirements,
 			&i.ResultDestination,
 			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const taskDeliveryEvidence = `-- name: TaskDeliveryEvidence :many
-SELECT 'execution'::text AS source,e.task_id::text AS task_id,
- coalesce(e.data->'report'->>'outcome','')::text AS outcome,
- coalesce(e.data->'report'->>'summary','')::text AS text,
- e.ended_at AS at
-FROM execution e
-WHERE e.task_id = ANY( $1::text[]) AND e.kind NOT IN ('child_agent','tool_run')
- AND e.state='succeeded' AND e.observation='confirmed' AND coalesce(e.data->'report'->>'outcome','') <> 'failed'
- AND (coalesce(e.data->'report'->>'outcome','')='succeeded' OR coalesce(e.data->'report'->>'summary','') <> '')
-UNION ALL
-SELECT 'board'::text AS source,b.scope_id::text AS task_id,''::text AS outcome,b.text,b.created_at AS at
-FROM board_message b
-WHERE b.scope_kind='task' AND b.scope_id = ANY( $1::text[]) AND b.kind='done' AND b.tombstoned_at IS NULL
-`
-
-type TaskDeliveryEvidenceRow struct {
-	Source  string
-	TaskID  string
-	Outcome string
-	Text    string
-	At      *time.Time
-}
-
-// Confirmed worker reports and done board posts referencing PRs or post-delivery verification.
-func (q *Queries) TaskDeliveryEvidence(ctx context.Context, taskIds []string) ([]TaskDeliveryEvidenceRow, error) {
-	rows, err := q.db.Query(ctx, taskDeliveryEvidence, taskIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TaskDeliveryEvidenceRow
-	for rows.Next() {
-		var i TaskDeliveryEvidenceRow
-		if err := rows.Scan(
-			&i.Source,
-			&i.TaskID,
-			&i.Outcome,
-			&i.Text,
-			&i.At,
 		); err != nil {
 			return nil, err
 		}
@@ -439,7 +403,7 @@ func (q *Queries) TaskDeliveryForgeRefs(ctx context.Context, taskIds []string) (
 }
 
 const taskDeliveryRejections = `-- name: TaskDeliveryRejections :many
-SELECT coalesce(execution_id,'')::text AS execution_id,data
+SELECT coalesce(execution_id,'')::text AS execution_id,data,answered_at
 FROM question
 WHERE task_id=$1 AND kind='acceptance' AND state='answered' AND answer='rejected'
 `
@@ -447,6 +411,7 @@ WHERE task_id=$1 AND kind='acceptance' AND state='answered' AND answer='rejected
 type TaskDeliveryRejectionsRow struct {
 	ExecutionID string
 	Data        []byte
+	AnsweredAt  *time.Time
 }
 
 func (q *Queries) TaskDeliveryRejections(ctx context.Context, taskID *string) ([]TaskDeliveryRejectionsRow, error) {
@@ -458,7 +423,7 @@ func (q *Queries) TaskDeliveryRejections(ctx context.Context, taskID *string) ([
 	var items []TaskDeliveryRejectionsRow
 	for rows.Next() {
 		var i TaskDeliveryRejectionsRow
-		if err := rows.Scan(&i.ExecutionID, &i.Data); err != nil {
+		if err := rows.Scan(&i.ExecutionID, &i.Data, &i.AnsweredAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -811,7 +776,7 @@ func (q *Queries) TaskHasOpenBlockingQuestion(ctx context.Context, taskID *strin
 }
 
 const taskHasOpenDependency = `-- name: TaskHasOpenDependency :one
-SELECT EXISTS (SELECT 1 FROM task_dependency d JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1 AND d.kind='blocks' AND t.state<>'completed')::boolean
+SELECT EXISTS (SELECT 1 FROM task_dependency d LEFT JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1 AND d.kind='blocks' AND t.state IS DISTINCT FROM 'completed')::boolean
 `
 
 func (q *Queries) TaskHasOpenDependency(ctx context.Context, taskID string) (bool, error) {
@@ -924,7 +889,13 @@ func (q *Queries) TaskHistory(ctx context.Context, id string) ([]TaskHistoryRow,
 const taskIdle = `-- name: TaskIdle :one
 SELECT t.id,t.title,t.project_id,coalesce(l.id,'')::text AS latest_id,coalesce(l.state::text,'')::text AS latest,l.session_id AS latest_session
 FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id FROM execution x
- WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') ORDER BY x.seq DESC LIMIT 1) l ON true
+ WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run')
+ AND NOT (x.state='cancelled' AND (
+  coalesce(x.data->>'automaticStop','')='superseded'
+  OR (coalesce(x.data->>'automaticStop','')='deadline' AND EXISTS (
+   SELECT 1 FROM task_recovery r WHERE r.task_id=x.task_id AND r.generation>1 AND r.execution_id IS DISTINCT FROM x.id
+  ))
+ )) ORDER BY x.seq DESC LIMIT 1) l ON true
 WHERE t.id=$1 AND (t.state='in_progress' OR (t.state='waiting' AND t.wait_reason='awaiting result'))
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance'

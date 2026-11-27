@@ -615,6 +615,20 @@ CREATE POLICY live ON task AS RESTRICTIVE FOR SELECT TO public USING ((fleet_sho
 DROP POLICY IF EXISTS project_scope ON task;
 CREATE POLICY project_scope ON task FOR ALL TO public USING (fleet_visible(project_id));
 
+-- task_delivery_result
+ALTER TABLE task_delivery_result ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON task_delivery_result;
+CREATE POLICY live ON task_delivery_result AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR (project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))));
+DROP POLICY IF EXISTS project_scope ON task_delivery_result;
+CREATE POLICY project_scope ON task_delivery_result FOR ALL TO public USING (fleet_visible(project_id));
+
+-- task_delivery_verification
+ALTER TABLE task_delivery_verification ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON task_delivery_verification;
+CREATE POLICY live ON task_delivery_verification AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR (project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))));
+DROP POLICY IF EXISTS project_scope ON task_delivery_verification;
+CREATE POLICY project_scope ON task_delivery_verification FOR ALL TO public USING (fleet_visible(project_id));
+
 -- task_dependency
 ALTER TABLE task_dependency ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON task_dependency;
@@ -628,6 +642,20 @@ DROP POLICY IF EXISTS live ON task_derived;
 CREATE POLICY live ON task_derived AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR (project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))));
 DROP POLICY IF EXISTS project_scope ON task_derived;
 CREATE POLICY project_scope ON task_derived FOR ALL TO public USING (fleet_visible(project_id));
+
+-- task_recovery
+ALTER TABLE task_recovery ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON task_recovery;
+CREATE POLICY live ON task_recovery AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR (project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))));
+DROP POLICY IF EXISTS project_scope ON task_recovery;
+CREATE POLICY project_scope ON task_recovery FOR ALL TO public USING (fleet_visible(project_id));
+
+-- task_wake
+ALTER TABLE task_wake ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON task_wake;
+CREATE POLICY live ON task_wake AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR (project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))));
+DROP POLICY IF EXISTS project_scope ON task_wake;
+CREATE POLICY project_scope ON task_wake FOR ALL TO public USING (fleet_visible(project_id));
 
 -- telegram_history
 ALTER TABLE telegram_history ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;

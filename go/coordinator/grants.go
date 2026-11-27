@@ -32,7 +32,7 @@ type gatewayUse struct {
 const ciConn = "<ci>"
 
 var gatewayUses = []gatewayUse{
-	{"github", "", "Delivery (go/coordinator/delivery.go)", []string{"pulls_open", "pulls_closed", "runs_in_progress", "runs_queued", "releases", "runs_completed_pr", "runs_completed_mq"}},
+	{"github", "", "Delivery (go/coordinator/delivery.go)", []string{"pulls_open", "pulls_closed", "compare_commits", "runs_in_progress", "runs_queued", "releases", "runs_completed_pr", "runs_completed_mq"}},
 	{"github", ciConn, "Delivery history (go/coordinator/delivery_history.go)", []string{"pulls_closed_page", "releases_page", "workflow_runs_day", "workflow_runs_sha", "run_jobs"}},
 	{"github", ciConn, "Runners CI (go/coordinator/runners_ci.go)", []string{"runs_in_progress", "runs_queued", "runs_recent", "run_jobs", "org_runners"}},
 	{"github", ciConn, "Pin qualification (go/coordinator/pins_qualify.go)", []string{"pull_files", "commit_status", "file_at"}},

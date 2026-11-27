@@ -661,6 +661,12 @@ func executionPutRaw(q *Request, e rawObject) error {
 		return err
 	}
 	if t != nil {
+		// This fact must survive a failure in the compatibility settlement savepoint.
+		if kind == "agent_run" && executionEnds(state) && (prev != state || observation != previous.Observation) {
+			if err := wakeTask(q, *t); err != nil {
+				return err
+			}
+		}
 		if prev == "" || executionEnds(state) && (state != prev || observation != previous.Observation) {
 			if q.tx != nil {
 				if serr := exec(q, "SAVEPOINT settle_idle_task"); serr != nil {
@@ -796,6 +802,10 @@ func executionStop(q *Request, id string) (contract.ExecutionStopReply, error) {
 }
 
 func requestExecutionStop(q *Request, id string, taskCancellation bool) (contract.ExecutionStopReply, error) {
+	return requestExecutionStopWithPolicy(q, id, taskCancellation, "")
+}
+
+func requestExecutionStopWithPolicy(q *Request, id string, taskCancellation bool, automaticStop string) (contract.ExecutionStopReply, error) {
 	var rep contract.ExecutionStopReply
 	if err := lockExecutionTask(q, id); err != nil {
 		return rep, err
@@ -824,6 +834,9 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 			return rep, err
 		}
 	}
+	if automaticStop != "" {
+		e.AutomaticStop = automaticStop
+	}
 	firstStop := !isTrue(e.StopRequested) && !e.terminal() // a stop of a finished run cancels nothing queued
 	e.StopRequested = ptr(true)
 	if taskCancellation {
@@ -836,7 +849,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 		}
 	}
 	neverHandedOut := false
-	if taskCancellation && known && e.State == "preparing" {
+	if (taskCancellation || automaticStop != "") && known && e.State == "preparing" {
 		neverHandedOut, err = q.db().DispStartNeverHandedOut(q.ctx(), &id)
 		if err != nil {
 			return rep, err
@@ -864,7 +877,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 	if err := executionPut(q, &e); err != nil {
 		return rep, err
 	}
-	if firstStop {
+	if firstStop && automaticStop == "" {
 		if err := cancelQueuedBehind(q, &e); err != nil {
 			return rep, err
 		}

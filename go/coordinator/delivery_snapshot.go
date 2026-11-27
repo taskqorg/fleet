@@ -93,5 +93,24 @@ func deliveryRestore(ctx context.Context, a *App) {
 
 // deliverySave: the pass stores its state after every pass.
 func deliverySave(q *Request, s deliveryState) error {
-	return q.db().DeliverySnapshotPut(q.ctx(), jsonBytes(snapshotOf(s)))
+	if err := q.db().DeliverySnapshotPut(q.ctx(), jsonBytes(snapshotOf(s))); err != nil {
+		return err
+	}
+	return observeTaskDeliveries(q, s.repos)
+}
+
+// restoreMissedTaskDeliveries uses the durable snapshot when the independent audit finds unowned work.
+func restoreMissedTaskDeliveries(q *Request) error {
+	raw, err := q.db().DeliverySnapshotGet(q.ctx())
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var snapshot deliverySnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return err
+	}
+	return observeTaskDeliveries(q, snapshot.state().repos)
 }

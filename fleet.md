@@ -92,15 +92,15 @@ Created tasks continue without an open PM session; closing a session window does
 
 Manual acceptance is not required for every task. Project rules determine which results need human acceptance and which can be accepted automatically. Operators can inspect results and intervene.
 
-Task acceptance selects a specific eligible result. Automatic acceptance for a task-bound agent run requires a confirmed successful execution and a successful work report; an explicit acceptance request can also offer a confirmed successful execution whose work report was not filed, unless incomplete work was reported.
+Task acceptance selects a specific eligible result. Automatic acceptance of an agent result requires confirmed successful execution and a successful work report. An exact task-linked delivery can supply a result independently when its required delivery stage, live check and artifacts are verified and there is no contradictory report or pending work. Human acceptance policy applies to both result sources. For an ordinary agent result, an explicit acceptance request can also offer a confirmed successful execution whose work report was not filed, unless incomplete work was reported.
 
 Required artifacts must be stored for that execution and the acceptance identifies the retained artifacts it offers. Active or queued continuation supersedes a pending acceptance. An operator may explicitly select an eligible earlier result after work ends, or supply an external result for a task without a Fleet execution.
 
-An operator may reject an open offer after its result loses eligibility. The rejection applies to the offered result. Missing completion evidence leaves the task open without a generated question. A failed execution or explicit report of incomplete work can require an operator decision.
+An operator may reject an open offer after its result loses eligibility. The rejection applies to the offered result. A missing result enters durable reconciliation. After eligible deliveries, answers and pending work have been considered, Fleet can continue the same task session. Two automatic recovery turns are allowed per episode within 90 minutes, and the second requires independently verified progress. Exhausted or unavailable recovery opens a decision for the task owner. A failed execution or explicit report of incomplete work can require an operator decision.
 
 Task details flag a missing completion report for the latest confirmed successful task-bound agent run. The note clears on continuation, an explicit offer or valid completion evidence.
 
-An idle task whose latest primary execution is a confirmed successful agent turn waits for its result. Live In work omits this wait unless execution or delivery is active.
+Question settlement, dependency changes, confirmed turn closure and delivery observations commit durable PostgreSQL wakes with their facts. A coordinator reducer uses existing dispatch, acceptance and session queues and retains the disposition of each wake. An independent auditor restores missing wakes from current facts. An idle task waiting on a result has a reconciliation item, a delivery watch, a result offer or a recovery decision.
 
 #### YouTrack project handoff
 
@@ -130,7 +130,9 @@ Fleet retains at most one task per YouTrack instance and immutable issue ID. Eve
 
 Show each wait's reason and release condition. Missing executors, environments, access or capacity before launch keep the task queued with the missing prerequisite visible.
 
-Answering a question an agent asked through `question_ask` continues its session with the answer when the asking execution has ended. The answer creates at most one continuation and uses the ordinary message queue. If a turn is already active or a steer is pending, the answer is recorded for the existing work to read. Paused or closed tasks and archived sessions do not start a turn from an answer.
+An answered agent question or execution-authored operator decision has a durable wake for the asking session. An active turn can acknowledge the answer by reading it. Otherwise the wake admits at most one ordinary `reply:<question-id>` message when the session is safe to continue. A pause defers admission until resume. Closed tasks fence admission, and an unavailable session or revoked authority requires a recovery decision for linked open work.
+
+A blocker created with explicit inverse dependency intent atomically links to the named open task in the same project, under the directing actor’s authority and with a cycle check.
 
 A question wait requires an open blocking question. When an execution is abandoned, withdraw the agent questions that depended on that execution and settle the task against its remaining work and questions. An unconfirmed active execution retains its last observed state and shows the missing confirmation.
 
