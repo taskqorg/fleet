@@ -376,6 +376,10 @@
             "$ref": "#/$defs/EdgeProblem"
           }
         },
+        "browserProductionReady": {
+          "$comment": "Absent before a fresh production readiness observation. False when unready or ungranted; problems gives the reason for an unready grant.",
+          "type": "boolean"
+        },
         "forgeLogins": {
           "$comment": "the forge logins this host checked from its forge store (forge_login.go): provider, forge host, whether its CLI answered as a user; the publishing capabilities follow from them, and System › Access shows a missing one",
           "type": "array",

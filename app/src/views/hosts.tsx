@@ -28,7 +28,7 @@ import { Humans } from './humans.tsx';
 import { Access } from './access.tsx';
 import { AgentGaps } from './agent-gaps.tsx';
 import { Problems } from './problems.tsx';
-import { FINDING, SystemIdle, hostFailures } from './system-idle.tsx';
+import { FINDING, SystemIdle, hostFailures, hostProblemTitle } from './system-idle.tsx';
 import { modelsText, useCompatProfiles } from './accounts.tsx';
 import { ConnectionAdd, HostAdd } from './system-add.tsx';
 import { HostUpdates } from './host-updates.tsx';
@@ -484,7 +484,7 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
         facts={<>{f.text.split('. ').slice(1).join('. ')} <AgeChip t={f.at} clockOffsetMs={props.clockOffsetMs} /></>} />
     )}</For>
     <For each={props.live ? h().problems : []}>{p => (
-      <ProblemRow title={`Edge answers ${p.route} with ${p.status}`} severity="failure" actions={[]} facts={p.detail || p.location || ''} />
+      <ProblemRow title={hostProblemTitle(p)} severity="failure" actions={[]} facts={p.detail || p.location || ''} />
     )}</For>
     <For each={findings()}>{f => <ProblemRow title={f.text ?? FINDING} code={f.cause} severity="warning" actions={[]} facts={<AgeChip t={ms(f.since)} clockOffsetMs={props.clockOffsetMs} />} />}</For>
     <For each={gaps()}>{g => (

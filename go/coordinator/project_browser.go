@@ -18,30 +18,38 @@ func init() {
 
 func productionBrowserAccess(q *Request, request *contract.BrowserAccessRequest) (contract.BrowserAccessReply, error) {
 	var empty contract.BrowserAccessReply
-	holder := q.peopleSnapshot().person(q.host.Holder)
-	if request.ProjectId != contract.ProductionBrowserProject || holder == nil || !holder.Owner {
+	if request.ProjectId != contract.ProductionBrowserProject {
 		return empty, nil
 	}
-	settings, err := projectSettingsByID(q, contract.ProductionBrowserProject)
-	if err != nil {
-		var missing *HTTPError
-		if errors.As(err, &missing) && missing.Code == http.StatusNotFound {
-			return empty, nil
-		}
+	granted, err := productionBrowserGranted(q)
+	if err != nil || !granted {
 		return empty, err
-	}
-	project := agentView[contract.ProjectContext](settings)
-	if project.Execution == nil || !slices.Contains(project.Execution.Tools, "browser") ||
-		!slices.ContainsFunc(project.Environments, func(env contract.ProjectEnvironment) bool {
-			return deref(env.HostId) == q.hostID()
-		}) {
-		return empty, nil
 	}
 	access, err := readProductionBrowserAccess(secretDir())
 	if err != nil {
 		return empty, fail(http.StatusServiceUnavailable, err.Error())
 	}
 	return access, nil
+}
+
+func productionBrowserGranted(q *Request) (bool, error) {
+	holder := q.peopleSnapshot().person(q.host.Holder)
+	if holder == nil || !holder.Owner {
+		return false, nil
+	}
+	settings, err := projectSettingsByID(q, contract.ProductionBrowserProject)
+	if err != nil {
+		var missing *HTTPError
+		if errors.As(err, &missing) && missing.Code == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	project := agentView[contract.ProjectContext](settings)
+	return project.Execution != nil && slices.Contains(project.Execution.Tools, "browser") &&
+		slices.ContainsFunc(project.Environments, func(env contract.ProjectEnvironment) bool {
+			return deref(env.HostId) == q.hostID()
+		}), nil
 }
 
 func readProductionBrowserAccess(root string) (contract.BrowserAccessReply, error) {

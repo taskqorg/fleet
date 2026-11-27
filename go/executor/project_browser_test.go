@@ -544,3 +544,32 @@ module.exports={chromium:{}};
 		t.Fatal("managed browser did not advertise its scoped origin without credential output")
 	}
 }
+
+// One in-flight refresh preserves current evidence. A first or overdue probe
+// leaves eligibility and the unknown problem to the coordinator.
+func TestProjectBrowserProductionObservationFreshness(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		last         time.Time
+		ready        bool
+		detail       string
+		wantObserved bool
+	}{
+		{name: "first"},
+		{name: "refreshing confirmed identity", last: time.Now().Add(-browserReadinessInterval - time.Second), ready: true, wantObserved: true},
+		{name: "ungranted", last: time.Now(), wantObserved: true},
+		{name: "unready", last: time.Now(), detail: "test probe failed", wantObserved: true},
+		{name: "overdue", last: time.Now().Add(-browserReadinessInterval - outboxClient.Timeout - probeWait - time.Second), ready: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &executor{browserHealth: productionBrowserHealth{busy: true, last: tc.last, ready: tc.ready, detail: tc.detail}}
+			ready, problems := e.productionBrowserStatus()
+			if (ready != nil) != tc.wantObserved || (ready != nil && *ready != tc.ready) {
+				t.Fatal("unexpected production observation")
+			}
+			if got := len(problems) > 0; got != (tc.detail != "") {
+				t.Fatalf("unexpected reported problems: %v", problems)
+			}
+		})
+	}
+}

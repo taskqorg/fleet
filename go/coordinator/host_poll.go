@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -410,7 +411,7 @@ type hostProblem struct {
 	Detail   string  `json:"detail"`
 }
 
-// hostProblems: the edge problems a host reports (at most 20, texts cut).
+// hostProblems: the problems a host reports (at most 20, texts cut).
 func hostProblems(list []contract.EdgeProblem) []hostProblem {
 	var out []hostProblem
 	cut := func(t string, n int) string {
@@ -933,6 +934,17 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 		obs.ActiveExecutions = &active
 	}
 	ps := hostProblems(b.Problems)
+	isBrowserProblem := func(p hostProblem) bool { return p.Kind == string(contract.ProblemKindBrowserProductionUnready) }
+	browserProblem := slices.ContainsFunc(ps, isBrowserProblem)
+	if b.BrowserProductionReady == nil || !*b.BrowserProductionReady || browserProblem {
+		granted, err := productionBrowserGranted(q)
+		switch {
+		case err == nil && !granted:
+			ps = slices.DeleteFunc(ps, isBrowserProblem)
+		case granted && !browserProblem:
+			ps = append(ps, hostProblem{Kind: string(contract.ProblemKindBrowserProductionUnready), Detail: "Waiting for a production browser readiness check"})
+		}
+	}
 	if b.Version != nil {
 		v := *b.Version
 		// N-1 is served without a flag; N-2 and older show version-behind (work still runs), unless the executor has not

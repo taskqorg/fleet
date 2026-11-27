@@ -243,17 +243,24 @@ func newBrowserAuthority(payload any, access contract.BrowserAccessReply) (*brow
 // prepareBrowser checks the same runtime used by MCP. An independently granted preview
 // can still start while the production probe is failing.
 func (e *executor) prepareBrowser(payload any, home string) (M, *browserAuthority, error) {
+	var productionErr error
 	if browserProject(payload) == contract.ProductionBrowserProject {
-		if access, status := e.browserAccess(e.baseCtx()); status == http.StatusOK {
-			if authority, err := newBrowserAuthority(payload, access); err == nil {
-				if browserProbe(authority.Config, home, authority) == nil {
-					return authority.Config, authority, nil
-				}
-			}
+		access, status := e.browserAccess(e.baseCtx())
+		if status != http.StatusOK {
+			productionErr = errors.New("browser-production-authority-unavailable")
+		} else if authority, err := newBrowserAuthority(payload, access); err != nil {
+			productionErr = err
+		} else if err := browserProbe(authority.Config, home, authority); err != nil {
+			productionErr = errors.New("browser-production-identity-unready")
+		} else {
+			return authority.Config, authority, nil
 		}
 	}
 	config, err := browserConfig(payload, false)
 	if err != nil {
+		if productionErr != nil {
+			return nil, nil, productionErr
+		}
 		return nil, nil, err
 	}
 	return config, nil, browserProbe(config, home, nil)
@@ -270,7 +277,7 @@ type productionBrowserHealth struct {
 }
 
 // productionBrowserStatus samples readiness in the background, independently of launches.
-func (e *executor) productionBrowserStatus() (bool, []contract.EdgeProblem) {
+func (e *executor) productionBrowserStatus() (*bool, []contract.EdgeProblem) {
 	h := &e.browserHealth
 	h.Lock()
 	defer h.Unlock()
@@ -283,14 +290,15 @@ func (e *executor) productionBrowserStatus() (bool, []contract.EdgeProblem) {
 			h.Unlock()
 		})
 	}
-	detail := h.detail
-	if time.Since(h.last) >= browserReadinessInterval {
-		detail = "Production browser readiness is awaiting a fresh check"
+	// Keep the last observation while one refresh can still finish within its own deadlines.
+	if time.Since(h.last) > browserReadinessInterval+outboxClient.Timeout+probeWait {
+		return nil, nil
 	}
-	if detail == "" {
-		return h.ready, nil
+	ready := h.ready
+	if h.detail == "" {
+		return &ready, nil
 	}
-	return false, []contract.EdgeProblem{{Kind: contract.ProblemKindBrowserProductionUnready, Route: contract.RouteBrowserAccess.Path, Detail: detail}}
+	return &ready, []contract.EdgeProblem{{Kind: contract.ProblemKindBrowserProductionUnready, Detail: h.detail}}
 }
 
 func (e *executor) probeProductionBrowser() (bool, string) {

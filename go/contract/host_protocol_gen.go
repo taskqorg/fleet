@@ -2041,23 +2041,24 @@ func (v *PollReply) Validate() error {
 }
 
 type PollRequest struct {
-	ActiveExecutions []string         `json:"activeExecutions"`
-	Capabilities     []string         `json:"capabilities"`
-	Diagnosis        *HostDiagnosis   `json:"diagnosis,omitempty"`
-	Drain            *DrainReport     `json:"drain,omitempty"`
-	ForgeLogins      []ForgeLogin     `json:"forgeLogins,omitempty"`
-	GitConnections   []string         `json:"gitConnections"`
-	HarnessVersions  []HarnessVersion `json:"harnessVersions,omitempty"`
-	HostId           string           `json:"hostId"`
-	Load             *HostLoad        `json:"load,omitempty"`
-	Platform         Platform         `json:"platform"`
-	Problems         []EdgeProblem    `json:"problems"`
-	ProjectRoots     []string         `json:"projectRoots"`
-	Stores           []StoreReport    `json:"stores"`
-	ToolVersions     []ToolVersion    `json:"toolVersions,omitempty"`
-	Update           *UpdateResult    `json:"update,omitempty"`
-	UtcOffsetMinutes *int64           `json:"utcOffsetMinutes,omitempty"`
-	Version          *string          `json:"version,omitempty"`
+	ActiveExecutions       []string         `json:"activeExecutions"`
+	BrowserProductionReady *bool            `json:"browserProductionReady,omitempty"`
+	Capabilities           []string         `json:"capabilities"`
+	Diagnosis              *HostDiagnosis   `json:"diagnosis,omitempty"`
+	Drain                  *DrainReport     `json:"drain,omitempty"`
+	ForgeLogins            []ForgeLogin     `json:"forgeLogins,omitempty"`
+	GitConnections         []string         `json:"gitConnections"`
+	HarnessVersions        []HarnessVersion `json:"harnessVersions,omitempty"`
+	HostId                 string           `json:"hostId"`
+	Load                   *HostLoad        `json:"load,omitempty"`
+	Platform               Platform         `json:"platform"`
+	Problems               []EdgeProblem    `json:"problems"`
+	ProjectRoots           []string         `json:"projectRoots"`
+	Stores                 []StoreReport    `json:"stores"`
+	ToolVersions           []ToolVersion    `json:"toolVersions,omitempty"`
+	Update                 *UpdateResult    `json:"update,omitempty"`
+	UtcOffsetMinutes       *int64           `json:"utcOffsetMinutes,omitempty"`
+	Version                *string          `json:"version,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

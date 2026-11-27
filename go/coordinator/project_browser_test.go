@@ -53,19 +53,27 @@ func TestProjectBrowserAccessAndObservation(t *testing.T) {
 		t.Fatalf("granted host did not receive the fixture credential, status %d", code)
 	}
 
-	p := doc{"kind": "browser-production-unready", "route": access, "status": 0, "location": nil, "detail": "Production browser failed the site-agents identity check"}
-	body := doc{"hostId": "browser-host", "platform": "linux", "capabilities": []string{}, "stores": []any{}, "problems": []doc{p}, "gitConnections": []string{}}
-	for _, want := range []bool{true, false} {
-		if !want {
-			body["problems"] = []doc{}
+	const pending = "Waiting for a production browser readiness check"
+	const failed = "Production browser failed the site-agents identity check"
+	poll := func(id string, headers map[string]string, ready *bool, problems []doc, reason string) {
+		t.Helper()
+		body := doc{"hostId": id, "platform": "linux", "capabilities": []string{}, "stores": []any{}, "problems": problems, "gitConnections": []string{}}
+		if ready != nil {
+			body["browserProductionReady"] = *ready
 		}
-		if code, _ := e.callJSON(t, "POST", contract.RoutePoll.Path, body, granted); code != http.StatusOK {
+		if code, _ := e.callJSON(t, "POST", contract.RoutePoll.Path, body, headers); code != http.StatusOK {
 			t.Fatalf("poll response = %d", code)
 		}
 		var info contract.HostDiagnoseReply
-		e.opInto(t, "host_diagnose", doc{"host": "browser-host", "wait": 0}, e.ownerHeaders(), &info)
-		if got := strings.Contains(strings.Join(info.Problems, " "), p["detail"].(string)); got != want {
-			t.Fatalf("production readiness problem present = %v, want %v", got, want)
+		e.opInto(t, "host_diagnose", doc{"host": id, "wait": 0}, e.ownerHeaders(), &info)
+		if got := strings.Join(info.Problems, " "); got != reason {
+			t.Fatalf("production readiness problem = %q, want %q", got, reason)
 		}
 	}
+	p := doc{"kind": "browser-production-unready", "route": "", "status": 0, "location": nil, "detail": failed}
+	poll("browser-host", granted, nil, nil, pending)
+	poll("other-host", ungranted, nil, nil, "")
+	poll("other-host", ungranted, ptr(false), []doc{p}, "")
+	poll("browser-host", granted, ptr(false), []doc{p}, failed)
+	poll("browser-host", granted, ptr(true), nil, "")
 }

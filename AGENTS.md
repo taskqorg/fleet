@@ -51,7 +51,7 @@ Agents read Fleet's production PostgreSQL only through the `fleet-postgres` conn
 
 Use the granted `project-browser` MCP tools to open `https://fleet.ufobe.com` as `site-agents`. Close the browser after the check. Use `hosts_list` or `host_diagnose` to inspect a missing production grant or runtime. The coordinator owns the binding and credentials ([configuration](docs/configuration.md#coding-execution)).
 
-Standalone Orca and access smoke scripts have their own operator procedure ([people access](docs/designs/fleet-people-access.md#agent-access-to-the-web-app)).
+Standalone Orca and access smoke scripts have their own operator procedure ([people access](docs/designs/fleet-people-access.md#agent-access-to-the-web-app)). Standalone walk and check scripts never print a response, cookie or header dump. A Playwright error can quote request headers and the `CF_Authorization` cookie. They use `scripts/prod-browser.ts` (`prodContext`, `guardOutput`) and print errors only through its `redact`, which keeps the first line and hides Cookie, Authorization and `CF-Access-*` values.
 
 ## External services and forges (Fleet connections)
 

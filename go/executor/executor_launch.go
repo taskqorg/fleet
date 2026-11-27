@@ -118,7 +118,7 @@ func (e *executor) run(c M) error {
 		return e.finish(cmd, "failed", "")
 	case contract.CommandKindReadiness:
 		productionReady, browserProblems := e.productionBrowserStatus()
-		data := readiness(payload, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), productionReady, e.forbidden())
+		data := readiness(payload, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), productionReady != nil && *productionReady, e.forbidden())
 		if browserProject(payload) == contract.ProductionBrowserProject {
 			for _, problem := range browserProblems {
 				data.Checks = append(data.Checks, check("browser-production", e.host, problem.Detail))
@@ -400,6 +400,9 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		var err error
 		if tool == "browser" {
 			browserCfg, browserAccess, err = e.prepareBrowser(p, commandHome(cmd))
+			if err != nil {
+				return fail(1, "coding-tool-unready: browser ("+err.Error()+")")
+			}
 		} else {
 			err = codingTool(tool, commandHome(cmd))
 		}

@@ -72,7 +72,7 @@ async function paused(sessionId,event) {
     });
     if(responseHeaders.length===(event.responseHeaders ?? []).length)
       return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId});
-    return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId,responseCode:event.responseStatusCode,responsePhrase:event.responseStatusText ?? "",responseHeaders});
+    return targetSend(sessionId,'Fetch.continueResponse',{requestId:event.requestId,responseCode:event.responseStatusCode,...(event.responseStatusText?{responsePhrase:event.responseStatusText}:{}),responseHeaders});
   }
   const production=cfg.production && new URL(request.url).origin===cfg.production.origin;
   const requestHeaders=Object.entries(request.headers)
@@ -94,7 +94,7 @@ async function attached(event) {
   }
   // Children (including out-of-process frames/workers) must be intercepted before resuming.
   await targetSend(sessionId,'Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
-  if(cfg.production)await targetSend(sessionId,'Network.setCacheDisabled',{cacheDisabled:true});
+  if(cfg.production && ['page','iframe'].includes(targetInfo.type))await targetSend(sessionId,'Network.setCacheDisabled',{cacheDisabled:true});
   await targetSend(sessionId,'Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]});
   await targetSend(sessionId,'Runtime.runIfWaitingForDebugger');
   if(targetInfo.targetId===primaryTarget)initialResolve();
