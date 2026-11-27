@@ -20,8 +20,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -660,6 +662,32 @@ func readingOverSwitch(account any, list []Reading) string {
 // ---- the built app (FLEET_APP_DIR, default dist/app): hashed assets immutable, entry files revalidated ----
 
 var appScreen func(http.ResponseWriter, *http.Request) bool
+var uiHashFn func() string
+
+func currentUIHash() string {
+	if uiHashFn == nil {
+		return ""
+	}
+	return uiHashFn()
+}
+
+var uiEntryAssetRe = regexp.MustCompile(`(?:src|href)="(/assets/(?:main|app)-[^"]+\.(?:js|css))"`)
+
+// uiAssetSignature returns the sorted entry script/stylesheet paths matching app/src/version.ts's own(),
+// falling back to a SHA-256 prefix of html when no hashed entry assets appear.
+func uiAssetSignature(html []byte) string {
+	matches := uiEntryAssetRe.FindAllSubmatch(html, -1)
+	if len(matches) == 0 {
+		sum := sha256.Sum256(html)
+		return hex.EncodeToString(sum[:8])
+	}
+	parts := make([]string, 0, len(matches))
+	for _, m := range matches {
+		parts = append(parts, string(m[1]))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
+}
 
 func appRoutes() {
 	dir, _ := filepath.Abs(envOr("FLEET_APP_DIR", "dist/app"))
@@ -669,6 +697,31 @@ func appRoutes() {
 			return cur
 		}
 		return dir
+	}
+	var hashCache struct {
+		mu   sync.Mutex
+		path string
+		mod  time.Time
+		size int64
+		sig  string
+	}
+	uiHashFn = func() string {
+		p := filepath.Join(appDir(), "index.html")
+		info, err := os.Stat(p)
+		if err != nil {
+			return ""
+		}
+		hashCache.mu.Lock()
+		defer hashCache.mu.Unlock()
+		if hashCache.path == p && hashCache.mod.Equal(info.ModTime()) && hashCache.size == info.Size() {
+			return hashCache.sig
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return ""
+		}
+		hashCache.path, hashCache.mod, hashCache.size, hashCache.sig = p, info.ModTime(), info.Size(), uiAssetSignature(b)
+		return hashCache.sig
 	}
 	file := func(name, media, cache string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {

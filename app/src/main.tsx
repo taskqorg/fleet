@@ -8,7 +8,7 @@ import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSear
 import { useLocation, useSearch, syncLocation } from './router.ts';
 import { projectCodesPending, setProjectCodes } from './routes.ts';
 import type { InfraSection } from './views/hosts.tsx';
-import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
+import { keepScroll, notifyServerUIHash, probeSiteRelease, setBeforeReload, startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
@@ -17,8 +17,8 @@ import { useOp, touchedBy, setIdentity, startStore } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
 import { useRailPinned } from './rail-pinned.ts';
 import { entityCards } from './entity-cards.ts';
-import { startFeed, stopFeed, subscribe, setResyncHandler, rebaseFeed, offerBootCursor } from './feed.ts';
-import { adopt, forget, mirrored } from './persist.ts';
+import { startFeed, stopFeed, subscribe, setResyncHandler, setUIHashHandler, rebaseFeed, offerBootCursor } from './feed.ts';
+import { adopt, flushPersist, forget, mirrored } from './persist.ts';
 import { clearAll } from './offline.ts';
 import type { LibrarySection } from './views/agents.tsx';
 
@@ -47,14 +47,37 @@ const History = lazy(() => import('./views/history.tsx'), { export: 'History' })
 // purpose. The release is the version this tab runs.
 configureErrors({ ignore: e => e instanceof OpError || e instanceof AccessChanged, release: () => tabVersion.value });
 
-/** A render crash shows a recoverable error in the work area instead of a blank page; navigating away clears it. */
+const CHUNK_RELOAD_KEY = 'fleet-chunk-reload';
+const isChunkLoadError = (err: unknown) => {
+  const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? '');
+  return /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError/i.test(msg);
+};
+function canAutoRecoverChunk(): boolean {
+  try {
+    const prev = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) ?? '0');
+    return !Number.isFinite(prev) || Date.now() - prev > 60_000;
+  } catch { return false; }
+}
+
+/** A render crash shows a recoverable error in the work area instead of a blank page; lazy chunk 404s auto-reload once. */
 function RenderBoundary(props: { at: string; children: JSX.Element }) {
   let resetErr: (() => void) | undefined;
   createEffect(() => props.at, () => { resetErr?.(); resetErr = undefined; }, { defer: true });
   return (
     <Errored fallback={(err, reset) => {
-      captureRender(err());
+      const e = err();
       resetErr = reset;
+      if (isChunkLoadError(e) && canAutoRecoverChunk()) {
+        void probeSiteRelease().then(async ok => {
+          if (!ok) { captureRender(e); return; }
+          try { sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now())); } catch { /* ignore */ }
+          await flushPersist();
+          keepScroll();
+          location.reload();
+        });
+        return <Empty text="Loading updated app…" />;
+      }
+      captureRender(e);
       return <Empty text="This page failed to render." action={<Button label="Reload" icon="rotate-ccw" onClick={() => location.reload()} />} />;
     }}>
       {props.children}
@@ -268,10 +291,16 @@ function App() {
     setIdentity(() => access.peek().identity?.identityKey);
     const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (cs.some(c => touchedBy(c, 'person_settings_get', {}))) void loadPrefs(); } });
     setResyncHandler(() => { rebaseWanted = true; void recheck(); });
+    setUIHashHandler(notifyServerUIHash);
     validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});
+    // Update any legacy SW registration so the cleanup stub deletes old precaches and unregisters itself; fresh tabs register none.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration().then(r => {
+        if (r) return navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+      }).catch(() => {});
+    }
     const stopChecks = startVersionChecks();
-    return () => { unregister(); setResyncHandler(null); clearTimeout(retryTimer); stopFeed(); offPrefs(); stopChecks(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
+    return () => { unregister(); setResyncHandler(null); setUIHashHandler(null); clearTimeout(retryTimer); stopFeed(); offPrefs(); stopChecks(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
   });
   // Drafts of answers and form fields are kept per person: once the person is known they load from storage (drafts.ts).
   createEffect(() => access.value.identity?.identityKey, k => { if (k) refreshDrafts(); });
@@ -299,8 +328,9 @@ function App() {
     // (prefs.ts saveOnLeave; a section leave sends the same request without keepalive above).
     const flush = () => { if (document.visibilityState === 'hidden' && !viewer()) saveOnLeave(left); };
     const leave = () => { if (!viewer()) saveOnLeave(left); };
+    setBeforeReload(leave);
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
-    return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
+    return () => { setBeforeReload(null); document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   });
   // The person's time zone, from this browser (Intl): agents and Telegram write times in it (person settings timezone).
   // Saved when it differs from the stored one, so a trip abroad follows the device in use. A viewer's set is refused, so it waits for the roles.

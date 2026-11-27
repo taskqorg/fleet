@@ -118,8 +118,8 @@ try {
   const arrived = await page.getByText('Mirror task hidden', { exact: true }).first().isVisible().catch(() => false);
   claim(hiddenReads === 0 && shownReads > 0 && arrived, `a hidden tab reads nothing on changes (${hiddenReads} hidden${hiddenOps.length ? ' ' + hiddenOps.join(',') : ''}, ${shownReads} on return, new row ${arrived ? 'shown' : 'missing'})`);
 
-  // The app update (nav-rail.md, Update): a tab the person is away from never reloads; coming back when the last action
-  // was 30 s or more ago reloads at once. The site is made to serve another app by answering the update check's page read.
+  // The app update (nav-rail.md, Update): a visible-but-unfocused tab never reloads while away; coming back when the last action
+  // was 30 s or more ago reloads at once. A clean hidden tab reloads silently in the background after 15-30 s jitter.
   await page.route('**/home', async r => {
     try {
       if (r.request().resourceType() !== 'fetch') return await r.continue();
@@ -131,22 +131,32 @@ try {
   await page.getByText(/Updating in/).first().waitFor({ timeout: 15000 });
   await page.evaluate(() => {
     (window as unknown as { kept: number }).kept = 1;
-    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
     document.hasFocus = () => false;
     document.dispatchEvent(new Event('visibilitychange')); dispatchEvent(new Event('blur')); dispatchEvent(new Event('focus'));
   });
   await page.waitForTimeout(36_000);
   const stayed = await page.evaluate(() => (window as unknown as { kept?: number }).kept === 1);
-  claim(stayed, 'a ready update does not reload a tab the person is away from (36 s)');
-  const reloaded = page.waitForEvent('load', { timeout: 10_000 }).then(() => true, () => false);
+  claim(stayed, 'a ready update does not reload a visible-but-unfocused tab (36 s)');
+  const reloadedOnReturn = page.waitForEvent('load', { timeout: 10_000 }).then(() => true, () => false);
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
     document.hasFocus = () => true;
     document.dispatchEvent(new Event('visibilitychange')); dispatchEvent(new Event('focus'));
   });
-  const came = await reloaded;
-  await page.unroute('**/home');
+  const came = await reloadedOnReturn;
   claim(came, 'coming back after 30 s without an action reloads into the new app at once');
+  await row.waitFor({ timeout: 30000 });
+  await page.getByText(/Updating in/).first().waitFor({ timeout: 15000 });
+  const hiddenReloaded = page.waitForEvent('load', { timeout: 36_000 }).then(() => true, () => false);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.hasFocus = () => false;
+    document.dispatchEvent(new Event('visibilitychange')); dispatchEvent(new Event('blur'));
+  });
+  const cameHidden = await hiddenReloaded;
+  await page.unroute('**/home');
+  claim(cameHidden, 'a clean hidden tab silently reloads in the background (15-30 s jitter)');
   claim(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.join('; ') : ''));
 } finally {
   await b.close(); slow.close(); await close();

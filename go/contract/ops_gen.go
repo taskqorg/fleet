@@ -770,9 +770,10 @@ func (v *SpawnedTaskRef) Validate() error {
 	return nil
 }
 
-// StreamCursor: Body of the GET /api/stream events ready (the cursor the stream starts after) and resync (reload everything, then continue after cursor).
+// StreamCursor: Body of the GET /api/stream events ready (the cursor the stream starts after, plus the live UI signature) and resync (reload everything, then continue after cursor).
 type StreamCursor struct {
-	Cursor int64 `json:"cursor"`
+	Cursor int64   `json:"cursor"`
+	UiHash *string `json:"uiHash,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

@@ -70,8 +70,6 @@ const VIEWS = Object.fromEntries(workspaces.filter(w => w.nav).map(w => [w.id, [
 // The sections with a manifest. The coordinator serves index.html for every path outside /api/ and the static files, so
 // earlier routes and unknown paths reach the app's redirect and not-found page (go/coordinator/artifact_routes.go appRoutes).
 writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
-// The paths the service worker caches: the sections and the earlier screens that redirect to them.
-const ROUTED = [...new Set(workspaces.map(w => w.id))];
 const accent = tokens.color.light.accent;
 for (const [view, [name]] of Object.entries(VIEWS)) {
   writeFileSync(new URL(`manifests/${view}.webmanifest`, out), JSON.stringify({ id: `/${view}`, name, short_name: name.replace('Fleet ', ''), start_url: `/${view}`, scope: '/', display: 'standalone', background_color: tokens.color.light.bg, theme_color: accent, icons: [
@@ -107,24 +105,10 @@ ${preloads}<script type="module" src="/${main}"></script>
 `;
 writeFileSync(new URL('index.html', out), html);
 
-const version = createHash('sha256').update([...files].sort().join()).update(html).digest('hex').slice(0, 10);
-const precache = ['/' + cssName, ...files.filter(f => f.startsWith('assets/')).map(f => '/' + f)];
-writeFileSync(new URL('sw.js', out), `// Fleet service worker ${version}: app shell only; /api is never cached (design §5).
-const CACHE='fleet-${version}',ASSETS=${JSON.stringify(precache)};
-self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll([...ASSETS,'/home']))));
-// The app's Update button asks a waiting worker to take over at once (app/src/version.ts), so one click updates.
-self.addEventListener('message',e=>{if(e.data==='skip-waiting')self.skipWaiting()});
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin||u.pathname.startsWith('/api/'))return;
- if(u.pathname.startsWith('/assets/'))return e.respondWith(caches.match(e.request,{cacheName:CACHE}).then(r=>r||fetch(e.request).then(res=>{if(res.ok){const c=res.clone();caches.open(CACHE).then(x=>x.put(e.request,c))}return res})));
- // Only the app's own routes are cached (a section or an earlier screen, up to three segments deep), each under its own path; others are never cached.
- const app=/^\\/(${ROUTED.join('|')})(\\/[^/]+){0,3}$/.test(u.pathname);
- // The shell is one page for every route: a visit opens this version's cached copy at once (the HTML through Access costs
- // 300-400 ms) and refreshes it from the network behind. Data comes from the read mirror and the API, never from here;
- // a new version arrives with its own worker (version.ts updates). Without a cached copy it is the network, as before.
- // ?signin (the expired session's Sign in again) always goes to the network, where Access sends it to its sign-in.
- if(e.request.mode==='navigate'&&app&&!u.searchParams.has('signin')){const net=fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r});
-  return e.respondWith(caches.open(CACHE).then(c=>c.match(u.pathname).then(r=>r||c.match('/home'))).then(r=>{if(r){e.waitUntil(net.catch(()=>{}));return r}return net.catch(()=>caches.match('/home'))}))}});
+// Self-unregistering cleanup stub: evicts legacy precaches and unregisters itself; HTTP caching + SSE drive updates.
+writeFileSync(new URL('sw.js', out), `// Fleet service worker cleanup stub: removes legacy caches and unregisters itself.
+self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('fleet-')).map(k=>caches.delete(k)))).then(()=>self.registration.unregister())));
 `);
 
 let total = 0, totalGz = 0;

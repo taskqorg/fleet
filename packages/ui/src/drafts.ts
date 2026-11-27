@@ -1,7 +1,7 @@
 // Drafts (controls/text-field.md#drafts): typed text lives here, keyed by what it is for (a question, a form field),
 // not in the component that shows it. A remount, a route change or a reload brings the text back. The app installs a
 // persistent, person-scoped backend (setDraftBackend); without one, drafts live in memory for the page's life.
-import { createEffect, createSignal, runWithOwner, untrack, type Accessor } from 'solid-js';
+import { createEffect, createSignal, getOwner, onCleanup, runWithOwner, untrack, type Accessor } from 'solid-js';
 
 export type DraftBackend = { read(key: string): string; write(key: string, text: string): void };
 
@@ -38,6 +38,13 @@ const EMPTIED = '\u0000';
 /** Forget a draft, after its text was sent or saved. */
 export function clearDraft(key: string) { writeDraft(key, ''); }
 
+const unpersisted = new Set<() => boolean>();
+/** Whether any unpersisted draft (created with an undefined key) holds unsaved non-empty text. */
+export const hasUnpersistedDrafts = () => {
+  for (const dirty of unpersisted) if (dirty()) return true;
+  return false;
+};
+
 /**
  * A text signal kept in the draft store under `key` (a string, or an accessor when the target can change). Reads start
  * from the stored text, else `initial`; every write is stored; `clear` empties it after a send or save. An undefined
@@ -48,6 +55,9 @@ export function createDraft(key: string | Accessor<string | undefined>, initial 
   // An emptied field with a default is stored as EMPTIED, so a reload does not bring the default back.
   const load = (k: string | undefined) => { const v = k ? readDraft(k) : ''; return v === EMPTIED ? '' : v || initial; };
   const [text, setText] = createSignal(untrack(() => load(keyOf())), { ownedWrite: true });
+  const isDirtyUnpersisted = () => !keyOf() && text().trim() !== '' && text() !== initial;
+  unpersisted.add(isDirtyUnpersisted);
+  if (getOwner()) onCleanup(() => unpersisted.delete(isDirtyUnpersisted));
   let current = untrack(keyOf);
   createEffect(() => [keyOf(), epoch()] as const, ([k]) => {
     if (k !== current) { current = k; setText(load(k)); return; }

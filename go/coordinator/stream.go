@@ -240,7 +240,11 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 	sw := newSSE(w)
 	send := sw.send
 	publicCursor := cursor
-	send("ready", contract.StreamCursor{Cursor: cursor}, -1)
+	ready := contract.StreamCursor{Cursor: cursor}
+	if h := currentUIHash(); h != "" {
+		ready.UiHash = &h
+	}
+	send("ready", ready, -1)
 	if err := sw.flush(); err != nil {
 		return nil
 	}

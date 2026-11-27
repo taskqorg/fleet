@@ -11,9 +11,24 @@ type Item = ComposerAttachment & { artifactId?: string; done: Promise<string>; a
 
 type PartBody = { id?: string; received?: number; finishing?: boolean; message?: string } | null;
 
+let activePutParts = 0;
+const attachmentSources = new Set<() => readonly Item[]>();
+/** Whether any attachment XHR or upload is currently running. */
+export const uploadsInFlight = () => {
+  if (activePutParts > 0) return true;
+  for (const read of attachmentSources) if (read().some(x => x.state === 'uploading')) return true;
+  return false;
+};
+/** Whether any composer currently holds an uploaded attachment chip waiting in memory to be sent. */
+export const hasReadyAttachments = () => {
+  for (const read of attachmentSources) if (read().some(x => x.state === 'ready')) return true;
+  return false;
+};
+
 /** PUT one part; progress reports the bytes of this part sent so far. */
 function putPart(url: string, body: Blob, range: string, signal: AbortSignal, progress: (sent: number) => void): Promise<{ status: number; body: PartBody }> {
-  return new Promise((resolve, reject) => {
+  activePutParts++;
+  return new Promise<{ status: number; body: PartBody }>((resolve, reject) => {
     const x = new XMLHttpRequest();
     x.open('PUT', url);
     x.setRequestHeader('content-range', range);
@@ -25,7 +40,7 @@ function putPart(url: string, body: Blob, range: string, signal: AbortSignal, pr
     x.onabort = () => { done(); reject(new OpError('aborted', 0)); };
     signal.addEventListener('abort', stop, { once: true });
     x.send(body);
-  });
+  }).finally(() => { activePutParts--; });
 }
 
 const wait = (ms: number, signal: AbortSignal) => new Promise<void>((ok, no) => {
@@ -88,6 +103,8 @@ export function useAttachments(targetInput: MaybeAccessor<UploadTarget>) {
     setItems(live);
   };
   let currentTarget: UploadTarget = {};
+  const readLive = () => live;
+  attachmentSources.add(readLive);
   const key = createMemo(() => JSON.stringify(readValue(targetInput)));
   // A new target starts empty; unmounting stops uploads and frees previews.
   createEffect(
@@ -95,6 +112,7 @@ export function useAttachments(targetInput: MaybeAccessor<UploadTarget>) {
     ([, target]) => {
       currentTarget = target;
       return () => {
+        attachmentSources.delete(readLive);
         for (const i of live) { i.abort.abort(); if (i.preview) URL.revokeObjectURL(i.preview); }
         updateItems(() => []);
       };

@@ -98,6 +98,7 @@ type part struct {
 	dump              bool
 	uiBackend         string // nonempty selects the independently signed UI archive
 	app               string // the release's app directory ("." for a UI release); its source maps go to Bugsink
+	uiPool            string // nonempty pools native release dist/app/assets into FLEET_UI_ROOT/assets
 	restart           func() error
 	activity          func(string) (func(), error)
 	health            func(ver string) probe
@@ -216,6 +217,11 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	}
 	if err := u.install(p, cand, dir); err != nil {
 		return u.result(cand, "error", err.Error())
+	}
+	if p.uiPool != "" && p.app != "" {
+		if err := poolNativeUIAssets(p.uiPool, filepath.Join(p.root, cand, p.app, "assets"), p.root, u.now()); err != nil {
+			log.Printf("%s: pool UI assets: %v", p.name, err)
+		}
 	}
 	if p.app != "" {
 		u.uploadSourcemaps(filepath.Join(p.root, cand, p.app), cand)
