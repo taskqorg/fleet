@@ -19,6 +19,9 @@ func init() {
 
 func productionBrowserAccess(q *Request, request *contract.BrowserAccessRequest) (contract.BrowserAccessReply, error) {
 	var empty contract.BrowserAccessReply
+	if isTrue(request.Managed) {
+		return managedSiteAccess(q, request)
+	}
 	projectID := request.ProjectId
 	if !filepath.IsLocal(projectID) || strings.ContainsAny(projectID, `/\`) || projectID == "." {
 		return empty, nil
@@ -53,6 +56,9 @@ func productionBrowserGranted(q *Request, projectID string) (bool, error) {
 		return false, err
 	}
 	project := agentView[contract.ProjectContext](settings)
+	if project.AgentSiteAccess != nil || legacySiteRetired(secretDir(), projectID) {
+		return false, nil
+	}
 	return project.Execution != nil && slices.Contains(project.Execution.Tools, "browser") &&
 		slices.ContainsFunc(project.Environments, func(env contract.ProjectEnvironment) bool {
 			return deref(env.HostId) == q.hostID()

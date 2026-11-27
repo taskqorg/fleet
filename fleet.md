@@ -265,6 +265,12 @@ An environment provides:
   Hosts probe production readiness before launches. Fleet's production check is also reported in host observations.
   Preview grants remain separate. See [coding execution](docs/configuration.md#coding-execution).
 - Access: available data, accounts and external services.
+- R-PROJECT-SITE-ACCESS. Project settings declare agent site-access intent by exact HTTPS origin, role and scope.
+  An independent owner grant binds the intended principal and probe to private credentials. Live access requires that
+  grant, the run's director and role, task access, and a verified host. Preview access is independent.
+  Setup reads current evidence without starting jobs. An explicit non-web project has no site-access attention.
+  Setup findings are advisory. Tasks that require live verification still prove the requested scenario.
+  See [Agent Site Access](docs/designs/fleet-project-access.md#agent-site-access).
 
 Manage its lifecycle: prepare, check readiness, make available for work, preserve or release. Track [working area ownership and cleanup](docs/execution-continuity.md#working-areas); preserve required results and history before release. A task completes only when its result reaches its destination.
 

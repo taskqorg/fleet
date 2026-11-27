@@ -502,7 +502,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			if err := exec(wq, "SAVEPOINT poll_command"); err != nil {
 				return err
 			}
-			fresh, err := a.pollReadyCommand(wq, hostDoc, cv, prepared)
+			fresh, err := a.pollReadyCommand(wq, hostDoc, cv, prepared, contract.HasCapability(caps, string(contract.CapabilityAgentSiteAccessV1)))
 			if err != nil {
 				reason, outcome := pollCommandRefusal(err)
 				if outcome == pollFails {
@@ -644,7 +644,7 @@ type pollExecutionView struct {
 
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
-func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandView, prepared map[string]pollPreparedEntry) (*contract.Command, error) {
+func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandView, prepared map[string]pollPreparedEntry, siteAccessSupported bool) (*contract.Command, error) {
 	ok, err := agentReady(wq, cv.Kind, cv.ExecutionID)
 	if err != nil || !ok {
 		return nil, err
@@ -725,6 +725,9 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 		}
 	}
 	prepared[cv.ID] = pollPreparedEntry{revision, cmd}
+	if !siteAccessSupported {
+		return fenceLegacySiteCommand(wq, cmd, rawText(cv.ProjectID))
+	}
 	return &cmd, nil
 }
 
@@ -907,6 +910,10 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	now := nowMs()
 	obs := hostPollObservation{ID: host, Holder: q.host.Holder}
 	obs.Version = b.Version
+	siteAccessSupported := contract.HasCapability(b.Capabilities, string(contract.CapabilityAgentSiteAccessV1))
+	if siteAccessSupported {
+		obs.BrowserTargets = sanitizeBrowserTargets(b.BrowserTargets, b.ActiveExecutions, now)
+	}
 	if b.Platform.Valid() {
 		obs.Platform = string(b.Platform)
 	}
@@ -995,13 +1002,15 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 			}
 			if flushObs {
 				var prev *struct {
-					Update    json.RawMessage `json:"update"`
-					PollError json.RawMessage `json:"pollError"`
+					Update         json.RawMessage                     `json:"update"`
+					PollError      json.RawMessage                     `json:"pollError"`
+					BrowserTargets []contract.BrowserTargetObservation `json:"browserTargets"`
 				}
 				if r, err := wq.db().HostObservationOf(wq.ctx(), host); err == nil {
 					var p struct {
-						Update    json.RawMessage `json:"update"`
-						PollError json.RawMessage `json:"pollError"`
+						Update         json.RawMessage                     `json:"update"`
+						PollError      json.RawMessage                     `json:"pollError"`
+						BrowserTargets []contract.BrowserTargetObservation `json:"browserTargets"`
 					}
 					if err := lenientDecode(r.Payload, &p); err != nil {
 						return err
@@ -1013,6 +1022,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 				var prevUpdate any
 				row := obs
 				if prev != nil {
+					if siteAccessSupported {
+						row.BrowserTargets = mergeBrowserTargets(prev.BrowserTargets, row.BrowserTargets, b.ActiveExecutions, now)
+					}
 					prevUpdate = rawAny(prev.Update)
 					// A recorded poll failure stays until a successful poll clears it (host_poll_health.go).
 					if !isNull(prev.PollError) {
@@ -1223,22 +1235,23 @@ func (a *App) hostMayRun(h hostRecord, projectID any, director any) bool {
 
 // hostPollObservationPayload holds the payload fields of a host observation (host_observation.payload).
 type hostPollObservationPayload struct {
-	Platform         string                     `json:"platform,omitempty"`
-	Capabilities     *[]string                  `json:"capabilities,omitempty"`
-	HarnessVersions  *[]contract.HarnessVersion `json:"harnessVersions,omitempty"`
-	ToolVersions     *[]contract.ToolVersion    `json:"toolVersions,omitempty"`
-	GitConnections   *[]string                  `json:"gitConnections,omitempty"`
-	ProjectRoots     *[]string                  `json:"projectRoots,omitempty"`
-	ForgeLogins      *[]contract.ForgeLogin     `json:"forgeLogins,omitempty"`
-	ActiveExecutions *[]string                  `json:"activeExecutions,omitempty"`
-	Version          *string                    `json:"version,omitempty"`
-	Problems         []hostProblem              `json:"problems,omitempty"`
-	Update           any                        `json:"update,omitempty"`
-	Stores           any                        `json:"stores"`
-	Load             *hostLoadObservation       `json:"load,omitempty"`
-	Drain            *contract.DrainReport      `json:"drain,omitempty"`
-	Pacing           *contract.HostUpdatePacing `json:"pacing,omitempty"`
-	PollError        json.RawMessage            `json:"pollError,omitempty"`
+	BrowserTargets   []contract.BrowserTargetObservation `json:"browserTargets,omitempty"`
+	Platform         string                              `json:"platform,omitempty"`
+	Capabilities     *[]string                           `json:"capabilities,omitempty"`
+	HarnessVersions  *[]contract.HarnessVersion          `json:"harnessVersions,omitempty"`
+	ToolVersions     *[]contract.ToolVersion             `json:"toolVersions,omitempty"`
+	GitConnections   *[]string                           `json:"gitConnections,omitempty"`
+	ProjectRoots     *[]string                           `json:"projectRoots,omitempty"`
+	ForgeLogins      *[]contract.ForgeLogin              `json:"forgeLogins,omitempty"`
+	ActiveExecutions *[]string                           `json:"activeExecutions,omitempty"`
+	Version          *string                             `json:"version,omitempty"`
+	Problems         []hostProblem                       `json:"problems,omitempty"`
+	Update           any                                 `json:"update,omitempty"`
+	Stores           any                                 `json:"stores"`
+	Load             *hostLoadObservation                `json:"load,omitempty"`
+	Drain            *contract.DrainReport               `json:"drain,omitempty"`
+	Pacing           *contract.HostUpdatePacing          `json:"pacing,omitempty"`
+	PollError        json.RawMessage                     `json:"pollError,omitempty"`
 }
 
 // hostPollObservation: what a poll observes of its host (the host-observation record): its platform, capabilities,

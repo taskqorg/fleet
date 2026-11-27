@@ -435,7 +435,8 @@ type projectEnvironment struct {
 
 // runSettings: the project settings dispatch reads.
 type runSettings struct {
-	Execution *struct {
+	AgentSiteAccess *contract.AgentSiteAccess `json:"agentSiteAccess"`
+	Execution       *struct {
 		Profiles []string `json:"profiles"`
 		Forge    bool     `json:"forge"`
 		Tools    []string `json:"tools"`
@@ -826,6 +827,10 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			missingTool := ""
 			if requirements != nil {
 				for _, tool := range requirements.Tools {
+					if tool == "browser" && settings.AgentSiteAccess != nil {
+						// Agent site access is advisory. The executor checks it before granting the tool.
+						continue
+					}
 					if !contract.HasCapability(k.caps[id], contract.ToolCapability(tool)) {
 						missingTool = tool
 						break

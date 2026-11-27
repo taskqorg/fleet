@@ -100,14 +100,25 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool
 	if gen == nil {
 		return nil, false, nil, errors.New("MCP generation is stale or unknown")
 	}
-	if action == "browser-authority" {
+	if action == "browser-authority" || action == "browser-generation" {
 		id, err := identity(gen.guardian)
 		target := gen.targets["fleet-browser-chromium"]
 		if o.browser == nil || err != nil || id != gen.guardianID || !descendant(pid, gen.guardian) ||
 			target.path != o.browser.Config["executable"] {
 			return nil, false, nil, errors.New("production browser authority is ungranted")
 		}
-		return M{"authority": o.browser}, false, nil, nil
+		if action == "browser-generation" {
+			if o.browser.Fence == nil || !o.browser.Fence.current() {
+				return nil, false, nil, errors.New("production browser authority changed")
+			}
+			return M{}, false, nil, nil
+		}
+		if o.browser.Fence != nil && !o.browser.Fence.current() {
+			return nil, false, nil, errors.New("production browser authority changed")
+		}
+		authority := *o.browser
+		authority.Fence = nil
+		return M{"authority": authority, "fenced": o.browser.Fence != nil}, false, nil, nil
 	}
 	dependency := request.Dependency
 	if action == "lookup" || dependency != "" {

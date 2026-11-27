@@ -44,6 +44,7 @@ func projectBundle(id string, bundle any) (rawObject, error) {
 	if !idPattern.MatchString(id) || st.ID != id || strings.TrimSpace(name) == "" {
 		return nil, fail(400, "Invalid project identity")
 	}
+	// Validate the authored shape before a typed readback can drop unknown nested fields.
 	if _, _, err := projectSettings(s); err != nil {
 		return nil, err
 	}

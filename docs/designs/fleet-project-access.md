@@ -4,6 +4,29 @@ One standard for giving Fleet agents access to a project's own resources: its pr
 
 API connections ([connections](fleet-connections.md)) reach HTTP providers with keys; this design reaches servers over SSH. Root on a project server never reaches an agent session.
 
+## Agent Site Access
+
+The optional `agentSiteAccess` project setting carries only intent. In `web` mode each target declares a stable ID,
+canonical HTTPS origin, `verify_read_only` or `operator` scope, project roles, authentication kind, and a same-origin
+readiness probe. Authenticated probes assert the application identity. Only GET, HEAD, and owner-approved read-only
+POST probes are permitted. An eligible default resolves multiple targets. Without a selection, ambiguity stays visible.
+Explicit `not_a_web_app` is quiet. Without the setting, applicability is unknown and produces no site-access attention.
+
+A project revision cannot authorize credentials. The owner grants the exact target, scope and role/profile bindings in
+the coordinator's protected credential store. A read-only target requires a site-enforced read-only principal or policy.
+Host observations are scoped to the project, target and authority generation. Rotation, expiry, loss of an eligible host
+or a changed binding invalidates its older observations. A run must be eligible on its own host. Browser permissions
+are checked again when used.
+
+`project_context`, `project_detail`, `project_view` and `project_readiness` share a setup projection.
+`project_readiness {mode: "status"}` reads stored evidence and starts no jobs. Its default mode still queues the
+environment checks. `projects_view` exposes a summary. Credential values, credential paths and raw probe responses
+stay private. Setup reports repository and publishing grants from current host evidence and the PM's observed
+profile and account binding when configured. Declared site gaps use one passive Problem per target until the
+target recovers or ceases to apply. Project setup readiness does not substitute for live task verification.
+
+See [configuration and cutover](../configuration.md#agent-site-access-configuration) for the owner-managed store.
+
 ## Terms
 
 - **Access server:** a project server Fleet may provision, `{id, address, via?}`; `via` names the jump server it is reached through.

@@ -39,6 +39,8 @@ func projectView(q *Request, r *contract.ProjectViewRequest) (contract.ProjectVi
 	if err != nil {
 		return out, err
 	}
+	setup, access := readProjectSetup(q, id, recOf(pc["settings"]))
+	out.Setup, out.SiteAccess = &setup, &access
 	for k, dst := range map[string]**string{"description": &out.Description, "domain": &out.Domain} {
 		if s, _ := jsonString(pc[k]); strings.TrimSpace(s) != "" {
 			*dst = ptr(strings.TrimSpace(s))

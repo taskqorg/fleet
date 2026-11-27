@@ -261,6 +261,63 @@ func TestProjectBrowserProductionAdapter(t *testing.T) {
 	}
 }
 
+// Managed probes run in a separate world on the exact granted origin. Provider
+// status and identity failures retain a fixed reason without response content.
+func TestProjectBrowserManagedSiteProbe(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("TMPDIR", d)
+	node, err := exec.LookPath("node")
+	noErr(t, err)
+	module := filepath.Join(d, "fixture.cjs")
+	noErr(t, os.WriteFile(module, []byte(browserProductionFixture), 0o700))
+	cfg := M{"module": module, "executable": module, "previewOrigins": []string{"http://127.0.0.1:4173"},
+		"production": M{"origin": damBrowserOrigin, "managed": true}, "timeoutMs": 5000}
+	access := contract.BrowserAccessReply{Managed: new(true), Production: &contract.BrowserProductionAccess{
+		Origin: damBrowserOrigin, Headers: []contract.BrowserSecretHeader{
+			{Name: "X-DAM-Verification-Token", Value: damBrowserToken}, {Name: "X-DAM-Aux", Value: "invented-dam-secondary"},
+		},
+		ReadinessProbe: contract.BrowserProductionProbe{Method: "GET", Path: "/api/ready", Status: new(int64(200)),
+			IdentityField: new("identity"), ExpectedIdentity: new("dam-agents")},
+	}}
+	authority := &browserAuthority{Config: cfg, Node: node, Access: access}
+	for _, tc := range []struct{ flag, want string }{
+		{"", "verified"}, {"badIdentity", "identity_mismatch"}, {"badStatus", "unexpected_status"}, {"authRejected", "auth_rejected"},
+	} {
+		if tc.flag != "" {
+			cfg[tc.flag] = true
+		}
+		got := managedSiteProbeReason(browserProbe(cfg, d, authority))
+		delete(cfg, tc.flag)
+		if got != tc.want {
+			t.Fatalf("probe result %q, want %q", got, tc.want)
+		}
+	}
+	t.Run("preview survives revoked production authority", func(t *testing.T) {
+		const preview = "http://127.0.0.1:4173"
+		cfg["checkGeneration"] = true
+		cfg["generationCheckMs"] = 60000
+		cfg["revokeAfterProductionNavigation"] = true
+		pipe, err := browserPipe(access)
+		noErr(t, err)
+		defer pipe.Close()
+		cmd := browserCommand(cfg, d, false)
+		cmd.ExtraFiles = []*os.File{pipe}
+		requests := []string{}
+		for i, url := range []string{damBrowserOrigin, preview, damBrowserOrigin} {
+			requests = append(requests, enc(M{"id": i + 1, "method": "tools/call",
+				"params": M{"name": "navigate", "arguments": M{"url": url}}}))
+		}
+		cmd.Stdin = strings.NewReader(strings.Join(requests, "\n"))
+		out, err := cmd.CombinedOutput()
+		noErr(t, err)
+		replies := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(replies) != 3 || decM(replies[0])["result"] == nil ||
+			decM(replies[1])["result"] == nil || decM(replies[2])["error"] == nil {
+			t.Fatal("expected production success, independent preview success, and revoked production refusal")
+		}
+	})
+}
+
 const browserProductionFixture = `
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -278,6 +335,20 @@ const expected = legacy
   ? {'cf-access-client-id':'invented-fleet-id','cf-access-client-secret':'invented-fleet-secret'}
   : {'x-dam-verification-token':token, 'x-dam-aux':auxToken};
 let socket;
+let pageURL = origin + '/';
+let generationChecks = 0;
+if (cfg.revokeAfterProductionNavigation) {
+  require('node:net').createConnection = () => {
+    const connection = new EventEmitter();
+    connection.setTimeout = () => {};
+    connection.write = () => {
+      connection.emit('data', JSON.stringify({registered: ++generationChecks <= 3}));
+      connection.emit('close');
+    };
+    queueMicrotask(() => connection.emit('connect'));
+    return connection;
+  };
+}
 let requestID = 0;
 const intercepted = new Map();
 class Socket extends EventEmitter {
@@ -294,7 +365,23 @@ class Socket extends EventEmitter {
   deliver(message) { this.emit('message', {data:JSON.stringify(message)}); }
   send(raw) {
     const {id, sessionId, method, params} = JSON.parse(raw);
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
+      if (method === 'Page.getFrameTree') {
+        this.deliver({id,result:{frameTree:{frame:{id:'fixture-frame'}}}});
+        return;
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        assert.equal(params.frameId,'fixture-frame');
+        this.deliver({id,result:{executionContextId:42}});
+        return;
+      }
+      if (method === 'Runtime.evaluate') {
+        assert.equal(params.contextId,42);
+        setProbeGlobals();
+        const value = await eval(params.expression);
+        this.deliver({id,result:{result:{value}}});
+        return;
+      }
       this.deliver({id, result:{}});
       if (method === 'Target.setAutoAttach' && !sessionId) this.deliver({
         method:'Target.attachedToTarget', params:{sessionId:'fixture',targetInfo:{type:'page',targetId:'page'}}
@@ -337,11 +424,22 @@ require('node:child_process').spawn = (_exe,args) => {
   return child;
 };
 const page = {
-  url: () => origin + '/',
+  url: () => pageURL,
   setContent: async () => {},
   title: async () => process.argv[2] === 'check' ? 'Fleet readiness' : token,
   locator: () => ({innerText:async()=>token+' '+auxToken+' '+cookie}),
   goto: async url => {
+    if (cfg.revokeAfterProductionNavigation) {
+      pageURL = url;
+      if (url === origin) await authenticated(url);
+      else {
+        assert.equal(url, cfg.previewOrigins[0]);
+        const preview = await request(url);
+        assert.equal(preview.method, 'Fetch.continueRequest');
+        assert.deepEqual(preview.values, {});
+      }
+      return;
+    }
     if (url === origin+'/protocol-loss') {
       socket.disconnect();
       return;
@@ -380,6 +478,12 @@ const page = {
     ]);
   },
   evaluate: async (fn,args) => {
+    assert.equal(Boolean(cfg.production.managed),false);
+    setProbeGlobals();
+    return fn(args);
+  }
+};
+function setProbeGlobals() {
     global.location = {origin};
     global.fetch = async (url,options) => {
       assert.equal(url.href, origin+(legacy?'/api/ops/me':'/api/ready'));
@@ -388,13 +492,11 @@ const page = {
       assert.equal(options.redirect, legacy?undefined:'error');
       if (legacy) assert.deepEqual(options.body, '{}');
       await authenticated(url.href);
-      const status = cfg.badStatus ? 201 : 200;
+      const status = cfg.authRejected ? 403 : cfg.badStatus ? 201 : 200;
       return {url:url.href, status, ok:true,
         json:async()=>legacy?{email:'site-agents'}:{identity:cfg.badIdentity?'wrong':'dam-agents'}};
     };
-    return fn(args);
-  }
-};
+}
 const context = {pages:()=>[page],cookies:async()=>[{value:cookie}],routeWebSocket:async()=>{},close:async()=>{}};
 module.exports = {chromium:{connectOverCDP:async()=>({contexts:()=>[context]})}};
 `

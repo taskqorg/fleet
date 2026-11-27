@@ -18,7 +18,7 @@ import (
 // projectWriteArgs: a decoded project_create or project_update; request is recorded under its JSON for idempotent replay.
 type projectWriteArgs struct {
 	id, requestID string
-	content       contract.ProjectBundle
+	content       json.RawMessage
 	baseRevision  int64
 	repoSha       *string
 	request       any
@@ -361,10 +361,10 @@ func projectRetired(q *Request, id string) (bool, error) {
 func init() {
 	op("project_archive", projectArchive)
 	op("project_create", func(q *Request, r *contract.ProjectCreateRequest) (contract.ProjectCreateReply, error) {
-		return projectReply(projectWrite(q, true, projectWriteArgs{id: r.Id, requestID: r.RequestId, content: r.Content, request: r}))
+		return projectReply(projectWrite(q, true, projectWriteArgs{id: r.Id, requestID: r.RequestId, content: recOf(q.body)["content"], request: r}))
 	})
 	op("project_update", func(q *Request, r *contract.ProjectUpdateRequest) (contract.ProjectUpdateReply, error) {
-		return projectReply(projectWrite(q, false, projectWriteArgs{id: r.ProjectId, requestID: r.RequestId, content: r.Content,
+		return projectReply(projectWrite(q, false, projectWriteArgs{id: r.ProjectId, requestID: r.RequestId, content: recOf(q.body)["content"],
 			baseRevision: r.BaseRevision, repoSha: r.RepoSha, request: r}))
 	})
 	op("project_initial_access_revoke", projectInitialRevoke)

@@ -43,6 +43,7 @@ type executor struct {
 	storeAt       time.Time
 	storeLast     []contract.StoreReport
 	browserHealth productionBrowserHealth
+	siteHealth    siteAccessHealth
 	loadMu        sync.Mutex
 	loadMemAt     time.Time
 	loadMemFree   float64
@@ -410,9 +411,10 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 	_, offset := time.Now().Zone() // seconds east of UTC: the coordinator's daily update window is in local time
 	offsetMinutes := int64(offset / 60)
 	browserReady, browserProblems := e.productionBrowserStatus()
-	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(browserReady != nil && *browserReady), BrowserProductionReady: browserReady, Stores: e.stores(),
+	active := e.activeExecutions()
+	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(browserReady != nil && *browserReady), BrowserProductionReady: browserReady, BrowserTargets: e.projectSiteStatus(active), Stores: e.stores(),
 		Problems: append(browserProblems, edgeProblems(pollRoute)...), ProjectRoots: roots, ForgeLogins: forgeLoginReport(), Version: &v, HarnessVersions: managedVersions(), ToolVersions: toolVersions(), Update: lastUpdate(e.root),
-		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions(), Load: e.sampleHostLoad()}
+		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: active, Load: e.sampleHostLoad()}
 	if diagnoseNext.Swap(false) {
 		body.Diagnosis = diagnosis(e.db)
 	}

@@ -14,7 +14,7 @@ import { accessGeneration, isAccessCurrent } from '../access.ts';
 import { useProjectResources, PreparedProjectResources } from './resources.tsx';
 import type { ProjectBundle, ProjectInitialAccess } from '../../../contracts/generated/ops.ts';
 
-type Bundle = ProjectBundle;
+type Bundle = ProjectBundle & { settings: Record<string, unknown> };
 export type ProjectDetailData = Ops['project_detail']['reply'] | Ops['project_context']['reply'];
 type Detail = ProjectDetailData;
 type Readiness = Ops['project_readiness']['reply'];

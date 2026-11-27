@@ -83,6 +83,21 @@ func projectsView(q *Request, r *contract.ProjectsViewRequest) (contract.Project
 	}
 	out.Catalogue = projectCounts(catalogue)
 	out.Lines = projectCounts(lines)
+	// Projects with no active work still have setup state.
+	heads, err := headTexts(q, "project")
+	if err != nil {
+		return out, err
+	}
+	out.Setup = map[string]contract.ProjectSetupState{}
+	now := nowMs()
+	hosts, _ := projectSetupHosts(q, now)
+	for _, head := range heads {
+		if !mayAccessProjectID(q.person, head.id) {
+			continue
+		}
+		setup, _ := projectSetupFor(q, head.id, projectHeadSettings(head.id, head.text), hosts, now)
+		out.Setup[head.id] = setup.State
+	}
 
 	// Pull requests in flight in the focus: publishing_status's items, without the projects' capabilities.
 	_, allowed, err := publishingProjectFilter(q, nil, r.ProjectIds, r.ExcludeProjectIds)
