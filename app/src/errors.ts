@@ -5,7 +5,7 @@
 // names what is not reported and the version (configureErrors). Without a DSN (config/bugsink.json) nothing starts.
 import {
   init, captureException, breadcrumbsIntegration, browserApiErrorsIntegration, dedupeIntegration, functionToStringIntegration,
-  globalHandlersIntegration, httpContextIntegration, linkedErrorsIntegration,
+  eventFiltersIntegration, globalHandlersIntegration, httpContextIntegration, linkedErrorsIntegration,
 } from '@sentry/browser';
 import bugsink from '../../config/bugsink.json';
 
@@ -25,8 +25,11 @@ if (bugsink.web) {
     // No personal data from the browser (SDK 11's form of sendDefaultPii off): no user fields, cookies or bodies.
     dataCollection: { userInfo: false, cookies: false, httpBodies: [] },
     // Errors only: no sessions, tracing or replay.
-    defaultIntegrations: [functionToStringIntegration(), browserApiErrorsIntegration(), breadcrumbsIntegration(), globalHandlersIntegration(),
-      linkedErrorsIntegration(), dedupeIntegration(), httpContextIntegration()],
+    defaultIntegrations: [
+      eventFiltersIntegration({ disableErrorDefaults: true }),
+      functionToStringIntegration(), browserApiErrorsIntegration(), breadcrumbsIntegration(), globalHandlersIntegration(),
+      linkedErrorsIntegration(), dedupeIntegration(), httpContextIntegration(),
+    ],
     // Query strings can carry tokens or search text: only the origin and path of a URL leave the browser.
     beforeBreadcrumb(crumb) {
       if (crumb.data) for (const k of ['url', 'from', 'to']) if (typeof crumb.data[k] === 'string') crumb.data[k] = pathOnly(crumb.data[k]);
