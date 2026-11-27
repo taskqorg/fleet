@@ -1,5 +1,7 @@
 # Laboratory (architect)
 
+**Preview sources:** [scene directory](../../../packages/ui/book/scenes/pages/laboratory/compare). Existing mockups are reference fixtures.
+
 ## Target
 
 **Status.** Target, rail section Lab ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). It keeps the built Lab's content and changes its frame; the sections after **Current build** stay true for the content.

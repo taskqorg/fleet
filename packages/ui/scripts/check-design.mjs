@@ -1,19 +1,21 @@
-// Design report (D6): prints warnings for reviewers and the owner. It fails on one thing only: a raw HTML control in an
-// app view beyond the legacy baseline below (screens are built from packages/ui).
+// Design report (D6): hard source checks plus warnings for reviewers and the owner.
 // pnpm run check:design builds the book first (it is not committed); run pnpm run book before calling this file directly.
 // Usage: pnpm run check:design [files or folders...]   (default: packages/ui)
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { designSourceProblems } from './design-sources.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { contrastProblems } from './tokens.mjs';
 import { solidEsbuildPlugin } from './solid-esbuild.mjs';
 
-const root = new URL('../../..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('../../../', import.meta.url));
 // Everything printed also goes to design-report/report.txt (CI uploads it).
-mkdirSync(join(root, 'design-report'), { recursive: true });
-const reportFile = join(root, 'design-report/report.txt');
+const reportDir = resolve(root, process.env.FLEET_DESIGN_REPORT_DIR ?? 'design-report');
+mkdirSync(reportDir, { recursive: true });
+const reportFile = join(reportDir, 'report.txt');
 writeFileSync(reportFile, '');
 const log = console.log;
 console.log = (...a) => { log(...a); appendFileSync(reportFile, a.join(' ') + '\n'); };
@@ -80,17 +82,7 @@ for (const f of files.filter(f => /\.tsx$/.test(f))) {
     warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information (OR-32: Spotlight is the only exception)`);
   }
 }
-// Raw controls in app views (build screens only from packages/ui): each file may hold at most its legacy count, which only
-// shrinks; one more fails the report.
-const RAW = /<(button|input|select|textarea|table|dialog|details|form|progress|meter)\b/g;
-const RAW_LEGACY = {};
-const failures = [];
-const viewsDir = join(root, 'app/src/views');
-for (const f of existsSync(viewsDir) ? readdirSync(viewsDir).filter(f => f.endsWith('.tsx')) : []) {
-  const counts = {};
-  for (const m of readFileSync(join(viewsDir, f), 'utf8').matchAll(RAW)) counts[m[1]] = (counts[m[1]] ?? 0) + 1;
-  for (const [el, n] of Object.entries(counts)) if (n > (RAW_LEGACY[f]?.[el] ?? 0)) failures.push(`app/src/views/${f}  raw <${el}> ×${n} (legacy ${RAW_LEGACY[f]?.[el] ?? 0}); use a packages/ui control`);
-}
+const failures = designSourceProblems(root);
 // Icons must take the theme colour (currentColor), never a fixed fill or stroke (D12).
 for (const [name, svg] of Object.entries(JSON.parse(readFileSync(join(root, 'packages/ui/icons.json'), 'utf8')))) {
   const tag = svg.match(/<svg[^>]*>/)?.[0] ?? '';
@@ -105,10 +97,15 @@ const kb = ui.outputFiles[0].contents.length / 1024;
 let tests = 'passed';
 try { execFileSync(process.execPath, ['--test', 'tests/ui/format.test.ts'], { cwd: root, stdio: 'pipe' }); } catch { tests = 'FAILED (run node --test tests/ui/format.test.ts)'; }
 
+const managedBrowser = process.env.FLEET_DESIGN_MANAGED_BROWSER === '1';
+const localBrowser = (script, options = {}) => {
+  if (managedBrowser) return 'not run here (use managed project-browser for render evidence)';
+  return execFileSync(process.execPath, [script], { cwd: root, stdio: 'pipe', ...options }).toString().trimEnd();
+};
 let scroll;
-try { scroll = execFileSync('node', ['tests/ui/scroll.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
+try { scroll = localBrowser('tests/ui/scroll.check.mjs'); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
 let ux;
-try { ux = execFileSync('node', ['tests/ui/ux.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { ux = `- UX checks not run (${String(e.message).split('\n')[0]})`; }
+try { ux = localBrowser('tests/ui/ux.check.mjs'); } catch (e) { ux = `- UX checks not run (${String(e.message).split('\n')[0]})`; }
 // A failed child's cause is its last stderr line (an exception message), not "Command failed: …"; the PR comment quotes it.
 const cause = e => {
   if (e.signal === 'SIGTERM') return 'timed out after 300 s';
@@ -119,11 +116,11 @@ const cause = e => {
   return (message ?? String(e.message).split('\n')[0]).slice(0, 300);
 };
 let appCheck;
-try { appCheck = existsSync(join(root, 'dist/app/index.html')) ? execFileSync(process.execPath, ['tests/ui/app.check.ts'], { cwd: root, stdio: 'pipe', timeout: 300000 }).toString().trimEnd() : '    not run (run npm run build first)'; } catch (e) { appCheck = `${e.stdout?.toString().trimEnd() ? e.stdout.toString().trimEnd() + '\n' : ''}    not run (${cause(e)})`; }
+try { appCheck = existsSync(join(root, 'dist/app/index.html')) ? localBrowser('tests/ui/app.check.ts', { timeout: 300000 }) : '    not run (run npm run build first)'; } catch (e) { appCheck = `${e.stdout?.toString().trimEnd() ? e.stdout.toString().trimEnd() + '\n' : ''}    not run (${cause(e)})`; }
 let breaks;
-try { breaks = execFileSync('node', ['tests/ui/layout-break.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { breaks = (e.stdout?.toString().trim() || `not run (${String(e.message).split('\n')[0]})`); }
+try { breaks = localBrowser('tests/ui/layout-break.check.mjs'); } catch (e) { breaks = (e.stdout?.toString().trim() || `not run (${String(e.message).split('\n')[0]})`); }
 let trace;
-try { trace = execFileSync('node', ['tests/ui/trace.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim().replace(/\n/g, '\n    '); } catch (e) { trace = `not run (${String(e.message).split('\n')[0]})`; }
+try { trace = localBrowser('tests/ui/trace.check.mjs').replace(/\n/g, '\n    '); } catch (e) { trace = `not run (${String(e.message).split('\n')[0]})`; }
 // Legacy web platform patterns (modern-web-guidance legacy-scan, pinned in package.json; AGENTS.md, Web UI work). The scan
 // covers the guides with deterministic rules only; each finding still needs its keepWhen/dropWhen check before a change.
 let legacy;
@@ -143,5 +140,5 @@ console.log(`- layout checks against injected breaches (OR-24 to OR-27, OR-41 to
 console.log(`- operator app (dist/app, coordinator on PGlite):\n${appCheck}`);
 console.log(`- legacy web patterns (modern-web-guidance legacy-scan): ${legacy}`);
 console.log(warn.length ? `- ${warn.length} source warnings:\n  ${warn.join('\n  ')}` : '- source checks: no warnings');
-if (failures.length) { console.log(`- FAILED: ${failures.length} raw controls in app views:\n  ${failures.join('\n  ')}`); process.exitCode = 1; }
-console.log('Rules: docs/design-system/owner-rules.md. The report fails only on raw controls in app views.');
+if (failures.length) { console.log(`- FAILED: ${failures.length} hard source findings:\n  ${failures.join('\n  ')}`); process.exitCode = 1; }
+console.log('Rules: docs/design-system/owner-rules.md. Deterministic source checks are required. Other findings are advisory.');

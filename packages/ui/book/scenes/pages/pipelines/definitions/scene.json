@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/pipelines.md",
+  "route": "/pipelines",
+  "states": {
+    "default": "/pipelines",
+    "failed-run": "/pipelines/render-props"
+  },
+  "landmark": "[data-ui=app-shell]",
+  "details": true
+}

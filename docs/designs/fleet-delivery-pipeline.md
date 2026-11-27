@@ -151,6 +151,10 @@ For idle executors, worst case from enable-auto-merge to the last executor, PDS1
 * The Access-path check `deploy/infrastructure/agent-access-smoke.sh` stays a manual check for agents. It is no longer a deploy step and nobody waits on a host version to run it.
 * The deploy rule stands in this form: hosts install only releases published by `release.yml`; nobody installs a branch build or CI artifact on a host.
 
+### Design approval
+
+**Target.** Keep the existing required checks. Enroll `design-approval` in the main ruleset after qualifying its dedicated trusted issuer and the [Fleet owner decision path](../design-system/README.md#design-first). The verifier runs from a protected revision, with decision lookup and status writing outside any credential-free candidate build. It publishes explicit success for proven nonvisual PRs and groups. For visible changes it verifies the owner's active selection, retained capture evidence, recipe and covered impact on the exact PR head and combined queue tree. Recompute visual scope from both trees, including shared dependencies and semantic effects. Missing authority, evidence or coverage blocks. Release consumes the qualifying receipt for its exact source. Approval binds the visual inputs. Code review remains exact-head on every push.
+
 ### 8. Workers merge and watch their own pull requests
 
 Amendment of 2026-11-11, decided by the owner. Data from pull requests #171 to #270: the orchestrator enqueued all 77 queue entries by hand; 93 of 290 commits were merges of `main` or of a sibling branch (#207 merged `main` 8 times); the queue removed pull requests 15 times for a conflict and once for a failed check; CI failed 8 of 146 pull request runs. The time went into hand-offs and conflicts, not into CI. The orchestrator also relayed "X landed, merge main" and "released, run the live test" to each lane, and workers sat idle until it did.

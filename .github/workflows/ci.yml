@@ -126,6 +126,37 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: error
+  # Source inputs for the protected design verifier. This job does not hold owner, Fleet, or status credentials.
+  design-candidate:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          CANDIDATE: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          node contracts/gen-ts.mjs
+          node packages/ui/scripts/design-sources.mjs
+          node packages/ui/scripts/design-candidate.mjs "$BASE" "$CANDIDATE" "$GITHUB_EVENT_NAME" design-candidate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: design-candidate
+          path: design-candidate.json
+          retention-days: 7
+          if-no-files-found: error
   reports:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-24.04

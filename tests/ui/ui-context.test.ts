@@ -45,6 +45,7 @@ test('UC3 the home context names its canvas and the rules its spec cites', () =>
 
 test('UC6 every page context starts with the owner principles card', () => {
   const c = context('home');
+  assert.ok(c.startsWith('## Principles card'));
   assert.ok(c.indexOf('## Principles card') < c.indexOf('Read next:'));
   assert.match(c, /Useful empty pane/);
 });
@@ -58,7 +59,15 @@ test('UC8 a page context lists its canvas frames and the frame-vs-prod-data chec
   assert.deepEqual(frames(idx, ['docs/design-system/board/screens/x.bl']),
     ['- a1 X · 1440 (approved 2026-11-26) (1440 px)', '- b2 X wide (3200 px, built)']);
   const c = context('projects');
-  assert.match(c, /^Frames \(board\/index\.json\):\n- [0-9a-f]{16} /m);
+  assert.match(c, /^Frames \(board\/index\.json, historical references\):\n- [0-9a-f]{16} /m);
   assert.match(c, /code \(the UI lacks it\), data \(.+\) or missing field/);
-  assert.ok(c.indexOf('Frames (') < c.indexOf('Before you build') && c.indexOf('Before you build') < c.indexOf('Rules cited'));
+  assert.ok(c.indexOf('Frames (') < c.indexOf('Design-first procedure') && c.indexOf('Design-first procedure') < c.indexOf('Rules cited'));
+});
+
+test('UC9 context identifies scene source and shows no approval for unmigrated pages', () => {
+  const tasks = context('tasks');
+  assert.match(tasks, /pages\/tasks\/list: default, failed, waiting/);
+  assert.match(tasks, /1440×900 and 390×844/);
+  assert.match(tasks, /Fleet owner’s selection of one sealed option before production coding, including for restorations/);
+  assert.match(context('home'), /This page has no registered scene/);
 });

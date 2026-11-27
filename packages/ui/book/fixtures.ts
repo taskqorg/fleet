@@ -2,7 +2,8 @@
 import { states, type StateOf, type Harness, type Stage } from '../src/registry.ts';
 import type { TreeNode, ThreadBlock } from '../src/controls.tsx';
 
-export const NOW = Date.now();
+import { NOW } from './clock.ts';
+export { NOW } from './clock.ts';
 export const min = 60e3, hr = 60 * min;
 
 export type Task = {

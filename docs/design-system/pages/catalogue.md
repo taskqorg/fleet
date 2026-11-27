@@ -1,5 +1,7 @@
 # Catalogue (architect)
 
+**Preview sources:** [scene directory](../../../packages/ui/book/scenes/pages/catalogue/definitions). Existing mockups are reference fixtures.
+
 **Target home.** [Library](library.md) › Methods: `/library/methods/<id>`; `/catalogue` redirects there.
 
 **App routes:** `/catalogue` and `/catalogue/<id>` (`app/src/views/definitions.tsx`). **Mockup routes:** `#/catalogue` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). The app uses `Definitions` / `DefinitionDetail` with a Methods tab ([D20](../decisions.md)).

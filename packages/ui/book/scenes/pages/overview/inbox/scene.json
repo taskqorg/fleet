@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/overview.md",
+  "route": "/overview",
+  "states": {
+    "default": "/overview",
+    "question": "/overview/q1",
+    "problem": "/overview/p1"
+  },
+  "landmark": "[data-ui=app-shell]",
+  "details": true
+}
