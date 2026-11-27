@@ -17,6 +17,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 // The title model: the cheapest text model of a connection granted to every project. Its calls are Fleet's own
@@ -63,7 +64,12 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 	if gatewayURL() == "" {
 		return "", "", errNoGateway
 	}
-	token, release, err := readTokenFor(ctx, a, titleConnection, project)
+	prepareCtx, prepare := obs.Start(ctx, "session-titles.gateway-prepare", obs.KindInternal)
+	token, release, err := readTokenFor(prepareCtx, a, titleConnection, project)
+	if errors.Is(err, errConnUnavailable) {
+		prepare.Outcome = obs.Refused
+	}
+	prepare.End(err)
 	if err != nil {
 		if !errors.Is(err, errConnUnavailable) {
 			err = fmt.Errorf("%w: %w", errTitleShared, err)
@@ -85,26 +91,33 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 		MaxOutputTokens int      `json:"maxOutputTokens"`
 		ThinkingConfig  thinking `json:"thinkingConfig"`
 	}
-	line := gatewayCall(ctx, token, titleConnection, titleTool, struct {
+	callCtx, call := obs.Start(ctx, "session-titles.gateway-call", obs.KindClient)
+	line := gatewayCall(callCtx, token, titleConnection, titleTool, struct {
 		Model             string     `json:"model"`
 		SystemInstruction content    `json:"systemInstruction"`
 		Contents          []content  `json:"contents"`
 		GenerationConfig  generation `json:"generationConfig"`
 	}{titleModel, content{Parts: []part{{titleSystem}}}, []content{{Role: "user", Parts: []part{{prompt}}}}, generation{256, thinking{"minimal"}}}, false)
+	call.Set("fleet.call.outcome", string(line.Outcome))
 	if line.Outcome != contract.CallOutcomeOk {
+		call.Outcome = obs.Error
 		code := deref(line.ErrorCode)
 		err := fmt.Errorf("%s/%s: %s %s", titleConnection, titleTool, line.Outcome, code)
 		if line.Outcome == contract.CallOutcomeUnknown {
+			call.End(nil)
 			return "", line.CallId, fmt.Errorf("%w: %w", errTitleUnknown, err)
 		}
 		switch code {
 		case "connection-unavailable", "not-granted", "intake-paused", "budget-reached": // the gateway's refusals for the project
+			call.Outcome = obs.Refused
 			err = fmt.Errorf("%w: %w", errConnUnavailable, err)
 		default: // a 400 too: it usually answers Fleet's own request (model, generationConfig), the same for every session
 			err = fmt.Errorf("%w: %w", errTitleShared, err)
 		}
+		call.End(nil)
 		return "", line.CallId, err
 	}
+	call.End(nil)
 	var r struct {
 		Candidates []struct {
 			FinishReason string `json:"finishReason"`
@@ -240,10 +253,13 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 	}
 	var rs []db.TitleCandidatesRow
 	now := time.Now()
-	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
+	readCtx, candidates := obs.Start(ctx, "session-titles.candidate-read", obs.KindInternal)
+	err := a.store.Read(readCtx, nil, func(q *Request) (err error) {
 		rs, err = q.db().TitleCandidates(q.ctx(), db.TitleCandidatesParams{WaitBefore: tstz(now.Add(-titleWaitReply)), TriedBefore: tstz(now.Add(-titleRetry)), Tries: titleTries, Batch: titleBatch})
 		return err
-	}); err != nil {
+	})
+	candidates.End(err)
+	if err != nil {
 		return err
 	}
 	var failed error
@@ -260,20 +276,25 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		var err error
 		if ungranted[project] {
 			err = errConnUnavailable
-		} else if err = a.store.Read(ctx, nil, func(q *Request) (err error) {
-			// Some native events carry no project column; the candidate ties them to a run in this project.
-			if err := q.db().TitleReadScope(q.ctx(), project+","); err != nil {
+		} else {
+			replyCtx, readReply := obs.Start(ctx, "session-titles.reply-read", obs.KindInternal)
+			err = a.store.Read(replyCtx, nil, func(q *Request) (err error) {
+				// Some native events carry no project column; the candidate ties them to a run in this project.
+				if err := q.db().TitleReadScope(q.ctx(), project+","); err != nil {
+					return err
+				}
+				reply, err = replyTextUpTo(q, r.ReplyExecution, 1500)
 				return err
-			}
-			reply, err = replyTextUpTo(q, r.ReplyExecution, 1500)
-			return err
-		}); err != nil {
-			// A conflict, a lost connection or a timeout is the database's (classes 40, 08, 57, as host_poll.go reads
-			// them); any other read failure is this session's own: it uses a try and the batch goes on.
-			if c := pgCode(err); c == "" || strings.HasPrefix(c, "40") || strings.HasPrefix(c, "08") || strings.HasPrefix(c, "57") { // no SQLSTATE: a lost connection
-				err = fmt.Errorf("%w: reply: %w", errTitleShared, err)
-			} else {
-				err = fmt.Errorf("reply: %w", err)
+			})
+			readReply.End(err)
+			if err != nil {
+				// A conflict, a lost connection or a timeout is shared (classes 40, 08, 57 or no SQLSTATE).
+				// Other reply read failures use a session try and the batch goes on.
+				if c := pgCode(err); c == "" || strings.HasPrefix(c, "40") || strings.HasPrefix(c, "08") || strings.HasPrefix(c, "57") {
+					err = fmt.Errorf("%w: reply: %w", errTitleShared, err)
+				} else {
+					err = fmt.Errorf("reply: %w", err)
+				}
 			}
 		}
 		raw, callID, attempt := "", "", ""
@@ -282,7 +303,9 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		}
 		if err == nil {
 			attempt = newID()
-			claimed, claimErr := claimTitleAttempt(ctx, a, id, attempt, r.ProjectID)
+			claimCtx, claim := obs.Start(ctx, "session-titles.claim", obs.KindInternal)
+			claimed, claimErr := claimTitleAttempt(claimCtx, a, id, attempt, r.ProjectID)
+			claim.End(claimErr)
 			if claimErr != nil {
 				return errors.Join(failed, claimErr)
 			}
@@ -300,7 +323,8 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		if err == nil && title == "" {
 			err = fmt.Errorf("empty title from %s", titleModel)
 		}
-		werr := a.store.Write(context.WithoutCancel(ctx), nil, nil, func(q *Request) error {
+		settleCtx, settle := obs.Start(context.WithoutCancel(ctx), "session-titles.settle", obs.KindInternal)
+		werr := a.store.Write(settleCtx, nil, nil, func(q *Request) error {
 			d := q.db()
 			if errors.Is(err, errTitleUnknown) {
 				return d.TitleUnknown(q.ctx(), db.TitleUnknownParams{Call: callID, ID: id, ProjectID: r.ProjectID, Attempt: attempt})
@@ -322,6 +346,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 			// A rename during the call keeps its title; the call stays a tool_run of system activity.
 			return d.TitleGenerated(q.ctx(), db.TitleGeneratedParams{Title: title, TitleCall: call, ID: id, ProjectID: r.ProjectID, Attempt: attempt})
 		})
+		settle.End(werr)
 		if err != nil {
 			log.Printf("session title %s: %v", id, err)
 			// Only a failure that is not the session's own fails the pass; a refused project and a session's own failure

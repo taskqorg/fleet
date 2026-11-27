@@ -250,6 +250,18 @@ func (v *TelemetryFindingsRequest) Validate() error {
 	return nil
 }
 
+// TelemetryPassLookup: Full pass span name, such as pass.session-titles. Match starts at or after from and before until (RFC 3339, microsecond precision).
+type TelemetryPassLookup struct {
+	From  string `json:"from"`
+	Name  string `json:"name"`
+	Until string `json:"until"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryPassLookup) Validate() error {
+	return nil
+}
+
 // TelemetrySummaryReply: enabled false: no span store configured (FLEET_CLICKHOUSE_URL) or telemetry switched off; error: the store did not answer. hosts and processes need full access; runs are the latest 50 execution ends in the caller's projects.
 type TelemetrySummaryReply struct {
 	BytesPerDay  *int64           `json:"bytesPerDay,omitempty"`
@@ -341,14 +353,20 @@ func (v *TelemetryTraceReply) Validate() error {
 	return nil
 }
 
-// TelemetryTraceRequest: Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.
+// TelemetryTraceRequest: Exactly one selector. Pass lookup returns the slowest visible completed pass, or empty spans and no traceId if none is visible.
 type TelemetryTraceRequest struct {
-	ExecutionId *string `json:"executionId,omitempty"`
-	TraceId     *string `json:"traceId,omitempty"`
+	ExecutionId *string              `json:"executionId,omitempty"`
+	Pass        *TelemetryPassLookup `json:"pass,omitempty"`
+	TraceId     *string              `json:"traceId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TelemetryTraceRequest) Validate() error {
+	if v.Pass != nil {
+		if err := Check(v.Pass, "pass"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -379,7 +397,7 @@ func init() {
 		"telemetry_disk":     {Read: false, Long: true, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Daily maximum of each host.disk reading (docs/designs/fleet-host-cleanup.md#12-disk-readings); days defaults to 30.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"days\":{\"minimum\":1,\"type\":\"integer\"},\"host\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Telemetry findings, optionally of one project", InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "window defaults to 1h.", InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.", InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409, 503}, Auth: "person", Agent: "tool", Description: "Specify traceId, executionId or pass. Pass lookup finds the slowest visible completed coordinator pass by full span name and RFC 3339 start window. Execution lookup uses project RLS; older executions without trace context return 409.", InputSchema: json.RawMessage("{\"$comment\":\"Exactly one selector. Pass lookup returns the slowest visible completed pass, or empty spans and no traceId if none is visible.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"pass\":{\"$comment\":\"Full pass span name, such as pass.session-titles. Match starts at or after from and before until (RFC 3339, microsecond precision).\",\"properties\":{\"from\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"until\":{\"type\":\"string\"}},\"required\":[\"name\",\"from\",\"until\"],\"type\":\"object\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}
