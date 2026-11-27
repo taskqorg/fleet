@@ -237,6 +237,36 @@ func executionSpan(execution string, l *live) {
 		run = *c.Run()
 	}
 	ctx := obs.WithRun(obs.WithRemote(context.Background(), tp), obs.Run{ExecutionID: execution, ProjectID: str0(run.ProjectId), TaskID: str0(run.TaskId), ExperimentID: str0(run.ExperimentId), AccountID: str0(run.AccountId), Actor: str0(run.Actor)})
+	if l.workerExit != nil {
+		_, s := obs.StartAt(ctx, "execution", obs.KindInternal, l.workerExit.StartedAt)
+		if _, _, ok := obs.ParseTraceparent(tp); !ok {
+			s.Set("missing.parent", "command trace context unavailable")
+		}
+		if c.Script != nil {
+			s.Set("fleet.harness", "script")
+		} else {
+			s.Set("fleet.harness", commandHarness(l.command))
+		}
+		if l.workerExit.HasCPU {
+			cpu := l.workerExit.CPUSeconds
+			peak := l.workerExit.PeakRSS
+			s.CPUSeconds = &cpu
+			s.PeakRSSBytes = &peak
+		} else {
+			s.Set("missing.cpu_seconds", "no sample")
+		}
+		switch {
+		case l.workerExit.TimedOut:
+			s.Fail("timeout")
+		case l.workerExit.Stopped:
+			s.Outcome = obs.Cancelled
+		case !l.workerExit.Succeeded || l.workerExit.CleanupUnknown:
+			s.Fail("internal")
+		}
+		s.Set("fleet.orphans", strconv.Itoa(l.workerExit.Orphans))
+		s.End(nil)
+		return
+	}
 	_, s := obs.StartAt(ctx, "execution", obs.KindInternal, l.started)
 	if _, _, ok := obs.ParseTraceparent(tp); !ok {
 		s.Set("missing.parent", "command trace context unavailable")

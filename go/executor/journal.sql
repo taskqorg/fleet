@@ -21,3 +21,7 @@ CREATE TABLE owned(execution TEXT NOT NULL,pid INTEGER NOT NULL,identity TEXT NO
 ALTER TABLE launches ADD COLUMN mcp_fenced INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE launches ADD COLUMN mcp_dir TEXT;
 CREATE TABLE mcp_groups(execution TEXT NOT NULL,pid INTEGER NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(execution,pid));
+
+-- version 4
+-- Detached run workers stream progress via events.jsonl; worker_seq commits the last applied worker event monotonically.
+ALTER TABLE launches ADD COLUMN worker_seq INTEGER NOT NULL DEFAULT 0;

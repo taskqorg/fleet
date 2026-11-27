@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -503,4 +504,69 @@ func writableOnCleanup(t *testing.T, dir string) {
 			return nil
 		})
 	})
+}
+
+func TestActiveReleaseLockPinsReleaseAndHarnesses(t *testing.T) {
+	f := newFixture(t)
+	dataDir := t.TempDir()
+	f.p.dataDir = dataDir
+
+	f.release("1.261111.0", 0)
+	if r := f.run("1.261111.0"); r == nil || string(r.State) != "ok" {
+		t.Fatalf("first install: %+v", r)
+	}
+	locksDir := filepath.Join(dataDir, "active-releases")
+	if err := os.MkdirAll(locksDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(locksDir, "1.261111.0.lock")
+	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+
+	f.release("1.261111.1", 0)
+	f.release("1.261111.2", 0)
+	if r := f.run("1.261111.1"); r == nil || string(r.State) != "ok" {
+		t.Fatalf("second install: %+v", r)
+	}
+	if r := f.run("1.261111.2"); r == nil || string(r.State) != "ok" {
+		t.Fatalf("third install: %+v", r)
+	}
+	// 1.261111.0 is no longer current/previous, but must remain on disk while LOCK_SH is held.
+	if _, err := os.Stat(filepath.Join(f.root, "1.261111.0")); err != nil {
+		t.Fatalf("pinned release pruned while lock held: %v", err)
+	}
+	if got := activeReleaseLocks(dataDir); !got["1.261111.0"] {
+		t.Fatalf("activeReleaseLocks = %v, want 1.261111.0", got)
+	}
+
+	// Releasing LOCK_SH lets the next cycle prune 1.261111.0 and clean up its lock file.
+	lf.Close()
+	f.release("1.261111.3", 0)
+	if r := f.run("1.261111.3"); r == nil || string(r.State) != "ok" {
+		t.Fatalf("fourth install: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "1.261111.0")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unpinned release still exists: %v", err)
+	}
+	if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale release lock still exists: %v", err)
+	}
+}
+
+func TestSettleSelfExecSkipsRestart(t *testing.T) {
+	f := newFixture(t)
+	f.p.selfExec = true
+	f.release("1.261111.0", 0)
+	if r := f.run("1.261111.0"); r == nil || string(r.State) != "ok" {
+		t.Fatalf("install: %+v", r)
+	}
+	if f.restarts != 0 {
+		t.Fatalf("restarts = %d, want 0 when selfExec probe turns up", f.restarts)
+	}
 }

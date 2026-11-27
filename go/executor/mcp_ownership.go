@@ -30,6 +30,7 @@ import (
 
 type mcpOwner struct {
 	db                     *sql.DB
+	local                  *workerMCPStore
 	execution, dir, socket string
 	listener               *net.UnixListener
 	ready                  chan struct{}
@@ -99,11 +100,19 @@ type ownerAnswer struct {
 }
 
 func newMCPOwner(db *sql.DB, execution string) (*mcpOwner, error) {
+	return openMCPOwner(db, nil, execution)
+}
+
+func newLocalMCPOwner(local *workerMCPStore, execution string) (*mcpOwner, error) {
+	return openMCPOwner(nil, local, execution)
+}
+
+func openMCPOwner(db *sql.DB, local *workerMCPStore, execution string) (*mcpOwner, error) {
 	dir, err := os.MkdirTemp("", "fleet-mcp-")
 	if err != nil {
 		return nil, err
 	}
-	o := &mcpOwner{db: db, execution: execution, dir: dir, socket: filepath.Join(dir, "owner.sock"), ready: make(chan struct{}), connections: map[*net.UnixConn]bool{}, generations: map[string]*mcpGeneration{}}
+	o := &mcpOwner{db: db, local: local, execution: execution, dir: dir, socket: filepath.Join(dir, "owner.sock"), ready: make(chan struct{}), connections: map[*net.UnixConn]bool{}, generations: map[string]*mcpGeneration{}}
 	o.listener, err = net.ListenUnix("unix", &net.UnixAddr{Name: o.socket, Net: "unix"})
 	if err != nil {
 		os.RemoveAll(dir)
@@ -221,25 +230,7 @@ func descendant(pid, root int) bool {
 	return false
 }
 func (o *mcpOwner) register(pid int, id string) error {
-	ctx := context.Background()
-	tx, err := o.db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	// Reserve the writer before reading ownership; a later upgrade can fail with SQLITE_BUSY_SNAPSHOT.
-	if _, err := tx.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	defer tx.ExecContext(ctx, "ROLLBACK")
-	var root int
-	var rootID string
-	var fenced int
-	err = tx.QueryRowContext(ctx, `SELECT l.grp,p.identity,l.mcp_fenced FROM launches l JOIN owned p ON p.execution=l.execution AND p.pid=l.grp JOIN commands c ON c.id=l.command WHERE l.execution=? AND c.terminal=0`, o.execution).Scan(&root, &rootID, &fenced)
-	if err != nil || fenced != 0 {
-		return errors.New("MCP execution launch is not open")
-	}
-	verify := func() error {
+	verifyWith := func(root int, rootID string) error {
 		actual, e := identity(pid)
 		if e != nil || id == "" || actual != id {
 			return errors.New("MCP guardian identity differs")
@@ -259,7 +250,32 @@ func (o *mcpOwner) register(pid int, id string) error {
 		}
 		return nil
 	}
-	if err = verify(); err != nil {
+	if o.local != nil {
+		root, rootID, fenced := o.local.rootState()
+		if fenced || root == 0 {
+			return errors.New("MCP execution launch is not open")
+		}
+		return o.local.register(pid, id, func() error { return verifyWith(root, rootID) })
+	}
+	ctx := context.Background()
+	tx, err := o.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	// Reserve the writer before reading ownership; a later upgrade can fail with SQLITE_BUSY_SNAPSHOT.
+	if _, err := tx.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer tx.ExecContext(ctx, "ROLLBACK")
+	var root int
+	var rootID string
+	var fenced int
+	err = tx.QueryRowContext(ctx, `SELECT l.grp,p.identity,l.mcp_fenced FROM launches l JOIN owned p ON p.execution=l.execution AND p.pid=l.grp JOIN commands c ON c.id=l.command WHERE l.execution=? AND c.terminal=0`, o.execution).Scan(&root, &rootID, &fenced)
+	if err != nil || fenced != 0 {
+		return errors.New("MCP execution launch is not open")
+	}
+	if err = verifyWith(root, rootID); err != nil {
 		return err
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO mcp_groups(execution,pid,identity) VALUES(?,?,?) ON CONFLICT(execution,pid) DO UPDATE SET identity=excluded.identity WHERE identity=excluded.identity`, o.execution, pid, id)
@@ -269,13 +285,13 @@ func (o *mcpOwner) register(pid int, id string) error {
 	if n, _ := res.RowsAffected(); n != 1 {
 		return errors.New("MCP group registration conflicts with retained identity")
 	}
-	if err = verify(); err != nil {
+	if err = verifyWith(root, rootID); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, "COMMIT"); err != nil {
 		return err
 	}
-	return verify() // lost ack never releases useful work
+	return verifyWith(root, rootID) // lost ack never releases useful work
 }
 func (o *mcpOwner) close() error {
 	o.mu.Lock()
@@ -285,7 +301,12 @@ func (o *mcpOwner) close() error {
 	}
 	o.closed = true
 	o.readyOnce.Do(func() { close(o.ready) })
-	_, err := o.db.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", o.execution)
+	var err error
+	if o.local != nil {
+		o.local.fence()
+	} else {
+		_, err = o.db.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", o.execution)
+	}
 	o.listener.Close()
 	for c := range o.connections {
 		c.Close()
@@ -446,6 +467,13 @@ func cleanupMCPGroups(db *sql.DB, execution string) error {
 		ids[pid] = id
 	}
 	rows.Close()
+	return cleanupMCPPIDs(ids, func(pid int, id string) error {
+		_, err := db.Exec("DELETE FROM mcp_groups WHERE execution=? AND pid=? AND identity=?", execution, pid, id)
+		return err
+	})
+}
+
+func cleanupMCPPIDs(ids map[int]string, after func(pid int, id string) error) error {
 	for pid, id := range ids {
 		actual, e := identity(pid)
 		if e == nil && actual == id {
@@ -466,8 +494,10 @@ func cleanupMCPGroups(db *sql.DB, execution string) error {
 		if !absent {
 			return fmt.Errorf("MCP group %d cleanup unknown; ownership retained", pid)
 		}
-		if _, err = db.Exec("DELETE FROM mcp_groups WHERE execution=? AND pid=? AND identity=?", execution, pid, id); err != nil {
-			return err
+		if after != nil {
+			if err := after(pid, id); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

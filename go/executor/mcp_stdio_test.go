@@ -36,7 +36,7 @@ func TestMain(m *testing.M) {
 	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "mcp", "mcp-guardian", "qualify-mcp", "code-shell":
+		case "mcp", "mcp-guardian", "qualify-mcp", "code-shell", "run-worker":
 			main()
 			os.Exit(0)
 		case "mcp-fixture":

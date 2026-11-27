@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"fleet/contract"
-	"fleet/errtrack"
-	"fleet/executor/supervise"
 )
 
 func (e *executor) run(c M) error {
@@ -88,7 +86,13 @@ func (e *executor) run(c M) error {
 		result := "unknown"
 		if l, ok := e.live[execution]; ok {
 			l.stopped = true
-			if l.cleanup() == nil {
+			if l.worker != nil {
+				if workerStop(l.worker.sock, cid) == nil {
+					result = "accepted"
+				} else {
+					l.cleanupUnknown = true
+				}
+			} else if l.cleanup() == nil {
 				result = "accepted"
 			} else {
 				l.cleanupUnknown = true
@@ -111,16 +115,22 @@ func (e *executor) run(c M) error {
 			sp = *cmd.Steer.Payload
 		}
 		sent := false
-		if l, ok := e.live[execution]; ok && l.wire != nil {
-			w := l.wire
-			w.mu.Lock()
-			if perr == nil && w.session != nil && w.stdin != nil && sp.Text != "" {
-				if frame := w.session.Steer(sp.Text, cid); frame != nil {
-					_, err := writeFrame(w.stdin, w.log, frame)
-					sent = err == nil
+		if l, ok := e.live[execution]; ok {
+			if l.worker != nil {
+				if perr == nil && sp.Text != "" {
+					sent = workerSteer(l.worker.sock, cid, sp.Text)
 				}
+			} else if l.wire != nil {
+				w := l.wire
+				w.mu.Lock()
+				if perr == nil && w.session != nil && w.stdin != nil && sp.Text != "" {
+					if frame := w.session.Steer(sp.Text, cid); frame != nil {
+						_, err := writeFrame(w.stdin, w.log, frame)
+						sent = err == nil
+					}
+				}
+				w.mu.Unlock()
 			}
-			w.mu.Unlock()
 		}
 		if sent {
 			return nil
@@ -682,152 +692,48 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			extra = append(extra, "Skill")
 		}
 	}
-	var mcp *mcpOwner
-	if len(servers) > 0 {
-		mcp, err = newMCPOwner(e.db, execution)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if !launched {
-				mcp.close()
-				os.RemoveAll(mcp.dir)
-			}
-		}()
-		receiptRoot, err := canon(dir)
-		if err != nil {
-			return err
-		}
-		servers, err = wrapMCPServers(servers, mcp.socket, work, filepath.Join(receiptRoot, execution+".mcp"))
-		if err != nil {
-			return err
-		}
-	}
-	h.WireMCP(cmd, p, servers, extra)
 	root := dir
 	if hasW {
 		root = w
 	}
-	pp := p
-	if name == "codex" {
-		pp, err = codexLaunchProfile(cmd, dir, p, gitRoots)
-		if err != nil {
-			return fail(1, "Codex Go cache: "+err.Error())
-		}
-	}
-	cmd, sess := h.Protocol(cmd, root, native, pp, servers)
-	if cs, ok := sess.(*codexSession); ok {
-		cs.marks = filepath.Join(e.root, "codex-instructions")
-	}
-	if as, ok := sess.(*acpSession); ok {
-		as.readRoots = []string{inputDir}
-	}
-	protocol := sess != nil
-	var stdin io.WriteCloser
-	if nativeInput != nil || protocol {
-		if stdin, err = cmd.StdinPipe(); err != nil {
-			return err
-		}
-	}
-	stderr, err := os.Create(filepath.Join(dir, execution+".stderr"))
-	if err != nil {
-		return err
-	}
-	defer stderr.Close()
-	cmd.Stderr = stderr
-	// Our own pipe, so Wait never closes the read side and an exit is seen while a descendant holds stdout.
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		return err
-	}
-	cmd.Stdout = pw
-	rawLog, err := os.Create(filepath.Join(dir, execution+".native.jsonl"))
-	if err != nil {
-		pr.Close()
-		pw.Close()
-		return err
-	}
-	var outLog *os.File
-	if protocol {
-		if outLog, err = os.OpenFile(filepath.Join(dir, execution+".protocol-out.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err != nil {
-			pr.Close()
-			pw.Close()
-			rawLog.Close()
-			return err
-		}
-	}
-	closeAll := func() {
-		pr.Close()
-		rawLog.Close()
-		if outLog != nil {
-			outLog.Close()
-		}
-	}
 	if err := e.launch(execution, cid, session); err != nil {
-		pw.Close()
-		closeAll()
 		return err
 	}
-	if mcp != nil {
-		if _, err = e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", mcp.dir, execution); err != nil {
-			return err
-		}
+	spec := workerSpec{
+		Kind:         "harness",
+		Execution:    execution,
+		CommandId:    cid,
+		Session:      session,
+		DataDir:      e.root,
+		Dir:          dir,
+		Work:         work,
+		Root:         root,
+		InputDir:     inputDir,
+		Harness:      name,
+		ACP:          acp(name),
+		Native:       native,
+		NativeInput:  string(nativeInput),
+		CmdPath:      cmd.Path,
+		CmdArgs:      cmd.Args,
+		CmdEnv:       cmd.Env,
+		CmdDir:       cmd.Dir,
+		Profile:      p,
+		Servers:      servers,
+		Extra:        extra,
+		GitRoots:     gitRoots,
+		GatewayConns: gatewayConns,
+		UseMCP:       len(servers) > 0,
+		InitialSeq:   2,
 	}
-	if err := markRun(cmd, e.root, execution); err != nil {
-		pw.Close()
-		closeAll()
-		e.release(execution)
-		return fail(1, "run temporary directory: "+err.Error())
-	}
-	// The identity is read before the reap: a harness that exits at once is still a zombie then.
-	var ident string
-	var identErr error
-	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Started: func(pid int) { ident, identErr = identity(pid) }})
+	l, err := e.spawnWorker(c, spec)
 	if err != nil {
-		pw.Close()
-		closeAll()
+		removeWorkerDir(e.root, execution)
 		e.release(execution)
-		return fail(1, "harness did not start: "+err.Error())
-	}
-	pw.Close()
-	l := &live{mcp: mcp, cmd: cmd, proc: proc, exited: proc.Done(), command: c, native: native, seq: 2, owned: map[int]string{}, metrics: newRunMetrics(gatewayConns), started: time.Now()}
-	kill := func() { proc.Kill(); proc.Wait(); closeAll(); e.release(execution) }
-	if nativeInput != nil && !protocol {
-		_, err := stdin.Write(nativeInput)
-		stdin.Close()
-		if err != nil {
-			kill()
+		if errors.Is(err, errWorkerStartUnknown) {
 			return e.finish(c, "unknown", native)
 		}
+		return fail(1, err.Error())
 	}
-	if identErr != nil {
-		kill()
-		return e.finish(c, "unknown", native)
-	}
-	l.owned[cmd.Process.Pid] = ident
-	_ = l.observe()
-	// Harness commands run in their own process group (newCmd): a restart can also kill descendants not yet observed.
-	if err := e.ownGroup(execution, cmd.Process.Pid, l); err != nil {
-		kill()
-		return e.finish(c, "unknown", native)
-	}
-	if mcp != nil {
-		mcp.readyOnce.Do(func() { close(mcp.ready) })
-	}
-	lines := make(chan string, 1024)
-	l.lines = lines
-	if protocol {
-		l.wire = &wire{session: sess, stdin: stdin, log: outLog}
-		meta, err := writeFrame(stdin, outLog, sess.Initialize())
-		if err != nil {
-			kill()
-			return e.finish(c, "unknown", native)
-		}
-		lines <- enc(meta)
-	}
-	acpProtocol := acp(name)
-	wire := l.wire
-	errtrack.Go("harness.stdout", func() { readStdout(pr, rawLog, wire, acpProtocol, lines) })
 	e.live[execution], launched = l, true
 	l.seq++
 	if err := e.event(c, l.seq, contract.FleetEventTypeHarness, observed); err != nil {
@@ -964,12 +870,10 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	if command == "" {
 		return refuse("script command missing")
 	}
-	var timeout time.Duration
 	if sp.TimeoutMs != nil {
 		if *sp.TimeoutMs <= 0 || *sp.TimeoutMs > math.MaxInt64/int64(time.Millisecond) {
 			return refuse("timeout_ms must be a positive integer")
 		}
-		timeout = time.Duration(*sp.TimeoutMs) * time.Millisecond
 	}
 	output, input := filepath.Join(dir, "output"), filepath.Join(dir, "input")
 	if err := os.MkdirAll(output, 0o755); err != nil {
@@ -981,16 +885,6 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	if err := e.stageArtifactInputs(sp.Inputs, input, execution); err != nil {
 		return refuse(err.Error())
 	}
-	stdout, err := os.Create(filepath.Join(output, "script.stdout"))
-	if err != nil {
-		return err
-	}
-	defer stdout.Close()
-	stderr, err := os.Create(filepath.Join(output, "script.stderr"))
-	if err != nil {
-		return err
-	}
-	defer stderr.Close()
 	project, err := projectContext(sp.Project)
 	if err != nil {
 		return refuse(err.Error())
@@ -1015,25 +909,12 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 			removeTrial(trial[0], trial[1])
 		}
 	}
-	mcp, err := newMCPOwner(e.db, execution)
-	if err != nil {
-		dropTrial()
-		return err
-	}
-	admitted := false
-	defer func() {
-		if !admitted {
-			mcp.close()
-			os.RemoveAll(mcp.dir)
-		}
-	}()
 	cmd := cleanCmd("sh", "-c", command)
 	cmd.Dir = work
-	cmd.Stdout, cmd.Stderr = stdout, stderr
 	realSession, _ := idOf(c, "sessionId") // "" for a host job: session is then its executionId, not a session
 	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+realSession, "FLEET_EXECUTION_ID="+execution,
 		// Lab scripts ship in the release next to the binary (fleet-asset-pipelines §4); Blender is a host setting.
-		"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"), "FLEET_MCP_OWNER="+mcp.socket)
+		"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"))
 	if v := os.Getenv("FLEET_BLENDER"); v != "" {
 		cmd.Env = append(cmd.Env, "FLEET_BLENDER="+v)
 	}
@@ -1042,49 +923,34 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		dropTrial()
 		return err
 	}
-	if _, err = e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", mcp.dir, execution); err != nil {
-		return err
+	spec := workerSpec{
+		Kind:       "script",
+		Execution:  execution,
+		CommandId:  cid,
+		Session:    session,
+		DataDir:    e.root,
+		Dir:        dir,
+		Work:       work,
+		Root:       work,
+		InputDir:   input,
+		CmdPath:    cmd.Path,
+		CmdArgs:    cmd.Args,
+		CmdEnv:     cmd.Env,
+		CmdDir:     cmd.Dir,
+		UseMCP:     true,
+		TimeoutMs:  sp.TimeoutMs,
+		Trial:      trial,
+		InitialSeq: 2,
 	}
-	if err := markRun(cmd, e.root, execution); err != nil {
-		dropTrial()
-		e.release(execution)
-		return refuse("run temporary directory: " + err.Error())
-	}
-	// The identity is read before the reap: a script that exits at once is still a zombie then.
-	var ident string
-	var identErr error
-	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Started: func(pid int) { ident, identErr = identity(pid) }})
+	l, err := e.spawnWorker(c, spec)
 	if err != nil {
+		removeWorkerDir(e.root, execution)
 		dropTrial()
 		e.release(execution)
-		return refuse("script spawn failed: " + err.Error())
-	}
-	pid := proc.Pid
-	l := &live{mcp: mcp, cmd: cmd, proc: proc, exited: proc.Done(), command: c, seq: 2, completed: true, owned: map[int]string{}, started: time.Now(), group: pid, trial: trial}
-	if identErr != nil {
-		proc.Kill()
-		proc.Wait()
-		dropTrial()
-		e.release(execution)
-		return e.finish(c, "unknown", "")
-	}
-	l.owned[pid] = ident
-	_ = l.observe()
-	if err := e.ownGroup(execution, pid, l); err != nil {
-		proc.Kill()
-		proc.Wait()
-		dropTrial()
-		e.release(execution)
-		return e.finish(c, "unknown", "")
-	}
-	mcp.readyOnce.Do(func() { close(mcp.ready) })
-	admitted = true
-	// No stdout stream to read: the closed channel marks EOF at once.
-	lines := make(chan string)
-	close(lines)
-	l.lines = lines
-	if timeout > 0 {
-		l.deadline, l.timeoutMs = time.Now().Add(timeout), sp.TimeoutMs
+		if errors.Is(err, errWorkerStartUnknown) {
+			return e.finish(c, "unknown", "")
+		}
+		return refuse(err.Error())
 	}
 	e.live[execution] = l
 	if err := e.event(c, 1, contract.FleetEventTypeScriptStarted, contract.ScriptStarted{Commit: sp.Commit, TimeoutMs: sp.TimeoutMs, TrialWorktree: work}); err != nil {

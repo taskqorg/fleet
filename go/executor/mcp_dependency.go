@@ -39,7 +39,13 @@ func (o *mcpOwner) allowedPeer(pid int) (string, error) {
 	var root int
 	var rootID string
 	var fence int
-	if err := o.db.QueryRow(`SELECT l.grp,p.identity,l.mcp_fenced FROM launches l JOIN owned p ON p.execution=l.execution AND p.pid=l.grp JOIN commands c ON c.id=l.command WHERE l.execution=? AND c.terminal=0`, o.execution).Scan(&root, &rootID, &fence); err != nil || fence != 0 {
+	if o.local != nil {
+		var fenced bool
+		root, rootID, fenced = o.local.rootState()
+		if fenced || root == 0 {
+			return "", errors.New("MCP execution is fenced")
+		}
+	} else if err := o.db.QueryRow(`SELECT l.grp,p.identity,l.mcp_fenced FROM launches l JOIN owned p ON p.execution=l.execution AND p.pid=l.grp JOIN commands c ON c.id=l.command WHERE l.execution=? AND c.terminal=0`, o.execution).Scan(&root, &rootID, &fence); err != nil || fence != 0 {
 		return "", errors.New("MCP execution is fenced")
 	}
 	id, err := identity(root)

@@ -99,6 +99,8 @@ type part struct {
 	uiBackend         string // nonempty selects the independently signed UI archive
 	app               string // the release's app directory ("." for a UI release); its source maps go to Bugsink
 	uiPool            string // nonempty pools native release dist/app/assets into FLEET_UI_ROOT/assets
+	dataDir           string // nonempty points to the executor data directory containing active-releases/<ver>.lock
+	selfExec          bool   // true lets an executor poller self-exec into cand before falling back to unit restart
 	restart           func() error
 	activity          func(string) (func(), error)
 	health            func(ver string) probe
@@ -156,7 +158,7 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 			return nil
 		}
 		defer unlock()
-		pruneReleases(p.r)
+		pruneReleases(p.r, activeReleaseLocks(p.dataDir), p.dataDir)
 	}
 	running := rootVersion(p.r, "current")
 	// A release without a healthy marker is still being checked (pending, an interrupted run, a first install).
@@ -492,7 +494,19 @@ func relink(r *os.Root, name, target string) error {
 // probes the running release without a restart (resume of an earlier run).
 func (u *updater) settle(p *part, ver string, restart bool) *Result {
 	startsFile, healthyFile := ver+"/starts", ver+"/healthy"
+	allowSelfExec := restart && p.selfExec
 	for {
+		if allowSelfExec {
+			allowSelfExec = false
+			grace := min(5*time.Second, u.window/2)
+			for end := u.now().Add(grace); u.now().Before(end); {
+				if p.health(ver) == up {
+					restart = false
+					break
+				}
+				time.Sleep(u.tick)
+			}
+		}
 		if restart {
 			if err := p.restart(); err != nil {
 				log.Printf("%s: restart: %v", p.name, err)
@@ -875,9 +889,39 @@ func flock(f *os.File) (unlock func(), ok bool, err error) {
 	return func() { f.Close() }, true, nil
 }
 
-// pruneReleases keeps current and previous: removes every other <ver>/, leftover .tmp entries and release directories
-// of the layout before self-update.
-func pruneReleases(r *os.Root) {
+// activeReleaseLocks inspects <dataDir>/active-releases/<ver>.lock with LOCK_EX|LOCK_NB and returns versions pinned
+// by live detached workers holding LOCK_SH. Opens read-only so root (PDS18) never creates files in executor dataDir.
+func activeReleaseLocks(dataDir string) map[string]bool {
+	if dataDir == "" {
+		return nil
+	}
+	dir := filepath.Join(dataDir, "active-releases")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	pinned := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		ver := strings.TrimSuffix(name, ".lock")
+		if ver == name || !verRe.MatchString(ver) {
+			continue
+		}
+		f, err := os.Open(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			pinned[ver] = true
+		}
+		f.Close()
+	}
+	return pinned
+}
+
+// pruneReleases keeps current, previous, and any release pinned by an active worker lock: removes every other <ver>/,
+// leftover .tmp entries and release directories of the layout before self-update.
+func pruneReleases(r *os.Root, pinned map[string]bool, dataDir string) {
 	keep := map[string]bool{}
 	for _, l := range []string{"current", "previous"} {
 		if t, err := r.Readlink(l); err == nil {
@@ -887,8 +931,16 @@ func pruneReleases(r *os.Root) {
 	entries, _ := fs.ReadDir(r.FS(), ".")
 	for _, e := range entries {
 		n := e.Name()
-		if strings.Contains(n, ".tmp") || (legacyRe.MatchString(n) || verRe.MatchString(n)) && !keep[n] {
-			r.RemoveAll(n)
+		if strings.Contains(n, ".tmp") || (legacyRe.MatchString(n) || verRe.MatchString(n)) && !keep[n] && !pinned[n] {
+			if err := r.RemoveAll(n); err == nil && dataDir != "" && verRe.MatchString(n) {
+				lockPath := filepath.Join(dataDir, "active-releases", n+".lock")
+				if f, err := os.Open(lockPath); err == nil {
+					if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
+						_ = os.Remove(lockPath)
+					}
+					f.Close()
+				}
+			}
 		}
 	}
 }

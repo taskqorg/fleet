@@ -136,6 +136,8 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 }
 
 type live struct {
+	worker         *liveWorker
+	workerExit     *workerExit
 	mcp            *mcpOwner
 	cmd            *exec.Cmd
 	exited         <-chan struct{} // closed once the process was reaped (supervise.Proc.Done)
@@ -444,24 +446,19 @@ func (e *executor) commandBody(id string, onlyOpen bool) (string, bool) {
 	return b, true
 }
 
-// reconcileProcesses runs at start, before any poll (K2-3). The stdout and stdin pipes of a run died with the executor
-// that started it, so nothing is reattached: every recorded process that survives, and every descendant still linked to
-// one, is frozen and killed, each signal bound to the recorded incarnation, then its run file is removed (K2-6). A launch
-// with no owned row crashed between spawn and the identity read, so its process cannot be named; the event says so,
-// and only a stop for that execution releases it (releaseLaunchWindow). A launch whose processes cannot be confirmed
-// gone stays recorded, which keeps its session refused, and is tried again at the next start.
+// reconcileProcesses runs at start, before any poll (K2-3). Detached run-workers holding worker.lock (or carrying
+// an uncollected exit.json) reattach cleanly into e.live; any launch without an active or cleanly exited worker has
+// its surviving owned tree frozen and killed and its run files removed (K2-6).
 func (e *executor) reconcileProcesses() error {
-	if _, err := e.db.Exec("UPDATE launches SET mcp_fenced=1"); err != nil {
-		return err
-	}
 	type launch struct {
 		execution, command string
+		workerSeq          uint64
 		l                  *live
 		survived           bool
 		err                error
 	}
-	var launches []*launch
-	rs, err := e.db.Query("SELECT execution,command,grp FROM launches")
+	var all []*launch
+	rs, err := e.db.Query("SELECT execution,command,grp,COALESCE(worker_seq,0) FROM launches")
 	if err != nil {
 		return err
 	}
@@ -469,13 +466,65 @@ func (e *executor) reconcileProcesses() error {
 	for rs.Next() {
 		x := &launch{l: &live{owned: map[int]string{}}}
 		var grp int
-		if err := rs.Scan(&x.execution, &x.command, &grp); err != nil {
+		if err := rs.Scan(&x.execution, &x.command, &grp, &x.workerSeq); err != nil {
 			rs.Close()
 			return err
 		}
-		launches, groups[x] = append(launches, x), grp
+		all, groups[x] = append(all, x), grp
 	}
 	rs.Close()
+
+	unresolved := map[string]bool{}
+	var launches []*launch
+	for _, x := range all {
+		wdir := workerDirFor(e.root, x.execution)
+		alive, _ := workerLockAlive(wdir)
+		_, hasExit, _ := readWorkerExit(wdir)
+		if alive || hasExit {
+			if b, ok := e.commandBody(x.command, false); ok {
+				cmd := commandOf(b)
+				spec, _ := readWorkerSpec(wdir)
+				native := ""
+				if sid, serr := workOf(cmd); serr == nil {
+					_ = e.db.QueryRow("SELECT native FROM sessions WHERE id=?", sid).Scan(&native)
+				}
+				if native == "" && spec != nil {
+					native = spec.Native
+				}
+				var openStops int
+				_ = e.db.QueryRow("SELECT COUNT(*) FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop' AND terminal=0", x.execution).Scan(&openStops)
+				var trial *[2]string
+				if spec != nil {
+					trial = spec.Trial
+				}
+				e.live[x.execution] = &live{
+					command:   cmd,
+					native:    native,
+					seq:       2,
+					completed: spec != nil && spec.Kind == "script",
+					stopped:   openStops > 0,
+					owned:     readWorkerPIDLines(filepath.Join(wdir, "owned.jsonl")),
+					journaled: map[int]bool{},
+					started:   time.Now(),
+					group:     groups[x],
+					trial:     trial,
+					worker: &liveWorker{
+						dir:     wdir,
+						sock:    readWorkerSockPath(wdir),
+						trial:   trial,
+						lastSeq: x.workerSeq,
+					},
+				}
+				unresolved[x.execution] = true
+				continue
+			}
+		}
+		if _, err := e.db.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", x.execution); err != nil {
+			return err
+		}
+		launches = append(launches, x)
+	}
+
 	for _, x := range launches {
 		rows, err := e.db.Query("SELECT pid,identity FROM owned WHERE execution=?", x.execution)
 		if err != nil {
@@ -491,7 +540,15 @@ func (e *executor) reconcileProcesses() error {
 			x.l.owned[pid] = ident
 		}
 		rows.Close()
+		wdir := workerDirFor(e.root, x.execution)
+		for pid, ident := range readWorkerPIDLines(filepath.Join(wdir, "owned.jsonl")) {
+			x.l.owned[pid] = ident
+		}
 		if err := cleanupMCPGroups(e.db, x.execution); err != nil {
+			x.err = err
+			continue
+		}
+		if err := cleanupMCPPIDs(readWorkerPIDLines(filepath.Join(wdir, "mcp_groups.jsonl")), nil); err != nil {
 			x.err = err
 			continue
 		}
@@ -525,7 +582,6 @@ func (e *executor) reconcileProcesses() error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	unresolved := map[string]bool{}
 	for _, x := range launches {
 		alive, err := x.l.aliveOwned()
 		// No owned row: the executor died between spawn and the identity write, so the process cannot be named and
@@ -544,6 +600,18 @@ func (e *executor) reconcileProcesses() error {
 		}
 		if err := e.release(x.execution); err != nil {
 			return err
+		}
+		removeWorkerDir(e.root, x.execution)
+	}
+	if wdirs, err := filepath.Glob(filepath.Join(e.root, "workers", "*")); err == nil {
+		for _, wd := range wdirs {
+			ex := filepath.Base(wd)
+			if unresolved[ex] {
+				continue
+			}
+			if alive, _ := workerLockAlive(wd); !alive {
+				removeWorkerDir(e.root, ex)
+			}
 		}
 	}
 	// Run files and code server specs of every execution without an unresolved launch: no process of this executor can need them.
@@ -583,7 +651,11 @@ func (e *executor) reconcile() error {
 	}
 	rs.Close()
 	for _, b := range bodies {
-		if err := e.finish(commandOf(b), "unknown", ""); err != nil {
+		cmd := commandOf(b)
+		if ex, err := idOf(cmd, "executionId"); err == nil && e.live[ex] != nil {
+			continue
+		}
+		if err := e.finish(cmd, "unknown", ""); err != nil {
 			return err
 		}
 	}
@@ -591,6 +663,63 @@ func (e *executor) reconcile() error {
 }
 
 func (e *executor) tickOne(execution string, l *live) (bool, error) {
+	if l.worker != nil {
+		if err := e.drainWorkerEvents(execution, l); err != nil {
+			return false, err
+		}
+		ex, hasExit, err := readWorkerExit(l.worker.dir)
+		if err != nil {
+			return false, err
+		}
+		if hasExit {
+			if err := e.drainWorkerEvents(execution, l); err != nil {
+				return false, err
+			}
+			return e.finishWorkerRun(execution, l, ex)
+		}
+		alive, lerr := workerLockAlive(l.worker.dir)
+		if lerr == nil && !alive {
+			ex, hasExit, err = readWorkerExit(l.worker.dir)
+			if err == nil && hasExit {
+				_ = e.drainWorkerEvents(execution, l)
+				return e.finishWorkerRun(execution, l, ex)
+			}
+			for pid, id := range readWorkerPIDLines(filepath.Join(l.worker.dir, "owned.jsonl")) {
+				if l.owned == nil {
+					l.owned = map[int]string{}
+				}
+				l.owned[pid] = id
+			}
+			_ = cleanupMCPGroups(e.db, execution)
+			_ = cleanupMCPPIDs(readWorkerPIDLines(filepath.Join(l.worker.dir, "mcp_groups.jsonl")), nil)
+			_ = l.cleanup()
+			cleanupRun(e.root, execution)
+			removeRunFiles(e.root, execution)
+			if l.trial != nil {
+				removeTrial(l.trial[0], l.trial[1])
+			}
+			l.cleanupUnknown = true
+			if err := e.finish(l.command, "unknown", l.native); err != nil {
+				return false, err
+			}
+			rs, rerr := e.db.Query("SELECT body FROM commands WHERE json_extract(body,'$.executionId')=? AND json_extract(body,'$.kind')='stop' AND terminal=0", execution)
+			if rerr == nil {
+				var stopBodies []string
+				for rs.Next() {
+					var b string
+					if rs.Scan(&b) == nil {
+						stopBodies = append(stopBodies, b)
+					}
+				}
+				rs.Close()
+				for _, b := range stopBodies {
+					_ = e.finish(commandOf(b), "unknown", l.native)
+				}
+			}
+			return true, nil
+		}
+		return false, nil
+	}
 	if l.observe() != nil {
 		l.cleanupUnknown = true
 	}

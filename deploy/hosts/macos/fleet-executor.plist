@@ -20,6 +20,7 @@
   <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>AbandonProcessGroup</key><true/>
   <key>ProcessType</key><string>Background</string>
   <key>Umask</key><integer>63</integer>
   <key>StandardOutPath</key><string>FLEET_HOME/Library/Logs/fleet-executor.log</string>
