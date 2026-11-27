@@ -57,7 +57,7 @@ if read -r line; then exit 1; fi
 	}
 	l, err := e.spawnWorker(command, workerSpec{Kind: "harness", Execution: execution, CommandId: cid, Session: sid,
 		DataDir: root, Dir: dir, Work: dir, Root: dir, Harness: "codex", Native: "recorded-thread",
-		CmdPath: harness, CmdArgs: []string{harness}, CmdDir: dir, Profile: M{"readOnly": true}})
+		CmdPath: harness, CmdArgs: []string{harness}, CmdDir: dir, Profile: M{"readOnly": true}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
