@@ -766,7 +766,7 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 		return none, err
 	}
 	if s.BotID != "" {
-		return none, fail(409, "Bot Home conversation cannot be attached to a single task")
+		return none, fail(409, "Bot conversations, including problem conversations, cannot be attached to a task")
 	}
 	bound := len(r.BoundProject) > 0
 	tid, err := taskFor(q, deref(r.TaskId), s.ProjectID, bound)

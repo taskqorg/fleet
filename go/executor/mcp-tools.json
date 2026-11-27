@@ -59,7 +59,7 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "The project's search methods and pipelines. No arguments.",
+    "description": "List the methods available in this project and the current recommendation. No arguments.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -95,7 +95,7 @@
         },
         "methodId": {
           "type": "string",
-          "description": "A method id from catalogue; omitted, Fleet recommends one."
+          "description": "Choose an enabled method ID from the catalogue response for this project. Omit to use the project recommendation."
         },
         "inputs": {
           "type": "array",
@@ -168,7 +168,7 @@
         },
         "methodId": {
           "type": "string",
-          "description": "A method id from catalogue; omitted, Fleet recommends one."
+          "description": "Choose an enabled method ID from the catalogue response for this project. Omit to use the project recommendation."
         }
       }
     }
@@ -700,24 +700,27 @@
   },
   {
     "name": "ask",
-    "description": "Fleet agent session tool ask (bound to this session by the host)",
+    "description": "Ask a fresh question with question and requestId. Include taskId for an existing-task blocker. To read an existing answer, pass only resume with the question ID. Never combine the modes or put continuation prose in resume.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "requestId": {
-          "type": "string"
+          "type": "string",
+          "description": "Required for a fresh question."
         },
         "question": {
-          "type": "string"
+          "type": "string",
+          "description": "Fresh question text. Supply requestId with it."
+        },
+        "taskId": {
+          "type": "string",
+          "description": "The task for a fresh question about an existing-task blocker."
         },
         "resume": {
-          "type": "string"
+          "type": "string",
+          "description": "An existing question ID. Supply resume alone to read its answer."
         }
-      },
-      "required": [
-        "requestId",
-        "question"
-      ]
+      }
     }
   },
   {
@@ -788,7 +791,7 @@
   },
   {
     "name": "agent_tool_result",
-    "description": "Read the eventual acknowledgment of a pending Fleet tool call from this command. This does not repeat the operation. After task_create returns an ID, use session_task_attach to link the Held task; creation alone does not attach it.",
+    "description": "Look up a pending Fleet call by requestKey from the same command and execution. A settled receipt returns the original operation's outcome, which may be a refusal. While the outcome is pending, check the same key again and do not repeat the operation.",
     "inputSchema": {
       "type": "object",
       "properties": {
