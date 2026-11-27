@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
 
 // A store route that logged the edge redirect logs one line when it succeeds again, so the log does not read as stuck.
@@ -34,6 +36,11 @@ func TestStoreEdgeLogsReachableAgain(t *testing.T) {
 func cutBodyServer(status int) (*httptest.Server, chan struct{}) {
 	flushed := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == contract.RouteBrowserAccess.Path {
+			// The heartbeat can start an independent browser probe.
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		io.WriteString(w, `{"pad":"xx`)
