@@ -23,7 +23,7 @@ export function Icon(p: { name: IconName; label?: string }) {
 
 type ButtonProps = {
   label: string; icon?: IconName; iconOnly?: boolean; kind?: 'primary' | 'default' | 'quiet' | 'attention' | 'danger';
-  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; tip?: string; pressed?: boolean;
+  kbd?: string; cls?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; tip?: string; pressed?: boolean;
   /** A fuller accessible name than the visible label ("Wake Release manager"). */
   name?: string;
   onClick?: (event: MouseEvent) => void;
@@ -33,7 +33,7 @@ export function Button(p: ButtonProps) {
   return (
     <SdkButton
       data-ui="button"
-      class={['btn', p.kind ?? 'default', { 'icon-only': !!p.iconOnly, 'row-link': !!p.rowLink, busy: !!p.busy }]}
+      class={['btn', p.kind ?? 'default', { 'icon-only': !!p.iconOnly, 'row-link': !!p.rowLink, busy: !!p.busy }, p.cls]}
       disabled={disabled()}
       focusableWhenDisabled={true}
       aria-label={p.iconOnly ? p.label : p.name}
@@ -349,16 +349,23 @@ export function StatusLine(p: { children?: JSX.Element }) {
 /** Writes text to the clipboard; the caller shows a failure (status line with retry). */
 export const copyText = (text: string) => navigator.clipboard.writeText(text);
 
+let lastCopyStatus = '';
+
 /** A copy action: its icon turns into a check (a cross when the copy failed) for a moment and the result is announced;
  *  the button keeps its width (OR-23). */
-export function CopyButton(p: { label: string; value: string; iconOnly?: boolean }) {
+export function CopyButton(p: { label: string; value: string; iconOnly?: boolean; tip?: string; cls?: string }) {
   const [done, setDone] = createSignal<boolean | null>(null);
+  const [status, setStatus] = createSignal('');
   let timer: ReturnType<typeof setTimeout> | undefined;
   onSettled(() => () => clearTimeout(timer));
   const show = (ok: boolean) => {
     setDone(ok);
+    let msg = ok ? `${p.label.replace(/^Copy /, '')} copied` : 'Copy failed';
+    if (msg === lastCopyStatus) msg += '\u00A0';
+    lastCopyStatus = msg;
+    setStatus(msg);
     clearTimeout(timer);
-    timer = setTimeout(() => setDone(null), 1500);
+    timer = setTimeout(() => { setDone(null); setStatus(''); }, 1500);
   };
   return (
     <>
@@ -367,11 +374,11 @@ export function CopyButton(p: { label: string; value: string; iconOnly?: boolean
         icon={done() === null ? actions.copy : done() ? 'check' : 'circle-x'}
         kind="quiet"
         iconOnly={p.iconOnly}
+        tip={p.tip}
+        cls={p.cls}
         onClick={() => copyText(p.value).then(() => show(true), () => show(false))}
       />
-      <span class="sr-only" role="status">
-        {done() === null ? '' : done() ? `${p.label.replace(/^Copy /, '')} copied` : 'Copy failed'}
-      </span>
+      <span class="sr-only" role="status">{status()}</span>
     </>
   );
 }

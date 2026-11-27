@@ -259,6 +259,10 @@
   :is(.ec-chip, .ec-full):hover .ec-cd, :is(.ec-chip, .ec-full):hover .ec-title, :is(.ec-chip, .ec-full)[aria-expanded=true] :is(.ec-cd, .ec-title) { text-decoration: underline; text-underline-offset: 3px; }
   .md .ec-chip.inline { font-size: inherit; }
   .md .ec-chip .ec-cd { font-size: .95em; }
+  .btn.ec-hash { display: inline-flex; align-items: center; gap: var(--space-1); height: auto; min-inline-size: var(--size-chip); min-block-size: var(--size-chip); padding: 0 var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--fg); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); vertical-align: baseline; white-space: nowrap; }
+  .btn.ec-hash:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.ec-hash .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  @media (pointer: coarse) { .btn.ec-hash { min-height: var(--size-hit-phone); } }
   /* OR-6: a state that changed while shown tints the reference once. */
   @keyframes ec-flash { from { background: var(--tone-bg); } to { background: transparent; } }
   .ec-flash { animation: ec-flash var(--motion-highlight) var(--motion-ease); }

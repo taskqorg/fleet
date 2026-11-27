@@ -8,7 +8,7 @@ import { Sparkline } from './figure-tile.tsx';
 import { StateDot } from './state-dot.tsx';
 
 export type LiveRowProps = (
-  | { kind: 'project'; name: string; running: number; queued: number; done: number; trend: readonly (number | null)[]; trendLabel: string }
+  | { kind: 'project'; name: string; running: number; open?: number; queued: number; done: number; trend: readonly (number | null)[]; trendLabel: string }
   /** A task in work: its state in the one vocabulary (OR-55), code and title. */
   | { kind: 'task'; state: Life; code?: string; title: string }
   | { kind: 'delivery'; tone: Tone; code: string; title: string; stage: Stage }
@@ -37,6 +37,7 @@ export function LiveRow(p: LiveRowProps) {
           <span class="lr-text">{r.name}</span>
           <span class="lr-counts">
             <Show when={r.running > 0}><span class="t-running">{r.running} running</span></Show>
+            <Show when={(r.open ?? 0) > 0}><span class="muted">{r.open} open</span></Show>
             <Show when={r.queued > 0}><span class="muted">{r.queued} queued</span></Show>
             <Show when={r.done > 0}><span class="t-success">{r.done} done</span></Show>
           </span>

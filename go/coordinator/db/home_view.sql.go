@@ -204,3 +204,44 @@ func (q *Queries) HomeProblemsSummary(ctx context.Context) ([]HomeProblemsSummar
 	}
 	return items, nil
 }
+
+const homeSupersededExecutions = `-- name: HomeSupersededExecutions :many
+SELECT e.id::text
+FROM execution e
+WHERE e.id = ANY($1::text[])
+ AND (
+  (e.session_id IS NOT NULL AND EXISTS (
+   SELECT 1 FROM execution later
+   WHERE later.session_id = e.session_id
+    AND later.kind <> 'tool_run'
+    AND later.state = 'succeeded'
+    AND later.seq > e.seq
+  ))
+  OR (e.task_id IS NOT NULL AND EXISTS (
+   SELECT 1 FROM task t
+   WHERE t.id = e.task_id
+    AND t.state IN ('completed', 'cancelled')
+  ))
+ )
+`
+
+// Failed executions in ids whose session later succeeded or whose task reached a terminal state.
+func (q *Queries) HomeSupersededExecutions(ctx context.Context, ids []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, homeSupersededExecutions, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var e_id string
+		if err := rows.Scan(&e_id); err != nil {
+			return nil, err
+		}
+		items = append(items, e_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

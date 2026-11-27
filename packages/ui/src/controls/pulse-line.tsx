@@ -17,14 +17,14 @@ export function BlockerChip(p: Blocker) {
   );
 }
 
-const COUNTS: { key: 'working' | 'queued' | 'done'; life: Life; word: string }[] = [
+const COUNTS: { key: 'working' | 'queued' | 'done'; life: Life; word: string; tip?: string }[] = [
   { key: 'working', life: 'working', word: 'working' },
   { key: 'queued', life: 'queued', word: 'queued' },
-  { key: 'done', life: 'done', word: 'done today' },
+  { key: 'done', life: 'done', word: 'sessions done today', tip: 'Succeeded conversations since local midnight' },
 ];
 
 /**
- * Counts (working, queued, done today; a zero count is hidden, OR-29), then one blocker chip per cause, newest first,
+ * Counts (working, queued, sessions done today; a zero count is hidden, OR-29), then one blocker chip per cause, newest first,
  * the first `chips` of them and `+K` (OR-30), then `Live ›`. Each count and chip is a link.
  */
 export function PulseLine(p: {
@@ -39,7 +39,7 @@ export function PulseLine(p: {
       <For each={COUNTS}>
         {c => (
           <Show when={p[c.key] > 0}>
-            <a class={['pulse-count', `t-${states.life[c.life].tone}`]} href={p.countHref(c.life)} aria-label={`${p[c.key]} ${c.word}`}>
+            <a class={['pulse-count', `t-${states.life[c.life].tone}`]} href={p.countHref(c.life)} aria-label={`${p[c.key]} ${c.word}`} data-tip={c.tip}>
               <i aria-hidden="true" /><b class="num">{p[c.key]}</b><span>{c.word}</span>
             </a>
           </Show>

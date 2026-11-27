@@ -597,8 +597,11 @@ WITH flagged AS (
   (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM command c
    WHERE c.execution_id=execution.id AND c.kind='stop' AND c.status IN ('pending','unknown'))))
    AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $2::float8)) AS is_unconfirmed,
-  (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $2::float8)
-   AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))) AS is_orphan_step
+  (kind='pipeline_step' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $2::float8)
+   AND (
+    (observation='unconfirmed' AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
+    OR EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)) AND r.state IN ('succeeded','failed','cancelled') AND coalesce(r.ended_at, r.updated_at) < now() - make_interval(secs => $1::float8))
+   )) AS is_orphan_step
  FROM execution
  WHERE state IN ('preparing','running','waiting')
   AND ($3::text[] IS NULL OR execution.id = ANY($3::text[]))
@@ -692,8 +695,11 @@ SELECT EXISTS(SELECT 1 FROM execution WHERE execution.id = $1 AND state IN ('pre
     AND h.payload ? 'activeExecutions' AND NOT (h.payload->'activeExecutions' ? execution.id)
     AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < h.last_seen_at - make_interval(secs => $3::float8)
     AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < now() - make_interval(secs => $3::float8)))
- OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $2::float8)
-  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))
+ OR (kind='pipeline_step' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $2::float8)
+  AND (
+   (observation='unconfirmed' AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
+   OR EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)) AND r.state IN ('succeeded','failed','cancelled') AND coalesce(r.ended_at, r.updated_at) < now() - make_interval(secs => $3::float8))
+  )))
  FOR UPDATE SKIP LOCKED)::boolean
 `
 
@@ -805,10 +811,13 @@ func (q *Queries) DispOpenQuestions(ctx context.Context, executionID *string) ([
 
 const dispOrphanStep = `-- name: DispOrphanStep :one
 SELECT EXISTS(SELECT 1 FROM execution s WHERE s.id=$1 AND s.kind='pipeline_step'
- AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1))))::boolean
+ AND (
+  NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1)))
+  OR EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1)) AND r.state IN ('succeeded','failed','cancelled'))
+ ))::boolean
 `
 
-// A pipeline step whose run row is gone.
+// A pipeline step whose run row is gone or already terminal.
 func (q *Queries) DispOrphanStep(ctx context.Context, id string) (bool, error) {
 	row := q.db.QueryRow(ctx, dispOrphanStep, id)
 	var column_1 bool

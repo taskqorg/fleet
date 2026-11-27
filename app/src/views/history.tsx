@@ -19,8 +19,9 @@ type Entry = Ops['history_view']['reply']['entries'][number];
 const LIFE: Record<Entry['outcome'], Life> = { ok: 'done', failed: 'failed', stopped: 'stopped', waiting: 'waiting', running: 'working', info: 'asleep' };
 const TASK_WORDS: Record<string, string> = { in_progress: 'in progress', completed: 'done', cancelled: 'cancelled', waiting: 'waiting', paused: 'paused', failed: 'failed', queued: 'queued' };
 
-/** An actor as a row shows it: a person by the name part of their email, an agent execution as "agent". */
-const shortActor = (a: string) => a.startsWith('execution:') ? 'agent' : a.includes('@') ? a.slice(0, a.indexOf('@')) : a;
+/** An actor as a row shows it: a person by the name part of their email, an agent execution as "agent", never a raw UUID (OR-38). */
+const UUID_ACTOR = /^(?:bot:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const shortActor = (a: string) => a.startsWith('execution:') ? 'agent' : UUID_ACTOR.test(a) ? 'bot' : a.includes('@') ? a.slice(0, a.indexOf('@')) : a;
 
 /** What a run is called when it has no title (execution kinds, as the entity card names them). */
 const RUN_WORDS: Record<string, string> = { agent_run: 'agent run', pipeline_run: 'pipeline run', pipeline_step: 'pipeline step', child_agent: 'child agent', tool_run: 'tool run', host_job: '' };

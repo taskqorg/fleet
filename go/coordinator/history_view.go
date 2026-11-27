@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -123,7 +124,63 @@ func historyView(q *Request, r *contract.HistoryViewRequest) (contract.HistoryVi
 		c := all[last].e.Seq
 		out.NextCursor = &c
 	}
+	if err := resolveHistoryBotActors(q, out.Entries); err != nil {
+		return out, err
+	}
 	return out, nil
+}
+
+// resolveHistoryBotActors replaces raw bot UUID actors with the bot's current name (OR-38), keeping activity.actor
+// intact in storage so actor=<bot_id> filters continue to work.
+func resolveHistoryBotActors(q *Request, entries []contract.HistoryEntry) error {
+	seen := map[string]bool{}
+	var botIDs []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			botIDs = append(botIDs, id)
+		}
+	}
+	for _, e := range entries {
+		if e.BotId != nil {
+			add(*e.BotId)
+		}
+		if e.Actor != nil {
+			a := strings.TrimPrefix(*e.Actor, "bot:")
+			if idOK(a) && len(a) == 36 && strings.Count(a, "-") == 4 {
+				add(a)
+			}
+		}
+	}
+	if len(botIDs) == 0 {
+		return nil
+	}
+	rows, err := q.db().HistoryBotNames(q.ctx(), botIDs)
+	if err != nil {
+		return err
+	}
+	names := make(map[string]string, len(rows))
+	for _, r := range rows {
+		if r.Name != "" {
+			names[r.ID] = r.Name
+		}
+	}
+	for i := range entries {
+		e := &entries[i]
+		var bid string
+		if e.BotId != nil && (e.Actor == nil || *e.Actor == "" || *e.Actor == *e.BotId || *e.Actor == "bot:"+*e.BotId) {
+			bid = *e.BotId
+		} else if e.Actor != nil {
+			a := strings.TrimPrefix(*e.Actor, "bot:")
+			if _, ok := names[a]; ok {
+				bid = a
+			}
+		}
+		if name := names[bid]; name != "" {
+			e.Actor = &name
+		}
+	}
+	return nil
 }
 
 // historyTrials: one experiment's trial runs in a page. Entries come newest first, so a trial's first entry is its

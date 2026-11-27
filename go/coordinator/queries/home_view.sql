@@ -56,3 +56,23 @@ FROM problem WHERE state = 'open' AND (owner_bot_id IS NULL OR phase = 'escalate
 -- Open escalated or unowned problems for Home's pulse line and blockers.
 SELECT * FROM problem WHERE state = 'open' AND (owner_bot_id IS NULL OR phase = 'escalated')
 ORDER BY seq DESC LIMIT @lim;
+
+-- name: HomeSupersededExecutions :many
+-- Failed executions in ids whose session later succeeded or whose task reached a terminal state.
+SELECT e.id::text
+FROM execution e
+WHERE e.id = ANY(@ids::text[])
+ AND (
+  (e.session_id IS NOT NULL AND EXISTS (
+   SELECT 1 FROM execution later
+   WHERE later.session_id = e.session_id
+    AND later.kind <> 'tool_run'
+    AND later.state = 'succeeded'
+    AND later.seq > e.seq
+  ))
+  OR (e.task_id IS NOT NULL AND EXISTS (
+   SELECT 1 FROM task t
+   WHERE t.id = e.task_id
+    AND t.state IN ('completed', 'cancelled')
+  ))
+ );

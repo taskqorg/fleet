@@ -190,8 +190,11 @@ WITH flagged AS (
   (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM command c
    WHERE c.execution_id=execution.id AND c.kind='stop' AND c.status IN ('pending','unknown'))))
    AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => @secs::float8)) AS is_unconfirmed,
-  (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => @secs::float8)
-   AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))) AS is_orphan_step
+  (kind='pipeline_step' AND coalesce(started_at, updated_at) < now() - make_interval(secs => @secs::float8)
+   AND (
+    (observation='unconfirmed' AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
+    OR EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)) AND r.state IN ('succeeded','failed','cancelled') AND coalesce(r.ended_at, r.updated_at) < now() - make_interval(secs => @closed_grace_secs::float8))
+   )) AS is_orphan_step
  FROM execution
  WHERE state IN ('preparing','running','waiting')
   AND (sqlc.narg(ids)::text[] IS NULL OR execution.id = ANY(sqlc.narg(ids)::text[]))
@@ -246,8 +249,11 @@ SELECT EXISTS(SELECT 1 FROM execution WHERE execution.id = @id AND state IN ('pr
     AND h.payload ? 'activeExecutions' AND NOT (h.payload->'activeExecutions' ? execution.id)
     AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < h.last_seen_at - make_interval(secs => @closed_grace_secs::float8)
     AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < now() - make_interval(secs => @closed_grace_secs::float8)))
- OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => @secs::float8)
-  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))
+ OR (kind='pipeline_step' AND coalesce(started_at, updated_at) < now() - make_interval(secs => @secs::float8)
+  AND (
+   (observation='unconfirmed' AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
+   OR EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)) AND r.state IN ('succeeded','failed','cancelled') AND coalesce(r.ended_at, r.updated_at) < now() - make_interval(secs => @closed_grace_secs::float8))
+  )))
  FOR UPDATE SKIP LOCKED)::boolean;
 
 -- name: DispExecStates :many
@@ -257,9 +263,12 @@ SELECT id, kind::text AS kind, state::text AS state, coalesce(data->>'waitReason
 SELECT state::text AS state,kind::text AS kind,project_id FROM execution WHERE id=$1 FOR UPDATE;
 
 -- name: DispOrphanStep :one
--- A pipeline step whose run row is gone.
+-- A pipeline step whose run row is gone or already terminal.
 SELECT EXISTS(SELECT 1 FROM execution s WHERE s.id=$1 AND s.kind='pipeline_step'
- AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1))))::boolean;
+ AND (
+  NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1)))
+  OR EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1)) AND r.state IN ('succeeded','failed','cancelled'))
+ ))::boolean;
 
 -- name: DispAbandonData :exec
 UPDATE execution SET data=data||jsonb_build_object('stopDetail','abandoned','error','abandoned: ' || @reason::text) WHERE id = @id;

@@ -129,4 +129,16 @@ func TestHistoryView(t *testing.T) {
 			t.Fatalf("a problem question in work: %+v", x)
 		}
 	}
+
+	// A bot run resolves its raw bot UUID actor to the bot's current name (OR-38).
+	botID := "11111111-2222-3333-4444-555555555555"
+	exec(`INSERT INTO bot (id, project_id, director, revision) VALUES ($1, 'fleet', $2, 1)`, botID, testOwnerEmail)
+	exec(`INSERT INTO bot_revision (bot_id, revision, name, purpose, profile_id, instructions, soul, schedule_time, schedule_zone, wake_on_needs_you) VALUES ($1, 1, 'HAL0', 'Ops', 'hal0', '', '', '', 'UTC', true)`, botID)
+	exec(`INSERT INTO execution (id, kind, state, project_id, bot_id, harness, started_at, ended_at, data, observation, config_ref)
+	 VALUES ('hs-bot-run', 'agent_run', 'succeeded', 'fleet', $1, 'codex', $2, $2, '{}', 'confirmed', '{}')`, botID, now.Add(11*time.Second))
+	var bots contract.HistoryViewReply
+	e.opInto(t, "history_view", map[string]any{"section": "work", "botId": botID}, e.ownerHeaders(), &bots)
+	if len(bots.Entries) != 1 || bots.Entries[0].Actor == nil || *bots.Entries[0].Actor != "HAL0" {
+		t.Fatalf("bot actor resolution: %+v", bots.Entries)
+	}
 }

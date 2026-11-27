@@ -57,6 +57,7 @@
   /* The server writes a card's fields on their own lines (an approval: what, where, waiting for, callbacks, limits). */
   .qcard-q { margin: 0; color: var(--fg); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); white-space: pre-line; overflow-wrap: anywhere; }
   .qcard-q .ec-reference.inline .ec-copy { display: none; }
+  .qcard-q .btn.ec-hash { height: auto; }
   .qcard-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .qcard .btn { height: var(--size-chip); }
   .qcard .btn.default { background: none; }
