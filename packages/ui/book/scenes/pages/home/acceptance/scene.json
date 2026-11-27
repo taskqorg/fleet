@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/home.md",
+  "route": "/home",
+  "states": {
+    "default": "/home",
+    "sparse": "/home/acceptance-sparse"
+  },
+  "landmark": "[data-ui=question-card]"
+}

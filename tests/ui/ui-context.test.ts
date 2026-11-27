@@ -69,5 +69,6 @@ test('UC9 context identifies scene source and shows no approval for unmigrated p
   assert.match(tasks, /pages\/tasks\/list: default, failed, waiting/);
   assert.match(tasks, /1440×900 and 390×844/);
   assert.match(tasks, /Fleet owner’s selection of one sealed option before production coding, including for restorations/);
-  assert.match(context('home'), /This page has no registered scene/);
+  assert.match(context('home'), /pages\/home\/acceptance: default, sparse/);
+  assert.match(context('conversations'), /This page has no registered scene/);
 });

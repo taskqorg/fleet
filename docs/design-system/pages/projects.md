@@ -108,3 +108,5 @@ Project draft fields use controlled `TextField` values; typing changes only the 
 An unverified save retains its original operation body and request identity separately from newer edits. After revalidation, Retry original save is explicit and sends only that frozen body. Verified readback advances the base; it clears the submitted draft only when no newer input exists.
 
 Creation fields become editable only after the validated actor scope and any authored draft have been restored. A late initialization cannot overwrite input typed into an already usable form; an authored project ID is never used as an authorization lookup.
+
+The [acceptance scene](../../../packages/ui/book/scenes/pages/projects/acceptance/scene.json) shows the project overview question card and the task detail decision.

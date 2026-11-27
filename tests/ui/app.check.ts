@@ -128,6 +128,16 @@ try {
   await openWaiting(page);
   const asked = await page.locator('[data-ui=question-card]').count();
   out.push(`home (OR-53): ${asked} question cards${asked < 5 ? '  MISSING QUESTIONS' : ''}`);
+  const richAcceptance = page.getByRole('group', { name: 'Accept the regression check?', exact: true });
+  await richAcceptance.getByText('Added a regression check for repeat submissions.', { exact: true }).waitFor();
+  await richAcceptance.getByText('Verified: application and Go tests passed.', { exact: true }).waitFor();
+  for (const name of [/^Task T-FLT-/, /^Pull request #138/, /^Release v1\.2\.3/, /^Result R-FLT-/]) {
+    await richAcceptance.getByRole('button', { name }).waitFor();
+  }
+  const sparseAcceptance = page.getByRole('group', { name: 'Accept this result?', exact: true });
+  await sparseAcceptance.getByRole('button', { name: /^Task T-CS-/ }).waitFor();
+  await sparseAcceptance.getByRole('button', { name: 'accepted', exact: true }).waitFor();
+  assert.equal(await sparseAcceptance.getByRole('button', { name: /^(Pull request|Release|Result)/ }).count(), 0);
   // T-FLT-129: an empty waiting group leaves active work next to the composer, even when the pulse is crowded.
   const homeFixture: HomeViewReply = {
     sessions: [{

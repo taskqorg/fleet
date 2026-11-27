@@ -115,3 +115,5 @@ One read: `home_view` (a view operation, [data layer](../../designs/fleet-data-l
 ## Design board
 
 The rendered states are on the [design board](../README.md#design-board), canvas [screens/home.bl](../board/screens/home.bl): normal, picker, session open with context panel, no open questions, and phone. Every part is an instance of a block on [blocks.bl](../board/blocks.bl) (see Blocks above), so a block change reaches these states; the card anatomy and its states are on that canvas. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+
+The [acceptance scene](../../../packages/ui/book/scenes/pages/home/acceptance/scene.json) shows Home question cards with evidence before the answer controls.
