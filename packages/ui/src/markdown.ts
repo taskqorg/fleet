@@ -15,6 +15,8 @@ export const PR_REF = /\bhttps:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-
 export const APP_URL_REF = /\bhttps?:\/\/[^\s/]+\/(?:home|live|conversations|tasks|results|delivery|projects|lab|library|system|history)\/(?:[\w.-]+\/)*?(?:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})|([TQCR]-[A-Z][A-Z0-9]{1,4}-[1-9][0-9]*))(?![\w/-])/g;
 /** A UUID in agent text: a reference whose kind the server finds (OR-38: a UUID is never shown). */
 export const UUID_REF = /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/g;
+/** A 40-char commit SHA or 64-char digest in agent/question text (OR-38: tooltip with click-to-copy only, never raw hex). */
+export const HASH_REF = /(?<![/\w-])(?:[0-9a-f]{40}(?:[0-9a-f]{24})?|[0-9A-F]{40}(?:[0-9A-F]{24})?)\b/g;
 
 type Fragment = { text: string; at: number };
 export type MdText = { text: string; fragments: Fragment[] };

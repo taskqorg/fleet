@@ -12,6 +12,7 @@ Perform a thorough whole-branch review of `origin/<base>...HEAD` inside the mana
 - **Never** run nested `codex review` or sub-harness CLIs inside a managed Fleet sandbox (`Operation not permitted` in sandboxed executions and no Fleet artifact provenance).
 - Review the **entire branch diff** (`origin/<base>...HEAD`), not only the latest commit.
 - Anchor the report to the exact 40-character lowercase `HEAD` commit SHA (`git rev-parse HEAD`). Any later commit invalidates prior review evidence and requires a fresh review and artifact.
+- When independent review is required, route it through the project's configured review pipeline or start a separate session using the project's `reviewer` role (`session_start` with the configured reviewer profile); never `message_send` another agent's or bot's session (`403: Session belongs to another agent`), never open an unaddressed operator question via `question_ask`, and never include raw commit SHAs or raw UUIDs in question text (`OR-38`; use entity codes such as `T-...`, `C-...`, `R-...`).
 - Follow the project contract (`fleet.md`, `AGENTS.md`, `README.md` contracts along changed paths, and pinned shared rules in `$FLEET_INPUT_DIR/context-sources/` when present).
 
 ## Depth levels
