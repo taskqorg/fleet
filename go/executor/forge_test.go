@@ -176,16 +176,35 @@ func TestPublishingBranchStatus(t *testing.T) {
 		t.Run(provider.name, func(t *testing.T) {
 			ctx := M{"provider": provider.name, "host": provider.host, "repo": "invented/project",
 				"repositories": provider.host + "/invented/project", "branch": branch, "store": dir, "skipWorktreeHead": true}
-			for _, tc := range []struct {
-				name, prView, list, state, wantError string
-			}{
-				{"unpublished", provider.absentLookup, "echo '[]'", "UNPUBLISHED", ""},
-				{"existing", "echo '" + provider.existing + "'", "echo '" + provider.existing + "'", provider.state, ""},
-				{"provider error", denied, denied, "", "project-status-read-failed"},
-				{"failed confirmation", provider.absentLookup, denied, "", "project-status-read-failed"},
-				{"malformed list", provider.absentLookup, "echo 'null'", "", "invalid forge response"},
-				{"nonempty invalid list", provider.absentLookup, "echo '[null]'", "", map[string]string{"github": "project-status-read-failed", "gitlab": "invalid forge response"}[provider.name]},
-			} {
+			const empty = "echo '[]'"
+			const invalid = "echo 'null'"
+			const readError = "project-delivery-unconfirmed: HTTP 403"
+			existing := "echo '" + provider.existing + "'"
+			type statusCase struct {
+				name, prView, list, allList, state, wantError string
+			}
+			cases := []statusCase{
+				{"unpublished", provider.absentLookup, empty, empty, "UNPUBLISHED", ""},
+				{"existing", existing, existing, "exit 2", provider.state, ""},
+				{"provider error", denied, denied, "exit 2", "", readError},
+				{"malformed list", provider.absentLookup, invalid, "exit 2", "", "invalid forge response"},
+			}
+			if provider.name == "github" {
+				cases = append(cases,
+					statusCase{"failed confirmation", noPR, denied, "exit 2", "", readError},
+					statusCase{"disagreement", noPR, "echo '[{}]'", "exit 2", "", "project-status-read-failed"},
+					statusCase{"malformed view", "echo '{}'", empty, "exit 2", "", "invalid forge response"})
+			} else {
+				cases = append(cases,
+					statusCase{"failed confirmation", ":", empty, denied, "", readError},
+					statusCase{"malformed confirmation", ":", empty, invalid, "", "invalid forge response"},
+					statusCase{"invalid merge request", ":", "echo '[null]'", "exit 2", "", "invalid forge response"})
+				for _, state := range []string{"merged", "closed", "locked"} {
+					allList := strings.Replace(existing, `"state":"opened"`, `"state":"`+state+`"`, 1)
+					cases = append(cases, statusCase{state, ":", empty, allList, strings.ToUpper(state), ""})
+				}
+			}
+			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
 					script := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = pr ] && [ "$2" = view ] && [ "$3" = %q ]; then
@@ -194,10 +213,11 @@ if [ "$1" = pr ] && [ "$2" = view ] && [ "$3" = %q ]; then
 fi
 case "$4" in
   %q) %s ;;
+  %q) %s ;;
   */statuses) echo '[]' ;;
   *) exit 2 ;;
 esac
-`, branch, tc.prView, provider.endpoint, tc.list)
+`, branch, tc.prView, provider.endpoint, tc.list, strings.Replace(provider.endpoint, "state=opened", "state=all", 1), tc.allList)
 					if err := os.WriteFile(filepath.Join(dir, provider.cli), []byte(script), 0o755); err != nil {
 						t.Fatal(err)
 					}
@@ -235,7 +255,7 @@ esac
 							t.Fatalf("%s: unexpected head comparison %s", call.name, content)
 						}
 					}
-					if tc.state == provider.state {
+					if tc.state != "" && tc.state != "UNPUBLISHED" {
 						got, err := executePublishingAction(typed[forgeContext](ctx), "status", publishingArgs{ExpectedHeadSha: &moved})
 						if err != nil || got["headMatchesExpected"] != false {
 							t.Fatalf("moved head matched: %v, %v", got, err)
