@@ -116,6 +116,8 @@ An idle task whose latest primary execution is a confirmed successful agent turn
 
 Show each wait's reason and release condition. Missing executors, environments, access or capacity before launch keep the task queued with the missing prerequisite visible.
 
+Answering a question an agent asked through `question_ask` continues its session with the answer when the asking execution has ended. The answer creates at most one continuation and uses the ordinary message queue. If a turn is already active or a steer is pending, the answer is recorded for the existing work to read. Paused or closed tasks and archived sessions do not start a turn from an answer.
+
 A question wait requires an open blocking question. When an execution is abandoned, withdraw the agent questions that depended on that execution and settle the task against its remaining work and questions. An unconfirmed active execution retains its last observed state and shows the missing confirmation.
 
 Show review, merge and deployment as operations or stages alongside task state. Merge, publication and deployment use project connections; track their state and results even without an active agent. Running CI or deployment counts as work.
