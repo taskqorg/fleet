@@ -351,6 +351,56 @@ func deliveredTaskDecision(q *Request, t db.Task, e *agentExecution, reason stri
 	return askTaskRecovery(q, t, e.ID, e.SessionID, reason, "delivery")
 }
 
+// Idle settlement also runs at startup, before a delivery wake can clear a
+// superseded recovery decision that would otherwise invalidate the offer.
+func withdrawEarlierDeliveryConflict(q *Request, taskID string) error {
+	decisions, err := q.db().TaskGeneratedRecoveryDecisions(q.ctx(), &taskID)
+	if err != nil {
+		return err
+	}
+	var conflicts []string
+	for _, decision := range decisions {
+		if decision.Cause == "delivery" {
+			conflicts = append(conflicts, decision.ID)
+		}
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	proof, err := q.db().TaskDeliveryProof(q.ctx(), taskID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	pr, err := retainedDelivery(proof)
+	if err != nil || !pr.Delivered {
+		return err
+	}
+	t, err := taskLoad(q, taskID)
+	if err != nil || !openTask[string(t.State)] || t.State == db.TaskStatePaused {
+		return err
+	}
+	requirement, err := taskLiveCheck(t)
+	if err != nil {
+		return nil // Keep the decision when policy needs correction.
+	}
+	verified, err := taskDeliveryVerified(q, t, requirement, pr)
+	if err != nil || !verified {
+		return err
+	}
+	offered, err := earlierDeliveryOffer(q, t, pr)
+	var conflict *HTTPError
+	if errors.As(err, &conflict) && conflict.Code == 409 {
+		return nil
+	}
+	if err != nil || !offered {
+		return err
+	}
+	return questionsWithdraw(q, conflicts)
+}
+
 // earlierDeliveryOffer checks the explicitly offered result against the current,
 // verified delivery. Callers check delivery and live evidence before using it.
 func earlierDeliveryOffer(q *Request, t db.Task, pr deliveryMergedPR) (bool, error) {

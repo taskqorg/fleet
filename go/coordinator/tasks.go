@@ -673,6 +673,11 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 				continue
 			}
 		}
+		if data.EarlierResult && !pending {
+			if err := withdrawEarlierDeliveryConflict(q, id); err != nil {
+				return false, err
+			}
+		}
 		selected, err := eligibleTaskResult(q, id, data.EarlierResult, pending, deref(question.AskedBy) == "fleet", data.Delivery)
 		var conflict *HTTPError
 		if err != nil && (!errors.As(err, &conflict) || conflict.Code != 409) {

@@ -306,6 +306,7 @@ func TestDeliveredTaskAcceptance(t *testing.T) {
 							}
 							return deliveredTaskDecision(q, task, nil, "Latest work has no confirmed successful result")
 						})
+						write(func(q *Request) error { _, err := settleIdleTask(q, id); return err })
 					}
 					write(func(q *Request) error { return wakeTask(q, id) })
 					runLifecycleWake(t, e, "task:"+id, time.Now().Add(time.Second))
