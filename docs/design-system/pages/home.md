@@ -14,7 +14,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)). The shel
    * A greeting with the person's name.
    * One pulse line, read left to right: working, queued, done today, the problems count with its stuck and down pills, then blockers. Counts follow OR-29 ([pulse line](../controls/pulse-line.md); board `drafts/anomaly-routing` frames A, C, D).
    * Each blocker is one chip in the danger tone, with its cause and `×N` ([OR-56](../owner-rules.md), [OR-58](../owner-rules.md)); a click opens [Live](live.md) at that host or cause.
-   * The line ends with `Live ›`.
+   * The line ends with `Live ›` or `Problems ›` when there are open problems. The full link stays visible when the line wraps.
 2. **Composer.** Picks who to talk to and sends the first message; see **Composer** below.
 3. **Session groups.** Cards in this order, each group with its count; an empty group is hidden. A session's group is the word of its state (registry `life`, [OR-55](../controls/state-badge.md#dot-and-word)), the same word its view shows:
    1. **Waiting for you:** sessions with an open question to this person, oldest question first.
@@ -58,10 +58,7 @@ Behaviour:
 ## States
 
 * **Loading:** card skeletons in the group places, with the composer usable at once.
-* **Quiet** (nothing waiting, nothing failed):
-  * A summary card replaces the empty groups: what happened since the person's last visit, in numbers (tasks done, pull requests merged, failures), and who keeps watch.
-  * Two buttons: one asks the watching bot "what happened?", the other opens Live.
-  * No empty grids ([useful idle work area](../patterns/list-detail.md)).
+* **Empty Waiting for you** ([OR-19](../owner-rules.md), [OR-29](../controls/state-counters.md#rules-kept-here)): the first nonempty group follows the composer directly.
 * **Offline or failed read:** the last known cards stay, marked stale with their age and a retry ([offline marker](../controls/offline-marker.md)).
 * **Phone (390 px):**
   * The rail is the bottom bar of five (OR-60).
@@ -86,7 +83,6 @@ One read: `home_view` (a view operation, [data layer](../../designs/fleet-data-l
 |---|---|
 | Groups and cards | `home_view.sessions`: the open session states and `failed` (`openStates('session')`), at most 200 by latest activity, grouped by `life('session', state)` in attention order; rows carry `activityAt` and `now` |
 | Now line | `now` on each session row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
-| Quiet summary | `home_view.counts`: sessions done, pull requests merged and failed runs that need a look since `visitAt`, the person's last Home visit (else since midnight). Leaving Home records the visit (`person_visit {page: "home"}`; closing or reloading the tab sends it by `fetchLater`), so it stays put while Home is open |
 | Questions on cards | `home_view.questions` (open, in the focus, oldest first), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem is never a question here: only its owner bot's escalation (`problem_escalate`) arrives, on that bot's card. Answered in place with `OpenQuestion` ([decision block](../controls/decision-block.md#open-question)); a key request takes the key on the card |
 | Asleep bots | `home_view.bots` with no `activeRunId`; Wake is `bot_run`; a message to a bot is `bot_run` with the text: it starts a turn in the bot's conversation without a subject, or queues there when it is busy |
 | Composer | Project PMs from `project_list` (the shell's read) and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets` when sent, `session_start`); bots from `home_view.bots`. The last target picked stays in this browser |
@@ -114,9 +110,8 @@ One read: `home_view` (a view operation, [data layer](../../designs/fleet-data-l
 * [Question card](../controls/decision-block.md#card): the open question on a card, answered in place.
 * [State dot and word](../controls/state-badge.md#dot-and-word): the state on cards and picker rows.
 * [Bot tile](../controls/bot-tile.md): the Asleep row.
-* [Quiet summary](../controls/quiet-summary.md): replaces the empty groups when nothing needs the person.
 * [Navigation rail and phone bottom bar](../controls/nav-rail.md#board) and [shell header](../patterns/app-shell.md#board): the frame.
 
 ## Design board
 
-The rendered states are on the [design board](../README.md#design-board), canvas [screens/home.bl](../board/screens/home.bl): normal, picker, session open with context panel, quiet, and phone. Every part is an instance of a block on [blocks.bl](../board/blocks.bl) (see Blocks above), so a block change reaches these states; the card anatomy and its states are on that canvas. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+The rendered states are on the [design board](../README.md#design-board), canvas [screens/home.bl](../board/screens/home.bl): normal, picker, session open with context panel, no open questions, and phone. Every part is an instance of a block on [blocks.bl](../board/blocks.bl) (see Blocks above), so a block change reaches these states; the card anatomy and its states are on that canvas. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).

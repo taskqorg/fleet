@@ -188,7 +188,6 @@ The earlier screens have no route of their own: each is a facet, a root or a sav
 | Problems aggregated by cause with count and newest time | Home, Live | `/home` blocker chips | built: Home chips with `×N`; the cause line on Live | checked | `executions_list`, `questions_list` |
 | Sessions with what each does now | Home | `/home` session cards | built | checked: fixtures | `sessions_list` `now` ([home](pages/home.md#data)) |
 | Composer that picks who to talk to | Home | `/home` composer | built | checked: fixtures, picker | `session_presets`, `session_start`, `message_send`, `bot_run` |
-| Quiet Home: what happened while away | Home | `/home` quiet summary | built | checked: fixtures | `person_visit`, `sessions_list`, `publishing_status` |
 
 ### Live
 

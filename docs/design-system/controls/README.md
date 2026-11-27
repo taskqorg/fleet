@@ -80,7 +80,7 @@ The screens of the conversation-first interface, and the catalogues and opened i
 | Bot avatar | [avatar](avatar.md) | `Avatar` | Library, Home, rail |
 | Question card | [decision block, card](decision-block.md#card) | `QuestionCard` | Home, session view |
 | Bot tile | [bot-tile](bot-tile.md) | `BotTile` | Home |
-| Quiet summary | [quiet-summary](quiet-summary.md) | New (`QuietSummary`) | Home |
+| Quiet summary | [quiet-summary](quiet-summary.md) | `QuietSummary` | Component book |
 | Composer with target picker | [composer, target picker](composer.md#target-picker) | `Composer` with `TargetPicker` | Home |
 | Pulse line, blocker chip | [pulse-line](pulse-line.md) | `PulseLine`, `BlockerChip` | Home |
 | State dot and word | [state badge, dot and word](state-badge.md#dot-and-word) | `StateDot` (`states.life`, `lifeOf`) | Home, Live, session view |

@@ -1,15 +1,15 @@
 // Home (docs/design-system/pages/home.md, OR-50): who works for me and what they need from me. A greeting and the pulse
 // line, a composer that picks who to talk to, the active sessions as cards in attention order (Waiting for you, Failed,
-// Working, Queued) with their questions answered in place, and the asleep bots with Wake. A quiet Home says what happened
-// since the last visit. A card opens the session at /home/<code>. Replaces the Overview (2026-11-25, FLT-48).
+// Working, Queued) with their questions answered in place, and the asleep bots with Wake. A card opens the session
+// at /home/<code>. Replaces the Overview (2026-11-25, FLT-48).
 // One read, home_view (docs/designs/fleet-data-layer.md): the server counts and groups; only the cards' rows arrive.
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onSettled, untrack, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, QuietSummary, GroupHeader, Ago,
-  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, states, stamp, day, dayStart, causeOf,
+  PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, GroupHeader, Ago,
+  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, states, dayStart, causeOf,
   type Blocker, type PulseProblems, type Target, type Life, type AvatarMark,
-  timeOf, plural, WorkFacts, peerFence, Fact,
+  timeOf, WorkFacts, peerFence, Fact,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { useLocation, useSearch } from '../router.ts';
@@ -102,16 +102,6 @@ function greeting(now: Date) {
   const h = now.getHours();
   return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
-/** The span a quiet summary covers, in words: "Overnight", "Since 14:20", "Since 12 Nov", or "Today" on a first visit. */
-function spanOf(since: number | null, now: Date): string {
-  if (!since) return 'Today';
-  const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
-  if (since < midnight.getTime() && now.getHours() < 12 && midnight.getTime() - since < 18 * 3600_000) return 'Overnight';
-  // OR-2 formats: the time today ("14:20", the end of a stamp), else the day ("12 Nov").
-  if (since >= midnight.getTime()) return `Since ${stamp(since, now.getTime()).slice(-5)}`;
-  return `Since ${day(since, now.getTime())}`;
-}
-
 function HomePage() {
   const [, go] = useLocation();
   const search = useSearch();
@@ -140,7 +130,6 @@ function HomePage() {
     } catch { /* over the deferred-fetch quota: the in-app leave still records */ }
     return () => { later.abort(); void op('person_visit', { page: 'home' }).catch(() => {}); };
   });
-  const since = (): number | null | undefined => (view.data ? view.data.counts.visitAt : undefined);
 
   const now = () => Date.now();
   const scopedBots = createMemo(() => view.data?.bots ?? []);
@@ -215,7 +204,6 @@ function HomePage() {
   const loaded = () => !!view.data;
   // A grid that appears later (the first cards, the asleep row) is measured once it is in the page.
   createEffect(() => [loaded(), view.data?.bots] as const, () => { requestAnimationFrame(measure); });
-  const quiet = createMemo(() => loaded() && !grouped().some(g => (g.id === 'waiting' || g.id === 'failed') && g.cards.length > 0));
 
   // Pulse: the Working and Queued groups' card counts (one source with the groups below), done today, then problems.
   const rows = () => view.data?.sessions ?? [];
@@ -229,15 +217,6 @@ function HomePage() {
     return { n: p.open, owner: p.owners.length === 1 ? p.owners[0].name : undefined, href: '/system/problems', pills };
   });
   const stateHref = (l: Life) => formatView({ view: 'conversations', state: GROUPS.find(g => g.id === l)?.states ?? statesOf('session', [l]) });
-
-  // Quiet summary: since the last visit, or today on a first one (home_view counts).
-  const quietFacts = createMemo(() => {
-    const c = view.data?.counts;
-    if (!c) return '';
-    return [plural(c.doneSince, 'session') + ' done', plural(c.mergedSince, 'pull request') + ' merged', plural(c.failedSince, 'failure')].join(', ');
-  });
-  // The bot that keeps watch: one running now (the most recent). An asleep bot watches nothing, so none is named.
-  const watcher = createMemo(() => scopedBots().filter(b => b.activeRunId).sort((a, b) => ms(b.lastRunAt) - ms(a.lastRunAt))[0]);
 
   // Answers in place (OR-53, OpenQuestion): the chosen label is busy until the write returns; then the card shows the
   // answered line until the question leaves the read, and the next open question of that session takes its place.
@@ -299,13 +278,6 @@ function HomePage() {
       throw e;
     }
   };
-  const askWatcher = () => {
-    const b = watcher(), span = spanOf(since() ?? null, new Date()).toLowerCase();
-    if (!b) return;
-    pick('bot:' + b.id);
-    void send(`What happened ${span}?`, 'bot:' + b.id).catch(() => {});
-  };
-
   const name = createMemo(() => (me.data?.name ?? '').split(/\s+/)[0]);
   const state = createMemo(() => view.state);
 
@@ -445,16 +417,6 @@ function HomePage() {
           </section>
         </Match>
         <Match when={true}>
-          <Show when={quiet()}>
-            <QuietSummary
-              span={spanOf(since() ?? null, new Date())}
-              facts={quietFacts()}
-              watcher={watcher()?.name}
-              loading={since() === undefined}
-              onAsk={askWatcher}
-              onLive={() => go('/live')}
-            />
-          </Show>
           <For each={grouped()}>
             {g => (
               <Show when={g.cards.length > 0}>

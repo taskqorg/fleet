@@ -101,11 +101,12 @@
 
   /* Pulse line and blocker chip */
   /* The line never runs past its column, whatever its parent's alignment: a long cause ends in an ellipsis inside its
-     chip (the full cause is the chip's tooltip, OR-20) and the line wraps (pulse-line.md, phone). */
+     chip (the full cause is the chip's tooltip, OR-20) and the line wraps as needed (pulse-line.md). */
   .pulse { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); min-width: 0; max-width: 100%; font-size: var(--font-size-sm); }
   .pulse a { color: inherit; text-decoration: none; }
   .pulse-count { display: inline-flex; align-items: center; gap: var(--space-2); }
   .pulse-count > i, .blocker > i { flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--tone-fg); }
+  .pulse-live { flex: none; white-space: nowrap; }
   .pulse-count b { font-weight: var(--font-weight-bold); }
   .pulse-count span, .pulse-live, .pulse-more { color: var(--fg-muted); }
   .pulse a:hover span, .pulse-live:hover { color: var(--fg); }
@@ -159,6 +160,7 @@
      cards in as many columns as fit; a card is never narrower than a phone column. */
   .detail.home { flex: 1; gap: var(--space-6); padding-block: var(--space-6); background: var(--bg); container-type: inline-size; }
   .home-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-3) var(--space-6); }
+  .home-head > .pulse { margin-inline-start: auto; justify-content: flex-end; }
   .home-hello { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-medium); }
   .home .composer.with-target { background: var(--surface); }
   .home-group { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
@@ -169,8 +171,8 @@
   .home-more { align-self: flex-start; color: var(--fg-muted); font-size: var(--font-size-sm); text-decoration: none; }
   .home-more:hover { color: var(--fg); }
   .home-group > .btn { align-self: flex-start; }
-  .home .qsum { max-width: 48rem; }
   @container (max-width: 40rem) {
     .home-head { flex-direction: column; align-items: stretch; }
+    .home-head > .pulse { margin-inline-start: 0; justify-content: flex-start; }
   }
 }
