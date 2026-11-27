@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	damBrowserOrigin = "https://revilio.com"
+	damBrowserOrigin = "https://dam.invalid"
 	damBrowserToken  = `invented-dam-"token\fixture`
 )
 
@@ -183,7 +183,7 @@ func TestProjectBrowserProductionAdapter(t *testing.T) {
 			c = command(false)
 			input := []string{
 				enc(M{"id": 1, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": damBrowserOrigin}}}),
-				enc(M{"id": 2, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": "https://revilio.com.evil.invalid"}}}),
+				enc(M{"id": 2, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": damBrowserOrigin + ".evil.invalid"}}}),
 				enc(M{"id": 3, "method": "tools/call", "params": M{"name": "navigate", "arguments": M{"url": damBrowserOrigin + "/protocol-loss"}}}),
 			}
 			c.Stdin = strings.NewReader(strings.Join(input, "\n"))

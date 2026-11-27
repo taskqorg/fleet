@@ -73,6 +73,9 @@ func browserConfig(payload any, origin string) (M, error) {
 	config := M{"module": os.Getenv("FLEET_PLAYWRIGHT_MODULE"), "executable": os.Getenv("FLEET_BROWSER_EXECUTABLE"), "ownedExecutor": exe(), "previewOrigins": previews, "timeoutMs": probeWait.Milliseconds()}
 	if origin != "" {
 		config["production"] = M{"origin": origin}
+		if projectID == "dam" && origin == "https://revilio.com" {
+			config["damVerification"] = true
+		}
 	}
 	return config, nil
 }
