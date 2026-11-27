@@ -1297,12 +1297,28 @@ const providersJSON = `
   "tools": {
    "projects": {
     "method": "GET",
-    "path": "/api/admin/projects?fields=id,shortName,name,archived&$top=500",
+    "path": "/api/admin/projects?fields=id,shortName,name,archived,leader(id,login)&$top=500",
     "unit": "requests",
     "idempotent": true,
     "headers": {"Accept": "application/json"},
-    "description": "Every YouTrack project this account sees: id (for issue_create), shortName (the issue id prefix), name, archived.",
+    "description": "Every YouTrack project this account sees: id (for issue_create), shortName (the issue id prefix), name, archived, and leader (database id and login where visible).",
     "inputSchema": {"type": "object", "properties": {}}
+   },
+   "project_create": {
+    "method": "POST",
+    "path": "/api/admin/projects?fields=id,shortName,name,description,leader(id,login)",
+    "unit": "requests",
+    "idempotent": false,
+    "forbiddenIsCall": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Create a YouTrack project. Requires the YouTrack Create Project permission. Use the project leader's database id (projects provides leaders where visible). Omit template for default settings. After an uncertain result, check projects for the exact shortName before trying again.",
+    "inputSchema": {"type": "object", "additionalProperties": false, "required": ["name", "shortName", "leader"], "properties": {
+      "name": {"type": "string", "pattern": "\\S"},
+      "shortName": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,30}$"},
+      "leader": {"type": "object", "additionalProperties": false, "required": ["id"], "properties": {"id": {"type": "string", "pattern": "^[0-9]+-[0-9]+$"}}},
+      "template": {"type": "string", "enum": ["scrum", "kanban"]},
+      "description": {"type": "string"}
+    }}
    },
    "issues_search": {
     "method": "GET",
@@ -1403,7 +1419,7 @@ const providersJSON = `
     "idempotent": false,
     "forbiddenIsCall": true,
     "headers": {"Accept": "application/json"},
-    "description": "Apply a YouTrack command to issues: {query: 'State In Progress', issues: [{idReadable: 'TGT-12'}], comment?}. Commands set fields, tags, links and visibility the same way as the command dialog in YouTrack.",
+    "description": "Apply a YouTrack command to issues: {query: 'State In Progress', issues: [{idReadable: 'TGT-12'}], comment?}. Commands set fields, tags, links and visibility the same way as the command dialog in YouTrack. Move an issue in place with query \"move to project DAM\" and the issue id in issues. Read the issue back for its new readable id.",
     "inputSchema": {"type": "object", "required": ["query", "issues"], "properties": {"query": {"type": "string"}, "issues": {"type": "array", "items": {"type": "object", "required": ["idReadable"], "properties": {"idReadable": {"type": "string"}}}}, "comment": {"type": "string"}}}
    }
   }

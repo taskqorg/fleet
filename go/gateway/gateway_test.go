@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -609,8 +610,8 @@ func TestBugsinkCatalogue(t *testing.T) {
 
 // Requirement: fleet-connections.md §5 path fields and §8 YouTrack: each youtrack catalogue tool (coordinator providers.go) reaches the
 // YouTrack REST path it names with the key as bearer; a search query is query-escaped, and an issue id that is not an id
-// is refused; a 403 is not recorded on the key. Risk: a query adds or ends a parameter, a crafted id walks to another
-// API path with the agents' token, or every refused action marks the only key as broken.
+// is refused. Project creation validates its input and preserves shared-key access on provider refusal.
+// Risk: caller input changes the API route or body, a refused create cools down the key, or a retry creates duplicates.
 func TestYouTrackCatalogue(t *testing.T) {
 	src, err := os.ReadFile("../coordinator/providers.go")
 	if err != nil {
@@ -624,6 +625,8 @@ func TestYouTrackCatalogue(t *testing.T) {
 	}
 	type seen struct{ method, path, query, skip, auth, body string }
 	got := make(chan seen, 1)
+	type projectCall struct{ fields, template, auth, body string }
+	creates := make(chan projectCall, 10)
 	file := []byte("\x89PNG shot")
 	var files struct {
 		sync.Mutex
@@ -654,6 +657,24 @@ func TestYouTrackCatalogue(t *testing.T) {
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
+		if r.Method == "POST" && r.URL.Path == "/api/admin/projects" {
+			creates <- projectCall{r.URL.Query().Get("fields"), r.URL.Query().Get("template"), r.Header.Get("Authorization"), string(b)}
+			switch {
+			case strings.Contains(string(b), `"name":"Forbidden"`):
+				w.WriteHeader(403)
+				io.WriteString(w, `{"error":"forbidden","error_description":"Create Project permission required"}`)
+			case strings.Contains(string(b), `"name":"Duplicate"`):
+				w.WriteHeader(400)
+				io.WriteString(w, `{"error":"invalid_properties","error_description":"Project ID already exists"}`)
+			case strings.Contains(string(b), `"name":"Uncertain"`):
+				w.WriteHeader(500)
+				io.WriteString(w, `{"error":"server_error"}`)
+			default:
+				w.WriteHeader(201)
+				io.WriteString(w, `{"id":"0-42","shortName":"DAM","name":"DAM","leader":{"id":"1-2"}}`)
+			}
+			return
+		}
 		got <- seen{r.Method, r.URL.Path, r.URL.Query().Get("query"), r.URL.Query().Get("$skip"), r.Header.Get("Authorization"), string(b)}
 		if strings.Contains(string(b), "State Done") || r.URL.Path == "/api/issues/TGT-403" {
 			w.WriteHeader(403)
@@ -675,7 +696,8 @@ func TestYouTrackCatalogue(t *testing.T) {
 	snap := testSnapshot(server.URL, []keyState{{"invented-youtrack-key", "active"}}, nil, "all")
 	snap["providers"].(map[string]any)["youtrack"] = yt
 	snap["connections"].(map[string]any)["youtrack"] = map[string]any{"provider": "youtrack", "tools": tools, "intake": "all",
-		"keys": []map[string]any{{"id": fp("invented-youtrack-key"), "state": "active"}}, "blocked": []string{}}
+		"keys": []map[string]any{{"id": fp("invented-youtrack-key"), "state": "active"}}, "blocked": []string{},
+		"keyPolicy": map[string]any{"failoverStatuses": []int{400, 403, 500}}}
 	snap["tokens"] = []map[string]any{{"sha256": sha(testToken), "executionId": "exec-1", "projectId": "fleet", "connections": []string{"youtrack"}}}
 	gw.write(snap)
 	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
@@ -706,6 +728,76 @@ func TestYouTrackCatalogue(t *testing.T) {
 			t.Fatalf("%s %s: %d", tool, body, status)
 		}
 	}
+	move := `{"issues":[{"idReadable":"LBG2-124"}],"query":"move to project DAM"}`
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/command", "Bearer "+testToken, move); status != 200 {
+		t.Fatalf("move command: %d", status)
+	}
+	expect(t, <-got, seen{"POST", "/api/commands", "", "", "Bearer invented-youtrack-key", move}, "move an existing issue")
+
+	createPath := "/v1/call/youtrack/project_create"
+	for _, tc := range []struct {
+		body, sent, template, responseKey, responseValue string
+		status                                           int
+	}{
+		{`{"name":"DAM","shortName":"DAM","leader":{"id":"1-2"}}`, `{"leader":{"id":"1-2"},"name":"DAM","shortName":"DAM"}`, "", "id", "0-42", 201},
+		{`{"name":"DAM","shortName":"DAM","leader":{"id":"1-2"},"description":"Digital assets","template":"kanban"}`,
+			`{"description":"Digital assets","leader":{"id":"1-2"},"name":"DAM","shortName":"DAM"}`, "kanban", "shortName", "DAM", 201},
+		{`{"name":"Forbidden","shortName":"DAM","leader":{"id":"1-2"}}`, `{"leader":{"id":"1-2"},"name":"Forbidden","shortName":"DAM"}`, "", "error_description", "Create Project permission required", 403},
+		{`{"name":"Duplicate","shortName":"DAM","leader":{"id":"1-2"}}`, `{"leader":{"id":"1-2"},"name":"Duplicate","shortName":"DAM"}`, "", "error_description", "Project ID already exists", 400},
+		{`{"name":"Uncertain","shortName":"DAM","leader":{"id":"1-2"}}`, `{"leader":{"id":"1-2"},"name":"Uncertain","shortName":"DAM"}`, "", "error", "server_error", 500},
+	} {
+		status, headers, reply := gw.raw("POST", createPath, "Bearer "+testToken, tc.body)
+		code := ""
+		outcome := "ok"
+		if tc.status >= 400 {
+			code = fmt.Sprintf("provider-%d", tc.status)
+			outcome = "error"
+		}
+		if tc.status >= 500 {
+			outcome = "unknown"
+		}
+		expect(t, []any{status, reply[tc.responseKey], headers.Get("X-Fleet-Error"), headers.Get("X-Fleet-Outcome")}, []any{tc.status, tc.responseValue, code, outcome}, tc.body)
+		select {
+		case upstream := <-creates:
+			expect(t, upstream, projectCall{"id,shortName,name,description,leader(id,login)", tc.template, "Bearer invented-youtrack-key", tc.sent}, tc.body)
+		default:
+			t.Fatalf("project_create never reached YouTrack: %s", tc.body)
+		}
+		lines, _ := gw.spool()
+		last := lines[len(lines)-1]
+		expect(t, []any{last["tool"], last["status"], last["keyProblem"], last["disabled"]}, []any{"project_create", float64(tc.status), nil, nil}, tc.body)
+	}
+	for _, body := range []string{
+		`{"shortName":"DAM","leader":{"id":"1-2"}}`,
+		`{"name":"  ","shortName":"DAM","leader":{"id":"1-2"}}`,
+		`{"name":"DAM","leader":{"id":"1-2"}}`,
+		`{"name":"DAM","shortName":"123","leader":{"id":"1-2"}}`,
+		`{"name":"DAM","shortName":"DAM","leader":"1-2"}`,
+		`{"name":"DAM","shortName":"DAM","leader":{"id":"Alex"}}`,
+		`{"name":"DAM","shortName":"DAM","leader":{"id":"1-2","login":"Alex"}}`,
+		`{"name":"DAM","shortName":"DAM","leader":{"id":"1-2"},"template":"scrum&fields=other"}`,
+		`{"name":"DAM","shortName":"DAM","leader":{"id":"1-2"},"description":null}`,
+		`{"name":"DAM","shortName":"DAM","leader":{"id":"1-2"},"archived":true}`,
+	} {
+		status, headers, _ := gw.raw("POST", createPath, "Bearer "+testToken, body)
+		expect(t, []any{status, headers.Get("X-Fleet-Error")}, []any{400, "bad-request"}, body)
+	}
+	if len(creates) != 0 {
+		t.Fatalf("unexpected project create requests reached YouTrack: %d", len(creates))
+	}
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/issue_get", "Bearer "+testToken, `{"issue":"TGT-12"}`); status != 200 {
+		t.Fatalf("issue_get after refused project creation: %d", status)
+	}
+	<-got
+	// Restore the default policy before exercising the existing issue-tool 403 rules.
+	grant := snap["connections"].(map[string]any)["youtrack"].(map[string]any)
+	delete(grant, "keyPolicy")
+	grant["tools"] = slices.DeleteFunc(slices.Clone(tools), func(name string) bool { return name == "project_create" })
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+	if status, headers, _ := gw.raw("POST", createPath, "Bearer "+testToken, `{"name":"DAM","shortName":"DAM","leader":{"id":"1-2"}}`); status != 404 || headers.Get("X-Fleet-Error") != "unknown-tool" {
+		t.Fatalf("project_create without a tool grant: %d %s", status, headers.Get("X-Fleet-Error"))
+	}
 	// An action the account may not do answers 403; that refuses the call, not the shared key.
 	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/command", "Bearer "+testToken, `{"query":"State Done","issues":[{"idReadable":"TGT-12"}]}`); status != 403 {
 		t.Fatalf("forbidden command: %d", status)
@@ -727,7 +819,7 @@ func TestYouTrackCatalogue(t *testing.T) {
 		t.Fatalf("numeric skip: %d", status)
 	}
 	expect(t, (<-got).skip, "100", "numeric skip")
-	if len(tools) != 10 {
+	if len(tools) != 11 {
 		t.Fatalf("youtrack tools: %v", tools)
 	}
 	// The model never gets a signed URL: issue_get asks for attachment ids, not urls.
@@ -1691,7 +1783,7 @@ func TestGateway401InsufficientScopePreservesKey(t *testing.T) {
 				"blocked":  []string{},
 			},
 		},
-		"tokens":           []map[string]any{{"sha256": sha(testToken), "executionId": "ex-1", "projectId": "dam", "connections": []string{"gradus-gitlab"}}},
+		"tokens":          []map[string]any{{"sha256": sha(testToken), "executionId": "ex-1", "projectId": "dam", "connections": []string{"gradus-gitlab"}}},
 		"usageTokenSha256": sha("usage-token"),
 	})
 
