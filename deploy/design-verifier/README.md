@@ -41,7 +41,9 @@ The service reports provider readiness independently of isolated renderer readin
 
 ## Check receipts
 
-The service retains check inputs before posting and readbacks after posting, under `/var/lib/fleet-design-verifier/receipts/`. Each file is indexed by the GitHub check's `external_id`. Merge-group receipts include every merge commit through current `main`, its original PR head, confirmed against the matching GitHub merge queue entry, and the corresponding protected PR receipt. This stage assumes the repository's existing merge-commit queue mode. Changes to that mode require requalification. GitHub may discard and regenerate queue refs. The service waits for fresh provider facts when a ref, base or original head moves.
+The service retains check inputs before posting and readbacks after posting, under `/var/lib/fleet-design-verifier/receipts/`. Each file is indexed by the GitHub check's `external_id`. Merge-group receipts include the verified merge method, every merge commit through current `main`, its original PR head, confirmed against the matching GitHub merge queue entry, and the corresponding protected PR receipt.
+
+The issuer uses its existing Metadata read access to confirm exactly one effective `merge_queue` rule with `merge_method: MERGE` at `GET /repos/taskqorg/fleet/rules/branches/main`. The same App reads all live membership pages through GraphQL. It checks the effective rule again before publishing. A missing, inaccessible, ambiguous or unsupported rule leaves the check pending. GitHub may discard and regenerate queue refs. The service waits for fresh provider facts when a ref, base or original head moves.
 
 ## Fleet identity and retained status
 
