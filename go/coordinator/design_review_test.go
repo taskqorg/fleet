@@ -235,12 +235,18 @@ func TestDesignStageDoesNotPublish(t *testing.T) {
 	project := rawObject{
 		"repos": jsonBytes([]doc{
 			{"id": "main", "remote": "https://github.com/taskqorg/fleet.git", "connection": "invented-secret"},
-			{"id": "docs", "remote": "https://github.com/taskqorg/specq.git"},
+			{"id": "docs", "remote": "https://github.com/taskqorg/specq.git", "connection": "invented-context-connection"},
+			{"id": "other", "remote": "https://github.com/taskqorg/other.git"},
 		}),
 		"environments": jsonBytes([]doc{
 			{"hostId": "preview-host", "repo": "docs", "checkoutPath": "/invented/docs"},
 			{"hostId": "preview-host", "repo": "main", "checkoutPath": "/invented/fleet"},
+			{"hostId": "preview-host", "repo": "other", "checkoutPath": "/invented/other"},
 		}),
+		"contextSources": jsonBytes([]contract.ContextSource{{
+			Repo: "docs", Revision: strings.Repeat("a", 40),
+			Core: []contract.ContextSourceFile{{Path: "rules.md", Sha256: strings.Repeat("b", 64)}},
+		}}),
 		"execution": jsonBytes(doc{"forge": true, "tools": []string{"browser"}}),
 		"worktree":  jsonBytes(doc{"linkPaths": []string{"shared-path"}}),
 	}
@@ -255,9 +261,14 @@ func TestDesignStageDoesNotPublish(t *testing.T) {
 	}
 	if start.WorkingDirectory != nil || start.Branch == nil || *start.Branch || isTrue(start.GitNetwork) ||
 		parsed.Execution == nil || isTrue(parsed.Execution.Forge) || len(parsed.Execution.Tools) != 1 ||
-		len(parsed.Environments) != 1 || deref(parsed.Environments[0].CheckoutPath) != "/invented/fleet" ||
-		len(parsed.Repos) != 1 || parsed.Repos[0].Connection != nil || len(parsed.Worktree.LinkPaths) != 0 ||
+		len(parsed.Environments) != 2 || deref(parsed.Environments[0].CheckoutPath) != "/invented/fleet" ||
+		len(parsed.Repos) != 2 || parsed.Repos[0].Connection != nil || len(parsed.Worktree.LinkPaths) != 0 ||
 		!bytes.Equal(profile["settings"], []byte(`{"sandbox":true}`)) {
-		t.Fatalf("preview start retained delivery authority: %+v %+v", start, parsed)
+		t.Fatalf("preview start has incorrect bindings: %d repositories, %d checkouts", len(parsed.Repos), len(parsed.Environments))
+	}
+	if deref(parsed.Repos[1].Id) != "docs" || parsed.Repos[1].Connection != nil ||
+		deref(parsed.Environments[1].Repo) != "docs" || deref(parsed.Environments[1].CheckoutPath) != "/invented/docs" ||
+		len(parsed.ContextSources) != 1 {
+		t.Fatal("the executor needs the pinned context repository and local host binding without a Git connection")
 	}
 }
