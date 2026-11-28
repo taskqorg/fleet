@@ -1093,11 +1093,6 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	if flushObs || flushStores {
 		obs.LastSeenAt = now
 		if err := a.store.Write(ctx, nil, []string{"host:" + host}, func(wq *Request) error {
-			if flushStores {
-				if err := storesObserve(wq.ctx(), wq.tx, host, stores); err != nil {
-					return err
-				}
-			}
 			if flushObs {
 				var prev *struct {
 					Update         json.RawMessage                     `json:"update"`
@@ -1105,8 +1100,8 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 					BrowserTargets []contract.BrowserTargetObservation `json:"browserTargets"`
 				}
 				if r, err := wq.db().HostObservationOf(wq.ctx(), host); err == nil {
-					if captureRefresh && r.LastSeenAt != nil && r.LastSeenAt.UnixMilli() >= now {
-						return nil // a concurrent, newer report already won the host lock
+					if r.LastSeenAt != nil && r.LastSeenAt.UnixMilli() >= now {
+						return nil // both poll write paths keep the observation that already won the host lock
 					}
 					var p struct {
 						Update         json.RawMessage                     `json:"update"`
@@ -1119,6 +1114,11 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 					prev = &p
 				} else if !errors.Is(err, pgx.ErrNoRows) {
 					return err
+				}
+				if flushStores {
+					if err := storesObserve(wq.ctx(), wq.tx, host, stores); err != nil {
+						return err
+					}
 				}
 				var prevUpdate any
 				row := obs

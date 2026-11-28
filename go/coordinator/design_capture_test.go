@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"fleet/contract"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The simulator uses actual command, artifact and receipt state with no guest.
@@ -218,6 +221,93 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		// A changed poll is persisted immediately even when the heartbeat
 		// normally coalesces repeated identical reports.
 		reportOrigin(contract.PlatformLinux, []string{"script"})
+		reportOriginReady()
+	})
+	t.Run("delayed ordinary poll cannot undo a newer withdrawal", func(t *testing.T) {
+		reportOriginReady()
+		t0 := time.Now().Add(-31 * time.Second).Truncate(time.Millisecond)
+		sql("UPDATE host_observation SET last_seen_at=$2 WHERE id=$1", designerHost, t0)
+		e.app.pollMu.Lock()
+		e.app.heartbeatOf(designerHost).lastPersistedAt = t0.UnixMilli()
+		e.app.pollMu.Unlock()
+
+		// Pause the older authenticated poll at its browser project lookup,
+		// after it takes the observation timestamp and before it locks the host.
+		blocked, resume := make(chan struct{}), make(chan struct{})
+		release := sync.OnceFunc(func() { close(resume) })
+		oldPool := e.app.store.readPool
+		cfg := oldPool.Config()
+		cfg.ConnConfig.Tracer = capturePollReadBarrier{signal: sync.OnceFunc(func() { close(blocked) }), resume: resume}
+		pool, err := pgxpool.NewWithConfig(e.ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.app.store.readPool = pool
+		olderDone := make(chan struct{})
+		defer func() {
+			release()
+			<-olderDone
+			e.app.store.readPool = oldPool
+			pool.Close()
+		}()
+
+		var olderCode int
+		go func() {
+			defer close(olderDone)
+			var activeCaps []string
+			for _, execution := range originExecutions {
+				activeCaps = append(activeCaps, contract.DesignCaptureStageCapability(execution))
+			}
+			olderCode, _ = e.callJSON(t, "POST", contract.RoutePoll.Path+"?wait=1ms", contract.PollRequest{
+				HostId: designerHost, Platform: contract.PlatformLinux, Version: ptr("signed-test"),
+				Capabilities: activeCaps, ActiveExecutions: originExecutions,
+			}, map[string]string{"Authorization": "Bearer " + designerSecret})
+		}()
+		select {
+		case <-blocked:
+		case <-time.After(3 * time.Second):
+			t.Fatal("older positive poll did not reach the pre-lock barrier")
+		}
+		// Ensure the two observations have distinct millisecond timestamps.
+		time.Sleep(time.Millisecond)
+		code, reply := e.callJSON(t, "POST", contract.RoutePoll.Path+"?wait=1ms", contract.PollRequest{
+			HostId: designerHost, Platform: contract.PlatformLinux, Version: ptr("signed-test"),
+			Capabilities: []string{"script"}, ActiveExecutions: originExecutions, BrowserProductionReady: ptr(true),
+		}, map[string]string{"Authorization": "Bearer " + designerSecret})
+		if code != 200 {
+			t.Fatalf("newer withdrawal poll failed: %d %+v", code, reply)
+		}
+		var withdrawalAt time.Time
+		var positive bool
+		err = e.ownerStore.pool.QueryRow(e.ctx, `SELECT last_seen_at, payload->'capabilities' ? $2
+			FROM host_observation WHERE id=$1`, designerHost, contract.DesignCaptureStageCapability(eid)).Scan(&withdrawalAt, &positive)
+		if err != nil || positive || !withdrawalAt.After(t0) {
+			t.Fatalf("withdrawal did not commit before releasing older poll: %v %v %v", withdrawalAt, positive, err)
+		}
+		release()
+		select {
+		case <-olderDone:
+			if olderCode != 200 {
+				t.Fatalf("delayed positive poll returned %d", olderCode)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("delayed positive poll did not finish")
+		}
+
+		// At t33, both reports are recent. Denial must follow from the
+		// persisted withdrawal, rather than expiry of the old report.
+		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
+		if err != nil || len(commands) != 0 {
+			t.Fatalf("delayed ordinary poll restored withdrawn capture authority: %d %v", len(commands), err)
+		}
+		var handed bool
+		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT handed_out FROM command WHERE id=$1", start.JobId).Scan(&handed); err != nil || handed {
+			t.Fatalf("withdrawn capture was claimed at t33: %v %v", handed, err)
+		}
+		var persistedAt time.Time
+		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT last_seen_at FROM host_observation WHERE id=$1", designerHost).Scan(&persistedAt); err != nil || !persistedAt.Equal(withdrawalAt) {
+			t.Fatalf("delayed poll replaced the t32 observation: %v instead of %v: %v", persistedAt, withdrawalAt, err)
+		}
 		reportOriginReady()
 	})
 	t.Run("identical capture poll stays fresh past the ordinary flush window", func(t *testing.T) {
@@ -684,3 +774,21 @@ func waitCaptureTestBlocker(t *testing.T, e *testCoordEnv, pid int) {
 		}
 	}
 }
+
+// capturePollReadBarrier pauses the old poll without locking tables the new poll may need.
+type capturePollReadBarrier struct {
+	signal func()
+	resume <-chan struct{}
+}
+
+func (b capturePollReadBarrier) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.HasPrefix(data.SQL, "-- name: DefRows ") && len(data.Args) > 2 {
+		if id, ok := data.Args[2].(*string); ok && id != nil && *id == contract.ProductionBrowserProject {
+			b.signal()
+			<-b.resume
+		}
+	}
+	return ctx
+}
+
+func (capturePollReadBarrier) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
