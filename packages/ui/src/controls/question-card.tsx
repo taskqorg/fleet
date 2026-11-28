@@ -4,7 +4,7 @@ import { createEffect, createSignal, For, Show } from 'solid-js';
 import { createDraft } from '../drafts.ts';
 import { isSubmitEnter } from '../keys.ts';
 import { Button, Ago } from './primitives.tsx';
-import { EntityCode, linkCodes } from './overlays.tsx';
+import { EntityCode, linkCodes, QuestionImages } from './overlays.tsx';
 import type { QuestionChoice } from '../answer.ts';
 
 /**
@@ -43,6 +43,7 @@ export function QuestionCard(p: {
           {ref()}
           {/* Codes, Fleet links and UUIDs in the text are entity references (OR-38, OR-44), never raw ids or URLs. */}
           <p class="qcard-q">{linkCodes(p.question, 0)}</p>
+          <QuestionImages text={p.question} />
           {p.context}
           <div class="qcard-choices">
             <For each={p.choices}>

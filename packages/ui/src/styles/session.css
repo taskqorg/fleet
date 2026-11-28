@@ -121,6 +121,8 @@
   /* A panel under the head never pushes the composer out of view: it scrolls within half the column. */
   .sv-panel { display: flex; flex-direction: column; gap: var(--space-2); flex: none; max-block-size: 50%; overflow-y: auto; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); }
   .sv-packet { max-block-size: 35vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .sv-questions { flex: 0 1 auto; min-height: 0; max-height: 45%; overflow-y: auto; overscroll-behavior: contain; }
+  .sv-questions:empty { display: none; }
   .sv-status:empty { display: none; }
   .session-view .drop-zone { gap: var(--space-3); }
   .sv-transcript { display: flex; flex-direction: column; flex: 1; min-height: 0; }

@@ -1,0 +1,24 @@
+html,body,#app{height:100%;margin:0}*{box-sizing:border-box}.demo{height:100%;color:var(--fg);background:var(--bg);font-family:var(--font-sans,system-ui,sans-serif);display:flex;flex-direction:column}.demo-bar{height:49px;flex:none;display:flex;align-items:center;gap:18px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--surface);font-size:12px}.demo-bar>span{color:var(--fg-muted);text-transform:uppercase;letter-spacing:.08em}.demo-bar>.btn{margin-left:auto}.demo-bar .tabs{border:0}.shell{min-height:0;flex:1;display:flex}.rail{width:208px;flex:none;padding:22px 14px;background:var(--surface);border-right:1px solid var(--line);font-size:13px}.brand{font-weight:700;font-size:21px;padding:4px 10px 27px}.rail-item{padding:10px 12px;color:var(--fg-muted);border-radius:6px}.rail-item.active{background:var(--surface-raised);color:var(--fg);font-weight:600}.work{min-width:0;flex:1;display:flex;flex-direction:column}.shell-head{height:58px;padding:0 26px;display:flex;align-items:center;gap:18px;border-bottom:1px solid var(--line);background:var(--surface)}.shell-head span{color:var(--fg-muted);font-size:12px}.workbody{min-height:0;flex:1;display:flex;justify-content:center;background:var(--bg)}.question-surface{width:min(100%,900px);height:100%;min-width:0;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--line);border-right:1px solid var(--line)}.question-surface[hidden]{display:none}.context-head{flex:none;min-height:76px;display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--line)}.context-head strong,.context-head small{display:block}.context-head small{margin-top:4px;color:var(--fg-muted)}.avatar{width:38px;height:38px;display:grid;place-items:center;border-radius:50%;background:#4d7094;color:white;font-weight:700}.context-tag{margin-left:auto;color:var(--attention-fg);font-size:12px}.question-scroll{min-height:0;flex:1;overflow:auto;padding:22px}.qcard{max-width:none!important}.decision .dq{white-space:pre-line;display:block!important;line-height:1.5}.sample-attachment{flex-wrap:wrap;margin:12px 0 4px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);display:flex;align-items:center;gap:10px}.attachment-thumbnail{width:110px;height:70px;flex:none;display:block;overflow:hidden;border:1px solid var(--line);border-radius:4px;background:var(--surface-sunken)}.attachment-thumbnail img{width:100%;height:100%;object-fit:contain}.attachment-copy{min-width:0;flex:1}.attachment-copy strong,.attachment-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.attachment-copy span{margin-top:4px;font-size:12px;color:var(--fg-muted)}.following{margin-top:28px;padding:18px 3px;color:var(--fg-muted);line-height:1.5}.following strong{color:var(--fg)}.phone-nav{display:none}@media(max-width:600px){.demo-bar{height:52px;gap:6px;padding:0 8px}.demo-bar>span{display:none}.demo-bar .btn{font-size:12px}.rail{display:none}.shell-head{height:48px;padding:0 16px}.question-surface{border:0}.context-head{padding:12px 14px;min-height:64px}.question-scroll{padding:14px}.sample-attachment{display:grid;grid-template-columns:88px minmax(0,1fr);align-items:center}.attachment-thumbnail{width:88px;height:60px}.sample-attachment>.btn{grid-column:2}.sample-attachment>.btn{min-height:44px}.phone-nav{height:48px;flex:none;display:flex;justify-content:space-around;align-items:center;border-top:1px solid var(--line);background:var(--surface);color:var(--fg-muted);font-size:10px}.phone-nav .active{color:var(--fg);font-weight:700}}
+
+/* Full viewport image surface; the toolbar floats above the image, never reduces its available area. */
+@media(max-width:600px){}
+
+
+
+.embed-warning{grid-column:1 / -1;flex-basis:100%;font-size:12px;line-height:1.5;color:var(--fg-muted);overflow-wrap:anywhere}.embed-warning code{display:block;user-select:text;overflow-wrap:anywhere;margin-top:5px}
+/* Viewer overlay is always dark over arbitrary image content, independent of the surrounding theme. */
+
+
+.original-link{display:inline-flex;align-items:center;min-height:44px;font-size:12px;color:var(--fg-muted);text-decoration:underline;text-underline-offset:3px}@media(max-width:600px){.original-link{grid-column:2}}
+
+/* Keep the native modal at the draft's edge-to-edge dimensions. */
+.demo dialog.side-sheet:modal {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  max-width: none; max-height: none; margin: 0; padding: 0;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none;
+  overflow: hidden; overscroll-behavior: contain;
+}
+.demo dialog.side-sheet::backdrop { background: transparent; overflow: hidden; overscroll-behavior: contain; }
+
+
+/* The fullscreen viewer is dark in either source theme. */

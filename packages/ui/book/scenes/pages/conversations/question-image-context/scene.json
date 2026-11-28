@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "spec": "docs/design-system/pages/session.md",
+  "route": "/conversations",
+  "states": {
+    "default": "/conversations/question-image-returned",
+    "conversation-open": "/conversations/question-image-full",
+    "conversation-fit": "/conversations/question-image-fit",
+    "conversation-zoom": "/conversations/question-image-zoom",
+    "task-returned": "/conversations/task-question-image-returned",
+    "task-open": "/conversations/task-question-image-full",
+    "task-fit": "/conversations/task-question-image-fit",
+    "task-zoom": "/conversations/task-question-image-zoom"
+  },
+  "landmark": ".question-image-scene[data-ready] .sample-attachment",
+  "stateLandmarks": {
+    "conversation-open": ".question-image-scene[data-ready] .qiv-stage img",
+    "conversation-fit": ".question-image-scene[data-ready] .qiv-stage img",
+    "conversation-zoom": ".question-image-scene[data-ready] .qiv-stage img",
+    "task-open": ".question-image-scene[data-ready] .qiv-stage img",
+    "task-fit": ".question-image-scene[data-ready] .qiv-stage img",
+    "task-zoom": ".question-image-scene[data-ready] .qiv-stage img"
+  }
+}

@@ -97,7 +97,7 @@ func entityRefs(q *Request, r *contract.EntityRefsRequest) (contract.EntityRefsR
 			seen[key] = c
 		}
 		if c != nil {
-			out.Items = append(out.Items, contract.EntityRefState{Ref: int64(i), Kind: c.Kind, Id: c.Id, Code: c.Code, State: c.State, Title: c.Title})
+			out.Items = append(out.Items, contract.EntityRefState{Ref: int64(i), Kind: c.Kind, Id: c.Id, Code: c.Code, State: c.State, Title: c.Title, MediaType: c.MediaType, Preview: c.Preview})
 		}
 	}
 	return out, nil
@@ -319,7 +319,7 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 		return nil, err
 	}
 	return &contract.EntityCardReply{Id: r.ID, Uuid: ptr(r.ID), Code: optStr(deref(r.Code)), Hash: optStr(r.ContentHash), Title: firstString(resultLabel(r.Name), "Result"), State: optStr(r.State),
-		Preview:   cardPreview(r.ID, r.MediaType, r.Size, r.PreviewID),
+		MediaType: optStr(r.MediaType), Preview: cardPreview(r.ID, r.MediaType, r.Size, r.PreviewID),
 		ProjectId: optStr(deref(r.ProjectID)), At: optStr(cardTime(&r.CreatedAt)), AtLabel: ptr("stored"), Path: itemPath("results", firstString(deref(r.Code), r.ID)),
 		Facts: facts(fact("Task", contract.EntityFactTypeCode, deref(r.TaskCode)), fact("Type", contract.EntityFactTypeCode, r.MediaType),
 			fact("Size", contract.EntityFactTypeBytes, count(r.Size)))}, nil

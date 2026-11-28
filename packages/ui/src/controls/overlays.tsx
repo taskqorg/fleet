@@ -1,6 +1,8 @@
 // Floating overlay layers and entity references: tooltips, entity codes/cards, and context menus.
 import { ProjectTile, projectIdentity } from './identity.tsx';
-import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext } from 'solid-js';
+import { PanelSheet } from './side-panel.tsx';
+import { QuestionImageViewer } from './question-image-viewer.tsx';
+import { createContext, createEffect, createMemo, createSignal, For, onSettled, onCleanup, Show, untrack, useContext } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { type IconName, type Harness, type EntityKind, entityKinds, codeKind, ENTITY_CODE, states, actions, harnesses } from '../registry.ts';
 import { bytes, count, duration } from '../format.ts';
@@ -78,7 +80,7 @@ export type EntityCardData = EntityCardReply;
 export type EntityRef = { kind: EntityKind; id?: string; code?: string };
 export type EntityCardRead = { data: EntityCardData | null; error: string | null; retry?: () => void };
 /** The live state of a rendered reference: undefined while it loads, null when the entity is unknown or not visible. */
-export type EntityLive = { kind: EntityKind; id: string; code: string | null; state: string | null; title: string };
+export type EntityLive = { kind: EntityKind; id: string; code: string | null; state: string | null; title: string; mediaType?: string | null; preview?: EntityCardData['preview'] };
 /** Where cards come from: the app reads `entity_card` through its store; the book serves fixtures. `useCard` is called once per open card; `open` goes to an in-app path (default: a full page load).
  *  `live` holds a rendered reference's live state (one batched registry, entity-card.md "Live state of many references"); `src` is the bytes URL of a result preview. */
 export type EntityCardSource = {
@@ -262,7 +264,7 @@ export function linkCodes(text: string, _key: number, literal = (value: string, 
   return out;
 }
 
-function EntityCardDialog(p: { cur: Shown }) {
+function EntityCardDialog(p: { cur: Shown; onImage: (src: string, title: string, anchor: HTMLElement, blocked: () => void) => void }) {
   let box: HTMLDivElement | undefined;
   onSettled(() => {
     const el = box as PopoverElement | undefined;
@@ -334,6 +336,8 @@ function EntityCardDialog(p: { cur: Shown }) {
     >
       <CardBody
         r={p.cur.ref}
+        imageAnchor={p.cur.anchor}
+        onImage={p.onImage}
         onOpen={() => {
           const a = p.cur.anchor;
           showCard(null);
@@ -344,15 +348,71 @@ function EntityCardDialog(p: { cur: Shown }) {
   );
 }
 
+// A question may name stored result codes in its own text. Resolve only those references through
+// the existing batched reference registry; never fetch the original bytes until the user opens an image.
+let openQuestionImage: ((src: string, title: string, anchor: HTMLElement, blocked: () => void) => void) | undefined;
+export function QuestionImages(p: { text: string }) {
+  const refs = createMemo(() => [...new Set([...p.text.matchAll(ENTITY_CODE)].map(m => m[0]).filter(code => code.startsWith('R-')))]);
+  return <div class="qiv-attachments"><For each={refs()}>{code => <QuestionImageReference code={code} />}</For></div>;
+}
+function QuestionImageReference(p: { code: string }) {
+  const source = useContext(EntityCards);
+  const holder = source?.live?.({ kind: 'result', code: p.code });
+  onCleanup(() => holder?.release());
+  const [blocked, setBlocked] = createSignal(false);
+  const data = () => holder?.read();
+  return <Show when={data()?.kind === 'result' && (data()?.preview?.view === 'image' || data()?.mediaType?.startsWith('image/')) && source?.src ? data() : null} keyed>{d =>
+    <div class="qiv-attachment">
+      <button type="button" class="qiv-thumbnail" aria-label={`Open ${d.title}`} onClick={e => openQuestionImage?.(source!.src!(d.id), d.title, e.currentTarget, () => setBlocked(true))}>
+        <Show when={d.preview && d.preview.resultId !== d.id} fallback={<span>Open image: {d.title}</span>}><img src={source!.src!(d.preview!.resultId)} alt={d.title} loading="lazy" decoding="async" /></Show>
+      </button>
+      <a href={source!.src!(d.id)} target="_blank" rel="noopener noreferrer">Open original</a>
+      <Show when={blocked()}><span role="status">Full-screen viewing is unavailable in this embedded view. Open the original from the surrounding app.</span></Show>
+    </div>
+  }</Show>;
+}
+
 /** The floating card of the open EntityCode: mount once (AppShell does). A non-modal dialog (OR-14 informational, OR-16
  *  surface): under the code, above it when there is no room, kept inside the window. Escape, a click outside, a scroll,
  *  focus leaving it or the code again close it; Escape and the Open action give focus back to the code. */
 export function EntityCardLayer() {
-  return <Show when={shown()} keyed>{c => <EntityCardDialog cur={c} />}</Show>;
+  const [image, setImage] = createSignal<{ src: string; title: string; anchor: HTMLElement } | null>(null);
+  let fullscreen = false;
+  let closing = false;
+  const openImage = (src: string, title: string, anchor: HTMLElement, blocked: () => void) => {
+    const open = () => { showCard(null); setImage({ src, title, anchor }); requestAnimationFrame(() => document.querySelector<HTMLElement>('.qiv-stage')?.focus({ preventScroll: true })); };
+    const embedded = window.self !== window.top;
+    if (!document.fullscreenEnabled || !document.documentElement.requestFullscreen) {
+      if (!embedded) open(); else blocked();
+      return;
+    }
+    document.documentElement.requestFullscreen().then(() => { fullscreen = true; open(); }).catch(() => { if (!embedded) open(); else blocked(); });
+  };
+  openQuestionImage = openImage;
+  onCleanup(() => { if (openQuestionImage === openImage) openQuestionImage = undefined; });
+  const closeImage = () => {
+    const current = image();
+    if (!current || closing) return;
+    closing = true;
+    setImage(null);
+    fullscreen = false;
+    const exit = document.fullscreenElement ? document.exitFullscreen().catch(() => {}) : Promise.resolve();
+    void exit.then(() => requestAnimationFrame(() => { if (current.anchor.isConnected) current.anchor.focus({ preventScroll: true }); closing = false; }));
+  };
+  const onFullscreen = () => { if (fullscreen && !document.fullscreenElement && !closing) closeImage(); };
+  document.addEventListener('fullscreenchange', onFullscreen);
+  onCleanup(() => document.removeEventListener('fullscreenchange', onFullscreen));
+  return <>
+    <Show when={shown()} keyed>{c => <EntityCardDialog cur={c} onImage={openImage} />}</Show>
+    <PanelSheet open={!!image()} label="Image viewer" onClose={closeImage}>
+      <Show when={image()} keyed>{v => <QuestionImageViewer src={v.src} title={v.title} onClose={closeImage} />}</Show>
+    </PanelSheet>
+  </>;
 }
 
-function CardBody(p: { r: EntityRef; onOpen: () => void }) {
+function CardBody(p: { r: EntityRef; onOpen: () => void; imageAnchor: HTMLElement; onImage: (src: string, title: string, anchor: HTMLElement, blocked: () => void) => void }) {
   const source = useContext(EntityCards);
+  const [imageBlocked, setImageBlocked] = createSignal(false);
   const read: EntityCardRead = source ? source.useCard(untrack(() => p.r)) : { data: null, error: 'Details are not available here' };
   const k = createMemo(() => entityKinds[p.r.kind]);
   const c = createMemo(() => read.error ? null : read.data);
@@ -427,11 +487,19 @@ function CardBody(p: { r: EntityRef; onOpen: () => void }) {
             </Show>
             <Show when={data.preview && source?.src ? data.preview : null} keyed>
               {pv => (
-                <a class="ec-pv" href={data.path ?? undefined} onClick={go} aria-label={`Open ${data.title}`}>
+                <a class="ec-pv" href={data.path ?? undefined} onClick={e => {
+                  if (pv.view === 'image' && data.kind === 'result' && p.imageAnchor.closest('[data-ui="question-card"], [data-ui="decision-block"]') && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+                    e.preventDefault();
+                    p.onImage(source!.src!(data.id), data.title, p.imageAnchor, () => setImageBlocked(true));
+                  } else go(e);
+                }} aria-label={`Open ${data.title}`}>
                   <img src={source!.src!(pv.resultId)} alt={data.title} loading="lazy" decoding="async" />
                   <Show when={pv.view === 'video'}><Icon name="play" /></Show>
                 </a>
               )}
+            </Show>
+            <Show when={imageBlocked() && source?.src}>
+              <p class="ec-image-fallback">Full-screen viewing is unavailable here. <a href={source!.src!(data.id)}>Open original</a></p>
             </Show>
             <Show when={data.facts.length > 0}>
               <dl class="ec-f">

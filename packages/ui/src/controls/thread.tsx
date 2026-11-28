@@ -11,7 +11,7 @@ import { author, clipMessage, writeClip } from '../clip.ts';
 import { isSubmitEnter } from '../keys.ts';
 import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, StageChip, Num, CostFigures, Ago, AgeChip, HarnessMark, Empty, ErrorBanner, copyText, SearchBox } from './primitives.tsx';
-import { EntityCode, linkCodes } from './overlays.tsx';
+import { EntityCode, linkCodes, QuestionImages } from './overlays.tsx';
 import { TabBar } from './tables.tsx';
 import { Choice } from './forms.tsx';
 import { ToolLine, type ToolCallIO } from './tool-line.tsx';
@@ -70,6 +70,7 @@ export function DecisionBlock(p: DecisionProps) {
           }}
         >
           <div class="dq"><Icon name="bell" /><b>{linkCodes(p.question, 0)}</b></div>
+          <QuestionImages text={p.question} />
           <div class="meta">
             {p.askedBy}{p.addressedTo === 'you' ? '' : ` · for ${p.addressedTo}`}
             <Show when={!p.timeInRow}> <> · <AgeChip t={p.since} /></></Show>

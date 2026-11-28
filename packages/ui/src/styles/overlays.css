@@ -280,3 +280,35 @@
   .ec-sk i:nth-child(2) { width: 55%; }
   .ec-sk i:nth-child(3) { width: 70%; }
 }
+
+/* An enlarged question image occupies the entire available work viewport. */
+dialog.side-sheet:has(> .qiv):modal { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: hidden; overscroll-behavior: contain; }
+dialog.side-sheet:has(> .qiv)::backdrop { background: transparent; overflow: hidden; overscroll-behavior: contain; }
+.qiv { color-scheme:dark; position: absolute; inset: 0; width: 100%; height: 100%; background: var(--bg); color: var(--fg); }
+.qiv-header { display:flex; align-items:center; gap:8px; position:absolute; inset:12px 12px auto; z-index:2; padding:7px; border:1px solid var(--fg-faint); border-radius:8px; background:var(--float); box-shadow:var(--elevation-popover); }
+.qiv-title { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.qiv-tools { display:flex; align-items:center; gap:5px; }
+.qiv-zoom { min-width:48px; text-align:center; font-variant-numeric:tabular-nums; font-size:12px; color:var(--fg-muted); }
+.qiv-stage { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; overflow:hidden; touch-action:none; background:var(--bg); cursor:grab; outline-offset:-3px; }
+.qiv-stage:active { cursor:grabbing; }
+.qiv-stage img { display:block; flex:none; max-width:none; max-height:none; height:auto; object-fit:contain; user-select:none; }
+.qiv-header.compact { background:none; border:0; box-shadow:none; padding:0; justify-content:space-between; pointer-events:none; }
+.qiv-header .btn { background:var(--float)!important; color:var(--fg)!important; border-color:var(--fg-faint)!important; }
+.qiv-header .btn:hover { background:var(--selected)!important; }
+.qiv-header .btn[aria-disabled=true] { color:var(--fg-muted)!important; }
+.qiv-header.compact .btn { pointer-events:auto; width:44px; height:44px; box-shadow:var(--elevation-popover); }
+.qiv :focus-visible { outline-color:currentColor; }
+@media (max-width:600px) {
+  .qiv-header { inset:8px 8px auto; flex-wrap:wrap; padding:6px; }
+  .qiv-header > .btn { min-height:44px; min-width:44px; }
+  .qiv-title { min-width:120px; }
+  .qiv-tools { width:100%; justify-content:center; gap:3px; }
+  .qiv-tools .btn { min-height:44px; min-width:44px; }
+  .qiv-tools .btn:last-child { font-size:11px; padding-inline:5px; }
+}
+
+.qiv-attachments { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.qiv-attachment { display: grid; gap: var(--space-1); justify-items: start; max-width: 15rem; }
+.qiv-thumbnail { padding: 0; border: 0; background: transparent; cursor: pointer; max-width: 100%; }
+.qiv-thumbnail img { display: block; max-width: 100%; max-height: 9rem; object-fit: contain; }
+.qiv-thumbnail:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

@@ -26,13 +26,15 @@
 
 YAML has no renderer: its source is already its readable form.
 
-**Viewers.** Text and markdown (rendered, with raw toggle); diff (unified and split, file list on the left); image (fit, 100 %, zoom with wheel and `+`/`-`, pan by drag); video (poster frame, native controls); preview link (URL, last check, "Open preview"); 3D (placeholder until defined); unknown type (metadata and download only).
+**Viewers.** Text and markdown (rendered, with raw toggle); diff (unified and split, file list on the left); image (fit in the result; enlarged view follows the rule below); video (poster frame, native controls); preview link (URL, last check, "Open preview"); 3D (placeholder until defined); unknown type (metadata and download only).
+
+**Enlarging images (owner).** An embedded enlarged view may be offered only when the visible image area occupies the entire available screen: navigation and panels do not take space from it. Where that is not possible, open the original file in the standard viewer. Prefer built-in platform capabilities to a custom copy of a system image viewer. This is the target for images opened from any result or question; zoom is not built yet.
 
 **States.** Loading (header shown at once, body skeleton), ready, unavailable ("No holding store is online. Last copy on windows, seen 2h ago"; never "lost"), too large to preview (download only), error.
 
-**Behaviour.** Compare opens two versions side by side with synchronised zoom and scroll, or a diff for text. Opening a result keeps the task context; `Esc` returns to it.
+**Behaviour.** Compare opens two versions side by side, or a diff for text. Any enlarged image follows the full-screen rule above. Opening a result keeps the task context; `Esc` returns to it.
 
-**Keyboard.** `Esc` close; `[`/`]` previous and next result; `c` compare; `+`/`-`/`0` zoom.
+**Keyboard.** `Esc` close; `[`/`]` previous and next result; `c` compare; `+`/`-`/`0` zoom where the embedded enlarged view is available; an external viewer keeps its own controls.
 
 **Accessibility.** Images need alt text from the result description; diffs are readable as text with added and removed lines marked in words, not only colour.
 

@@ -49,7 +49,7 @@ async function read(batch: Entry[]) {
         if (!e) continue;
         got.add(it.ref);
         join(e, `${it.kind}:${it.id}`);
-        e.live.value = { kind: it.kind, id: it.id, code: it.code ?? null, state: it.state ?? null, title: it.title };
+        e.live.value = { kind: it.kind, id: it.id, code: it.code ?? null, state: it.state ?? null, title: it.title, mediaType: it.mediaType, preview: it.preview };
       }
       // Left out: unknown or not visible to this person; the reference keeps its code and loses its tone.
       part.forEach((e, n) => { if (!got.has(n)) e.live.value = null; });
@@ -148,8 +148,8 @@ function live(r: AnyRef) {
 /** An open card's reply is the newest state of its entity: every reference to it shows the same. */
 function seed(c: EntityCardReply) {
   const set = byEntity.get(`${c.kind}:${c.id}`);
-  if (set) for (const e of set) e.live.value = { kind: c.kind, id: c.id, code: c.code ?? null, state: c.state ?? null, title: c.title };
-  if (c.code) { const e = entries.get('code:' + c.code.toUpperCase()); if (e) { join(e, `${c.kind}:${c.id}`); e.live.value = { kind: c.kind, id: c.id, code: c.code, state: c.state ?? null, title: c.title }; } }
+  if (set) for (const e of set) e.live.value = { kind: c.kind, id: c.id, code: c.code ?? null, state: c.state ?? null, title: c.title, mediaType: c.mediaType, preview: c.preview };
+  if (c.code) { const e = entries.get('code:' + c.code.toUpperCase()); if (e) { join(e, `${c.kind}:${c.id}`); e.live.value = { kind: c.kind, id: c.id, code: c.code, state: c.state ?? null, title: c.title, mediaType: c.mediaType, preview: c.preview }; } }
 }
 
 function useCard(refInput: MaybeAccessor<EntityRef>): EntityCardRead {
