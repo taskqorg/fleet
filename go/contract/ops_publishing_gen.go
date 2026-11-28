@@ -114,6 +114,7 @@ type DesignVerifierStatusReply struct {
 	LatestProvider          *DesignVerifierObservationRecord `json:"latestProvider,omitempty"`
 	Permissions             []string                         `json:"permissions"`
 	Provider                string                           `json:"provider"`
+	ProviderReason          *string                          `json:"providerReason,omitempty"`
 	Repository              string                           `json:"repository"`
 	RepositoryId            int64                            `json:"repositoryId"`
 	Service                 string                           `json:"service"`

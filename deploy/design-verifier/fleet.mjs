@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
+import { designCredentialIsPrivate } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { repository, repositoryId } from './provider.mjs';
 
 const origin = 'https://fleet.ufobe.com';
@@ -9,13 +10,14 @@ const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value
 
 export async function fleetVerifierClient(credentialDir, send = fetch) {
   if (!credentialDir) return null;
+  const path = join(credentialDir, 'fleet-access.json');
   let file;
-  try { file = await open(join(credentialDir, 'fleet-access.json'), constants.O_RDONLY | constants.O_NOFOLLOW); }
+  try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (err) { if (err.code === 'ENOENT') return null; throw err; }
   let access;
   try {
     const stat = await file.stat();
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0) throw new Error('The Fleet verifier credential must be service-private');
+    if (!designCredentialIsPrivate(path, stat)) throw new Error('The Fleet verifier credential must be service-private');
     access = JSON.parse(await file.readFile('utf8'));
     if (!access || Object.keys(access).length !== 2 || ![access.clientId, access.clientSecret]
       .every(x => typeof x === 'string' && x.length && !/[\r\n]/.test(x))) throw new Error('Invalid protected Fleet access credential');

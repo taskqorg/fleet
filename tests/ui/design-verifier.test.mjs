@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
+import { designCredentialIsPrivate, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { appId, githubCandidates, repo, repositoryId } from '../../deploy/design-verifier/provider.mjs';
 import { openRepository } from '../../deploy/design-verifier/git.mjs';
 import { receiptStore } from '../../deploy/design-verifier/receipts.mjs';
@@ -54,7 +54,12 @@ test('the verifier gives each original head its own receipt and fences the cumul
   const runs = new Map();
   let runId = 0;
   let groupTrusted = true;
+  let queueMemberLimit = 2;
   const api = async (endpoint, options) => {
+    if (endpoint === '/graphql') return { data: { repository: { databaseId: repositoryId, nameWithOwner: 'taskqorg/fleet',
+      mergeQueue: { configuration: { mergeMethod: 'MERGE' }, entries: { totalCount: queueMemberLimit, pageInfo: { hasNextPage: false },
+        nodes: prs.slice(0, queueMemberLimit).map(({ number, head: { sha } }) => ({ id: 'queued-' + number,
+          pullRequest: { number, headRefOid: sha, baseRefName: 'main', state: 'OPEN' } })) } } } } };
     const request = new URL(endpoint, 'https://api.github.com');
     const pathname = request.pathname.slice(repo.length);
     if (pathname === '/pulls') return prs;
@@ -70,8 +75,6 @@ test('the verifier gives each original head its own receipt and fences the cumul
       record.commit.verification.verified = groupTrusted;
       return record;
     }
-    if (pathname === '/commits/' + queuedFirst + '/pulls') return [prs[0]];
-    if (pathname === '/commits/' + head + '/pulls') return [prs[1]];
     if (pathname === '/check-runs' || pathname.startsWith('/check-runs/')) {
       if (!options) return runs.get(Number(pathname.split('/').at(-1)));
       const current = options.method === 'PATCH' ? runs.get(Number(pathname.split('/').at(-1))) :
@@ -99,6 +102,10 @@ test('the verifier gives each original head its own receipt and fences the cumul
   assert.equal(grouped.head, head);
   assert.equal(grouped.appId, appId);
   assert.equal((await evaluate(group, deps)).checkRunId, grouped.checkRunId);
+  const candidate = await provider.readCandidate(group, git);
+  queueMemberLimit = 1;
+  await assert.rejects(provider.assertCurrent(group, candidate), /left the queue/);
+  queueMemberLimit = 2;
   groupTrusted = false;
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(unknown, deps)).conclusion, 'failure');
@@ -108,6 +115,17 @@ test('the verifier gives each original head its own receipt and fences the cumul
   const newResult = await evaluate(newEvent, deps);
   assert.equal(newResult.head, fresh);
   assert.equal(newResult.conclusion, 'success');
+});
+
+test('only a root-owned systemd credential accepts the service ACL mode', () => {
+  const systemdFile = '/run/credentials/fleet-design-verifier.service/github-app.pem';
+  const credential = mode => ({ uid: 0, gid: 0, mode, isFile: () => true });
+  assert.equal(designCredentialIsPrivate(systemdFile, credential(0o440)), true);
+  assert.equal(designCredentialIsPrivate(systemdFile, { ...credential(0o440), uid: 1000 }), false);
+  assert.equal(designCredentialIsPrivate('/somewhere/github-app.pem', credential(0o440)), false);
+  assert.equal(designCredentialIsPrivate(systemdFile, credential(0o460)), false);
+  assert.equal(designCredentialIsPrivate(systemdFile, credential(0o444)), false);
+  assert.equal(designCredentialIsPrivate('/somewhere/github-app.pem', credential(0o600)), true);
 });
 
 test('a restarted issuer reacquires a short-lived installation token and closes only its own access', async () => {

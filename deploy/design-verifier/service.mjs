@@ -31,6 +31,7 @@ const stop = new AbortController();
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => stop.abort());
 
 let reportedProvider;
+let providerReportedAt = 0;
 async function report(observation, results) {
   if (!fleet) return fleetAccess;
   try {
@@ -38,9 +39,10 @@ async function report(observation, results) {
     const providerReport = { kind: 'provider', state: observation.provider, revision: release.commit,
       ...(observation.provider === 'ready' ? observation.authentication : {}) };
     const signature = JSON.stringify(providerReport);
-    if (signature !== reportedProvider) {
+    if (signature !== reportedProvider || Date.now() - providerReportedAt >= 60_000) {
       await fleet.observe(providerReport);
       reportedProvider = signature;
+      providerReportedAt = Date.now();
     }
     for (const check of results) {
       const { kind, head, externalId, checkRunId, conclusion } = check;
@@ -63,7 +65,6 @@ async function poll() {
       throw new Error('The provider default repository does not match Fleet main');
     const events = await provider.snapshot();
     const byHead = Map.groupBy(events, event => event.head);
-    observation = { provider: 'ready', authentication: api.authentication() };
     for (const [head, candidates] of byHead) {
       if (stop.signal.aborted) break;
       const [event] = candidates;
@@ -84,6 +85,9 @@ async function poll() {
           reason: 'Could not publish or confirm the exact-head result' });
       }
     }
+    const authentication = api.authentication();
+    observation = authentication ? { provider: 'ready', authentication } :
+      { provider: 'unknown', reason: 'The installation token was rejected' };
   } catch {
     observation = { provider: 'unknown', reason: 'Could not confirm the GitHub App installation and repository facts' };
   }

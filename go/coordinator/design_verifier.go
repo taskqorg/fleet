@@ -17,6 +17,7 @@ import (
 
 const designVerifierIdentity = "fleet-design-verifier"
 const designVerifierAudit = "design-verifier:taskqorg/fleet"
+const designVerifierObservationMaxAge = 2 * time.Minute
 
 func designVerifierPerson(p *Person) bool {
 	return isViewer(p) && p.Email == designVerifierIdentity &&
@@ -119,8 +120,19 @@ func getDesignVerifierStatus(q *Request, _ *contract.DesignVerifierStatusRequest
 			out.LatestMergeGroup = record
 		}
 	}
-	if o := out.LatestProvider; out.FleetIdentityConfigured && o != nil &&
-		o.Observation.State == "ready" && deref64(o.Observation.ExpiresAt) > nowMs() {
+	now := nowMs()
+	switch o := out.LatestProvider; {
+	case !out.FleetIdentityConfigured:
+		out.ProviderReason = ptr("Fleet verifier access is unconfigured")
+	case o == nil:
+		out.ProviderReason = ptr("No authenticated provider observation")
+	case o.At < now-designVerifierObservationMaxAge.Milliseconds():
+		out.ProviderReason = ptr("The verifier heartbeat is stale")
+	case o.Observation.State != "ready":
+		out.ProviderReason = ptr("The verifier reported that the provider is unavailable")
+	case deref64(o.Observation.ExpiresAt) <= now:
+		out.ProviderReason = ptr("The observed installation token expired")
+	default:
 		out.Provider = "ready"
 	}
 	return out, nil
@@ -204,13 +216,14 @@ func verifyDesignWriter(q *Request, r *contract.DesignVerifierEvidenceRequest, t
 				return err
 			}
 			recipes = append(recipes, r)
+			delete(selectedRecipes, id)
 		}
 		return nil
 	})
 	if err != nil {
 		return out, err
 	}
-	if digest != seal.Digest {
+	if digest != seal.Digest || len(recipes) != len(seal.Request.Options[option].Cases) {
 		return out, fail(409, "The original design evidence has changed")
 	}
 	return contract.DesignVerifierEvidenceReply{Number: r.Number, Head: r.Head, Branch: r.Branch, Writer: writer, Review: seal.reply(row), Recipes: recipes}, nil

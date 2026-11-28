@@ -44,8 +44,8 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet }
   }
   if (event.kind === 'pull_request') evidence.source = { branch: event.branch, repositoryId: event.sourceRepositoryId };
   if (event.kind === 'merge_group' && candidate) evidence.queue = {
-    ref: event.ref, commits: candidate.members.map(({ number, head, mergeCommit, branch, sourceRepositoryId }) =>
-      ({ number, head, mergeCommit, branch, sourceRepositoryId })),
+    ref: event.ref, commits: candidate.members.map(({ number, head, mergeCommit, branch, sourceRepositoryId, queueEntryId }) =>
+      ({ number, head, mergeCommit, branch, sourceRepositoryId, queueEntryId })),
     memberReceipts,
   };
   if (visualEvidence.length) evidence.visualEvidence = visualEvidence;

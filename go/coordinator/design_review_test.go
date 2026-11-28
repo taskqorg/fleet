@@ -205,7 +205,7 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	}
 	var evidence contract.DesignVerifierEvidenceReply
 	exact := doc{"number": prNumber, "head": head, "branch": branch}
-	e.opInto(t, "design_verifier_evidence", exact, e.ownerHeaders(), &evidence)
+	e.opInto(t, "design_verifier_evidence", exact, verifierTestHeaders(t, e), &evidence)
 	if evidence.Writer != builder || evidence.Review.Digest != offer.Digest || len(evidence.Recipes) != 1 ||
 		len(evidence.Recipes[0].Inputs) != 1 || evidence.Recipes[0].Inputs[0].Path != "source.tsx" {
 		t.Fatalf("wrong exact-head evidence: %+v", evidence)

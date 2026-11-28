@@ -41,7 +41,7 @@ The initial service qualifies the nonvisual and fail-closed paths. It reports pr
 
 ## Check receipts
 
-The service retains check inputs before posting and readbacks after posting, under `/var/lib/fleet-design-verifier/receipts/`. Each file is indexed by the GitHub check's `external_id`. Merge-group receipts include every merge commit through current `main`, its original PR head and the corresponding protected PR receipt. This stage assumes the repository's existing merge-commit queue mode. Changes to that mode require requalification. GitHub may discard and regenerate queue refs. The service waits for fresh provider facts when a ref, base or original head moves.
+The service retains check inputs before posting and readbacks after posting, under `/var/lib/fleet-design-verifier/receipts/`. Each file is indexed by the GitHub check's `external_id`. Merge-group receipts include every merge commit through current `main`, its original PR head, confirmed against the matching GitHub merge queue entry, and the corresponding protected PR receipt. This stage assumes the repository's existing merge-commit queue mode. Changes to that mode require requalification. GitHub may discard and regenerate queue refs. The service waits for fresh provider facts when a ref, base or original head moves.
 
 ## Fleet identity and retained status
 
@@ -61,10 +61,12 @@ The operator can provision it without an interactive daemon login:
    ```sh
    set -eu
    umask 077
+   fleet_credential=$(mktemp)
+   trap 'rm -f "$fleet_credential"' EXIT
    jq -e '{clientId:.result.client_id,clientSecret:.result.client_secret}
-     | select(.clientId and .clientSecret)' "$CF_TOKEN_RESPONSE_FILE" |
-     systemd-creds encrypt --with-key=host --name=fleet-access.json - \
-       /etc/credstore.encrypted/fleet-design-verifier.fleet-access.json.next
+     | select([.clientId, .clientSecret] | all(type == "string" and length > 0))' "$CF_TOKEN_RESPONSE_FILE" >"$fleet_credential"
+   systemd-creds encrypt --with-key=host --name=fleet-access.json "$fleet_credential" \
+     /etc/credstore.encrypted/fleet-design-verifier.fleet-access.json.next
    mv -T /etc/credstore.encrypted/fleet-design-verifier.fleet-access.json.next \
      /etc/credstore.encrypted/fleet-design-verifier.fleet-access.json
    install -d /etc/systemd/system/fleet-design-verifier.service.d
@@ -85,11 +87,11 @@ The operator can provision it without an interactive daemon login:
    console.log(await status.json());
    ```
 
-   `fleetIdentityConfigured` reports roster registration. `lastReady` retains the last successful provider authentication even after a later failure. `latestPR` and `latestMergeGroup` each carry the exact commit, App check run and retained receipt when observed. An absent entry is unknown. The current service also reads and hashes selected original PNGs and recipe bytes through the Fleet admission operation. The results include tracked recipe-input comparisons. Normal production-route and isolated rendered parity are unavailable in this stage, so missing evidence, unknown impact and visual changes stay blocked.
+   `fleetIdentityConfigured` reports roster registration. `lastReady` retains the last successful provider authentication even after a later failure. `latestPR` and `latestMergeGroup` each carry the exact commit, App check run and retained receipt when observed. An absent entry is unknown. Fleet marks provider readiness unknown when the last daemon observation is older than two minutes. The current service also reads and hashes selected original PNGs and recipe bytes through the Fleet admission operation. The results include tracked recipe-input comparisons. Normal production-route and isolated rendered parity are unavailable in this stage, so missing evidence, unknown impact and visual changes stay blocked.
 
 ## Restart and rotation
 
-Restart `fleet-design-verifier.service` and check that a fresh host report advances `authentication.authenticatedAt` and `expiresAt`. Once its Fleet identity is configured, the new authentication also appears in `lastReady`. On clean stop the service revokes its current installation token. Older instantly superseded tokens expire on GitHub's schedule.
+Restart `fleet-design-verifier.service` and check that a fresh host report advances `authentication.authenticatedAt` and `expiresAt`. Once its Fleet identity is configured, the new authentication also appears in `lastReady`. On clean stop the service revokes its current installation token. Superseded tokens expire on GitHub's schedule.
 
 To rotate the App key, the operator prepares the replacement key for App `5962560`, then encrypts it into an adjacent file and switches the encrypted credential atomically. Set `FLEET_DESIGN_NEW_APP_KEY_FILE` to the operator's private input file on PDS18.
 

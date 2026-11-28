@@ -33,6 +33,10 @@ function branch(row, ref) {
 export function githubCandidates(api) {
   const read = (path, options) => api(repo + path, options);
   const readRef = async ref => branch(await read('/git/ref/' + ref.slice('refs/'.length)), ref);
+  async function assertGroupRef(event) {
+    requireFact(event.ref.startsWith(queuePrefix) && await readRef(mainRef) === event.base &&
+      await readRef(event.ref) === event.head, 'The merge queue head or base changed');
+  }
   async function list(path) {
     const all = [];
     for (let page = 1; ; page++) {
@@ -50,12 +54,50 @@ export function githubCandidates(api) {
     return event;
   }
 
+  async function readQueue() {
+    const entries = new Map();
+    let cursor = null;
+    do {
+      const result = await api('/graphql', { method: 'POST', body: { variables: { cursor }, query: `
+        query FleetDesignQueue($cursor: String) {
+          repository(owner: "taskqorg", name: "fleet") {
+            databaseId nameWithOwner
+            mergeQueue(branch: "main") {
+              configuration { mergeMethod }
+              entries(first: 100, after: $cursor) {
+                totalCount pageInfo { hasNextPage endCursor }
+                nodes { id pullRequest { number headRefOid baseRefName state } }
+              }
+            }
+          }
+        }` } });
+      const owner = result.data?.repository;
+      const queue = owner?.mergeQueue;
+      const page = queue?.entries;
+      requireFact(!result.errors?.length && owner?.databaseId === repositoryId && owner.nameWithOwner === 'taskqorg/fleet' &&
+        queue?.configuration?.mergeMethod === 'MERGE' && Array.isArray(page?.nodes) && typeof page.pageInfo?.hasNextPage === 'boolean',
+      'GitHub did not confirm the live merge queue');
+      for (const row of page.nodes) {
+        const pr = row?.pullRequest;
+        requireFact(row?.id && positive(pr?.number) && sha(pr.headRefOid) && pr.baseRefName === target && pr.state === 'OPEN' &&
+          !entries.has(pr.number), 'GitHub returned incomplete queue member facts');
+        entries.set(pr.number, { id: row.id, number: pr.number, head: pr.headRefOid });
+      }
+      const next = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+      requireFact(next ? next !== cursor && page.nodes.length > 0 : entries.size === page.totalCount && !page.pageInfo.hasNextPage,
+        'GitHub returned an incomplete merge queue page');
+      cursor = next;
+    } while (cursor);
+    return entries;
+  }
+
   async function readGroup(event, git) {
     const match = queueRef.exec(event.ref);
-    requireFact(match && await readRef(event.ref) === event.head && await readRef(mainRef) === event.base,
-      'GitHub regenerated the merge group');
+    requireFact(match, 'GitHub returned an unsupported merge queue ref');
+    await assertGroupRef(event);
     const chain = await git.groupChain(event);
     requireFact(chain.length && chain[0].parent === match[2], 'The queue ref does not match its first parent');
+    const queue = [...(await readQueue()).values()];
     const members = [];
     for (const { commit, parent, original } of chain) {
       const row = await read('/commits/' + commit);
@@ -63,12 +105,11 @@ export function githubCandidates(api) {
       requireFact(row.sha === commit && row.committer?.id === 19864447 && row.commit?.verification?.verified === true &&
         row.parents?.length === 2 && row.parents[0].sha === parent && row.parents[1].sha === original,
       'GitHub did not confirm the queue merge commit');
-      const linked = (await list('/commits/' + commit + '/pulls')).filter(pr => pr.state === 'open' &&
-        pr.base?.repo?.id === repositoryId && pr.base.ref === target && pr.head?.sha === original);
-      requireFact(linked.length === 1, 'GitHub did not identify one open PR for the queue merge commit');
+      const linked = queue.filter(pr => pr.head === original);
+      requireFact(linked.length === 1, 'GitHub did not identify one queued PR for the original commit');
       const member = await readPR(linked[0].number);
       requireFact(member.head === original, 'A merge group member has moved to a new PR head');
-      members.push({ ...member, mergeCommit: commit });
+      members.push({ ...member, mergeCommit: commit, queueEntryId: linked[0].id });
     }
     requireFact(members[0].number === Number(match[1]), 'The queue ref names a different final PR');
     return { ...event, complete: true, members: members.reverse() };
@@ -103,11 +144,15 @@ export function githubCandidates(api) {
         requireFact(samePR(current, event), 'The PR source, head or base changed');
         return;
       }
-      requireFact(event.ref.startsWith(queuePrefix) && await readRef(event.ref) === event.head &&
-        await readRef(mainRef) === event.base, 'The merge queue head or base changed');
-      for (const member of candidate?.members ?? []) {
-        requireFact(samePR(await readPR(member.number), member), 'A merge group member has moved to a new PR head');
+      if (candidate) {
+        const queue = await readQueue();
+        for (const member of candidate.members) {
+          const entry = queue.get(member.number);
+          requireFact(entry?.id === member.queueEntryId && entry?.head === member.head &&
+            samePR(await readPR(member.number), member), 'A merge group member has moved or left the queue');
+        }
       }
+      await assertGroupRef(event);
     },
   };
 }

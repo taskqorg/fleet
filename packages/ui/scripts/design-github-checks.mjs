@@ -2,13 +2,21 @@
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { dirname, isAbsolute } from 'node:path';
 import { verifyProtectedDesignCandidate } from './design-protected.mjs';
 
 const repo = '/repos/taskqorg/fleet';
 const name = 'design-approval';
 const permissions = { checks: 'write', contents: 'read', pull_requests: 'read', metadata: 'read' };
 const repositoryId = 1450484391;
+const unitCredentialDir = '/run/credentials/fleet-design-verifier.service';
+
+export function designCredentialIsPrivate(path, stat) {
+  if (!stat.isFile()) return false;
+  if ((stat.mode & 0o077) === 0) return true;
+  // DynamicUser's ACL masks a read-only systemd credential as group-readable.
+  return dirname(path) === unitCredentialDir && stat.uid === 0 && stat.gid === 0 && (stat.mode & 0o7777) === 0o440;
+}
 
 export function designGitHubConfig(env = process.env) {
   const appId = Number(env.FLEET_DESIGN_GITHUB_APP_ID);
@@ -24,7 +32,7 @@ async function gitHubJWT({ appId, keyFile }) {
   try {
     file = await open(keyFile, constants.O_RDONLY | constants.O_NOFOLLOW);
     const state = await file.stat();
-    if (!state.isFile() || (state.mode & 0o077) !== 0) throw new Error('private key must be service-private');
+    if (!designCredentialIsPrivate(keyFile, state)) throw new Error('private key must be service-private');
     const now = Math.floor(Date.now() / 1000);
     const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
     const jwt = encode({ alg: 'RS256', typ: 'JWT' }) + '.' + encode({ iss: String(appId), iat: now - 60, exp: now + 540 });
