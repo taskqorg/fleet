@@ -187,6 +187,7 @@ Fleet models repository change publication through one shared **Publishing** con
 - **Authority and secret isolation:** publication authority is the intersection of host capability, project repo/profile grant and active execution branch; credentials stay inside host mediators and never reach harnesses or tool results.
 - **Fleet publishing identity:** `github.com/taskqorg/fleet` requires the repository-only `taskqorg-fleet-publisher` App on PDS18.
   The coordinator authorizes scoped operations. The dedicated publisher service verifies the installation and renews its token.
+  The host systemd socket unit owns the Unix listener. The publisher requires that listener at startup and checks the accepted connection's Linux peer UID for every request.
   Readiness and status identify the App and repository. Missing App readiness blocks publication.
   The design approval issuer and CI recovery grants remain separate. See the [operator procedure](deploy/infrastructure/README.md#fleet-publishing-identity).
 - **Failed-job logs:** Both publishing MCP servers expose the read-only `ci_logs` tool. It takes a provider job ID and the exact SHA of the granted execution branch's live head. The failed provider job must match the bound repository, branch and SHA. The job ID identifies the specific job attempt. Report the workflow attempt number where the provider supplies it.
