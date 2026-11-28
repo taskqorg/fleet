@@ -15,6 +15,7 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"path"
 	"reflect"
 	"regexp"
 	"strings"
@@ -89,6 +90,7 @@ type captureFile struct {
 	limit         int64
 	size          int64
 	width, height int
+	recipe        *appCaptureCase
 }
 
 type appCaptureReceipt struct {
@@ -129,7 +131,7 @@ func captureFiles(m appCaptureManifest, requested appCaptureRequest) (map[string
 			return nil, errAppCapture
 		}
 		scopes[c.ScopeKey] = true
-		files[c.RecipeFile] = captureFile{digest: c.RecipeSHA256, limit: maxCaptureRecipe}
+		files[c.RecipeFile] = captureFile{digest: c.RecipeSHA256, limit: maxCaptureRecipe, recipe: &c}
 		for j, frame := range c.Frames {
 			cell := matrix[j]
 			name := fmt.Sprintf("case-%d-%s-%s.png", i+1, cell.viewport, cell.theme)
@@ -351,9 +353,17 @@ func stageAppCapture(ctx context.Context, root string, requested appCaptureReque
 			if openErr != nil {
 				return receipt, errAppCapture
 			}
-			config, decodeErr := png.DecodeConfig(&captureContextReader{ctx: ctx, reader: imageFile})
+			image, decodeErr := png.Decode(&captureContextReader{ctx: ctx, reader: imageFile})
+			tail, tailErr := io.ReadAll(io.LimitReader(imageFile, 1))
 			closeErr := imageFile.Close()
-			if decodeErr != nil || closeErr != nil || config.Width != want.width || config.Height != want.height {
+			if decodeErr != nil || tailErr != nil || closeErr != nil || len(tail) != 0 ||
+				image.Bounds().Dx() != want.width || image.Bounds().Dy() != want.height {
+				return receipt, errAppCapture
+			}
+		}
+		if want.recipe != nil {
+			raw, err := staged.ReadFile(h.Name)
+			if err != nil || !validAppCaptureRecipe(raw, *want.recipe) {
 				return receipt, errAppCapture
 			}
 		}
@@ -404,4 +414,38 @@ func stageAppCapture(ctx context.Context, root string, requested appCaptureReque
 	}
 	sum := sha256.Sum256(raw)
 	return appCaptureReceipt{Directory: final, ManifestSHA256: hex.EncodeToString(sum[:]), Files: files}, nil
+}
+
+func validAppCaptureRecipe(raw []byte, c appCaptureCase) bool {
+	var r struct {
+		contract.PreviewRecipe
+		Digest string `json:"digest"`
+		HTML   string `json:"html"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if exactKeys(raw, "version", "scene", "state", "path", "landmark", "clock", "timeZone", "locale", "dpr",
+		"reducedMotion", "matrix", "viewport", "theme", "width", "height", "css", "inputs", "sha256", "digest", "html") != nil ||
+		decoder.Decode(&r) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF || r.Version != 1 ||
+		r.Scene+":"+r.State != c.ScopeKey || r.Digest != c.Recipe || r.PreviewRecipe.Digest() != c.Recipe ||
+		!sceneSHA.MatchString(r.CSS) || !sceneSHA.MatchString(r.HTML) || r.Landmark == "" || r.Clock <= 0 ||
+		r.TimeZone != "UTC" || r.Locale != "en-US" || r.DPR != 1 || !r.ReducedMotion || len(r.Inputs) == 0 ||
+		len(r.Matrix) != len(c.Frames) || r.Path == "" || !strings.HasPrefix(r.Path, "/") || strings.HasPrefix(r.Path, "//") {
+		return false
+	}
+	for i, m := range r.Matrix {
+		f := c.Frames[i]
+		if len(f.Routes) != 1 || f.Routes[0] != r.Path || m.Viewport != f.Viewport || m.Theme != f.Theme ||
+			m.Width != f.Width || m.Height != f.Height {
+			return false
+		}
+	}
+	for i, input := range r.Inputs {
+		if input.Path == "" || input.Path == "." || input.Path == ".." || strings.HasPrefix(input.Path, "../") ||
+			strings.HasPrefix(input.Path, "/") || strings.Contains(input.Path, "\\") || path.Clean(input.Path) != input.Path ||
+			!sceneSHA.MatchString(input.SHA256) || i > 0 && r.Inputs[i-1].Path >= input.Path {
+			return false
+		}
+	}
+	return true
 }

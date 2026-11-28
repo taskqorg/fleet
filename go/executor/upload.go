@@ -31,28 +31,27 @@ import (
 // reads) with the command and the spool folder; get and list carry the MCP call; done is the journaled per-part
 // progress of an upload or copy.
 type transferJob struct {
-	Path             string          `json:"path"`
-	Spool            string          `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
-	Name             string          `json:"name"`
-	MediaType        string          `json:"mediaType"`
-	ExecutionId      string          `json:"executionId"`
-	DerivedFrom      string          `json:"derivedFrom"`
-	Role             string          `json:"role"`
-	Required         bool            `json:"required"`
-	ArtifactId       *string         `json:"artifactId"`
-	StoreId          string          `json:"storeId"`
-	Url              string          `json:"url"`
-	StagingKey       *string         `json:"stagingKey"`
-	Size             *uint64         `json:"size"`
-	PartSize         *uint64         `json:"partSize"`
-	Source           transferSource  `json:"source"`
-	InputDir         string          `json:"inputDir"`
-	ExistingInputDir bool            `json:"existingInputDir"`
-	MaxDownloadBytes int64           `json:"maxDownloadBytes"`
-	Filter           *transferFilter `json:"filter"`
-	Done             []donePart      `json:"done"`
-	Command          jsonValue       `json:"command"` // present (even null): the job sends the command's final receipt
-	Recoveries       int             `json:"recoveries"`
+	Path         string              `json:"path"`
+	Spool        string              `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
+	Name         string              `json:"name"`
+	MediaType    string              `json:"mediaType"`
+	ExecutionId  string              `json:"executionId"`
+	DerivedFrom  string              `json:"derivedFrom"`
+	Role         string              `json:"role"`
+	Required     bool                `json:"required"`
+	ArtifactId   *string             `json:"artifactId"`
+	StoreId      string              `json:"storeId"`
+	Url          string              `json:"url"`
+	StagingKey   *string             `json:"stagingKey"`
+	Size         *uint64             `json:"size"`
+	PartSize     *uint64             `json:"partSize"`
+	Source       transferSource      `json:"source"`
+	InputDir     string              `json:"inputDir"`
+	CaptureStage captureStageRequest `json:"-"`
+	Filter       *transferFilter     `json:"filter"`
+	Done         []donePart          `json:"done"`
+	Command      jsonValue           `json:"command"` // present (even null): the job sends the command's final receipt
+	Recoveries   int                 `json:"recoveries"`
 }
 
 type transferSource struct {
@@ -73,7 +72,11 @@ type donePart struct {
 }
 
 // readJob: a body that is not a JSON object reads as an empty job.
-func readJob(body string) transferJob { return typedRaw[transferJob]([]byte(body)) }
+func readJob(body string) transferJob {
+	out := typedRaw[transferJob]([]byte(body))
+	out.CaptureStage = typedRaw[captureStageRequest]([]byte(body))
+	return out
+}
 
 // orU64: *p, or def when p is nil.
 func orU64(p *uint64, def uint64) uint64 {
@@ -164,6 +167,7 @@ func accessAllowed(raw string) bool {
 
 type transferClient struct {
 	url, token, host string
+	root             string
 	access           *[2]string
 	coordinator      *http.Client
 	store            *http.Client
@@ -574,6 +578,14 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			os.Remove(tmp)
 		}
 		return out, f
+	case captureStageKind:
+		request := body.CaptureStage
+		if c.root == "" || !request.valid() || id != request.key() {
+			return nil, permanentf("Invalid private capture stage request")
+		}
+		return executeCaptureStage(c.root, request, func() (contract.DesignCaptureReturn, *failure) {
+			return c.captureAuthority(request)
+		}, c.captureArtifact)
 	case "get":
 		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId), ArtifactId: str0(body.ArtifactId)})
 		if f != nil {
@@ -600,10 +612,8 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		// ponytail: per byte, so a multibyte character becomes several '_' where Rust wrote one.
 		name = string(safe)
 		dir := body.InputDir
-		if !body.ExistingInputDir {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return nil, ioFailure(err)
-			}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, ioFailure(err)
 		}
 		tag := "x"
 		if r.Id != "" {
@@ -638,16 +648,8 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			return nil, f
 		}
 		defer src.Close()
-		var download io.Reader = src
-		if body.MaxDownloadBytes > 0 {
-			download = io.LimitReader(src, body.MaxDownloadBytes+1)
-		}
-		n, err := io.Copy(out, download)
-		if err != nil {
+		if _, err := io.Copy(out, src); err != nil {
 			return nil, ioFailure(err)
-		}
-		if body.MaxDownloadBytes > 0 && n > body.MaxDownloadBytes {
-			return nil, permanentf("capture artifact exceeds its transport bound")
 		}
 		return M{"artifactId": r.Id, "path": target, "mediaType": r.MediaType, "size": r.Size}, nil
 	case "list":
@@ -685,7 +687,7 @@ type afterJob func(c *transferClient, db *sql.DB, body M, response any)
 // oldest first. Retryable failures back off and stay queued. A third goroutine renews the coordinator lease of every
 // queued or running job every 10 minutes.
 func spawnTransfers(journal string, c *transferClient, after afterJob) error {
-	for _, lane := range []string{"kind<>'verify'", "kind='verify'"} {
+	for _, lane := range []string{"kind NOT IN ('verify','" + captureStageKind + "')", "kind='verify'", "kind='" + captureStageKind + "'"} {
 		db, err := openJournal(journal)
 		if err != nil {
 			return err
@@ -742,6 +744,9 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 			body = readJob(freshBody)
 		} else {
 			db.QueryRow("SELECT attempts FROM transfers WHERE id=?", id).Scan(&attempts) // a run that journaled parts reset it
+		}
+		if kind == captureStageKind && f != nil && f.retry && attempts >= 2 {
+			f = permanentf("Capture transfer retry limit reached")
 		}
 		// The terminal state and its outbound notices commit together. In this process a failed commit is retried as a
 		// commit, not by running the job again (a crash before the commit leaves the row running, and the job runs again

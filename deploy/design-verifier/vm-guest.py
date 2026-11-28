@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 """One fixed job on the private virtio port. No host paths or commands from input."""
 import hashlib
+import importlib.util
+from pathlib import Path
 import os
 import resource
 import selectors
@@ -20,6 +22,16 @@ WORKDIR = '/var/lib/fleet-design-vm-guest'
 CHUNK = 65536
 
 
+def load_sibling(name):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+capture = load_sibling('vm-capture')
+
+
 def read_exact(stream, n):
     data = bytearray()
     while len(data) < n:
@@ -32,7 +44,8 @@ def read_exact(stream, n):
 
 def read_request(stream, tempdir):
     magic, version, op, reserved, nonce, size, expected = REQUEST.unpack(read_exact(stream, REQUEST.size))
-    if magic != b'FVMQ' or version != 1 or reserved != b'\0\0' or op not in LIMITS or size > LIMITS[op][0]:
+    maximum = capture.INPUT_MAX if op == capture.OPERATION else LIMITS.get(op, (-1,))[0]
+    if magic != b'FVMQ' or version != 1 or reserved != b'\0\0' or size > maximum:
         raise ValueError('invalid request')
     hasher = hashlib.sha256()
     data = tempfile.TemporaryFile(dir=tempdir)
@@ -53,6 +66,8 @@ def read_request(stream, tempdir):
 
 
 def run_job(op, payload, tempdir, worker=WORKER):
+    if op == capture.OPERATION:
+        return load_sibling('vm-capture-guest').fixed_job(capture, read_exact, payload)
     _, maximum, seconds = LIMITS[op]
     process = None
     def limits():
@@ -99,7 +114,8 @@ def serve(stream, tempdir, runner=run_job):
         status, result = runner(op, payload, tempdir)
     finally:
         payload.close()
-    if status not in (0, 1, 2) or status == 1 and op != 2 or status != 0 and result or len(result) > LIMITS[op][1]:
+    maximum = capture.OUTPUT_MAX if op == capture.OPERATION else LIMITS[op][1]
+    if status not in (0, 1, 2) or status == 1 and op != 2 or status != 0 and result or len(result) > maximum:
         raise ValueError('invalid fixed worker result')
     # Launch identity is host-owned. The guest must never supply it.
     header = RESPONSE.pack(b'FVMR', 1, op, status, b'\0', nonce, request_hash, b'\0' * 32,

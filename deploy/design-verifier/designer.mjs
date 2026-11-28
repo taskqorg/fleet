@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { appOriginalsFixture } from '../../scripts/app-originals-fixture.ts';
 import { captureMatrix } from '../../packages/ui/scripts/capture-scene.mjs';
 import { designerSource, packOverlay, hash, maxBaseBundle, maxOverlay, verifyRequestedSource } from './designer-source.mjs';
-import { retainScript } from './designer-retain.mjs';
 import { sourcePath } from './git.mjs';
 import { readTrusted, designerRuntime } from './parity.mjs';
 import { assertAllocation, assertScratch } from './designer-allocation.mjs';
@@ -231,7 +230,7 @@ async function captureJob(input, out) {
 try {
   const { positionals: [mode, ...extra], values } = parseArgs({ allowPositionals: true, options: {
     checkout: { type: 'string' }, base: { type: 'string' }, paths: { type: 'string' }, nonce: { type: 'string' }, session: { type: 'string' }, execution: { type: 'string' },
-    'base-bundle': { type: 'string' }, source: { type: 'string' }, 'base-sha': { type: 'string' }, 'overlay-sha': { type: 'string' }, handoff: { type: 'string' }, overlay: { type: 'string' }, fixture: { type: 'string' }, out: { type: 'string' },
+    'base-bundle': { type: 'string' }, source: { type: 'string' }, overlay: { type: 'string' }, fixture: { type: 'string' }, out: { type: 'string' },
     'job-input': { type: 'string' },
     replay: { type: 'string' }, before: { type: 'string' }, after: { type: 'string' }, help: { type: 'boolean' },
   } });
@@ -241,7 +240,6 @@ try {
       '  capture --base-bundle <bundle> --overlay <json> --nonce <64-hex> --session <uuid> --execution <uuid> [--fixture <synthetic.json>] --out <new-directory>\n' +
       '  capture-job --job-input <private-input-directory> --out <new-output-directory>\n' +
       '  replay --base-bundle <bundle> --replay <source-directory> [--nonce <64-hex> --out <new-directory>]\n' +
-      '  retain-script --handoff <json> --source <tar> --session <uuid> --execution <uuid> --base <commit> --base-sha <sha256> --overlay-sha <sha256> --nonce <64-hex>\n' +
       '  compare --before <capture-directory> --after <capture-directory>');
   } else if (mode === 'fixture' && !extra.length && !Object.keys(values).length) {
     checkFixture(appOriginalsFixture);
@@ -251,13 +249,6 @@ try {
     const overlay = packOverlay(resolve(values.checkout), values.base, paths);
     writeFileSync(resolve(values.out), json(overlay), { mode: 0o600, flag: 'wx' });
     console.log(json({ base: overlay.base, paths: overlay.files.map(file => file.path), sha256: hash(json(overlay)) }).trimEnd());
-  } else if (mode === 'retain-script' && !extra.length && Object.keys(values).sort().join(',') === 'base,base-sha,execution,handoff,nonce,overlay-sha,session,source') {
-    const handoff = JSON.parse(read(resolve(values.handoff), maxManifest));
-    const option = handoffOption(handoff, { nonce: values.nonce, base: values.base,
-      baseSha256: values['base-sha'], overlaySha256: values['overlay-sha'], session: values.session, execution: values.execution });
-    const source = read(resolve(values.source), 64 * 1024 * 1024);
-    await validateSource(source, option, { base: values.base, baseSha256: values['base-sha'], overlaySha256: values['overlay-sha'] });
-    console.log(retainScript(option, values.nonce));
   } else if (mode === 'capture-job' && !extra.length && Object.keys(values).sort().join(',') === 'job-input,out') {
     await captureJob(resolve(values['job-input']), resolve(values.out));
   } else {

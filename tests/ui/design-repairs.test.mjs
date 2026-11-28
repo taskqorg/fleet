@@ -166,14 +166,6 @@ test('Conversation fixture binds its route, resolution and returned head', async
   assert.throws(() => checkFixture(fixture), /same conversation/);
 });
 
-test('retention script asks for this execution’s staged directory', async () => {
-  const { retainScript } = await import('../../deploy/design-verifier/designer-retain.mjs');
-  const script = retainScript({ sourceSha256: 'abc', cases: [] });
-  assert.match(script, /captureDirectory = null/);
-  assert.match(script, /Stage the captured files into this execution/);
-  assert.doesNotMatch(script, /trusted-vm-output/);
-});
-
 test('handoff matches this designer request and names only the expected capture files', async () => {
   const { handoffOption } = await import('../../deploy/design-verifier/designer-handoff.mjs');
   const { captureMatrix } = await import('../../packages/ui/scripts/capture-scene.mjs');

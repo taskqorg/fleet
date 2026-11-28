@@ -90,7 +90,7 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(jsonBytes(recipe), &binding); err != nil {
 		t.Fatal(err)
 	}
-	digest := binding.digest()
+	digest := binding.Digest()
 	recipe["digest"] = digest
 	recipe["html"] = strings.Repeat("b", 64)
 	c := contract.DesignReviewCase{ScopeKey: "pages/history/events:default", Recipe: digest, RecipeArtifactId: retain("application/json", jsonBytes(recipe))}

@@ -76,6 +76,13 @@ func designCaptureCaller(q *Request) (contract.DesignCaptureScope, error) {
 	if !ok || id == "" || q.host == nil {
 		return scope, fail(403, "Capture requires an authenticated Fleet designer turn")
 	}
+	return designCaptureAuthority(q, id, q.hostID())
+}
+
+// An empty expected host is used only by authenticated poll dispatch. Resolve
+// the current originating host and its effective director just as agent tools do.
+func designCaptureAuthority(q *Request, id, expectedHost string) (contract.DesignCaptureScope, error) {
+	var scope contract.DesignCaptureScope
 	if err := lockExecutionTask(q, id); err != nil {
 		return scope, err
 	}
@@ -95,7 +102,7 @@ func designCaptureCaller(q *Request) (contract.DesignCaptureScope, error) {
 	if err != nil {
 		return scope, err
 	}
-	if s == nil || s.Role != "designer" || s.ProjectID != "fleet" || deref(e.HostID) != q.hostID() ||
+	if s == nil || s.Role != "designer" || s.ProjectID != "fleet" || (expectedHost != "" && deref(e.HostID) != expectedHost) ||
 		!fleetDesigner(deref(link.ProjectID), profile.ID) || e.State != "running" || e.unconfirmed() ||
 		isTrue(e.StopRequested) || isTrue(e.TaskStopRequested) || deref(link.TaskID) == "" {
 		return scope, fail(403, "Capture requires the active Fleet Design execution")
@@ -106,6 +113,23 @@ func designCaptureCaller(q *Request) (contract.DesignCaptureScope, error) {
 	}
 	if presetSettingsOf(project.object("settings")).Roles["designer"] != designProfileID {
 		return scope, fail(403, "The official Fleet designer role is unavailable")
+	}
+	if expectedHost == "" {
+		origin, err := hostRecordByID(q, deref(e.HostID))
+		if err != nil {
+			return scope, err
+		}
+		if origin == nil || origin.removed() {
+			return scope, fail(403, "The originating designer host is unavailable")
+		}
+		sub := *q
+		sub.host = &authHost{HostID: origin.ID, Holder: deref(origin.Holder)}
+		person, err := hostAgentPerson(&sub, firstString(e.DirectedBy, s.DirectedBy, sub.host.Holder), e.TakenFrom)
+		if err != nil {
+			return scope, err
+		}
+		sub.person = person
+		q = &sub
 	}
 	task := deref(link.TaskID)
 	if err := activeDesignTask(q, task, "fleet"); err != nil {
@@ -177,6 +201,13 @@ func designCapture(q *Request, r *contract.DesignCaptureRequest) (contract.Desig
 		return out, err
 	}
 	out.State = e.State
+	if e.State == "preparing" && !isTrue(e.StopRequested) && p.PermitExpiresAt <= time.Now().Unix() {
+		if err := stopDesignerCapture(q, scope.Execution, "design-capture-permit-expired"); err != nil {
+			return out, err
+		}
+		out.State = "cancelled"
+		return out, nil
+	}
 	if string(r.Action) == "cancel" {
 		if !isTrue(e.StopRequested) && e.terminal() {
 			e.StopRequested = ptr(true)
@@ -298,7 +329,7 @@ func captureResult(q *Request, p designCapturePayload, out contract.DesignCaptur
 	return out, err
 }
 
-func stopDesignerCapture(q *Request, execution string) error {
+func stopDesignerCapture(q *Request, execution, reason string) error {
 	c, err := commandGet(q, designCaptureJobID(execution))
 	if errors.Is(err, errNotFound) {
 		return nil
@@ -314,7 +345,7 @@ func stopDesignerCapture(q *Request, execution string) error {
 	if err != nil || e.terminal() || isTrue(e.StopRequested) {
 		return err
 	}
-	_, err = requestExecutionStopWithPolicy(q, c.ExecutionID, false, "designer-execution-ended")
+	_, err = requestExecutionStopWithPolicy(q, c.ExecutionID, false, reason)
 	return err
 }
 

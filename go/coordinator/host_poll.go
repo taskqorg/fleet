@@ -504,21 +504,41 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 					return err
 				}
 				if capture, ok := captureCommandPayload(cmd); ok {
-					if !contract.HasCapability(caps, contract.DesignCaptureCapability) {
-						continue
-					}
-					parent, err := getExecution(wq, capture.DesignCapture.Request.Execution)
-					if err != nil {
-						return err
-					}
-					if parent.State != "running" || parent.unconfirmed() || isTrue(parent.StopRequested) ||
-						capture.PermitExpiresAt <= time.Now().Unix() {
-						if err := stopDesignerCapture(wq, parent.ID); err != nil {
+					request := capture.DesignCapture.Request
+					expired := capture.PermitExpiresAt <= time.Now().Unix()
+					if expired {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-permit-expired"); err != nil {
 							return err
 						}
 						continue
 					}
-					p, err := capturePermit(capture.DesignCapture.Request, capture.PermitExpiresAt)
+					if !contract.HasCapability(caps, contract.DesignCaptureCapability) {
+						continue
+					}
+					scope, err := designCaptureAuthority(wq, request.Execution, "")
+					if err != nil {
+						_, outcome := pollCommandRefusal(err)
+						var refused *HTTPError
+						if outcome != pollStopsCommand && (!errors.As(err, &refused) || refused.Code != 409) {
+							return err
+						}
+					}
+					if err != nil || scope != request.DesignCaptureScope {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-authority-changed"); err != nil {
+							return err
+						}
+						continue
+					}
+					current, err := loadDesignCaptureInstallation()
+					producer, runtime := capture.DesignCapture.Producer, capture.DesignCapture.Runtime
+					if err != nil || len(capture.Inputs) != 3 || capture.Inputs[0].ArtifactId != current.BaseArtifact ||
+						producer != current.Producer || runtime != current.Runtime {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-installation-changed"); err != nil {
+							return err
+						}
+						continue
+					}
+					p, err := capturePermit(request, capture.PermitExpiresAt)
 					if err != nil {
 						continue
 					}

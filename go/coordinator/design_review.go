@@ -192,38 +192,7 @@ func readDesignDigest(q *Request, r *contract.DesignOfferRequest, project, task,
 }
 
 // The preview builder hashes these fields in this order before it adds the HTML and recipe digests.
-type designRecipe struct {
-	Version       int    `json:"version"`
-	Scene         string `json:"scene"`
-	State         string `json:"state"`
-	Path          string `json:"path"`
-	Landmark      string `json:"landmark"`
-	Clock         int64  `json:"clock"`
-	TimeZone      string `json:"timeZone"`
-	Locale        string `json:"locale"`
-	DPR           int    `json:"dpr"`
-	ReducedMotion bool   `json:"reducedMotion"`
-	Matrix        []struct {
-		Viewport string `json:"viewport"`
-		Theme    string `json:"theme"`
-		Width    int    `json:"width"`
-		Height   int    `json:"height"`
-	} `json:"matrix"`
-	CSS    string `json:"css"`
-	Inputs []struct {
-		Path   string `json:"path"`
-		SHA256 string `json:"sha256"`
-	} `json:"inputs"`
-}
-
-func (r *designRecipe) digest() string {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(r) // only strings, integers and a boolean
-	raw := bytes.TrimSuffix(b.Bytes(), []byte{'\n'})
-	return sha256hex(append([]byte("fleet:preview-recipe:v1\x00"), raw...))
-}
+type designRecipe = contract.PreviewRecipe
 
 func checkDesignOriginal(buf []byte, c *contract.DesignReviewCase, cell *designCell) error {
 	if cell != nil {
@@ -237,7 +206,7 @@ func checkDesignOriginal(buf []byte, c *contract.DesignReviewCase, cell *designC
 	dec := json.NewDecoder(bytes.NewReader(buf))
 	dec.DisallowUnknownFields()
 	if !json.Valid(buf) || dec.Decode(&r) != nil || r.Version != 1 || r.Scene+":"+r.State != c.ScopeKey ||
-		r.Digest != c.Recipe || r.digest() != c.Recipe || !validDesignHash(r.HTML) || !validDesignHash(r.CSS) ||
+		r.Digest != c.Recipe || r.designRecipe.Digest() != c.Recipe || !validDesignHash(r.HTML) || !validDesignHash(r.CSS) ||
 		r.Path == "" || r.Landmark == "" || r.DPR != 1 || !r.ReducedMotion || len(r.Inputs) == 0 || len(r.Matrix) != len(designMatrix) {
 		return fail(409, "Retained recipe does not match the offered scene, source digest and capture settings")
 	}

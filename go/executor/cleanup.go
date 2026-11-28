@@ -208,6 +208,12 @@ func cleanupRun(root, execution string) int {
 		c.bytes += treeSize(d)
 		_ = removeTree(d)
 	}
+	if captureID.MatchString(execution) {
+		private := capturePrivateDir(root, execution)
+		if _, err := os.Lstat(private); err == nil {
+			c.removeDir(private)
+		}
+	}
 	if c.processes > 0 || c.bytes > 0 {
 		c.dirs = max(c.dirs, 1)
 	}
@@ -231,6 +237,12 @@ func cleanupAtStart(root string, unresolved map[string]bool) {
 	dirs, _ := filepath.Glob(filepath.Join(root, "run-tmp", "*"))
 	for _, d := range dirs {
 		if !unresolved[filepath.Base(d)] {
+			c.removeDir(d)
+		}
+	}
+	captureDirs, _ := filepath.Glob(filepath.Join(root, "design-capture-staging", "*"))
+	for _, d := range captureDirs {
+		if id := filepath.Base(d); captureID.MatchString(id) && !unresolved[id] {
 			c.removeDir(d)
 		}
 	}

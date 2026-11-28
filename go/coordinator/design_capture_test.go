@@ -28,7 +28,7 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	}}, e.ownerHeaders(), &project)
 	var task contract.TaskDetail
 	e.opInto(t, "task_create", doc{"title": "Synthetic capture", "projectId": "fleet"}, e.ownerHeaders(), &task)
-	e.registerHost(t, "capture-designer")
+	designerSecret := e.registerHost(t, "capture-designer")
 	e.registerHost(t, contract.DesignCaptureHost)
 	const designerHost = "capture-designer"
 	turn := func(role string) (string, string) {
@@ -79,6 +79,19 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 			t.Fatalf("accepted unauthorized capture: %+v", bad)
 		}
 	}
+	startCommand := newID()
+	sql("INSERT INTO command (id,execution_id,host_id,project_id,kind,status,payload,handed_out) VALUES ($1,$2,$3,'fleet','start','started','{}',true)",
+		startCommand, eid, designerHost)
+	httpCode, rpc := e.callJSON(t, "POST", contract.RouteAgentTools.Path, contract.AgentToolsRequest{
+		HostId: designerHost, CommandId: startCommand, ExecutionId: &eid,
+		Request: jsonBytes(doc{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": doc{
+			"name": "design_capture", "arguments": doc{"action": "status", "requestId": "first"},
+		}}),
+	}, map[string]string{"Authorization": "Bearer " + designerSecret})
+	if httpCode != 200 || !strings.Contains(string(jsonBytes(rpc)), "configured") {
+		t.Fatalf("authenticated designer MCP status did not reach the fixed operation: %d %+v", httpCode, rpc)
+	}
+
 	start, err := call(designerHost, eid, "start", "first", &overlay, &fixture)
 	if err != nil || start.State != "preparing" {
 		t.Fatalf("start = %+v, %v", start, err)
@@ -193,4 +206,44 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	if _, err := call(designerHost, parent, "stage", "parent-stop", nil, nil); err == nil {
 		t.Fatal("stopped parent staged a capture")
 	}
+
+	for _, kind := range []string{"paused task", "role revoked", "origin director revoked", "expired while broker unavailable"} {
+		t.Run(kind, func(t *testing.T) {
+			sid, execution := turn("designer")
+			overlay := asset(execution, "overlay.json", "bound overlay")
+			fixture := asset(execution, "fixture.json", "bound fixture")
+			job, err := call(designerHost, execution, "start", "handoff-check", &overlay, &fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hostCaps := caps
+			switch kind {
+			case "paused task":
+				sql("UPDATE task SET state='paused' WHERE id=$1", task.Id)
+				defer sql("UPDATE task SET state='queued' WHERE id=$1", task.Id)
+			case "role revoked":
+				sql("UPDATE session SET payload=jsonb_set(payload,'{role}','\"worker\"') WHERE id=$1", sid)
+			case "origin director revoked":
+				sql("UPDATE execution SET directed_by=$2,data=jsonb_set(data,'{directedBy}',to_jsonb($2::text)) WHERE id=$1",
+					execution, "former-director@example.invalid")
+			case "expired while broker unavailable":
+				sql("UPDATE command SET payload=jsonb_set(payload,'{payload,permitExpiresAt}','0') WHERE id=$1", job.JobId)
+				hostCaps = []string{"script"}
+			}
+			commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, hostCaps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, command := range commands {
+				if command.Script != nil {
+					t.Fatal("stale capture was handed out")
+				}
+			}
+			var state string
+			if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT state::text FROM execution WHERE id=$1", job.JobId).Scan(&state); err != nil || state != "cancelled" {
+				t.Fatalf("stale capture did not settle: %q %v", state, err)
+			}
+		})
+	}
+
 }

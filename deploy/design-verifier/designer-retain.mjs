@@ -1,20 +1,3 @@
-// Emitted as a Fleet tool-runner snippet after all originals have been captured.
-// Copy returned receipts into this object before retrying a pending transfer.
-export function retainScript(option, nonce) {
-  return `const retain = ${retain.toString()};
-// Set to the capture directory staged in THIS designer execution's worktree, TMPDIR, or FLEET_INPUT_DIR.
-const captureDirectory = null;
-// Set to the nonce recorded when this designer execution requested the capture.
-const requestNonce = null;
-if (requestNonce !== ${JSON.stringify(nonce)}) throw new Error('Capture nonce does not match this request');
-if (typeof captureDirectory !== 'string' || !captureDirectory || captureDirectory.split('/').includes('..'))
-  throw new Error('Stage the captured files into this execution and set captureDirectory');
-const receipts = {};
-text(await retain(tools, captureDirectory, ${JSON.stringify(option)}, receipts,
-  receipt => text(JSON.stringify({ receipt }))));
-`;
-}
-
 export async function retain(tools, out, option, receipts = {}, checkpoint = () => {}) {
   const execution = option.execution;
   if (typeof execution !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(execution))

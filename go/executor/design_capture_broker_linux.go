@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -33,4 +34,15 @@ func dialCaptureBroker() (net.Conn, error) {
 		return nil, errCaptureBroker
 	}
 	return conn, nil
+}
+
+// Publish an already verified directory in one operation, without replacing
+// any entry the designer created. The capture workflow is supported on Linux.
+func publishCaptureDirectory(source, final string) error {
+	d, err := unix.Open(filepath.Dir(final), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(d)
+	return unix.Renameat2(unix.AT_FDCWD, source, d, filepath.Base(final), unix.RENAME_NOREPLACE)
 }

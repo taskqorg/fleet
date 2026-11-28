@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 func captureTestSHA(b []byte) string { d := sha256.Sum256(b); return hex.EncodeToString(d[:]) }
@@ -31,8 +33,8 @@ func captureTestFixture(t *testing.T) (appCaptureRequest, appCaptureManifest, ma
 	req.BaseSHA256 = captureTestSHA(bundle)
 	req.OverlaySHA256 = captureTestSHA(overlay)
 	req.FixtureSHA256 = captureTestSHA([]byte("{}\n"))
-	files := map[string][]byte{"case-1-recipe.json": []byte("{}")}
-	c := appCaptureCase{ScopeKey: "pages/tasks/app-shell:details", Recipe: strings.Repeat("e", 64), RecipeFile: "case-1-recipe.json", RecipeSHA256: captureTestSHA(files["case-1-recipe.json"])}
+	files := map[string][]byte{}
+	c := appCaptureCase{ScopeKey: "pages/tasks/app-shell:details", RecipeFile: "case-1-recipe.json"}
 	for _, v := range []struct {
 		viewport, theme string
 		w, h            int
@@ -46,6 +48,19 @@ func captureTestFixture(t *testing.T) (appCaptureRequest, appCaptureManifest, ma
 		files[name] = imageBytes
 		c.Frames = append(c.Frames, appCaptureFrame{Viewport: v.viewport, Theme: v.theme, Width: v.w, Height: v.h, File: name, SHA256: captureTestSHA(imageBytes), Bytes: int64(len(imageBytes)), Routes: []string{"/projects/FLEET/tasks/T-FLEET-1"}})
 	}
+	recipe := contract.PreviewRecipe{Version: 1, Scene: "pages/tasks/app-shell", State: "details",
+		Path: "/projects/FLEET/tasks/T-FLEET-1", Landmark: "main", Clock: 123, TimeZone: "UTC", Locale: "en-US", DPR: 1,
+		ReducedMotion: true, CSS: strings.Repeat("1", 64), Inputs: []contract.PreviewRecipeInput{{Path: "app/main.ts", SHA256: strings.Repeat("6", 64)}}}
+	for _, f := range c.Frames {
+		recipe.Matrix = append(recipe.Matrix, contract.PreviewRecipeCell{Viewport: f.Viewport, Theme: f.Theme, Width: f.Width, Height: f.Height})
+	}
+	c.Recipe = recipe.Digest()
+	files[c.RecipeFile], _ = json.Marshal(struct {
+		contract.PreviewRecipe
+		Digest string `json:"digest"`
+		HTML   string `json:"html"`
+	}{recipe, c.Recipe, strings.Repeat("2", 64)})
+	c.RecipeSHA256 = captureTestSHA(files[c.RecipeFile])
 	producer := appCaptureProducer{Commit: req.Base, Version: "invented-test-release", Target: "linux-amd64"}
 	replay, _ := json.Marshal(map[string]any{
 		"version": 1, "producer": producer, "kind": "fleet-normal-app", "base": req.Base,
@@ -311,4 +326,62 @@ func TestAppCaptureRejectsCancellationAndWrongArchiveDigest(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("staging left files after failure: %v %v", entries, err)
 	}
+}
+
+// Rerender-source and archive digests agree in both regressions. The bytes
+// that used to pass config-only PNG and presence-only recipe checks differ.
+func TestAppCaptureRejectsDigestBoundTruncatedPNGAndInvalidRecipe(t *testing.T) {
+	for _, kind := range []string{"truncated PNG", "empty recipe"} {
+		t.Run(kind, func(t *testing.T) {
+			req, manifest, files := captureTestFixture(t)
+			c := &manifest.Cases[0]
+			if kind == "truncated PNG" {
+				frame := &c.Frames[0]
+				pngBytes := files[frame.File]
+				files[frame.File] = append([]byte(nil), pngBytes[:len(pngBytes)-10]...)
+				frame.Bytes = int64(len(files[frame.File]))
+				frame.SHA256 = captureTestSHA(files[frame.File])
+			} else {
+				files[c.RecipeFile] = []byte("{}")
+				c.RecipeSHA256 = captureTestSHA(files[c.RecipeFile])
+			}
+			source := map[string][]byte{}
+			tr := tar.NewReader(bytes.NewReader(files["source.tar"]))
+			for {
+				header, err := tr.Next()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				source[header.Name], err = io.ReadAll(tr)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var replay map[string]json.RawMessage
+			if err := json.Unmarshal(source["replay.json"], &replay); err != nil {
+				t.Fatal(err)
+			}
+			replay["cases"], _ = json.Marshal(manifest.Cases)
+			source["replay.json"], _ = json.Marshal(replay)
+			files["source.tar"] = captureTestSource(t, source)
+			manifest.SourceSHA256 = captureTestSHA(files["source.tar"])
+			wire := captureTestTar(t, manifest, files, "")
+			req.CaptureSHA256 = captureTestSHA(wire)
+			if _, err := stageAppCapture(context.Background(), privateCaptureTestRoot(t), req, bytes.NewReader(wire)); err == nil {
+				t.Fatal("archive containing incomplete original was staged")
+			}
+		})
+	}
+}
+
+func privateCaptureTestRoot(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

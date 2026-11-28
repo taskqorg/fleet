@@ -287,7 +287,7 @@ func delegationServer(ctx any, journal, contextFile string) (M, error) {
 	names := mcpToolNames(mcpTools(ctx))
 	server := M{"command": exe(), "args": []any{"mcp", "delegation", journal, "@" + contextFile}, "tools": names}
 	if slices.Contains(names, any("design_capture")) {
-		server["toolTimeoutSec"] = 1250 // two journaled artifact transfers and terminal readback
+		server["toolTimeoutSec"] = 60 // authorization, bounded journal wait and handoff readback
 	} else if slices.Contains(names, any("board_read")) {
 		// Keep Codex's native MCP call open through the maximum journal wait, with time for the local handoff.
 		server["toolTimeoutSec"] = contract.BoardReadMaxWaitSeconds + agentToolReplySeconds + 10
@@ -407,7 +407,7 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 	if err != nil || name != "design_capture" || typed[contract.DesignCaptureRequest](q).Action != contract.DesignCaptureActionStage {
 		return result, err
 	}
-	return stageCaptureTool(result, contextOf(ctx), db, func() (any, error) {
+	return captureStageTool(result, contextOf(ctx), db, typed[contract.DesignCaptureRequest](q).RequestId, func() (any, error) {
 		return delegationCallRaw(name, q, ctx, db)
 	})
 }
@@ -452,6 +452,16 @@ func delegationCallRaw(name string, q, ctx any, db *sql.DB) (any, error) {
 			return nil, dbe(err)
 		}
 		if stored.Request.Set {
+			call := typed[struct {
+				Params struct {
+					Name      string                        `json:"name"`
+					Arguments contract.DesignCaptureRequest `json:"arguments"`
+				} `json:"params"`
+			}](stored.Request.V)
+			if call.Params.Name == "design_capture" && call.Params.Arguments.Action == contract.DesignCaptureActionStage {
+				// Resume the same local transfer workflow with fresh authority.
+				return delegationCall("design_capture", jClone(call.Params.Arguments), ctx, db)
+			}
 			if result.Keys.Result.Set {
 				return result.Keys.Result.V, nil
 			}

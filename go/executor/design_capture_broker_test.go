@@ -125,76 +125,163 @@ func TestDesignCaptureToolOnlyAcceptsTerminalReturn(t *testing.T) {
 	}
 }
 
-func TestDesignCaptureStageRechecksCallerAndCleansPrivateDownloads(t *testing.T) {
+func TestDesignCaptureStageRechecksCallerAndKeepsVerifiedBytesPrivate(t *testing.T) {
 	scope, job, measured, archive, _ := measuredCaptureFixture(t)
 	raw := []byte(enc(measured))
 	job.ReceiptSHA256 = captureTestSHA(raw)
 	proof := contract.DesignCaptureReturn{Job: job, ReceiptArtifact: "receipt-id", CaptureArtifact: "archive-id"}
-	terminal := mcpText(M{"state": "succeeded", "result": proof}, nil)
-	for _, test := range []struct {
-		name      string
-		latest    any
-		downloads int
-		staged    bool
-	}{
-		{"ready", terminal, 2, true},
-		{"cancelled during transfer", mcpText(M{"state": "cancelled"}, nil), 2, false},
-		{"foreign execution", terminal, 0, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			dir := t.TempDir()
-			execution := scope.Execution
-			if test.downloads == 0 {
-				execution = scope.Task
+	for _, name := range []string{"ready and replay", "cancelled during transfer", "foreign execution", "preexisting designer directory"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			request := captureStageRequest{scope.Execution, scope.Session, "test-stage"}
+			if name == "foreign execution" {
+				request.ExecutionID = scope.Task
 			}
-			ctx := &delegationContext{ProjectId: &scope.Project, TempDir: &dir, ExecutionId: jsonValue{Set: true, V: execution}}
-			downloaded := 0
-			get := func(id, incoming, artifact string, limit int64) (*os.File, bool, error) {
-				downloaded++
-				if id != scope.Execution || filepath.Dir(filepath.Dir(incoming)) != dir {
-					t.Fatal("download left the requesting execution's private area")
-				}
-				data := raw
-				if artifact == proof.CaptureArtifact {
-					data = archive
-				} else if artifact != proof.ReceiptArtifact {
-					t.Fatal("foreign artifact")
-				}
-				if int64(len(data)) > limit {
-					t.Fatal("test artifact exceeds its bound")
-				}
-				name := filepath.Join(incoming, artifact)
-				if err := os.WriteFile(name, data, 0600); err != nil {
-					return nil, false, err
-				}
-				f, err := os.Open(name)
-				return f, false, err
-			}
-			result, err := stageCaptureWithTransfer(terminal, ctx, get, func() (any, error) { return test.latest, nil })
-			if err != nil || downloaded != test.downloads {
-				t.Fatalf("stage = %v downloads=%d", err, downloaded)
-			}
-			entries, err := os.ReadDir(dir)
-			if err != nil {
+			designer := runTempDir(root, request.ExecutionID)
+			if err := os.MkdirAll(designer, 0700); err != nil {
 				t.Fatal(err)
 			}
-			if !test.staged {
-				if len(entries) != 0 || len(captureToolText(result)) != 0 {
-					t.Fatalf("refused capture left output: %v", entries)
+			if name == "preexisting designer directory" {
+				if err := os.Mkdir(filepath.Join(designer, "design-originals-"+job.Request.Job), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			authCount, downloads := 0, 0
+			authorize := func() (contract.DesignCaptureReturn, *failure) {
+				authCount++
+				if authCount == 2 {
+					entries, err := os.ReadDir(designer)
+					if err != nil || len(entries) != 0 {
+						t.Fatal("verified bytes exposed before authorization", entries, err)
+					}
+					if name == "cancelled during transfer" {
+						return contract.DesignCaptureReturn{}, permanentf("cancelled")
+					}
+				}
+				return proof, nil
+			}
+			get := func(id string, pin captureTransferPin) (io.ReadCloser, *failure) {
+				downloads++
+				if id != scope.Execution || pin.Job != job.Request.Job {
+					t.Fatal("download belongs to another capture")
+				}
+				var data []byte
+				switch pin.ID {
+				case proof.ReceiptArtifact:
+					data = raw
+				case proof.CaptureArtifact:
+					data = archive
+				default:
+					t.Fatal("foreign artifact")
+				}
+				if int64(len(data)) > pin.Limit || captureTestSHA(data) != pin.SHA256 {
+					t.Fatal("download pin changed")
+				}
+				return io.NopCloser(bytes.NewReader(data)), nil
+			}
+			published, f := executeCaptureStage(root, request, authorize, get)
+			if name == "foreign execution" || name == "preexisting designer directory" {
+				if f == nil || downloads != 0 {
+					t.Fatalf("foreign source became staged: %+v (%d downloads)", f, downloads)
 				}
 				return
 			}
-			if len(entries) != 1 || !bytes.Contains(captureToolText(result), []byte("staged")) {
-				t.Fatalf("staged original unavailable: %v", result)
+			if _, err := os.Stat(filepath.Join(capturePrivateDir(root, request.ExecutionID), "verify")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("verification scratch survived", err)
 			}
-			contents, err := os.ReadDir(filepath.Join(dir, entries[0].Name()))
-			if err != nil || len(contents) != 1 || contents[0].Name() != "originals" {
-				t.Fatalf("private input was not removed: %v %v", contents, err)
+			if name == "cancelled during transfer" {
+				entries, err := os.ReadDir(designer)
+				if f == nil || downloads != 2 || err != nil || len(entries) != 0 {
+					t.Fatalf("cancelled result became visible: %v %v %v", f, entries, err)
+				}
+				return
 			}
-			replayed, err := stageCaptureWithTransfer(terminal, ctx, get, func() (any, error) { return terminal, nil })
-			if err != nil || downloaded != test.downloads || !bytes.Contains(captureToolText(replayed), []byte("already-staged")) {
-				t.Fatalf("stage replay downloaded another copy: %v %v", replayed, err)
+			if f != nil || downloads != 2 || !checkCapturePublication(published.Capture) {
+				t.Fatalf("verified archive unavailable: %v", f)
+			}
+			// The durable marker, not a new download, recovers a crash after rename.
+			replayed, f := executeCaptureStage(root, request, authorize, get)
+			if f != nil || downloads != 2 || replayed.Capture.ManifestSHA256 != published.Capture.ManifestSHA256 {
+				t.Fatalf("stage replay created a new transfer: %v", f)
+			}
+			if err := os.WriteFile(filepath.Join(published.Capture.Directory, "case-1-recipe.json"), []byte("{}"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, f := executeCaptureStage(root, request, authorize, get); f == nil || checkCapturePublication(published.Capture) {
+				t.Fatal("mutated staged files were accepted on replay")
 			}
 		})
+	}
+}
+
+func TestDesignCaptureLateAgentToolResultResumesVerifiedStage(t *testing.T) {
+	scope, job, measured, archive, _ := measuredCaptureFixture(t)
+	raw := []byte(enc(measured))
+	job.ReceiptSHA256 = captureTestSHA(raw)
+	proof := contract.DesignCaptureReturn{Job: job, ReceiptArtifact: "receipt-id", CaptureArtifact: "archive-id"}
+	request := captureStageRequest{scope.Execution, scope.Session, "late-stage"}
+	root := t.TempDir()
+	dir := runTempDir(root, scope.Execution)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	publication, f := executeCaptureStage(root, request, func() (contract.DesignCaptureReturn, *failure) {
+		return proof, nil
+	}, func(_ string, pin captureTransferPin) (io.ReadCloser, *failure) {
+		if pin.ID == proof.ReceiptArtifact {
+			return io.NopCloser(bytes.NewReader(raw)), nil
+		}
+		return io.NopCloser(bytes.NewReader(archive)), nil
+	})
+	if f != nil {
+		t.Fatal(f)
+	}
+	db := journal(t)
+	if _, err := db.Exec("INSERT INTO transfers(id,kind,body,state,response,created_at) VALUES(?,?,?,'done',?,?)",
+		request.key(), captureStageKind, enc(request), enc(publication), nowMs()); err != nil {
+		t.Fatal(err)
+	}
+	args := M{"action": "stage", "requestId": request.RequestID}
+	rpc := M{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": M{"name": "design_capture", "arguments": args}}
+	result := enc(M{"jsonrpc": "2.0", "id": 1, "result": mcpText(M{"state": "succeeded", "result": proof}, nil)})
+	oldKey := request.CommandID + ":late"
+	if _, err := db.Exec("INSERT INTO delegation_requests(id,body,response) VALUES(?,?,?)", oldKey,
+		enc(M{"commandId": request.CommandID, "executionId": scope.Execution, "request": rpc}), result); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				var key string
+				if db.QueryRow("SELECT id FROM delegation_requests WHERE response IS NULL LIMIT 1").Scan(&key) == nil {
+					if _, err := db.Exec("UPDATE delegation_requests SET response=? WHERE id=?", result, key); err == nil {
+						wake(db, key)
+					}
+				}
+			}
+		}
+	}()
+	defer func() { close(stop); <-stopped }()
+	ctx := M{"hostId": "fixture", "commandId": request.CommandID, "executionId": scope.Execution,
+		"projectId": "fleet", "tempDir": dir, "operations": []M{{"name": "design_capture"}}}
+	answer, err := delegationCall("agent_tool_result", M{"requestKey": oldKey}, ctx, db)
+	if err != nil || !bytes.Contains(captureToolText(answer), []byte("staged")) ||
+		bytes.Contains(captureToolText(answer), []byte(proof.CaptureArtifact)) {
+		t.Fatalf("late response bypassed verified staging: %v %v", answer, err)
+	}
+	var jobs, auth int
+	if err := db.QueryRow("SELECT count(*) FROM transfers WHERE kind=?", captureStageKind).Scan(&jobs); err != nil || jobs != 1 {
+		t.Fatalf("late response created another transfer: %d %v", jobs, err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM delegation_requests").Scan(&auth); err != nil || auth != 3 {
+		t.Fatalf("late response skipped the current authority checks: %d %v", auth, err)
 	}
 }
