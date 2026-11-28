@@ -63,8 +63,8 @@ UID and GID. Remove the temporary units and sockets.
    root-owned executor binary and its own service UID. The
    service accepts systemd's root-owned `0440` file inside its exact read-only
    credential directory, or a service-owned `0400` file in that namespace.
-2. Drain Fleet publishing runs and record the previous signed release and
-   installed publisher unit for rollback. On upgrade from the self-binding
+2. Drain Fleet publishing runs and retain the verified previous signed
+   release and its publisher unit for rollback. On upgrade from the self-binding
    service, run `systemctl disable --now fleet-project-publisher.service` before
    replacing its unit. Check that its old socket and service-owned runtime
    directory are gone. If the stopped service left an empty directory, remove
@@ -96,14 +96,37 @@ the endpoint and queues new connections while the service restarts.
 Wait for a new installation verification timestamp and repeat the
 confined status check. Save the nonsecret observations with the delivery.
 
-For operator-approved rollback to the self-binding publisher, drain
-publishing and disable and stop the socket unit first. Its dependency
-stops the activated service and systemd removes the socket pathname.
-Remove the empty activation directory if it remains. Restore the exact
-prior service unit and matching signed binary together, remove the
-activation unit, reload systemd and enable and start the prior service.
-Recheck the confined status path. A rollback to the self-binding service
-can restore the disconnected-path denial.
+For operator-approved rollback to the self-binding publisher:
+
+1. Drain publishing. Disable and stop the socket unit. Its dependency
+   stops the activated service, and systemd removes the socket pathname.
+   Remove the empty activation directory if it remains.
+2. Restore the prior service unit from the verified signed release and
+   remove the activation socket unit. As root, copy that same release's
+   `fleet-executor` to `/opt/fleet/publisher-rollback/fleet-executor`, a
+   root-owned file with mode `0555` in a root-owned `0755` directory.
+   This path is outside the executor updater's managed release tree.
+3. Create the root-owned
+   `/etc/systemd/system/fleet-project-publisher.service.d/publisher-rollback.conf`
+   with this content:
+
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=/opt/fleet/publisher-rollback/fleet-executor project-publisher
+   ```
+
+   Reload systemd, verify the effective `ExecStart` using
+   `systemctl show -p ExecStart fleet-project-publisher.service`, then enable
+   and start the service. Verify the running executable using the service's
+   `MainPID` and `/proc/<MainPID>/exe` and repeat the confined status check.
+   Rolling back to the self-binding service can restore the disconnected-path
+   denial.
+4. Keep the rollback drop-in and pinned binary for the life of the restored
+   unit. To return to socket activation, repeat the cutover with a compatible
+   signed release and both matching units. Remove the rollback drop-in after
+   stopping the restored service and before reloading systemd. Verify confined
+   status before removing the pinned rollback binary.
 
 If readiness fails, use the reported reason to check the unit, App binding
 and provider permissions. An installation failure blocks Fleet repository
