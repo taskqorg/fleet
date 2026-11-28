@@ -171,6 +171,11 @@ Each is a row of the [rules pass](fleet-telemetry.md#6-rules); every number is a
 | `orphan` | as designed in [telemetry](fleet-telemetry.md#6-rules) | `problem:execution:<id>:orphans` |
 | `run-frequency` | executions started by one pipeline, trigger or bot within an hour above `rules.runFrequency.factor` (5) times its 7-day hourly median and above `rules.runFrequency.min` (50) | `problem:frequency:<subject>` |
 
+### Disk-growth evidence
+
+The rule compares the earliest and latest `host.disk` rows within 25 hours and requires the earliest to be at least 20 hours old. It selects each row as a unit and orders ties by trace and span ID. The finding carries `diskGrowth.baseline` and `diskGrowth.current` with trace ID, span ID, start time, and the reported byte categories and session directory counts. Exemplar links list the current trace first and the baseline second.
+
+The problem saves this pair when it opens or reopens, independent of span retention. Sum the nine Fleet byte categories at each endpoint and subtract the baseline sum from the current sum to obtain the reported delta. An absent category remains absent in the evidence and contributes zero in the rule's sum. Directory counts, volume capacity and free space are outside the sum. Daily maxima describe trends. Historical per-directory sizes, eligibility and sweep outcomes require their own observations.
 
 ## Alternatives Considered
 

@@ -378,6 +378,7 @@ PMs apply the project's effective rules when preparing tasks. Executing agents a
 - Compatibility: checked combinations of harnesses, models, skills, tools and environments, stored as versioned facts. Confirmed incompatibility blocks launch; incomplete or unchecked results are visible, not treated as incompatibility.
 - Quality: compare agents, methods and methodologies through [experiments](docs/designs/fleet-lab.md), including numeric evaluations and budgeted iterative improvement at step, task or project scope.
 - Operation: retain invocation counts, duration, cost, CPU, memory, disk usage, failures and recovery across agents, tools, Fleet components and infrastructure, including preparation and cleanup. Link records to components, tools, working areas and runs where applicable; expose missing observations.
+- Disk-growth problems retain the exact baseline and current aggregate observations used by the rule. See [disk-growth evidence](docs/designs/fleet-host-cleanup.md#disk-growth-evidence).
 
 Three records: a run with its conditions and results; an assessment of runs with criteria, comparison, limitations and suitability, appended and never rewritten; a recommendation for a catalogue kind of work within a project or system scope, linked to its assessment. Comments and tags are fields of runs and assessments. Keep failed runs visible.
 

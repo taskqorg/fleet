@@ -38,27 +38,45 @@ var diskKeys = []string{"sessions_worktree", "sessions_other", "run_tmp", "tmp_o
 // cleanupSpanRules: disk-growth and orphan over the span table.
 func cleanupSpanRules(ctx context.Context) ([]contract.Finding, error) {
 	var out []contract.Finding
-	sum := make([]string, len(diskKeys))
-	for i, k := range diskKeys {
-		sum[i] = "toFloat64OrZero(attrs['fleet.disk." + k + "'])"
+	names := append(append([]string{}, diskKeys...), "sessions_worktree_count", "sessions_other_count")
+	keys, values := make([]string, len(names)), make([]string, len(names))
+	for i, k := range names {
+		keys[i] = "'" + k + "'"
+		values[i] = "toFloat64OrNull(attrs['fleet.disk." + k + "'])"
 	}
 	var growth []struct {
-		HostID          string
-		Now, Before     float64
-		Exemplar        string
-		BeforeAt, NowAt string
+		HostID string
+		contract.DiskGrowthEvidence
 	}
-	if err := spanStore.Query(ctx, `SELECT host_id AS HostID, argMax(total, start) AS Now, argMin(total, start) AS Before,
-	argMax(trace_id, start) AS Exemplar, toString(min(start)) AS BeforeAt, toString(max(start)) AS NowAt
-	FROM (SELECT host_id, start, trace_id, `+strings.Join(sum, " + ")+` AS total FROM span
+	if err := spanStore.Query(ctx, `SELECT host_id AS HostID,
+	argMin(sample, tuple(start, trace_id, span_id)) AS baseline,
+	argMax(sample, tuple(start, trace_id, span_id)) AS current
+	FROM (SELECT host_id, start, trace_id, span_id,
+		CAST(tuple(trace_id, span_id, toString(start),
+			mapFilter((k, v) -> isNotNull(v), mapFromArrays([`+strings.Join(keys, ", ")+`], [`+strings.Join(values, ", ")+`])))
+			AS Tuple(traceId String, spanId String, start String, values Map(String, Nullable(Float64)))) AS sample
+		FROM span
 		WHERE name = 'host.disk' AND start >= now64() - toIntervalHour(25))
-	GROUP BY host_id HAVING min(start) <= now64() - toIntervalHour(20)`, nil, &growth); err != nil {
+	GROUP BY host_id HAVING min(start) <= now64() - toIntervalHour(20)
+	SETTINGS output_format_json_named_tuples_as_objects = 1`, nil, &growth); err != nil {
 		return nil, err
 	}
 	for _, g := range growth {
-		if d := g.Now - g.Before; d > ruleDiskGrowthBytes && d > ruleDiskGrowthShare*g.Before {
-			f := contract.Finding{Rule: "disk-growth", Subject: g.HostID, Value: d, Baseline: ptr(g.Before), Cause: "problem:host:" + g.HostID + ":disk-growth", HostId: ptr(g.HostID), Exemplars: []string{g.Exemplar}}
-			text(&f, fmt.Sprintf("Fleet's disk use on %s grew from %s to %s GB in a day.", g.HostID, gb(g.Before), gb(g.Now)))
+		evidence := g.DiskGrowthEvidence
+		var before, current float64
+		for _, k := range diskKeys {
+			before += evidence.Baseline.Values[k]
+			current += evidence.Current.Values[k]
+		}
+		if d := current - before; d > ruleDiskGrowthBytes && d > ruleDiskGrowthShare*before {
+			evidence.Baseline.Start = chTime(evidence.Baseline.Start)
+			evidence.Current.Start = chTime(evidence.Current.Start)
+			f := contract.Finding{
+				Rule: "disk-growth", Subject: g.HostID, Value: d, Baseline: ptr(before),
+				Cause: "problem:host:" + g.HostID + ":disk-growth", HostId: ptr(g.HostID),
+				Exemplars: []string{evidence.Current.TraceId, evidence.Baseline.TraceId}, DiskGrowth: &evidence,
+			}
+			text(&f, fmt.Sprintf("Fleet's disk use on %s grew from %s to %s GB in a day.", g.HostID, gb(before), gb(current)))
 			out = append(out, f)
 		}
 	}

@@ -106,7 +106,7 @@ func rulesPass(ctx context.Context, a *App) error {
 		if f.Text != nil {
 			txt = *f.Text
 		}
-		data := ruleProblemData{Exemplars: f.Exemplars, Value: f.Value, HostID: f.HostId, StoreID: f.StoreId, ExecutionID: f.ExecutionId}
+		data := ruleProblemData{Exemplars: f.Exemplars, Value: f.Value, HostID: f.HostId, StoreID: f.StoreId, ExecutionID: f.ExecutionId, DiskGrowth: f.DiskGrowth}
 		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, RefreshText: f.Rule == "resource-failing" || f.Rule == "personal-output", Data: data}
 		if f.ProjectId != nil {
 			p.ProjectID = *f.ProjectId
@@ -126,11 +126,12 @@ func rulesPass(ctx context.Context, a *App) error {
 
 // ruleProblemData: the data of a rule finding's problem (Problem.Data, problems.go, is still a map).
 type ruleProblemData struct {
-	Exemplars   []string `json:"exemplars"`
-	Value       float64  `json:"value"`
-	HostID      *string  `json:"hostId,omitempty"`
-	StoreID     *string  `json:"storeId,omitempty"`
-	ExecutionID *string  `json:"executionId,omitempty"`
+	Exemplars   []string                     `json:"exemplars"`
+	Value       float64                      `json:"value"`
+	HostID      *string                      `json:"hostId,omitempty"`
+	StoreID     *string                      `json:"storeId,omitempty"`
+	ExecutionID *string                      `json:"executionId,omitempty"`
+	DiskGrowth  *contract.DiskGrowthEvidence `json:"diskGrowth,omitempty"`
 }
 
 func text(f *contract.Finding, s string) { f.Text = &s }
