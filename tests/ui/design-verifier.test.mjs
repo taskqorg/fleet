@@ -1,16 +1,80 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { designCredentialIsPrivate, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { appId, DesignBlocked, githubCandidates, repo, repositoryId } from '../../deploy/design-verifier/provider.mjs';
 import { openRepository } from '../../deploy/design-verifier/git.mjs';
 import { receiptStore } from '../../deploy/design-verifier/receipts.mjs';
 import { evaluate } from '../../deploy/design-verifier/verifier.mjs';
 import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
+import { registerImageOpenSelector } from '../../deploy/design-verifier/worker/image-journey.mjs';
 import { loadPolicy } from '../../deploy/design-verifier/parity.mjs';
+
+test('the pinned Playwright handle query runs the opener engine beyond main-world interception', async () => {
+  const require = createRequire(import.meta.url);
+  const requirePlaywright = createRequire(require.resolve('playwright/package.json'));
+  const core = dirname(requirePlaywright.resolve('playwright-core/package.json'));
+  const { Selectors: ClientSelectors } = require(join(core, 'lib/client/selectors.js'));
+  const { Selectors: ServerSelectors } = require(join(core, 'lib/server/selectors.js'));
+  const { ElementHandle: ClientHandle } = require(join(core, 'lib/client/elementHandle.js'));
+  const { ElementHandle: ServerHandle } = require(join(core, 'lib/server/dom.js'));
+  const { FrameSelectors } = require(join(core, 'lib/server/frameSelectors.js'));
+  const clientSelectors = new ClientSelectors({});
+  await registerImageOpenSelector(clientSelectors);
+  const { selectorEngines } = clientSelectors._withSelectorOptions({});
+  const [definition] = selectorEngines;
+  const serverSelectors = new ServerSelectors(selectorEngines);
+  const signal = '/_fleet_image_open/' + 'a'.repeat(32);
+  const sent = [];
+  let click;
+  class HTMLElement {}
+  const engine = runInNewContext(definition.source, {
+    HTMLElement,
+    window: { addEventListener: (_type, fn) => { click = fn; }, removeEventListener: () => { click = undefined; } },
+    XMLHttpRequest: class {
+      open(method, path, async) { assert.deepEqual([method, path, async], ['POST', signal, false]); }
+      send() { sent.push(signal); }
+    },
+  });
+  const main = { injectedScript() { assert.fail('candidate main world intercepted the opener binding'); } };
+  const delivered = { _context: main };
+  const utility = {
+    injectedScript: async () => ({
+      evaluateHandle: async (query, args) => ({
+        asElement: () => query({ querySelector: (parsed, root) => {
+          assert.equal(root, opener);
+          assert.equal(parsed.parts.length, 1);
+          return engine.queryAll(root, parsed.parts[0].body)[0];
+        } }, args) ? delivered : null,
+      }),
+    }),
+  };
+  const frame = {
+    _page: { browserContext: { _options: {}, selectors: () => serverSelectors } },
+    _context: async world => world === 'utility' ? utility : main,
+    _mainContext: async () => main,
+  };
+  frame.selectors = new FrameSelectors(frame);
+  const opener = Object.assign(new HTMLElement(), {
+    _frame: frame, isConnected: true, dispatchEvent() { assert.fail('candidate intercepted an event'); },
+  });
+  const handle = { _elementChannel: { querySelector: async ({ selector }) => ({
+    element: { _object: await ServerHandle.prototype.querySelector.call(opener, selector) },
+  }) } };
+  assert.equal(await ClientHandle.prototype.$.call(handle, definition.name + '=' + signal), delivered);
+  assert.deepEqual(sent, []);
+  click({ isTrusted: false, composedPath: () => [opener] });
+  click({ isTrusted: true, composedPath: () => [new HTMLElement()] });
+  assert.deepEqual(sent, []);
+  click({ isTrusted: true, composedPath: () => [opener] });
+  assert.deepEqual(sent, [signal]);
+  assert.equal(click, undefined);
+});
 
 test('image policy registration preserves the legacy policy used by the rollback release', async t => {
   const fixture = { start: '/conversations/C-TST-1', target: '/conversations/C-TST-1',

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { imageJourney, imageScenarioOK, resolveImages, validateImages } from '../../deploy/design-verifier/worker/image-journey.mjs';
+import { imageJourney, imageOpenSelector, imageScenarioOK, resolveImages, validateImages } from '../../deploy/design-verifier/worker/image-journey.mjs';
 import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
 
 // Invented one-pixel PNG for the transport check, never an owner reference.
@@ -110,7 +110,8 @@ function journeyPage(flow, distinct = false, surface = 'task', reorder = false) 
   const parent = { scrollLeft: 0, scrollTop: 96, parentElement: root };
   const stageEdges = { left: 0, top: 0, right: frame.width, bottom: frame.height };
   const imageEdges = { left: -480, top: 0, right: 870, bottom: 843.984375 };
-  const trigger = { isConnected: true, ownerDocument: document, parentElement: parent };
+  class HTMLElement {}
+  const trigger = Object.assign(new HTMLElement(), { isConnected: true, ownerDocument: document, parentElement: parent });
   const sibling = { parentElement: parent };
   root.children = [parent];
   parent.children = [trigger, sibling];
@@ -118,14 +119,19 @@ function journeyPage(flow, distinct = false, surface = 'task', reorder = false) 
   const picture = { complete: true, naturalWidth: 1600, naturalHeight: 1000, currentSrc: origin + original.path,
     offsetWidth: 1350, offsetHeight: 844, decode: async () => {}, getBoundingClientRect: () => ({ toJSON: () => imageEdges }) };
   const calls = [];
-  let opened = false;
-  const listeners = new Map();
-  const emit = (type, event) => {
-    const listener = listeners.get(type);
-    if (listener?.once) listeners.delete(type);
-    listener?.callback(event);
-  };
-  const openSignal = distinct ? '/_fleet_image_open/test' : null;
+  let opened = false, listener;
+  const openSignal = distinct ? '/_fleet_image_open/' + 'a'.repeat(32) : null;
+  const utility = runInNewContext('(' + imageOpenSelector + ')()', {
+    HTMLElement,
+    window: {
+      addEventListener: (_type, callback) => { listener = callback; },
+      removeEventListener: () => { listener = undefined; },
+    },
+    XMLHttpRequest: class {
+      open(method, path, async) { assert.deepEqual([method, path, async], ['POST', openSignal, false]); }
+      send() { calls.push('activation signal'); }
+    },
+  });
   const handles = new Map([
     ['button:' + (distinct ? 'Open ' : 'Open image: ') + resultTitle, trigger],
     ['region:Image. Drag to pan; plus and minus to zoom.', stage],
@@ -136,10 +142,10 @@ function journeyPage(flow, distinct = false, surface = 'task', reorder = false) 
       if (trial) return;
       calls.push(key);
       if (el === trigger) {
-        emit('click', { isTrusted: false, composedPath: () => [trigger, parent] });
-        emit('click', { isTrusted: true, composedPath: () => [sibling, parent] });
+        listener?.({ isTrusted: false, composedPath: () => [trigger, parent] });
+        listener?.({ isTrusted: true, composedPath: () => [sibling, parent] });
         assert.ok(!calls.includes('activation signal'));
-        emit('click', { isTrusted: true, composedPath: () => [trigger, parent] });
+        listener?.({ isTrusted: true, composedPath: () => [trigger, parent] });
         opened = true;
         document.activeElement = stage;
       }
@@ -161,37 +167,18 @@ function journeyPage(flow, distinct = false, surface = 'task', reorder = false) 
       evaluate: async callback => callback.name ? callback(el) : runInNewContext('(' + callback + ')(el)', { el, document }),
       elementHandle: async () => ({
         click, evaluate: async callback => callback(el), value: el, dispose: async () => {},
-        dispatchEvent: async (type, options) => {
-          assert.equal(options.bubbles, false);
-          emit(type, { isTrusted: false, composedPath: () => [el, parent] });
+        dispatchEvent() { assert.fail('the app main world intercepted an event'); },
+        async $(selector) {
+          if (reorder) parent.children.reverse();
+          assert.equal(selector, 'fleetImageOpen=' + openSignal);
+          assert.equal(utility.query(el, openSignal), el);
           assert.ok(!calls.includes('activation signal'));
+          return { dispose: async () => {} };
         },
       }),
     };
   };
-  const cdp = { detach: async () => {}, async send(method, params) {
-    if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
-    if (method === 'Page.createIsolatedWorld') {
-      if (reorder) parent.children.reverse();
-      return { executionContextId: 1 };
-    }
-    assert.equal(method, 'Runtime.evaluate');
-    assert.equal(params.contextId, 1);
-    runInNewContext(params.expression, {
-      document,
-      window: {
-        addEventListener: (type, callback, options) => listeners.set(type, { callback, once: options?.once }),
-        removeEventListener: type => listeners.delete(type),
-      },
-      XMLHttpRequest: class {
-        open(method, path, async) { assert.deepEqual([method, path, async], ['POST', openSignal, false]); }
-        send() { calls.push('activation signal'); }
-      },
-    });
-    return {};
-  } };
   const page = { ...locator('page'), evaluate: async () => true, url: () => origin + spec.start,
-    context: () => ({ newCDPSession: async () => cdp }),
     waitForFunction: async (callback, handle) => assert.equal(callback(handle.value), true) };
   const start = () => imageJourney(page, spec, frame, origin, async () => {}, () => {}, openSignal);
   return { start, calls, parent, sibling, document, stage, stageEdges, imageEdges };

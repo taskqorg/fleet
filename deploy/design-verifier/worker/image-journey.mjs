@@ -1,5 +1,5 @@
 // The operator supplies route and result data. Gestures and DOM observations ship with the verifier.
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 const flows = new Set(['image-open', 'image-fit', 'image-zoom', 'image-returned']);
 const routes = {
@@ -77,33 +77,28 @@ const covers = (outer, inner) => pixelBoundary(outer.left) <= pixelBoundary(inne
   pixelBoundary(outer.right) >= pixelBoundary(inner.right) &&
   pixelBoundary(outer.bottom) >= pixelBoundary(inner.bottom);
 
-async function observeOpen(page, opener, path) {
-  const bindEvent = 'fleet-bind-image-' + randomUUID();
-  const cdp = await page.context().newCDPSession(page);
-  try {
-    const { frameTree } = await cdp.send('Page.getFrameTree');
-    const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'Fleet verifier' });
-    // Transfer the same DOM node through a one-use event. The binding event carries no
-    // loopback URL and cannot itself authorize the original. Only the trusted click can.
-    const { exceptionDetails } = await cdp.send('Runtime.evaluate', {
-      contextId: executionContextId,
-      expression: `(() => {
-        window.addEventListener(${JSON.stringify(bindEvent)}, binding => {
-          const opener = binding.composedPath()[0];
-          const mark = event => {
-            if (!event.isTrusted || !event.composedPath().includes(opener)) return;
-            window.removeEventListener('click', mark, true);
-            const request = new XMLHttpRequest();
-            request.open('POST', ${JSON.stringify(path)}, false);
-            request.send();
-          };
-          window.addEventListener('click', mark, true);
-        }, { capture: true, once: true });
-      })()`,
-    });
-    if (exceptionDetails) throw new Error('Could not observe the trusted Open activation');
-    await opener.dispatchEvent(bindEvent, { bubbles: false });
-  } finally { await cdp.detach(); }
+const imageOpenEngine = 'fleetImageOpen';
+
+export function registerImageOpenSelector(selectors) {
+  return selectors.register(imageOpenEngine, imageOpenSelector, { contentScript: true });
+}
+
+export function imageOpenSelector() {
+  // Playwright runs this engine in its utility world with the selected handle as its root.
+  const query = (opener, path) => {
+    if (!(opener instanceof HTMLElement) || !opener.isConnected || !/^\/_fleet_image_open\/[a-f0-9]{32}$/.test(path))
+      return null;
+    const mark = event => {
+      if (!event.isTrusted || !event.composedPath().includes(opener)) return;
+      window.removeEventListener('click', mark, true);
+      const request = new XMLHttpRequest();
+      request.open('POST', path, false);
+      request.send();
+    };
+    window.addEventListener('click', mark, true);
+    return opener;
+  };
+  return { query, queryAll: (root, path) => [query(root, path)].filter(Boolean) };
 }
 
 export async function imageJourney(page, scenario, frame, origin, settle, checkpoint, openSignal) {
@@ -181,7 +176,10 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
     if (openSignal) {
       const selected = await opener.elementHandle();
       try {
-        await observeOpen(page, selected, openSignal);
+        // A single content-script selector preserves the handle and stays in the utility world.
+        const observed = await selected.$(imageOpenEngine + '=' + openSignal);
+        if (!observed) throw new Error('Could not observe the trusted Open activation');
+        await observed.dispose();
         await selected.click();
       } finally { await selected.dispose(); }
     } else await opener.click();

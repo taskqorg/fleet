@@ -1,8 +1,8 @@
 // The browser guest receives the release build output and protected synthetic fixtures.
-import { chromium } from '/opt/fleet-design-runtime/playwright/index.mjs';
+import { chromium, selectors } from '/opt/fleet-design-runtime/playwright/index.mjs';
 import { readFileSync } from 'node:fs';
 import { openSite } from './site.mjs';
-import { imageJourney, isImageFlow } from './image-journey.mjs';
+import { imageJourney, isImageFlow, registerImageOpenSelector } from './image-journey.mjs';
 
 const options = {
   executablePath: '/opt/fleet-design-runtime/chromium/chrome-headless-shell-linux64/chrome-headless-shell',
@@ -80,6 +80,7 @@ async function capture(browser, { files, main, scenario, clock }, frame) {
   }
 }
 
+await registerImageOpenSelector(selectors);
 const browser = await chromium.launch(options);
 try {
   if (process.argv[2] === '--probe') {
