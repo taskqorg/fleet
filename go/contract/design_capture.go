@@ -13,7 +13,7 @@ const DesignCaptureScript = "@fleet-design-capture/v1"
 const DesignCaptureHost = "pds18-native"
 const DesignCaptureCapability = "design-capture-broker-v2"
 
-// The value belongs to one active designer execution on the fixed host.
+// The value belongs to one active designer execution on its reporting host.
 func DesignCaptureStageCapability(execution string) string {
 	return "design-capture-stage-linux-v2:" + execution
 }
@@ -61,6 +61,7 @@ type DesignCaptureArchive struct {
 
 type DesignCaptureCommand struct {
 	RequestID    string                  `json:"requestId"`
+	OriginHost   string                  `json:"originHost"` // coordinator/executor routing only
 	Request      DesignCaptureJobRequest `json:"request"`
 	Producer     DesignCaptureProducer   `json:"producer"`
 	Runtime      DesignCaptureRuntime    `json:"runtime"`

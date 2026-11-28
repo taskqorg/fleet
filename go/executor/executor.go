@@ -416,7 +416,7 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 	active := e.activeExecutions()
 	caps := capabilities(browserReady != nil && *browserReady)
 	platformID := contract.Platform(platform())
-	if platformID == contract.PlatformLinux && e.host == contract.DesignCaptureHost {
+	if platformID == contract.PlatformLinux {
 		caps = append(caps, e.captureStageCapabilities(active, captureStageReady)...)
 	}
 	if e.host == contract.DesignCaptureHost && captureBrokerReady() {

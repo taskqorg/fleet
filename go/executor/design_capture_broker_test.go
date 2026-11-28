@@ -73,7 +73,14 @@ func TestDesignCaptureBrokerFixedFrames(t *testing.T) {
 		_, err := server.Write(reply.Bytes())
 		done <- err
 	}()
-	receipt, archive, err := captureBrokerResponse(client, input, []byte(fields[0].data), time.Now().Add(time.Second), time.Now().Add(time.Second), func() bool { return true })
+	authority := captureUploadAuthority{OriginHost: "separate-linux-designer"}
+	receipt, archive, err := captureBrokerResponse(client, input, []byte(fields[0].data),
+		time.Now().Add(time.Second), time.Now().Add(time.Second), func() bool {
+			return authority.redemptionReady(func(path string) bool {
+				t.Errorf("renderer attempted to inspect a remote destination: %q", path)
+				return false
+			})
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +105,17 @@ func TestDesignCaptureBrokerFixedFrames(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(input, "permit.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("host permit escaped to a named input")
+	}
+}
+
+func TestDesignCaptureRenderHandoffRejectsMismatchedOriginPaths(t *testing.T) {
+	for _, authority := range []captureUploadAuthority{
+		{}, {OriginHost: contract.DesignCaptureHost},
+		{OriginHost: "separate-linux-designer", StageInput: "/unowned/input"},
+	} {
+		if authority.redemptionReady(func(string) bool { t.Error("invalid stage binding reached preflight"); return true }) {
+			t.Fatal("renderer admitted a missing or mismatched local destination")
+		}
 	}
 }
 

@@ -86,7 +86,7 @@ func captureTransportAuthority(q *Request, host, execution, startID string, arti
 		return empty, err
 	}
 	payload, ok := captureCommandPayload(job)
-	if !ok || payload.DesignCapture.Request.DesignCaptureScope != scope || job.Status != "completed" {
+	if !ok || payload.DesignCapture.Request.DesignCaptureScope != scope || payload.DesignCapture.OriginHost != host || job.Status != "completed" {
 		return empty, fail(403, "Capture transport has no confirmed matching job")
 	}
 	e, err := getExecution(q, job.ExecutionID)

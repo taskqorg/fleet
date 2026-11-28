@@ -170,9 +170,6 @@ func designCaptureAuthority(q *Request, id, expectedHost string) (contract.Desig
 // This pilot can return captures only to an origin running the signed native
 // Linux staging implementation. Read the authenticated poll, not host setup.
 func requireDesignCaptureOrigin(q *Request, host, execution string) error {
-	if host != contract.DesignCaptureHost {
-		return fail(403, "The designer origin must use the fixed PDS18 Linux capture staging capability")
-	}
 	observed, err := unscoped(q, func() (db.HostObservationOfRow, error) {
 		return q.db().HostObservationOf(q.ctx(), host)
 	})
@@ -180,7 +177,7 @@ func requireDesignCaptureOrigin(q *Request, host, execution string) error {
 		return err
 	}
 	var payload hostObservationPayload
-	if err != nil || observed.LastSeenAt == nil || float64(nowMs())-q.app.effectiveHostSeen(host, float64(observed.LastSeenAt.UnixMilli())) >= hostStaleMs ||
+	if err != nil || observed.LastSeenAt == nil || nowMs()-observed.LastSeenAt.UnixMilli() >= hostStaleMs ||
 		json.Unmarshal(observed.Payload, &payload) != nil || deref(payload.Platform) != string(contract.PlatformLinux) ||
 		deref(payload.Version) == "" || !contract.HasCapability(payload.Capabilities, contract.DesignCaptureStageCapability(execution)) {
 		return fail(403, "The designer origin needs the current signed Linux capture staging capability")
@@ -235,7 +232,7 @@ func designCapture(q *Request, r *contract.DesignCaptureRequest) (contract.Desig
 		return out, err
 	}
 	p, ok := captureCommandPayload(c)
-	if !ok || p.DesignCapture.Request.DesignCaptureScope != scope || p.DesignCapture.RequestID != r.RequestId {
+	if !ok || p.DesignCapture.Request.DesignCaptureScope != scope || p.DesignCapture.RequestID != r.RequestId || p.DesignCapture.OriginHost != q.hostID() {
 		return out, fail(409, "Capture request identity differs")
 	}
 	if string(r.Action) == "start" && (len(p.Inputs) != 3 || p.Inputs[1].ArtifactId != deref(r.OverlayArtifactId) ||
@@ -319,7 +316,7 @@ func startDesignCapture(q *Request, scope contract.DesignCaptureScope, r *contra
 		return out, fail(409, "Invalid capture job identity")
 	}
 	expires := time.Now().Add(15 * time.Minute).Unix()
-	launch := contract.DesignCaptureCommand{RequestID: r.RequestId, Request: request, Producer: cfg.Producer, Runtime: cfg.Runtime, LaunchSHA256: cfg.LaunchSHA256}
+	launch := contract.DesignCaptureCommand{RequestID: r.RequestId, OriginHost: q.hostID(), Request: request, Producer: cfg.Producer, Runtime: cfg.Runtime, LaunchSHA256: cfg.LaunchSHA256}
 	if _, err := capturePermit(launch, expires); err != nil {
 		return out, err
 	}

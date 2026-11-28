@@ -34,8 +34,9 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	}}, e.ownerHeaders(), &project)
 	var task contract.TaskDetail
 	e.opInto(t, "task_create", doc{"title": "Synthetic capture", "projectId": "fleet"}, e.ownerHeaders(), &task)
-	const designerHost = contract.DesignCaptureHost
+	const designerHost = "capture-designer"
 	designerSecret := e.registerHost(t, designerHost)
+	rendererSecret := e.registerHost(t, contract.DesignCaptureHost)
 	var originExecutions []string
 	var reportOriginReady func()
 	turn := func(role string) (string, string) {
@@ -123,23 +124,25 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 			}
 		}
 	})
-	t.Run("an exact capability from a different Linux host cannot reserve", func(t *testing.T) {
-		const other = "capture-foreign-origin"
-		secret := e.registerHost(t, other)
+	t.Run("a different host cannot attest for an incapable designer", func(t *testing.T) {
+		reportOrigin(contract.PlatformLinux, []string{"script"})
 		caps := []string{contract.DesignCaptureStageCapability(eid)}
 		code, reply := e.callJSON(t, "POST", contract.RoutePoll.Path, contract.PollRequest{
-			HostId: other, Platform: contract.PlatformLinux, Version: ptr("signed-test"), Capabilities: caps,
-		}, map[string]string{"Authorization": "Bearer " + secret})
+			HostId: contract.DesignCaptureHost, Platform: contract.PlatformLinux, Version: ptr("signed-test"), Capabilities: caps,
+		}, map[string]string{"Authorization": "Bearer " + rendererSecret})
 		if code != 200 {
-			t.Fatalf("foreign test origin poll: %d %+v", code, reply)
+			t.Fatalf("renderer test poll: %d %+v", code, reply)
 		}
-		sql("UPDATE execution SET host_id=$2 WHERE id=$1", eid, other)
-		defer sql("UPDATE execution SET host_id=$2 WHERE id=$1", eid, designerHost)
-		_, err := call(other, eid, "start", "first", &overlay, &fixture)
-		if err == nil || !strings.Contains(err.Error(), "fixed PDS18") {
-			t.Fatalf("foreign Linux origin was admitted: %v", err)
+		_, err := call(designerHost, eid, "start", "first", &overlay, &fixture)
+		if err == nil || !strings.Contains(err.Error(), "Linux capture staging capability") {
+			t.Fatalf("renderer readiness substituted for the incapable origin: %v", err)
+		}
+		var jobCount int
+		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM command WHERE id=$1", designCaptureJobID(eid)).Scan(&jobCount); err != nil || jobCount != 0 {
+			t.Fatalf("incapable origin left a command: %d %v", jobCount, err)
 		}
 	})
+
 	reportOriginReady()
 	for _, bad := range []struct{ host, turn, input string }{
 		{"", eid, overlay}, {"wrong-host", eid, overlay}, {designerHost, foreign, overlay}, {designerHost, eid, foreignOverlay},
@@ -193,6 +196,21 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		}
 		reportOriginReady()
 	})
+	t.Run("a stale distinct origin report cannot authorize dispatch", func(t *testing.T) {
+		sql("UPDATE host_observation SET last_seen_at=now()-interval '2 minutes' WHERE id=$1", designerHost)
+		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
+		if err != nil || len(commands) != 0 {
+			t.Fatalf("stale origin obtained a permit: %d %v", len(commands), err)
+		}
+		var handed bool
+		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT handed_out FROM command WHERE id=$1", start.JobId).Scan(&handed); err != nil || handed {
+			t.Fatalf("stale origin claimed the durable job: %v %v", handed, err)
+		}
+		// A changed poll is persisted immediately even when the heartbeat
+		// normally coalesces repeated identical reports.
+		reportOrigin(contract.PlatformLinux, []string{"script"})
+		reportOriginReady()
+	})
 	first, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
 	if err != nil || len(first) != 1 || first[0].Script == nil {
 		t.Fatalf("fixed host poll: %v %v", len(first), err)
@@ -211,7 +229,7 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	if !ed25519.Verify(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey), p.Request.PermitMessage(permit.ExpiresAt, p.InstallationDigest()), signature) {
 		t.Fatal("invalid per-job permit")
 	}
-	if p.Request.Execution != eid || p.Request.Job != start.JobId || p.Request.BaseSHA256 != sha256hex([]byte("invented bundle")) {
+	if p.OriginHost != designerHost || deref(first[0].Script.HostId) != contract.DesignCaptureHost || p.Request.Execution != eid || p.Request.Job != start.JobId || p.Request.BaseSHA256 != sha256hex([]byte("invented bundle")) {
 		t.Fatalf("invalid job identity: %+v", p.Request)
 	}
 
@@ -424,7 +442,7 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Fatal("stopped parent staged a capture")
 	}
 
-	for _, kind := range []string{"paused task", "role revoked", "origin director revoked", "expired while broker unavailable"} {
+	for _, kind := range []string{"paused task", "role revoked", "origin director revoked", "origin host changed", "expired while broker unavailable"} {
 		t.Run(kind, func(t *testing.T) {
 			sid, execution := turn("designer")
 			overlay := asset(execution, "overlay.json", "bound overlay")
@@ -443,6 +461,15 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 			case "origin director revoked":
 				sql("UPDATE execution SET directed_by=$2,data=jsonb_set(data,'{directedBy}',to_jsonb($2::text)) WHERE id=$1",
 					execution, "former-director@example.invalid")
+			case "origin host changed":
+				sql("UPDATE execution SET host_id=$2 WHERE id=$1", execution, contract.DesignCaptureHost)
+				code, _ := e.callJSON(t, "POST", contract.RoutePoll.Path, contract.PollRequest{
+					HostId: contract.DesignCaptureHost, Platform: contract.PlatformLinux, Version: ptr("signed-test"),
+					Capabilities: []string{contract.DesignCaptureStageCapability(execution)},
+				}, map[string]string{"Authorization": "Bearer " + rendererSecret})
+				if code != 200 {
+					t.Fatalf("replacement host poll returned %d", code)
+				}
 			case "expired while broker unavailable":
 				sql("UPDATE command SET payload=jsonb_set(payload,'{payload,permitExpiresAt}','0') WHERE id=$1", job.JobId)
 				hostCaps = []string{"script"}

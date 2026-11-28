@@ -533,7 +533,14 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 					if err != nil {
 						return err
 					}
-					if err := requireDesignCaptureOrigin(wq, deref(origin.HostID), request.Execution); err != nil {
+					originHost := capture.DesignCapture.OriginHost
+					if originHost == "" || deref(origin.HostID) != originHost {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-origin-changed"); err != nil {
+							return err
+						}
+						continue
+					}
+					if err := requireDesignCaptureOrigin(wq, originHost, request.Execution); err != nil {
 						var refused *HTTPError
 						if !errors.As(err, &refused) || refused.Code != 403 {
 							return err

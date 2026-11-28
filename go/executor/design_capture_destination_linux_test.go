@@ -17,7 +17,7 @@ import (
 )
 
 func TestDesignCaptureAdvertisesOnlyTheResolvedSessionDestination(t *testing.T) {
-	e := &executor{root: t.TempDir(), sessions: t.TempDir(), db: journal(t), host: contract.DesignCaptureHost}
+	e := &executor{root: t.TempDir(), sessions: t.TempDir(), db: journal(t), host: "separate-linux-designer"}
 	if !captureDestinationReady(e.root) {
 		t.Fatal("the data filesystem must support the real publish preflight for this regression")
 	}
@@ -141,7 +141,9 @@ func TestDesignCaptureDowngradedDestinationNeverSendsPermit(t *testing.T) {
 	dial := func() (net.Conn, error) { return client, nil }
 	deadline := time.Now().Add(time.Second)
 	_, _, _, err := awaitCaptureBroker(dial, t.TempDir(), []byte("unspent fixture permit"), deadline, deadline, time.Millisecond,
-		func() bool { return captureDestinationReady(dest) })
+		func() bool {
+			return (captureUploadAuthority{OriginHost: contract.DesignCaptureHost, StageInput: dest}).redemptionReady(captureDestinationReady)
+		})
 	if !errors.Is(err, errCaptureStageUnavailable) {
 		t.Fatalf("admission ignored destination downgrade: %v", err)
 	}

@@ -916,9 +916,11 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		if err != nil || !captureBrokerReady() {
 			return refuse(errCaptureBroker.Error())
 		}
-		captureStageDir = e.captureStageInput(captureJob.Request.Execution, captureJob.Request.Session)
-		if captureStageDir == "" || !captureStageReady(captureStageDir) {
-			return refuse(errCaptureStageUnavailable.Error())
+		if captureJob.OriginHost == e.host {
+			captureStageDir = e.captureStageInput(captureJob.Request.Execution, captureJob.Request.Session)
+			if captureStageDir == "" || !captureStageReady(captureStageDir) {
+				return refuse(errCaptureStageUnavailable.Error())
+			}
 		}
 	}
 	command := sp.Command
@@ -1035,7 +1037,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	var captureAuthority *captureUploadAuthority
 	if capture {
 		captureAuthority = &captureUploadAuthority{URL: e.url, Token: e.token, Access: accessToken(accessFile()),
-			Execution: execution, StageInput: captureStageDir, Permit: permit, Stores: storeAccessHosts()}
+			Execution: execution, OriginHost: captureJob.OriginHost, StageInput: captureStageDir, Permit: permit, Stores: storeAccessHosts()}
 	}
 	l, err := e.spawnWorkerWithCapture(c, spec, nil, captureAuthority)
 	if err != nil {

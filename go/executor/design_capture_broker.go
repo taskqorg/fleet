@@ -37,7 +37,7 @@ func fixedCaptureCommand(c contract.Command, host, execution string) (contract.D
 	}
 	sp := c.Script.Payload
 	if json.Unmarshal(sp.Rest["designCapture"], &job) != nil || json.Unmarshal(sp.Rest["designCapturePermit"], &permit) != nil ||
-		!job.Request.Valid() || job.Request.Job != execution || !job.Producer.Valid() ||
+		job.OriginHost == "" || !job.Request.Valid() || job.Request.Job != execution || !job.Producer.Valid() ||
 		job.Producer.Commit != job.Request.Base || job.InstallationDigest() == "" || permit.InstallationSHA256 != job.InstallationDigest() ||
 		sp.Commit != nil || sp.Rest["workingDirectory"] != nil || sp.TimeoutMs == nil || *sp.TimeoutMs != contract.DesignCaptureTimeoutMS ||
 		len(sp.Inputs) != 3 || sp.Inputs[0].Path != "base.bundle" || sp.Inputs[1].Path != "overlay.json" || sp.Inputs[2].Path != "fixture.json" {
@@ -102,8 +102,22 @@ type captureUploadAuthority struct {
 	Access     *[2]string                   `json:"access"`
 	Stores     []string                     `json:"stores"`
 	Execution  string                       `json:"execution"`
-	StageInput string                       `json:"stageInput"`
+	OriginHost string                       `json:"originHost"`
+	StageInput string                       `json:"stageInput,omitempty"`
 	Permit     contract.DesignCapturePermit `json:"permit"`
+}
+
+func (a captureUploadAuthority) validStageBinding() bool {
+	if a.OriginHost == contract.DesignCaptureHost {
+		return filepath.IsAbs(a.StageInput)
+	}
+	return a.OriginHost != "" && a.StageInput == ""
+}
+
+func (a captureUploadAuthority) redemptionReady(preflight func(string) bool) bool {
+	// A separate origin was checked by the coordinator on its own poll.
+	// Its input directory stays on that executor.
+	return a.validStageBinding() && (a.OriginHost != contract.DesignCaptureHost || preflight(a.StageInput))
 }
 
 // The supervisor passes host authority on a private inherited pipe. Neither
@@ -121,7 +135,7 @@ func captureBrokerCLI(args []string) error {
 	decoder.DisallowUnknownFields()
 	err := decoder.Decode(&auth)
 	_ = pipe.Close()
-	if err != nil || auth.URL == "" || auth.Token == "" || !captureID.MatchString(auth.Execution) || !filepath.IsAbs(auth.StageInput) {
+	if err != nil || auth.URL == "" || auth.Token == "" || !captureID.MatchString(auth.Execution) || !auth.validStageBinding() {
 		return errCaptureBroker
 	}
 	permit, err := json.Marshal(auth.Permit)
@@ -133,7 +147,7 @@ func captureBrokerCLI(args []string) error {
 	auth.Token, auth.Access = "", nil
 	jobDeadline := time.Now().Add(time.Duration(contract.DesignCaptureTimeoutMS) * time.Millisecond)
 	conn, receipt, archive, err := awaitCaptureBroker(dialCaptureBroker, args[0], permit,
-		time.Unix(auth.Permit.ExpiresAt, 0), jobDeadline, 2*time.Second, func() bool { return captureStageReady(auth.StageInput) })
+		time.Unix(auth.Permit.ExpiresAt, 0), jobDeadline, 2*time.Second, func() bool { return auth.redemptionReady(captureStageReady) })
 	if err != nil {
 		return err
 	}
