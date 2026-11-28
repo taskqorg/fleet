@@ -2,6 +2,10 @@
 
 [Launch and inspect a Swarm task from an external agent](docs/designs/fleet-swarm.md#external-agent-quickstart).
 
+[Fleet’s native design-first workflow](docs/design-system/README.md#design-first) describes how Fleet presents a sealed owner choice. If the question is addressed to you, open its task link and select **Details**. The link may open on **History**, and switching tabs keeps the same URL. Open the linked originals to compare the options, then select an option (for example, **A** or **B**) or choose **Request changes**.
+
+See the [protected design verifier runbook](deploy/design-verifier/README.md) for service readiness and check receipts.
+
 ## System Overview
 
 Fleet coordinates agent work across projects and hosts. The [system specification](fleet.md) owns product rules; [AGENTS.md](AGENTS.md) names the pinned shared rules and task-entry requirements. These directory contracts map implemented boundaries and side effects; they do not replace product specifications.
