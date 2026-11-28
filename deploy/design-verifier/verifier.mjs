@@ -54,10 +54,11 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
   }
 
   try {
-    git.ensure(event);
+    await git.ensure(event);
     candidate = await provider.readCandidate(event, git);
     evidence = await verifyProtectedDesignCandidate(event, {
       repositoryDir: git.dir,
+      ...(git.changes && { readChanges: current => git.changes(current) }),
       readCandidate: async () => candidate,
       readPRReceipt: async member => {
         const receipt = await receipts.readPR(member);
@@ -74,7 +75,7 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
           if (rendererPending) throw new VerificationWait('Protected VM renderer is temporarily unavailable');
           throw new DesignBlocked('Protected normal-route verification is unconfigured for this change');
         }
-        const measured = runner.impact(event, paths, git, visual);
+        const measured = await runner.impact(event, paths, git, visual);
         policy = measured.policy;
         return measured;
       },

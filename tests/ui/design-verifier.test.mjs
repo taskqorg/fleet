@@ -9,6 +9,7 @@ import { runInNewContext } from 'node:vm';
 import { designCredentialIsPrivate, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { appId, DesignBlocked, githubCandidates, repo, repositoryId } from '../../deploy/design-verifier/provider.mjs';
 import { openRepository } from '../../deploy/design-verifier/git.mjs';
+import { openAsyncRepository, runGitProcess } from '../../deploy/design-verifier/git-isolated.mjs';
 import { receiptStore } from '../../deploy/design-verifier/receipts.mjs';
 import { evaluate } from '../../deploy/design-verifier/verifier.mjs';
 import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
@@ -208,7 +209,7 @@ test('the verifier gives each original head its own receipt and fences the cumul
   const provider = githubCandidates(api);
   const checks = fleetDesignChecks(api, appId);
   const receipts = await receiptStore(path, 'd'.repeat(40), checks);
-  const deps = { provider, git, checks, receipts };
+  const deps = { provider, git: openAsyncRepository(path), checks, receipts };
   const [firstPR, secondPR, unknown, group] = await provider.snapshot();
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(firstPR, deps)).conclusion, 'success');
@@ -265,6 +266,14 @@ test('the verifier gives each original head its own receipt and fences the cumul
   let stoppedWrites = 0;
   await assert.rejects(evaluate(unknown, { ...deps, signal: stopped.signal,
     checks: { publish: async () => { stoppedWrites++; } } }), /Verifier stopped/);
+  assert.equal(stoppedWrites, 0);
+  const gitStop = new AbortController();
+  const stalled = { ...deps.git, ensure: () => runGitProcess(process.execPath,
+    ['-e', 'setTimeout(() => {}, 10000)'], { signal: gitStop.signal }) };
+  const pendingGit = evaluate(unknown, { ...deps, git: stalled, signal: gitStop.signal,
+    checks: { publish: async () => { stoppedWrites++; } } });
+  setTimeout(() => gitStop.abort(), 150);
+  await assert.rejects(pendingGit, /Verifier stopped/);
   assert.equal(stoppedWrites, 0);
   const during = new AbortController();
   await assert.rejects(evaluate(unknown, { ...deps, signal: during.signal,

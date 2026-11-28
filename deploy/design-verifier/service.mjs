@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { designGitHubConfig, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { appId, installationId, repositoryId, githubCandidates, repo, sha } from './provider.mjs';
 import { fleetVerifierClient } from './fleet.mjs';
-import { openRepository } from './git.mjs';
+import { openAsyncRepository } from './git-isolated.mjs';
 import { receiptStore } from './receipts.mjs';
 import { evaluate } from './verifier.mjs';
 import { parityRunner } from './parity.mjs';
@@ -24,7 +24,7 @@ const api = fleetDesignGitHub(config, { signal: stop.signal });
 const checks = fleetDesignChecks(api, appId);
 const provider = githubCandidates(api);
 const receipts = await receiptStore(state, release.commit, checks);
-const git = openRepository(state);
+const git = openAsyncRepository(state, { signal: stop.signal, onUnconfirmed: () => stop.abort() });
 let fleet;
 let fleetAccess = 'unconfigured';
 try { fleet = await fleetVerifierClient(process.env.CREDENTIALS_DIRECTORY, fetch, { signal: stop.signal }); }

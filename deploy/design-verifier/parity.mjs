@@ -234,7 +234,7 @@ export function parityRunner({ signal, onUnavailable = () => {} } = {}) {
     policyIsCurrent(hash) {
       return sha256(readPolicy(readTrusted).raw) === hash;
     },
-    impact(event, paths, git, evidence) {
+    async impact(event, paths, git, evidence) {
       let policy;
       try { policy = loadPolicy(); }
       catch (err) {
@@ -242,12 +242,12 @@ export function parityRunner({ signal, onUnavailable = () => {} } = {}) {
         throw new VerificationWait('The protected route policy could not be loaded');
       }
       evidence.policy = policy.hash;
-      const base = git.diffBase(event);
+      const base = await git.diffBase(event);
       const pathsToCases = Object.create(null);
       const unmapped = [];
       const measured = evidence.impact = [];
       for (const path of paths) {
-        const before = git.fingerprint(base, path), after = git.fingerprint(event.head, path);
+        const before = await git.fingerprint(base, path), after = await git.fingerprint(event.head, path);
         const row = policy.mapping.get(JSON.stringify([path, before, after]));
         if (!row) unmapped.push(path);
         measured.push({ path, before, after, ...(row && { cases: row.cases, reason: row.reason }) });
@@ -262,7 +262,7 @@ export function parityRunner({ signal, onUnavailable = () => {} } = {}) {
     },
     async measure(event, git, policy, selected, evidence, readOriginal) {
       for (const [path, expected] of Object.entries(build.files)) {
-        if (git.fingerprint(event.head, path) !== expected)
+        if (await git.fingerprint(event.head, path) !== expected)
           throw new DesignBlocked('The candidate changed a signed build input: ' + path);
       }
       const scenarios = [...selected].map(([key, { original, sourceSha256, recipe }]) => {
@@ -276,12 +276,12 @@ export function parityRunner({ signal, onUnavailable = () => {} } = {}) {
       if (['bot', 'back'].some(flow => flows.has(flow)) &&
           ['bot', 'standalone', 'back'].some(flow => !flows.has(flow)))
         throw new DesignBlocked('The bot journey requires click, standalone direct entry and Back cases');
-      const tree = git.measureInputs(event.head, [...selected.values()].map(s => s.recipe));
+      const tree = await git.measureInputs(event.head, [...selected.values()].map(s => s.recipe));
       evidence.treeInputs = tree;
       if (tree.some(item => item.changed.length)) throw new DesignBlocked('The candidate differs from selected recipe inputs');
       const dependencies = JSON.stringify(tree.flatMap(item => item.dependencies));
       if (Buffer.byteLength(dependencies) > 96 * 1024) throw new DesignBlocked('Selected dependency input list is too large');
-      const archive = git.archive(event.head, build.files);
+      const archive = await git.archive(event.head, build.files);
       evidence.archiveSha256 = sha256(archive);
       const artifacts = await run('build', [dependencies], archive, 24 * 1024 * 1024, 60_000);
       const app = JSON.parse(artifacts);
