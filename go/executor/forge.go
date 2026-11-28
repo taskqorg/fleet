@@ -1910,26 +1910,23 @@ func (e *executor) publishingSourceWorktree(execution string) (string, error) {
 		if err := rows.Scan(&body); err != nil {
 			return "", err
 		}
-		var cmd struct {
-			SessionID string `json:"sessionId"`
-			Payload   struct {
-				WorkspaceKey *string `json:"workspaceKey"`
-			} `json:"payload"`
-		}
-		if err := json.Unmarshal([]byte(body), &cmd); err != nil {
+		cmd := commandOf(body)
+		if cmd.Start == nil && cmd.Input == nil {
 			return "", errors.New("invalid source execution command")
 		}
-		if _, err := checkedID(cmd.SessionID); err != nil {
-			return "", errors.New("invalid source execution command")
+		sourceSession, err := idOf(cmd, "sessionId")
+		if err != nil {
+			return "", errors.New("invalid source execution session")
 		}
-		workspace := ""
-		if cmd.Payload.WorkspaceKey != nil {
-			workspace = *cmd.Payload.WorkspaceKey
+		payload, err := startPayload(cmd)
+		if err != nil {
+			return "", errors.New("invalid source execution payload")
 		}
-		if found && (session != cmd.SessionID || key != workspace) {
+		workspace := str0(payload.WorkspaceKey)
+		if found && (session != sourceSession || key != workspace) {
 			return "", errors.New("ambiguous source execution workspace")
 		}
-		session, key, found = cmd.SessionID, workspace, true
+		session, key, found = sourceSession, workspace, true
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
