@@ -7,13 +7,15 @@ import { verifyRetainedDesignEvidence } from './design-evidence.mjs';
 
 const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 const digest = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-const reject = message => { throw new Error('Protected design verification: ' + message); };
+export class ProtectedDesignRejection extends Error {}
+const reject = message => { throw new ProtectedDesignRejection('Protected design verification: ' + message); };
 
 export function candidateChanges(repositoryDir, { kind, base, head }) {
   if (!sha(base) || !sha(head) || !['pull_request', 'merge_group'].includes(kind))
     reject('missing immutable provider revisions');
   const env = { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull };
-  const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: repositoryDir, encoding: 'utf8', env });
+  const git = (...args) => new TextDecoder('utf-8', { fatal: true }).decode(
+    execFileSync('git', ['--no-replace-objects', ...args], { cwd: repositoryDir, env, timeout: 60_000 }));
   if (git('rev-parse', '--verify', base + '^{commit}').trim() !== base ||
       git('rev-parse', '--verify', head + '^{commit}').trim() !== head) reject('provider revisions are not local commits');
   const ancestor = git('merge-base', base, head).trim();

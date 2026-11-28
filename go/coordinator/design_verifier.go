@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -146,6 +147,14 @@ func getDesignVerifierEvidence(q *Request, r *contract.DesignVerifierEvidenceReq
 	if r.Number < 1 || !forgeSHAPattern.MatchString(r.Head) || !validForgeBranch(r.Branch) {
 		return out, fail(400, "Provide an exact PR number, head and branch")
 	}
+	if f := r.Original; f != nil {
+		if !designVerifierCaller(q) {
+			return out, fail(403, "The protected Fleet verifier identity is required for original bytes")
+		}
+		if !validDesignHash(f.Decision) || !validDesignHash(f.Sha256) || f.ArtifactId == "" {
+			return out, fail(400, "Provide the decision, artifact and original hash")
+		}
+	}
 	rows, err := q.db().DesignVerifierPublishingSources(q.ctx(), db.DesignVerifierPublishingSourcesParams{
 		Number: strconv.FormatInt(r.Number, 10), Head: r.Head, Branch: r.Branch,
 	})
@@ -170,7 +179,10 @@ func verifyDesignWriter(q *Request, r *contract.DesignVerifierEvidenceRequest, t
 	if err != nil {
 		return out, err
 	}
-	if !needsDesignSelection(t) || t.State == db.TaskStatePaused || t.State == db.TaskStateCancelled ||
+	if deref(t.ProjectID) != "fleet" || !needsDesignSelection(t) {
+		return out, errNotFound
+	}
+	if t.State == db.TaskStatePaused || t.State == db.TaskStateCancelled ||
 		t.State == db.TaskStateFailed || t.State == db.TaskStateCompleted {
 		return out, fail(409, "No active design admission for this Fleet task")
 	}
@@ -185,9 +197,13 @@ func verifyDesignWriter(q *Request, r *contract.DesignVerifierEvidenceRequest, t
 	if err != nil {
 		return out, err
 	}
-	if seal == nil || seal.Request.Repository != fleetDesignRepository || row.State != db.QuestionStateAnswered ||
+	if seal == nil || deref(row.ProjectID) != "fleet" || deref(row.TaskID) != task ||
+		seal.Request.Repository != fleetDesignRepository || row.State != db.QuestionStateAnswered ||
 		deref(row.AnsweredBy) == "" || deref(row.AnsweredBy) != deref(row.AddressedTo) || deref(row.Answer) == designRework {
 		return out, fail(409, "The Fleet owner has no current selection for this PR")
+	}
+	if owner := q.peopleSnapshot().person(deref(row.AnsweredBy)); owner == nil || !owner.Owner || owner.machine() {
+		return out, fail(409, "The current Fleet owner did not make this selection")
 	}
 	writer, err := designWriter(row)
 	if err != nil {
@@ -204,29 +220,72 @@ func verifyDesignWriter(q *Request, r *contract.DesignVerifierEvidenceRequest, t
 	if option < 0 {
 		return out, fail(409, "The selected option is absent")
 	}
+	selected := seal.Request.Options[option]
+	reader := designArtifactReader{sourceID: selected.SourceArtifactId}
+	if f := r.Original; f != nil {
+		if f.Decision != seal.Digest || !slices.ContainsFunc(selected.Cases, func(c contract.DesignReviewCase) bool {
+			return slices.ContainsFunc(c.Frames, func(frame contract.DesignReviewFrame) bool {
+				return frame.ArtifactId == f.ArtifactId && frame.Sha256 == f.Sha256
+			})
+		}) {
+			return out, fail(409, "The requested original is outside the current selected decision")
+		}
+		reader.sourceID = ""
+		reader.pngID = f.ArtifactId
+	}
 	selectedRecipes := make(map[string]string)
-	for _, c := range seal.Request.Options[option].Cases {
+	for _, c := range selected.Cases {
 		selectedRecipes[c.RecipeArtifactId] = c.ScopeKey
 	}
 	recipes := []contract.DesignVerifierRecipe{}
-	digest, err := readDesignDigest(q, &seal.Request, "fleet", task, deref(row.ExecutionID), false, true, func(id string, bytes []byte) error {
-		if key := selectedRecipes[id]; key != "" {
+	reader.read = func(id, kind, hash string, bytes []byte) error {
+		switch kind {
+		case "source":
+			out.SourceSha256 = ptr(hash)
+		case "png":
+			out.Original = &contract.DesignVerifierOriginal{ArtifactId: id, Sha256: hash, Base64: base64.StdEncoding.EncodeToString(bytes)}
+		case "recipe":
+			key := selectedRecipes[id]
+			if key == "" {
+				return nil
+			}
+			var recipe designRecipe
+			if err := json.Unmarshal(bytes, &recipe); err != nil {
+				return err
+			}
 			r := contract.DesignVerifierRecipe{ScopeKey: key}
 			if err := json.Unmarshal(bytes, &r); err != nil {
 				return err
 			}
+			r.Sha256, r.Clock, r.TimeZone, r.Locale = ptr(hash), ptr(recipe.Clock), ptr(recipe.TimeZone), ptr(recipe.Locale)
 			recipes = append(recipes, r)
 			delete(selectedRecipes, id)
 		}
 		return nil
-	})
+	}
+	digest, err := readDesignDigest(q, &seal.Request, "fleet", task, deref(row.ExecutionID), false, true, &reader)
 	if err != nil {
 		return out, err
 	}
-	if digest != seal.Digest || len(recipes) != len(seal.Request.Options[option].Cases) {
+	if digest != seal.Digest || r.Original == nil && len(recipes) != len(selected.Cases) ||
+		r.Original != nil && out.Original == nil {
 		return out, fail(409, "The original design evidence has changed")
 	}
-	return contract.DesignVerifierEvidenceReply{Number: r.Number, Head: r.Head, Branch: r.Branch, Writer: writer, Review: seal.reply(row), Recipes: recipes}, nil
+	// Recheck the question after reads from artifact storage. A replacement,
+	// withdrawal or writer update during those reads cannot authorize a reply.
+	latest, err := q.db().LatestDesignOffer(q.ctx(), &task)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, fail(409, "The Fleet owner selection changed during verification")
+	}
+	if err != nil {
+		return out, err
+	}
+	if latest.ID != row.ID || latest.State != row.State || deref(latest.Answer) != deref(row.Answer) ||
+		deref(latest.AnsweredBy) != deref(row.AnsweredBy) || !bytes.Equal(latest.Data, row.Data) {
+		return out, fail(409, "The Fleet owner selection changed during verification")
+	}
+	out.Number, out.Head, out.Branch, out.Writer, out.Review, out.Recipes = r.Number, r.Head, r.Branch, writer, seal.reply(row), recipes
+	return out, nil
 }
 
 func init() {

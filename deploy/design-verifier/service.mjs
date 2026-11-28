@@ -7,6 +7,7 @@ import { fleetVerifierClient } from './fleet.mjs';
 import { openRepository } from './git.mjs';
 import { receiptStore } from './receipts.mjs';
 import { evaluate } from './verifier.mjs';
+import { parityRunner } from './parity.mjs';
 
 const once = process.argv[2] === '--once';
 if (process.argv.length !== (once ? 3 : 2)) throw new Error('Usage: service.mjs [--once]');
@@ -22,11 +23,11 @@ const checks = fleetDesignChecks(api, appId);
 const provider = githubCandidates(api);
 const receipts = await receiptStore(state, release.commit, checks);
 const git = openRepository(state);
-let fleet;
+let fleet, runner;
 let fleetAccess = 'unconfigured';
 try { fleet = await fleetVerifierClient(process.env.CREDENTIALS_DIRECTORY); }
 catch { fleetAccess = 'unknown'; }
-const service = { appId, installationId, repositoryId, revision: release.commit, visualParity: 'unavailable' };
+const service = { appId, installationId, repositoryId, revision: release.commit };
 const stop = new AbortController();
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => stop.abort());
 
@@ -69,7 +70,7 @@ async function poll() {
       if (stop.signal.aborted) break;
       const [event] = candidates;
       try {
-        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet }));
+        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet, runner }));
         else {
           const reason = 'The SHA has multiple active provider identities';
           const evidence = { head, classification: 'pending', reason, candidates };
@@ -100,6 +101,16 @@ async function poll() {
 
 let ok;
 try {
+  try {
+    runner = parityRunner();
+    service.renderer = await runner.probe();
+    service.visualParity = 'ready';
+    service.rendererProbedAt = new Date().toISOString();
+  } catch {
+    runner = undefined;
+    service.visualParity = 'unavailable';
+    service.visualParityReason = 'Isolated renderer runtime or Chromium probe failed';
+  }
   do {
     ok = await poll();
     if (!once) await delay(period * 1000, null, { signal: stop.signal });

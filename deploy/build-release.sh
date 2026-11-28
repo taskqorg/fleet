@@ -25,8 +25,9 @@ status working 15 "building the web app"
 corepack pnpm install --frozen-lockfile
 node app/build.mjs
 if [ -f deploy/design-verifier/service.mjs ]; then
-  corepack pnpm exec esbuild deploy/design-verifier/service.mjs --bundle --platform=node --format=esm \
-    --target=node22 --outfile="$work/design-verifier-service.mjs"
+  corepack pnpm exec esbuild deploy/design-verifier/service.mjs deploy/design-verifier/renderer-probe.mjs \
+    --bundle --platform=node --format=esm --target=node22 --out-extension:.js=.mjs --outdir="$work/verifier"
+  node deploy/design-verifier/build-pins.mjs > "$work/verifier/build-inputs.json"
 fi
 step=0
 for target in "$@"; do
@@ -37,8 +38,15 @@ for target in "$@"; do
     CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-X main.version=$version" -o "$stage/fleet-$cmd" "./$cmd"
   done)
   cp -R dist/app "$stage/dist/" && cp -R config deploy "$stage/" && mkdir -p "$stage/scripts" && cp -R scripts/lab "$stage/scripts/"
-  if [ -f "$work/design-verifier-service.mjs" ]; then
-    cp "$work/design-verifier-service.mjs" "$stage/deploy/design-verifier/service.mjs"
+  if [ -d "$work/verifier" ]; then
+    cp "$work/verifier/"* "$stage/deploy/design-verifier/"
+    if [ "$target" = linux/amd64 ]; then
+      runtime="$stage/deploy/design-verifier/runtime-lock"
+      mkdir "$runtime"
+      cp package.json pnpm-lock.yaml pnpm-workspace.yaml "$runtime/"
+      (cd go && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+        -o "$stage/deploy/design-verifier/compare-png" ../deploy/design-verifier/compare.go)
+    fi
   fi
   printf '{"version":"%s","previous":"%s","commit":"%s","target":"%s","builtAt":"%s"}\n' \
     "$version" "$previous" "$commit" "$os-$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$stage/release.json"

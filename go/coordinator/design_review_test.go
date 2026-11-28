@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"image"
@@ -205,11 +206,34 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	}
 	var evidence contract.DesignVerifierEvidenceReply
 	exact := doc{"number": prNumber, "head": head, "branch": branch}
-	e.opInto(t, "design_verifier_evidence", exact, verifierTestHeaders(t, e), &evidence)
+	verifier := verifierTestHeaders(t, e)
+	e.opInto(t, "design_verifier_evidence", exact, verifier, &evidence)
 	if evidence.Writer != builder || evidence.Review.Digest != offer.Digest || len(evidence.Recipes) != 1 ||
-		len(evidence.Recipes[0].Inputs) != 1 || evidence.Recipes[0].Inputs[0].Path != "source.tsx" {
+		len(evidence.Recipes[0].Inputs) != 1 || evidence.Recipes[0].Inputs[0].Path != "source.tsx" ||
+		deref(evidence.Recipes[0].Sha256) != sha256hex(jsonBytes(recipe)) ||
+		deref(evidence.SourceSha256) != sha256hex([]byte("test source object")) || evidence.Original != nil {
 		t.Fatalf("wrong exact-head evidence: %+v", evidence)
 	}
+	frame := c.Frames[0]
+	original := doc{"decision": offer.Digest, "artifactId": frame.ArtifactId, "sha256": frame.Sha256}
+	exact["original"] = original
+	e.opInto(t, "design_verifier_evidence", exact, verifier, &evidence)
+	if evidence.Original == nil || evidence.Original.ArtifactId != frame.ArtifactId ||
+		evidence.Original.Base64 != base64.StdEncoding.EncodeToString(objects[frame.Sha256]) {
+		t.Fatal("the verifier did not receive the selected original bytes")
+	}
+	if code, _ := e.callJSON(t, "POST", "/api/ops/design_verifier_evidence", exact, e.ownerHeaders()); code != 403 {
+		t.Fatalf("original bytes operation accepted a caller outside the protected service: %d", code)
+	}
+	original["decision"] = strings.Repeat("e", 64)
+	if code, _ := e.callJSON(t, "POST", "/api/ops/design_verifier_evidence", exact, verifier); code != 409 {
+		t.Fatalf("an obsolete decision obtained original bytes: %d", code)
+	}
+	original["decision"], original["artifactId"] = offer.Digest, c.RecipeArtifactId
+	if code, _ := e.callJSON(t, "POST", "/api/ops/design_verifier_evidence", exact, verifier); code != 409 {
+		t.Fatalf("a non-PNG artifact obtained original bytes: %d", code)
+	}
+	delete(exact, "original")
 	if code, _ := e.callJSON(t, "POST", "/api/ops/design_verifier_evidence", doc{"number": prNumber, "head": strings.Repeat("b", 40), "branch": branch}, e.ownerHeaders()); code != 404 {
 		t.Fatalf("new head inherited the former admission: %d", code)
 	}

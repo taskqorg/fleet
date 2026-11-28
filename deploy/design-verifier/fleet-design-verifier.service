@@ -26,6 +26,12 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# The controller and its one disposable worker share this cgroup. The browser
+# also has its own namespaces and a fixed per-job watchdog.
+TasksMax=256
+MemoryMax=2G
+CPUQuota=200%
+TimeoutStopSec=15s
 
 [Install]
 WantedBy=multi-user.target
