@@ -24,13 +24,16 @@ const api = fleetDesignGitHub(config, { signal: stop.signal });
 const checks = fleetDesignChecks(api, appId);
 const provider = githubCandidates(api);
 const receipts = await receiptStore(state, release.commit, checks);
-const git = openAsyncRepository(state, { signal: stop.signal, onUnconfirmed: () => stop.abort() });
+const git = openAsyncRepository(state, { signal: stop.signal, onUnconfirmed: () => {
+  process.exitCode = 1;
+  stop.abort(new Error('Git process cleanup unconfirmed'));
+} });
 let fleet;
 let fleetAccess = 'unconfigured';
 try { fleet = await fleetVerifierClient(process.env.CREDENTIALS_DIRECTORY, fetch, { signal: stop.signal }); }
 catch { fleetAccess = 'unknown'; }
 const service = { appId, installationId, repositoryId, revision: release.commit };
-for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => stop.abort());
+for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => stop.abort(new Error('Service stopped')));
 const ensureRunning = () => { if (stop.signal.aborted) throw new Error('Verifier stopped'); };
 const renderer = rendererController(service, onUnavailable => parityRunner({ signal: stop.signal, onUnavailable }), stop.signal);
 
@@ -120,12 +123,13 @@ try {
   await renderer.wait();
   try { await api.close(); } catch { console.error('GitHub installation token revocation could not be confirmed'); }
   if (stopped) {
-    const status = { ...service, provider: 'unknown', reason: 'Service stopped', at: new Date().toISOString() };
-    await receipts.observe(status);
-    if (fleet) {
-      try { await fleet.observe({ kind: 'provider', state: 'unknown', revision: release.commit }, { signal: AbortSignal.timeout(3000) }); }
-      catch { console.error('Final Fleet stop observation could not be confirmed'); }
-    }
+    const status = { ...service, provider: 'unknown', reason: stop.signal.reason.message, at: new Date().toISOString() };
+    const reported = fleet?.observe({ kind: 'provider', state: 'unknown', revision: release.commit },
+      { signal: AbortSignal.timeout(3000) })
+      .catch(() => console.error('Final Fleet stop observation could not be confirmed'));
+    try { await receipts.observe(status); }
+    catch { process.exitCode = 1; console.error('Local verifier stop status could not be written'); }
+    await reported;
   }
 }
 if (once && !ok) process.exitCode = 1;

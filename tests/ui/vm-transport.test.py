@@ -68,6 +68,36 @@ class TransportTests(unittest.TestCase):
         finally:
             qmp.close(); peer.close(); client.close()
 
+    def test_qmp_connect_respects_deadline_with_full_unix_backlog(self):
+        class Process:
+            def poll(self): return None
+        with tempfile.TemporaryDirectory() as root, socket.socket(socket.AF_UNIX) as listener, \
+                socket.socket(socket.AF_UNIX) as filler:
+            path = str(Path(root) / 'qmp.sock')
+            listener.bind(path)
+            listener.listen(0)
+            filler.connect(path)
+            client, peer = socket.socketpair()
+            outcome = []
+            def connect():
+                try:
+                    with broker.connect_qmp(path, Process(), client, time.monotonic() + 0.1):
+                        outcome.append('connected')
+                except TimeoutError:
+                    outcome.append('timeout')
+            thread = threading.Thread(target=connect)
+            try:
+                thread.start()
+                thread.join(1)
+                self.assertEqual(outcome, ['timeout'])
+            finally:
+                # Drain the queue if a regression blocks in connect.
+                listener.settimeout(1)
+                with listener.accept()[0]:
+                    pass
+                thread.join(1)
+                client.close(); peer.close()
+
     def test_qmp_negotiation_accepts_complete_exchange(self):
         qmp, peer = socket.socketpair(); client, remote = socket.socketpair()
         class Process:
@@ -111,6 +141,25 @@ class TransportTests(unittest.TestCase):
                     broker.serve(None, lambda _: (b'i'*32, 11, 12), lambda *_:(0,b''), root)
             self.assertEqual(calls, ['payload',11,12,'cgroup'])
             self.assertEqual(len(list(Path(root).glob('run.fence.*'))),1)
+
+    def test_manifest_close_error_cannot_clear_helper_cleanup_fence(self):
+        import json
+        from unittest.mock import patch
+        digest = '0' * 64
+        manifest = json.dumps({
+            'version': 1, 'releaseCommit': 'a' * 40, 'goldenSha256': digest, 'biosSha256': digest,
+            'releaseSha256': digest, 'guestWorkerSha256': digest, 'runtimeSha256': digest,
+        }).encode()
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(broker, 'send_all'), patch.object(broker, 'read_request', return_value=(1,0,H(b''),io.BytesIO())), \
+                    patch.object(broker, 'trusted_file', side_effect=[100, 101]), \
+                    patch.object(broker.os, 'read', return_value=manifest), \
+                    patch.object(broker, 'digest_file', return_value=digest), \
+                    patch.object(broker, 'validate_image_fd', side_effect=broker.CleanupUnconfirmed('fixture helper')), \
+                    patch.object(broker.os, 'close', side_effect=[None, OSError('fixture close')]):
+                with self.assertRaises(broker.CleanupUnconfirmed):
+                    broker.serve(None, root=root)
+            self.assertEqual(len(list(Path(root).glob('run.fence.*'))), 1)
 
     def test_guest_fixed_request_and_response(self):
         nonce = b'n' * 32

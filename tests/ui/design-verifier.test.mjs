@@ -426,6 +426,7 @@ test('final Fleet stop observation uses a fresh bounded signal', async t => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'fleet-access.json'), JSON.stringify({ clientId: 'invented', clientSecret: 'invented' }), { mode: 0o600 });
   const stop = new AbortController(); stop.abort(); const calls = [];
+  const timeout = t.mock.method(AbortSignal, 'timeout');
   const client = await fleetVerifierClient(dir, async (url, options) => {
     calls.push({ url, body: JSON.parse(options.body), aborted: options.signal.aborted });
     return { ok: true, json: async () => ({ ok: true }) };
@@ -433,6 +434,7 @@ test('final Fleet stop observation uses a fresh bounded signal', async t => {
   await assert.rejects(client.observe({ kind:'provider', state:'unknown', revision:'a'.repeat(40) }));
   await client.observe({ kind:'provider', state:'unknown', revision:'a'.repeat(40) }, { signal: AbortSignal.timeout(1000) });
   assert.equal(calls.length, 1); assert.equal(calls[0].aborted, false); assert.equal(calls[0].body.state, 'unknown');
+  assert.deepEqual(timeout.mock.calls.map(call => call.arguments[0]), [30_000, 1_000, 30_000]);
 });
 
 test('lost mint response emits uncertainty without claiming token revocation', async () => {

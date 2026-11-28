@@ -42,11 +42,21 @@ def digest_file(fd, client=None):
 
 def trusted_file(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-        os.close(fd)
-        raise ValueError('untrusted operator file')
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError('untrusted operator file')
+    except BaseException:
+        close_input(fd)
+        raise
     return fd
+
+
+def close_input(fd):
+    try:
+        os.close(fd)
+    except OSError as error:
+        raise CleanupUnconfirmed('operator descriptor cleanup unconfirmed') from error
 
 
 def validate_image_info(raw):
@@ -145,7 +155,7 @@ def load_manifest(client=None):
     try:
         raw = os.read(fd, 8193)
     finally:
-        os.close(fd)
+        close_input(fd)
     if len(raw) > 8192:
         raise ValueError('launch manifest too large')
     def unique(pairs):
@@ -172,10 +182,10 @@ def load_manifest(client=None):
                 raise ValueError('firmware digest mismatch')
             return hashlib.sha256(raw).digest(), image_fd, bios_fd
         except BaseException:
-            os.close(bios_fd)
+            close_input(bios_fd)
             raise
     except BaseException:
-        os.close(image_fd)
+        close_input(image_fd)
         raise
 
 
@@ -276,16 +286,25 @@ def connect_qmp(path, process, client, deadline):
         client_alive(client)
         if process.poll() is not None:
             raise RuntimeError('VM exited before QMP opened')
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError('QMP unavailable')
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connected = False
         try:
+            s.settimeout(min(left, 0.1))
             s.connect(path)
-            s.settimeout(3)
+            connected = True
             return s
-        except (FileNotFoundError, ConnectionRefusedError):
-            s.close()
-            if time.monotonic() >= deadline:
-                raise TimeoutError('QMP unavailable')
-            time.sleep(0.05)
+        except (FileNotFoundError, ConnectionRefusedError, BlockingIOError, TimeoutError):
+            pass
+        finally:
+            if not connected:
+                try:
+                    s.close()
+                except OSError as error:
+                    raise CleanupUnconfirmed('QMP socket cleanup unconfirmed') from error
+        time.sleep(max(0, min(deadline - time.monotonic(), 0.05)))
 
 
 def qmp_negotiate(qmp, process, client, deadline):
@@ -403,7 +422,7 @@ class CleanupUnconfirmed(Exception):
 
 def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
     run = None
-    process = guest = listener = qmp = qmp_file = None
+    process = guest = listener = qmp = None
     try:
         run = Path(tempfile.mkdtemp(prefix='run.', dir=root))
         overlay = run / 'overlay.qcow2'
@@ -442,7 +461,7 @@ def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
                                    time.monotonic() + LIMITS[op][2] + 5)
     finally:
         cleanup_failed = process is not None and not cleanup_process(process, 10)
-        for handle in (qmp_file, guest, listener, qmp):
+        for handle in (guest, listener, qmp):
             if handle is not None:
                 try:
                     handle.close()

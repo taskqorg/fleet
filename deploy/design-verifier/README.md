@@ -128,6 +128,8 @@ The operator owns `/etc/fleet-design-verifier/parity.json`. Install it atomicall
 
 Use the installer-shipped diagnostic to print fingerprints once the daemon has fetched the actual provider objects. Run against the protected daemon's local bare repository as the operator. The output is a mapping input and does not issue a check.
 
+Provider fetches keep only content-addressed objects in the retained bare repository. Fetch metadata lives in a private temporary slot. The verifier removes the slot after its Git process group exits. On unconfirmed cleanup it stops, and systemd reaps the private temporary directory on restart.
+
 ```sh
 /usr/bin/node /opt/fleet-design-verifier/current/deploy/design-verifier/renderer-probe.mjs \
   --impact /var/lib/fleet-design-verifier pull_request BASE_SHA HEAD_SHA

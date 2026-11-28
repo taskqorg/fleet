@@ -9,14 +9,24 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const sourcePath = path => typeof path === 'string' && path.length < 512 && path.split('/').every(
   part => /^[A-Za-z0-9_.@+ -]{1,120}$/.test(part) && !['.', '..', '.git'].includes(part.toLowerCase()));
 
+export function fetchGitObjects(gitAt, slot, objects, remote, source, negotiationTip) {
+  gitAt(slot, ['init', '--bare', '.']);
+  // Only Git's content-addressed objects are shared. Refs and fetch metadata stay in the disposable slot.
+  gitAt(slot, ['fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules',
+    '--no-auto-maintenance', '--no-write-commit-graph', '--refmap=',
+    ...(negotiationTip ? ['--negotiation-tip=' + negotiationTip] : []), '--', remote, 'refs/heads/main', source],
+  { GIT_OBJECT_DIRECTORY: objects });
+}
+
 // This Git process only reads objects. It has no checkout, hooks, helpers or credentials.
 export function openRepository(state) {
   const dir = join(state, 'git');
   const env = { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https', GIT_NO_REPLACE_OBJECTS: '1' };
-  const git = (...args) => execFileSync('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args],
-    { env, cwd: existsSync(dir) ? dir : state, encoding: 'buffer', stdio: ['ignore', 'pipe', 'pipe'],
+  const gitAt = (cwd, args, extraEnv) => execFileSync('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args],
+    { env: { ...env, ...extraEnv }, cwd, encoding: 'buffer', stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 60_000, maxBuffer: maxArchive });
+  const git = (...args) => gitAt(existsSync(dir) ? dir : state, args);
   if (!existsSync(join(dir, 'HEAD'))) git('init', '--bare', dir);
   const remote = 'https://github.com/taskqorg/fleet.git';
   function read(...args) { return git(...args).toString('utf8').trim(); }
@@ -34,12 +44,12 @@ export function openRepository(state) {
   }
   return {
     dir,
-    ensure({ base, head, kind, number, ref }) {
+    ensure({ base, head, kind, number, ref }, fetchSlot) {
       if (!sha(base) || !sha(head)) throw new VerificationWait('Invalid Git commit identity');
-      if (!has(base) || !has(head)) {
+      const basePresent = has(base);
+      if (!basePresent || !has(head)) {
         const source = kind === 'merge_group' ? ref : 'refs/pull/' + number + '/head';
-        git('fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', remote,
-          '+refs/heads/main:refs/fleet-design/main', '+' + source + ':refs/fleet-design/last-candidate');
+        fetchGitObjects(gitAt, fetchSlot, join(dir, 'objects'), remote, source, basePresent ? base : undefined);
       }
       if (!has(base) || !has(head)) throw new VerificationWait('The provider commits are not available');
     },

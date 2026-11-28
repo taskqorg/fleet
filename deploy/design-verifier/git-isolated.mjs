@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DesignBlocked, VerificationWait } from './provider.mjs';
 import { ProtectedDesignRejection } from '../../packages/ui/scripts/design-protected.mjs';
@@ -39,7 +41,7 @@ export function runGitProcess(command, args, { input, signal, timeout = 120_000,
       if (closed) return;
       // close reaps the leader, but a Git descendant could have outlived it.
       // Keep the same bound and fail closed unless the whole group disappears.
-      const deadline = Date.now() + cleanupTimeout;
+      const deadline = performance.now() + cleanupTimeout;
       let groupExists = false;
       do {
         groupExists = false;
@@ -49,9 +51,9 @@ export function runGitProcess(command, args, { input, signal, timeout = 120_000,
         }
         if (groupExists) {
           if (!failure) terminate('Git process left descendants');
-          if (Date.now() < deadline) await new Promise(done => setTimeout(done, 30));
+          if (performance.now() < deadline) await new Promise(done => setTimeout(done, 30));
         }
-      } while (groupExists && Date.now() < deadline);
+      } while (groupExists && performance.now() < deadline);
       closed = true;
       clearTimeout(timer); clearTimeout(settleTimer);
       signal?.removeEventListener('abort', abort);
@@ -82,7 +84,12 @@ export function openAsyncRepository(state, { signal, onUnconfirmed } = {}) {
     }
     return method === 'archive' ? Buffer.from(reply.value, 'base64') : reply.value;
   }
-  return { dir: state + '/git', ensure: value => call('ensure', value),
+  return { dir: join(state, 'git'), async ensure(value) {
+    // The unit's PrivateTmp is reaped on restart, including slots left by an unconfirmed group.
+    const slot = await mkdtemp('/tmp/fleet-design-fetch-');
+    try { await call('ensure', value, slot); }
+    finally { if (!poisoned) await rm(slot, { recursive: true }); }
+  },
     diffBase: value => call('diffBase', value), fingerprint: (head, path) => call('fingerprint', head, path),
     archive: (head, files) => call('archive', head, files),
     measureInputs: (head, recipes) => call('measureInputs', head, recipes),

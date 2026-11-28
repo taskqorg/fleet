@@ -31,7 +31,8 @@ export async function fleetVerifierClient(credentialDir, send = fetch, { signal 
     'CF-Access-Client-Id': access.clientId, 'CF-Access-Client-Secret': access.clientSecret };
   async function op(name, body, override) {
     const useSignal = override ?? signal;
-    const boundedSignal = useSignal ? AbortSignal.any([useSignal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000);
+    const deadline = AbortSignal.timeout(30_000);
+    const boundedSignal = useSignal ? AbortSignal.any([useSignal, deadline]) : deadline;
     boundedSignal.throwIfAborted();
     let abort;
     const stopped = new Promise((_, reject) => {

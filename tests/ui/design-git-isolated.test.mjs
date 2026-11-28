@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openAsyncRepository, runGitProcess } from '../../deploy/design-verifier/git-isolated.mjs';
-import { openRepository } from '../../deploy/design-verifier/git.mjs';
+import { fetchGitObjects, openRepository } from '../../deploy/design-verifier/git.mjs';
 import { candidateChanges, ProtectedDesignRejection } from '../../packages/ui/scripts/design-protected.mjs';
 
 const git = (cwd, ...args) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -30,6 +30,41 @@ test('isolated Git agrees with the existing synchronous reader', async () => {
     await assert.rejects(asyncGit.changes({ kind: 'merge_group', base: head, head: base }), ProtectedDesignRejection);
     assert.deepEqual(await asyncGit.archive(head, {}), sync.archive(head, {}));
   } finally { rmSync(state, { recursive: true, force: true }); }
+});
+
+test('fetch retry acquires exact objects without touching a stranded durable ref lock', t => {
+  const root = mkdtempSync(join(tmpdir(), 'fleet-git-retry-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  git(root, 'init', '-q', '--initial-branch=main', 'remote');
+  const remote = join(root, 'remote');
+  const commit = message => {
+    git(remote, '-c', 'user.email=test@example.invalid', '-c', 'user.name=Test',
+      'commit', '-qm', message, '--allow-empty');
+    return git(remote, 'rev-parse', 'HEAD');
+  };
+  const base = commit('base');
+  const head = commit('candidate');
+  const source = 'refs/pull/1/head';
+  git(remote, 'update-ref', 'refs/heads/main', base);
+  git(remote, 'update-ref', source, head);
+  const { dir } = openRepository(root);
+  mkdirSync(join(dir, 'refs', 'fleet-design'));
+  const lock = join(dir, 'refs', 'fleet-design', 'last-candidate.lock');
+  writeFileSync(lock, 'fixture stale lock');
+  const gitAt = (cwd, args, env) => execFileSync('/usr/bin/git', args, {
+    cwd, env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const fetch = (...args) => fetchGitObjects(gitAt, mkdtempSync(join(root, 'slot-')),
+    join(dir, 'objects'), remote, ...args);
+  fetch(source);
+  assert.equal(git(dir, 'cat-file', '-t', base), 'commit');
+  assert.equal(git(dir, 'cat-file', '-t', head), 'commit');
+  const next = commit('retry');
+  git(remote, 'update-ref', source, next);
+  fetch(source, base);
+  assert.equal(git(dir, 'cat-file', '-t', next), 'commit');
+  assert.equal(readFileSync(lock, 'utf8'), 'fixture stale lock');
+  assert.equal(git(dir, 'for-each-ref'), '');
 });
 
 test('pre-aborted Git never starts a process', async () => {
