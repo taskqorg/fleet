@@ -86,7 +86,7 @@ func projectView(q *Request, r *contract.ProjectViewRequest) (contract.ProjectVi
 		out.Decisions = append(out.Decisions, d)
 	}
 
-	tr := &contract.TaskPageRequest{Filter: &contract.ListFilter{ProjectId: []string{id}, State: projectsRunningTasks()}, Limit: ptr(int64(projectViewTasks))}
+	tr := &contract.TaskPageRequest{Filter: &contract.TaskPageFilter{ProjectId: []string{id}, State: projectsRunningTasks()}, Limit: ptr(int64(projectViewTasks))}
 	tasks, err := taskPage(q, tr, jsonBytes(tr.Filter)) // taskPage reads the filter from its text
 	if err != nil {
 		return out, err

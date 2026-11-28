@@ -84,7 +84,8 @@ each member is its own struct; give each member a `const` discriminator such as 
 member has, `Value`, `Validate` and a getter for every envelope property the members share).
 An object without properties whose `additionalProperties` is a schema is a map (`map[string]T` in Go, `Record<string, T>` in TypeScript).
 
-* An object with properties, and an enum, must be a `$defs` entry (Go needs its name).
+* An object with properties must be a `$defs` entry. A named string enum generates a Go type with validation. An inline string enum, optionally including null for a nullable field, publishes its choices in discovery and TypeScript while keeping a Go string for operation validation.
+* `description`, `default`, `minItems` and `maxItems` carry discovery metadata and constraints. They do not change generated Go validation or defaults.
 * `{}` is any JSON value: `unknown` in TypeScript, `json.RawMessage` in Go. Use it only for native records Fleet
   passes on without reading.
 * `"additionalProperties": true` marks an open object: TypeScript names only the listed fields, so code reads a

@@ -26,7 +26,8 @@ import (
 type schema map[string]any
 
 var allowed = map[string]bool{"type": true, "properties": true, "required": true, "additionalProperties": true, "unevaluatedProperties": true, "items": true,
-	"enum": true, "$ref": true, "minimum": true, "$comment": true, "const": true, "oneOf": true}
+	"enum": true, "$ref": true, "minimum": true, "$comment": true, "const": true, "oneOf": true,
+	"description": true, "default": true, "minItems": true, "maxItems": true}
 
 func check(s schema, where string) {
 	for k := range s {
@@ -87,6 +88,18 @@ func goType(s schema, where string) (string, bool) {
 		fail("%s: oneOf must be a $defs entry", where)
 	}
 	t, null := types(s, where)
+	if values, present := s["enum"]; present {
+		choices, ok := values.([]any)
+		if !ok || len(choices) == 0 || t != "string" {
+			fail("%s: an inline enum must list string choices", where)
+		}
+		for _, choice := range choices {
+			if _, ok := choice.(string); !ok && !(null && choice == nil) {
+				fail("%s: an inline enum choice must be a string or an allowed null", where)
+			}
+		}
+		// Discovery advertises the choices while the operation keeps its existing validation.
+	}
 	if _, ok := s["const"].(string); ok && (t == "" || t == "string") && !null {
 		t = "string"
 	} else if s["const"] != nil {
@@ -96,9 +109,6 @@ func goType(s schema, where string) (string, bool) {
 	case "":
 		return "json.RawMessage", false
 	case "string":
-		if s["enum"] != nil {
-			fail("%s: an enum must be a $defs entry", where)
-		}
 		return "string", null
 	case "integer":
 		return "int64", null

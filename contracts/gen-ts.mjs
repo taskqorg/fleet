@@ -4,7 +4,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const dir = new URL('./', import.meta.url);
-const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'unevaluatedProperties', 'items', 'enum', '$ref', 'minimum', 'const', 'oneOf']);
+const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'unevaluatedProperties', 'items', 'enum', '$ref', 'minimum', 'const', 'oneOf', 'description', 'default', 'minItems', 'maxItems']);
 const SCALAR = { string: 'string', integer: 'number', number: 'number', boolean: 'boolean', null: 'null' };
 
 function type(s, at) {
@@ -23,8 +23,13 @@ function type(s, at) {
     if (typeof s.const !== 'string' || (s.type !== undefined && s.type !== 'string')) throw Error(`${at}: const must be a string, with no other type`);
     return JSON.stringify(s.const);
   }
-  if (s.enum && /[.[]/.test(at)) throw Error(`${at}: an enum must be a $defs entry (Go needs its name)`);
-  if (s.enum) return s.enum.map((v) => JSON.stringify(v)).join(' | ');
+  if (s.enum !== undefined) {
+    const nullable = /[.[]/.test(at) && Array.isArray(s.type) && s.type.includes('null') && s.type.includes('string');
+    if (!Array.isArray(s.enum) || !s.enum.length || s.enum.some((v) => typeof v !== 'string' && !(nullable && v === null))) {
+      throw Error(`${at}: an enum must list string choices or an allowed null`);
+    }
+    return s.enum.map((v) => JSON.stringify(v)).join(' | ');
+  }
   if (s.type === undefined) return 'unknown';
   if (Array.isArray(s.type)) return s.type.map((t) => type({ ...s, type: t }, at)).join(' | ');
   if (s.type === 'array') return `Array<${type(s.items ?? {}, at + '[]')}>`;
