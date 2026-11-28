@@ -20,25 +20,62 @@ func (v *DeliveryTraceWindow) Validate() error {
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*DeliveryTraceWindow) Closed() bool { return true }
 
+type DiskGrowthEvidence struct {
+	Baseline DiskGrowthSample `json:"baseline"`
+	Current  DiskGrowthSample `json:"current"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiskGrowthEvidence) Validate() error {
+	if err := Check(&v.Baseline, "baseline"); err != nil {
+		return err
+	}
+	if err := Check(&v.Current, "current"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type DiskGrowthSample struct {
+	SpanId  string             `json:"spanId"`
+	Start   string             `json:"start"`
+	TraceId string             `json:"traceId"`
+	Values  map[string]float64 `json:"values"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiskGrowthSample) Validate() error {
+	if v.Values == nil {
+		return Missing("values")
+	}
+	return nil
+}
+
 // Finding: One rule result of the last rules pass (fleet-telemetry.md section 6). since: when the rule first fired for this cause (RFC 3339). exemplars: trace ids. groupCause: the absence cause it folds into (no question of its own).
 type Finding struct {
-	Baseline    *float64 `json:"baseline,omitempty"`
-	Cause       string   `json:"cause"`
-	ExecutionId *string  `json:"executionId,omitempty"`
-	Exemplars   []string `json:"exemplars"`
-	GroupCause  *string  `json:"groupCause,omitempty"`
-	HostId      *string  `json:"hostId,omitempty"`
-	ProjectId   *string  `json:"projectId,omitempty"`
-	Rule        string   `json:"rule"`
-	Since       string   `json:"since"`
-	StoreId     *string  `json:"storeId,omitempty"`
-	Subject     string   `json:"subject"`
-	Text        *string  `json:"text,omitempty"`
-	Value       float64  `json:"value"`
+	Baseline    *float64            `json:"baseline,omitempty"`
+	Cause       string              `json:"cause"`
+	DiskGrowth  *DiskGrowthEvidence `json:"diskGrowth,omitempty"`
+	ExecutionId *string             `json:"executionId,omitempty"`
+	Exemplars   []string            `json:"exemplars"`
+	GroupCause  *string             `json:"groupCause,omitempty"`
+	HostId      *string             `json:"hostId,omitempty"`
+	ProjectId   *string             `json:"projectId,omitempty"`
+	Rule        string              `json:"rule"`
+	Since       string              `json:"since"`
+	StoreId     *string             `json:"storeId,omitempty"`
+	Subject     string              `json:"subject"`
+	Text        *string             `json:"text,omitempty"`
+	Value       float64             `json:"value"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Finding) Validate() error {
+	if v.DiskGrowth != nil {
+		if err := Check(v.DiskGrowth, "diskGrowth"); err != nil {
+			return err
+		}
+	}
 	if v.Exemplars == nil {
 		return Missing("exemplars")
 	}
