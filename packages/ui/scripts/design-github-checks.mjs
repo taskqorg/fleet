@@ -61,6 +61,16 @@ async function github(path, token, { method = 'GET', body, signal } = {}) {
   return response.json();
 }
 
+// A failed mint response may mean GitHub issued a token whose value we never received.
+export async function mintDesignToken(send, path, jwt, options) {
+  try { return await send(path, jwt, options); }
+  catch (error) {
+    if (!Number.isInteger(error?.status) || error.status === 408 || error.status >= 500)
+      console.error('GitHub installation token issuance outcome unconfirmed; no token value was received');
+    throw error;
+  }
+}
+
 async function fleetInstallation(config, signal) {
   let issued, accepted = false;
   try {
@@ -73,7 +83,7 @@ async function fleetInstallation(config, signal) {
         !Object.entries(permissions).every(([key, value]) => installed.permissions?.[key] === value) ||
         Object.keys(installed.permissions).some(key => !Object.hasOwn(permissions, key)))
       throw new Error('The GitHub App installation does not match the protected Fleet issuer');
-    issued = await github('/app/installations/' + config.installationId + '/access_tokens', jwt, {
+    issued = await mintDesignToken(github, '/app/installations/' + config.installationId + '/access_tokens', jwt, {
       method: 'POST', body: { repository_ids: [repositoryId], permissions }, signal,
     });
     if (typeof issued.token !== 'string' || !issued.token ||

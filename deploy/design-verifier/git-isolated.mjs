@@ -5,7 +5,7 @@ import { ProtectedDesignRejection } from '../../packages/ui/scripts/design-prote
 
 // The child and every Git descendant occupy a private process group. A failed cleanup
 // poisons the service: it must not publish while a previous Git operation may run.
-export function runGitProcess(command, args, { input, signal, timeout = 120_000, onUnconfirmed = () => {} } = {}) {
+export function runGitProcess(command, args, { input, signal, timeout = 120_000, onUnconfirmed = () => {}, kill = process.kill.bind(process), cleanupTimeout = 3000 } = {}) {
   if (signal?.aborted) return Promise.reject(new Error('Verifier stopped'));
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { detached: true, env: { PATH: '/usr/bin:/bin' },
@@ -14,9 +14,15 @@ export function runGitProcess(command, args, { input, signal, timeout = 120_000,
     let size = 0, failure, closed = false, settleTimer;
     const terminate = reason => {
       failure ??= reason;
-      if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch (err) { if (err.code !== 'ESRCH') onUnconfirmed(); } }
+      if (child.pid) { try { kill(-child.pid, 'SIGKILL'); } catch (err) { if (err.code !== 'ESRCH') onUnconfirmed(); } }
       // Never wait forever on an uninterruptible process or inherited pipe.
-      settleTimer ??= setTimeout(() => { if (!closed) { onUnconfirmed(); reject(new Error('Git process cleanup unconfirmed')); } }, 3000);
+      settleTimer ??= setTimeout(() => {
+        if (closed) return;
+        closed = true; onUnconfirmed();
+        clearTimeout(timer); signal?.removeEventListener('abort', abort);
+        child.stdin.destroy(); child.stdout.destroy(); child.stderr?.destroy(); child.unref();
+        reject(new Error('Git process cleanup unconfirmed'));
+      }, cleanupTimeout);
     };
     const abort = () => terminate('Verifier stopped');
     signal?.addEventListener('abort', abort, { once: true });
@@ -30,14 +36,15 @@ export function runGitProcess(command, args, { input, signal, timeout = 120_000,
     child.stdin.on('error', () => {});
     child.on('error', () => { failure ??= 'Git process could not start'; });
     child.on('close', async code => {
+      if (closed) return;
       // close reaps the leader, but a Git descendant could have outlived it.
       // Keep the same bound and fail closed unless the whole group disappears.
-      const deadline = Date.now() + 3000;
+      const deadline = Date.now() + cleanupTimeout;
       let groupExists = false;
       do {
         groupExists = false;
         if (child.pid) {
-          try { process.kill(-child.pid, 0); groupExists = true; }
+          try { kill(-child.pid, 0); groupExists = true; }
           catch (err) { if (err.code !== 'ESRCH') groupExists = true; }
         }
         if (groupExists) {

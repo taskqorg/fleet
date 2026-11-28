@@ -419,3 +419,34 @@ test('token revocation is bounded even when the provider transport stalls', asyn
   await assert.rejects(client.close(), /revocation|timeout|abort/i);
   assert.ok(Date.now() - started < 5000);
 });
+
+test('final Fleet stop observation uses a fresh bounded signal', async t => {
+  const { fleetVerifierClient } = await import('../../deploy/design-verifier/fleet.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-stop-observation-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'fleet-access.json'), JSON.stringify({ clientId: 'invented', clientSecret: 'invented' }), { mode: 0o600 });
+  const stop = new AbortController(); stop.abort(); const calls = [];
+  const client = await fleetVerifierClient(dir, async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body), aborted: options.signal.aborted });
+    return { ok: true, json: async () => ({ ok: true }) };
+  }, { signal: stop.signal });
+  await assert.rejects(client.observe({ kind:'provider', state:'unknown', revision:'a'.repeat(40) }));
+  await client.observe({ kind:'provider', state:'unknown', revision:'a'.repeat(40) }, { signal: AbortSignal.timeout(1000) });
+  assert.equal(calls.length, 1); assert.equal(calls[0].aborted, false); assert.equal(calls[0].body.state, 'unknown');
+});
+
+test('lost mint response emits uncertainty without claiming token revocation', async () => {
+  const { mintDesignToken } = await import('../../packages/ui/scripts/design-github-checks.mjs');
+  const lines = [], original = console.error;
+  console.error = line => lines.push(String(line));
+  try {
+    await assert.rejects(mintDesignToken(async () => { throw Error('connection lost'); }, '/fixture', 'redacted', {}));
+    assert.match(lines[0], /issuance outcome unconfirmed/);
+    assert.doesNotMatch(lines[0], /revoked/);
+    lines.length = 0;
+    await assert.rejects(mintDesignToken(async () => { throw Object.assign(Error('refused'), { status:403 }); }, '/fixture', 'redacted', {}));
+    assert.equal(lines.length, 0);
+    await assert.rejects(mintDesignToken(async () => { throw Object.assign(Error('server failed'), { status:503 }); }, '/fixture', 'redacted', {}));
+    assert.match(lines[0], /issuance outcome unconfirmed/);
+  } finally { console.error = original; }
+});

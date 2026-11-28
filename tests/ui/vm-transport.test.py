@@ -47,6 +47,71 @@ class TransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             broker.validate_image_info(json.dumps([valid, valid]).encode())
 
+    def test_qmp_negotiation_uses_one_boot_deadline_and_disconnect(self):
+        qmp, peer = socket.socketpair(); client, remote = socket.socketpair()
+        class Process:
+            def poll(self): return None
+        def slow():
+            try:
+                for c in b'{"QMP":{}}\n':
+                    peer.send(bytes([c])); time.sleep(0.04)
+            except OSError: pass
+        thread = threading.Thread(target=slow); thread.start()
+        try:
+            with self.assertRaises(TimeoutError):
+                broker.qmp_negotiate(qmp, Process(), client, time.monotonic()+0.12)
+        finally:
+            qmp.close(); peer.close(); client.close(); remote.close(); thread.join(timeout=2)
+        qmp, peer = socket.socketpair(); client, remote = socket.socketpair(); remote.close()
+        try:
+            with self.assertRaises(EOFError): broker.qmp_negotiate(qmp, Process(), client, time.monotonic()+1)
+        finally:
+            qmp.close(); peer.close(); client.close()
+
+    def test_qmp_negotiation_accepts_complete_exchange(self):
+        qmp, peer = socket.socketpair(); client, remote = socket.socketpair()
+        class Process:
+            def poll(self): return None
+        def guest():
+            peer.sendall(b'{"QMP":{}}\r\n')
+            data = bytearray()
+            while not data.endswith(b'\n'): data.extend(peer.recv(1024))
+            peer.sendall(b'{"return":{}}\r\n')
+        thread = threading.Thread(target=guest); thread.start()
+        try: broker.qmp_negotiate(qmp, Process(), client, time.monotonic()+2)
+        finally:
+            thread.join(timeout=2); qmp.close(); peer.close(); client.close(); remote.close()
+        self.assertFalse(thread.is_alive())
+
+    def test_process_cleanup_attempts_reap_after_kill_failure(self):
+        from unittest.mock import patch
+        called = []
+        class Process:
+            pid = 123
+            def poll(self): return None
+            def wait(self, timeout): called.append('wait')
+        def kill(_pid, sig):
+            called.append('kill' if sig else 'probe')
+            if sig: raise PermissionError('fixture')
+            raise ProcessLookupError()
+        with patch.object(broker.os, 'killpg', side_effect=kill):
+            self.assertFalse(broker.cleanup_process(Process(), 1))
+        self.assertEqual(called, ['kill', 'wait', 'probe'])
+
+    def test_attempt_cleanup_closes_every_input_and_checks_cgroup_on_error(self):
+        from unittest.mock import patch
+        calls = []
+        class Payload:
+            def close(self): calls.append('payload'); raise OSError('fixture')
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(broker, 'send_all'), patch.object(broker, 'read_request', return_value=(1,0,H(b''),Payload())), \
+                 patch.object(broker, 'client_alive'), patch.object(broker.os, 'close', side_effect=lambda fd:calls.append(fd)), \
+                 patch.object(broker, 'require_empty_job_cgroup', side_effect=lambda:calls.append('cgroup')):
+                with self.assertRaises(broker.CleanupUnconfirmed):
+                    broker.serve(None, lambda _: (b'i'*32, 11, 12), lambda *_:(0,b''), root)
+            self.assertEqual(calls, ['payload',11,12,'cgroup'])
+            self.assertEqual(len(list(Path(root).glob('run.fence.*'))),1)
+
     def test_guest_fixed_request_and_response(self):
         nonce = b'n' * 32
         source = io.BytesIO(self.request(1, nonce))
@@ -212,6 +277,7 @@ if (result.toString() !== '{\"probe\":\"fixture\"}') throw Error('unexpected rep
             pid = 12345
             stdout = None
             def poll(self): return None
+            def wait(self, timeout): return 0
         with patch.object(broker.subprocess, 'Popen', return_value=Helper()), \
              patch.object(broker.time, 'sleep', side_effect=TimeoutError('fixture timeout')), \
              patch.object(broker.os, 'killpg', side_effect=PermissionError('fixture kill failure')):

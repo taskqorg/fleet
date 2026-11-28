@@ -122,7 +122,10 @@ try {
   if (stopped) {
     const status = { ...service, provider: 'unknown', reason: 'Service stopped', at: new Date().toISOString() };
     await receipts.observe(status);
-    await report(status, []);
+    if (fleet) {
+      try { await fleet.observe({ kind: 'provider', state: 'unknown', revision: release.commit }, { signal: AbortSignal.timeout(3000) }); }
+      catch { console.error('Final Fleet stop observation could not be confirmed'); }
+    }
   }
 }
 if (once && !ok) process.exitCode = 1;

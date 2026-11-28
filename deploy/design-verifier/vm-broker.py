@@ -94,24 +94,43 @@ def run_checked(args, client, timeout, pass_fds=(), capture=False):
                     raise subprocess.CalledProcessError(process.returncode, args)
                 return bytes(output)
     finally:
-        try:
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=5)
+        failed = not cleanup_process(process, 5)
+        if process.stdout is not None:
             try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                pass
-            else:
-                raise CleanupUnconfirmed('image helper process group remains')
-        except (OSError, subprocess.SubprocessError) as error:
-            raise CleanupUnconfirmed('image helper cleanup unconfirmed') from error
-        finally:
-            if process.stdout is not None:
                 process.stdout.close()
+            except OSError:
+                failed = True
+        if failed:
+            raise CleanupUnconfirmed('image helper cleanup unconfirmed')
+
+
+def cleanup_process(process, timeout):
+    """Attempt kill, reap and process-group check independently."""
+    failed = False
+    try:
+        running = process.poll() is None
+    except Exception:
+        running, failed = True, True
+    if running:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            failed = True
+        try:
+            process.wait(timeout=timeout)
+        except Exception:
+            failed = True
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        pass
+    except Exception:
+        failed = True
+    else:
+        failed = True
+    return not failed
 
 
 def validate_image_fd(fd, client=None):
@@ -269,22 +288,42 @@ def connect_qmp(path, process, client, deadline):
             time.sleep(0.05)
 
 
-def qmp_negotiate(qmp):
-    # QMP emits newline-separated JSON. Greeting and capability reply only;
-    # unexpected or oversized data fail closed.
-    qmp_file = qmp.makefile('rb', buffering=0)
+def qmp_negotiate(qmp, process, client, deadline):
+    # Read exactly one bounded line at a time, under the shared boot deadline.
+    qmp.setblocking(False)
+    def wait(read=False):
+        while True:
+            client_alive(client)
+            if process.poll() is not None:
+                raise RuntimeError('VM exited during QMP negotiation')
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError('QMP negotiation deadline')
+            ready = select.select([qmp] if read else [], [] if read else [qmp], [], min(left, 0.1))
+            if (ready[0] if read else ready[1]):
+                return
     def line():
-        raw = qmp_file.readline(65537)
-        if not raw or len(raw) > 65536:
-            raise ValueError('invalid QMP')
-        return json.loads(raw)
+        raw = bytearray()
+        while len(raw) <= 65536:
+            wait(True)
+            part = qmp.recv(1)
+            if not part:
+                raise EOFError('QMP disconnected')
+            raw.extend(part)
+            if part == b'\n':
+                return json.loads(raw)
+        raise ValueError('oversized QMP')
     if 'QMP' not in line():
         raise ValueError('missing QMP greeting')
-    qmp.sendall(b'{"execute":"qmp_capabilities"}\r\n')
+    request = memoryview(b'{"execute":"qmp_capabilities"}\r\n')
+    while request:
+        wait(False)
+        sent = qmp.send(request)
+        if sent <= 0:
+            raise EOFError('QMP disconnected')
+        request = request[sent:]
     if 'return' not in line():
         raise ValueError('QMP negotiation failed')
-    qmp.setblocking(False)
-    return qmp_file
 
 
 def wait_guest_response(guest, qmp, process, client, op, nonce, request_hash, deadline):
@@ -389,7 +428,7 @@ def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
                                    env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C'})
         boot_deadline = time.monotonic() + 90
         qmp = connect_qmp(qmp_path, process, client, boot_deadline)
-        qmp_file = qmp_negotiate(qmp)
+        qmp_negotiate(qmp, process, client, boot_deadline)
         guest = await_guest(listener, process, client, boot_deadline)
         guest.setblocking(False)
         wait_guest_ready(guest, process, client, boot_deadline)
@@ -402,33 +441,17 @@ def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
         return wait_guest_response(guest, qmp, process, client, op, nonce, request_hash,
                                    time.monotonic() + LIMITS[op][2] + 5)
     finally:
-        cleanup_failed = False
-        try:
-            if process is not None and process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=10)
-            if process is not None:
-                try:
-                    os.killpg(process.pid, 0)
-                except ProcessLookupError:
-                    pass
-                else:
-                    cleanup_failed = True
-        except (OSError, subprocess.SubprocessError):
-            cleanup_failed = True
+        cleanup_failed = process is not None and not cleanup_process(process, 10)
         for handle in (qmp_file, guest, listener, qmp):
             if handle is not None:
                 try:
                     handle.close()
-                except OSError:
+                except Exception:
                     cleanup_failed = True
         if not cleanup_failed and run is not None:
             try:
                 shutil.rmtree(run)
-            except OSError:
+            except Exception:
                 cleanup_failed = True
         if cleanup_failed or (run is not None and run.exists()):
             raise CleanupUnconfirmed('VM cleanup incomplete; operator review required')
@@ -457,18 +480,29 @@ def serve(client, manifest_loader=load_manifest, runner=run_vm, root=STATE):
         unconfirmed = True
         raise
     finally:
+        cleanup_failed = False
+        for handle in (payload, launch_fd, bios_fd):
+            if handle is None:
+                continue
+            try:
+                if isinstance(handle, int):
+                    os.close(handle)
+                else:
+                    handle.close()
+            except Exception:
+                cleanup_failed = True
         try:
-            if payload is not None:
-                payload.close()
-            if launch_fd is not None:
-                os.close(launch_fd)
-            if bios_fd is not None:
-                os.close(bios_fd)
             require_empty_job_cgroup()
-            if not unconfirmed:
+        except Exception:
+            cleanup_failed = True
+        if not unconfirmed and not cleanup_failed:
+            try:
                 fence.rmdir()
-        except (OSError, RuntimeError) as error:
-            raise CleanupUnconfirmed('Attempt cleanup unconfirmed; operator review required') from error
+            except Exception:
+                cleanup_failed = True
+        if cleanup_failed:
+            raise CleanupUnconfirmed('Attempt cleanup unconfirmed; operator review required')
+
     # Release bytes only after all worker and staging cleanup is confirmed.
     send_all(client, response, time.monotonic() + 5)
     send_all(client, result, time.monotonic() + 5)

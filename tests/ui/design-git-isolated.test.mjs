@@ -63,3 +63,24 @@ test('abort kills Git descendants before returning', async () => {
     assert.equal(existsSync(marker), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('unconfirmed kill releases child and pipe references within the cleanup deadline', async () => {
+  const { spawn } = await import('node:child_process');
+  const moduleURL = new URL('../../deploy/design-verifier/git-isolated.mjs', import.meta.url).href;
+  const code = `import {runGitProcess} from ${JSON.stringify(moduleURL)};
+    const stop = new AbortController();
+    const task = runGitProcess(process.execPath, ['-e','setTimeout(()=>{},1500)'], {
+      signal:stop.signal, cleanupTimeout:100,
+      kill:()=>{const e = new Error('fixture'); e.code='EPERM'; throw e;},
+      onUnconfirmed:()=>{}
+    });
+    setTimeout(()=>stop.abort(),50);
+    try { await task; process.exitCode=1; } catch(e) {
+      if (!e.message.includes('cleanup unconfirmed')) process.exitCode=2;
+    }`;
+  const start = Date.now();
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: 'ignore' });
+  const codeResult = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
+  assert.equal(codeResult, 0);
+  assert.ok(Date.now() - start < 1000, 'issuer retained the stuck child or a pipe');
+});
