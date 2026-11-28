@@ -38,7 +38,7 @@ func TestPublishingAppAPI(t *testing.T) {
 	repositoryJSON := fmt.Sprintf(`{"id":%d,"full_name":%q}`, RepoID, Repo)
 
 	installation := &installation{app: 123, id: 456, key: key, do: func(r *http.Request) (*http.Response, error) {
-		if r.URL.Scheme != "https" || r.URL.Host != "api.github.com" {
+		if r.URL.Scheme != "https" || (r.URL.Host != "api.github.com" && r.URL.Host != "github.com") {
 			t.Fatalf("unexpected provider origin %s", r.URL)
 		}
 		bearer := r.Header.Get("Authorization")
@@ -59,7 +59,14 @@ func TestPublishingAppAPI(t *testing.T) {
 			if strings.Count(bearer, ".") != 2 {
 				t.Fatal("App lookup did not use a signed JWT")
 			}
-			return reply(`{"id":123,"slug":"` + Slug + `","public":false,"owner":{"login":"taskqorg"}}`), nil
+			return reply(`{"id":123,"slug":"` + Slug + `","owner":{"login":"taskqorg"}}`), nil
+		case "GET /apps/" + Slug:
+			if bearer != "" || r.Header.Get("Cookie") != "" {
+				t.Fatal("visibility lookup leaked authorization")
+			}
+			v := reply(privateFixture)
+			v.Header = http.Header{"Content-Type": []string{"text/html"}}
+			return v, nil
 		case "GET " + repoPath + "/installation":
 			return reply(fmt.Sprintf(`{"id":456,"app_id":123,"app_slug":%q,"repository_selection":"selected","permissions":%s}`, Slug, permissionsJSON)), nil
 		case "POST /app/installations/456/access_tokens":

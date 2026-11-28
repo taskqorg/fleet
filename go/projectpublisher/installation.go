@@ -17,11 +17,15 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"fleet/errtrack"
+
+	"golang.org/x/net/html"
 )
 
 const apiOrigin = "https://api.github.com"
@@ -156,8 +160,20 @@ func (i *installation) acquire(ctx context.Context, now time.Time) (token, error
 			Login string `json:"login"`
 		} `json:"owner"`
 	}
-	if i.api(ctx, jwt, http.MethodGet, "/app", nil, &app) != nil || app.ID != i.app || app.Slug != Slug ||
-		app.Public == nil || *app.Public || app.Owner.Login != "taskqorg" {
+	identity := func() bool {
+		app.ID, app.Slug, app.Public, app.Owner.Login = 0, "", nil, ""
+		return i.api(ctx, jwt, http.MethodGet, "/app", nil, &app) == nil && app.ID == i.app &&
+			app.Slug == Slug && (app.Public == nil || !*app.Public) && app.Owner.Login == "taskqorg"
+	}
+	// Bracket the public probe with fresh authenticated identity checks so a
+	// moved or renamed slug cannot establish privacy for the wrong App.
+	if !identity() {
+		return token{}, errors.New("publisher-app-identity-unverified")
+	}
+	if !i.privateApp(ctx) {
+		return token{}, errors.New("publisher-app-visibility-unverified")
+	}
+	if !identity() {
 		return token{}, errors.New("publisher-app-identity-unverified")
 	}
 	var binding struct {
@@ -209,6 +225,209 @@ func (i *installation) acquire(ctx context.Context, now time.Time) (token, error
 		return token{}, errors.New("publisher-repository-token-unverified")
 	}
 	return token{value: issued.Value, verified: now.UTC(), expires: issued.Expires}, nil
+}
+
+// privateApp requires the first-party GitHub landing page's exact private-app
+// banner, structurally separate from the App owner's description. A changed,
+// hidden, duplicate or otherwise ambiguous page fails closed.
+func (i *installation) privateApp(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://github.com/apps/"+Slug, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Cache-Control", "no-cache")
+	resp, err := i.do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20+1))
+	if err != nil || len(body) > 2<<20 {
+		return false
+	}
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	return privateLanding(doc)
+}
+
+func privateLanding(doc *html.Node) bool {
+	attr := func(n *html.Node, key string) string {
+		for _, a := range n.Attr {
+			if a.Key == key {
+				return a.Val
+			}
+		}
+		return ""
+	}
+	hasClass := func(n *html.Node, name string) bool { return slices.Contains(strings.Fields(attr(n, "class")), name) }
+	visible := func(n *html.Node) bool {
+		for p := n; p != nil; p = p.Parent {
+			for _, a := range p.Attr {
+				if a.Key == "hidden" || (a.Key == "style" && strings.TrimSpace(a.Val) != "word-wrap: break-word;") || (a.Key == "aria-hidden" && a.Val == "true") {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	children := func(n *html.Node, tag string) []*html.Node {
+		var result []*html.Node
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && c.Data == tag {
+				result = append(result, c)
+			}
+		}
+		return result
+	}
+	directText := func(n *html.Node) string {
+		var b strings.Builder
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.TextNode {
+				b.WriteString(c.Data)
+				b.WriteByte(' ')
+			}
+		}
+		return strings.Join(strings.Fields(b.String()), " ")
+	}
+	var mains []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "main" {
+			mains = append(mains, n)
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	if len(mains) != 1 || !visible(mains[0]) {
+		return false
+	}
+	mainElements := children(mains[0], "div")
+	styles := children(mains[0], "style")
+	if len(mainElements) != 1 || len(styles) != 1 || strings.TrimSpace(directText(styles[0])) != ".footer { display: none; }" {
+		return false
+	}
+	for c := mains[0].FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c != mainElements[0] && c != styles[0] {
+			return false
+		}
+	}
+	var linkCount int
+	var bad bool
+	var scan func(*html.Node)
+	scan = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "main", "div", "h3", "p", "svg", "path", "img":
+			case "style":
+				if n.Parent != mains[0] {
+					bad = true
+				}
+			case "a":
+				linkCount++
+			default:
+				bad = true
+			}
+			if hasClass(n, "markdown-body") {
+				bad = true
+			}
+			for _, a := range n.Attr {
+				if a.Key == "hidden" || (a.Key == "aria-hidden" && a.Val == "true" && n.Data != "svg") {
+					bad = true
+				}
+				if a.Key == "style" && !(n.Data == "div" && hasClass(n, "CircleBadge") && a.Val == "background-color: #ffebda") {
+					bad = true
+				}
+				if a.Key == "class" && (slices.Contains(strings.Fields(a.Val), "d-none") || slices.Contains(strings.Fields(a.Val), "visually-hidden") || slices.Contains(strings.Fields(a.Val), "sr-only")) {
+					bad = true
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			scan(c)
+		}
+	}
+	scan(mains[0])
+	if bad || linkCount != 1 {
+		return false
+	}
+	var matches int
+	for _, container := range mainElements {
+		if !hasClass(container, "container-sm") || !visible(container) {
+			continue
+		}
+		boxes := children(container, "div")
+		if len(boxes) != 1 {
+			return false
+		}
+		for c := container.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && c != boxes[0] {
+				return false
+			}
+		}
+		for _, box := range boxes {
+			if !hasClass(box, "Box") || !visible(box) {
+				continue
+			}
+			headings, paragraphs := children(box, "h3"), children(box, "p")
+			if len(headings) != 1 || len(paragraphs) != 1 || attr(headings[0], "class") != "f2 text-normal lh-condensed mb-2" || attr(paragraphs[0], "class") != "tmp-mb-3 lh-condensed" || !visible(headings[0]) || !visible(paragraphs[0]) || directText(headings[0]) != Slug || directText(paragraphs[0]) != Slug+" is a private GitHub App." {
+				continue
+			}
+			var elements []*html.Node
+			for c := box.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode {
+					elements = append(elements, c)
+				}
+			}
+			if len(elements) != 4 || elements[0].Data != "div" || elements[1] != headings[0] || elements[2] != paragraphs[0] || elements[3].Data != "div" {
+				return false
+			}
+			links := children(elements[3], "div")
+			if len(links) != 1 {
+				return false
+			}
+			anchors := children(links[0], "a")
+			if len(anchors) != 1 || attr(anchors[0], "href") != "https://docs.github.com/apps/building-integrations/setting-up-and-registering-github-apps/" || directText(anchors[0]) != "Learn more about GitHub Apps" {
+				return false
+			}
+			if len(children(links[0], "form")) != 0 || !visible(anchors[0]) {
+				return false
+			}
+			for c := headings[0].FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode {
+					return false
+				}
+			}
+			for c := anchors[0].FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode {
+					return false
+				}
+			}
+			icons := children(paragraphs[0], "svg")
+			if len(icons) != 1 || !hasClass(icons[0], "octicon-lock") || attr(icons[0], "aria-hidden") != "true" {
+				continue
+			}
+			// No author-provided inline element may contribute or hide marker text.
+			other := false
+			for c := paragraphs[0].FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode && c != icons[0] {
+					other = true
+				}
+			}
+			if !other {
+				matches++
+			}
+		}
+	}
+	return matches == 1
 }
 
 func (i *installation) api(ctx context.Context, bearer, method, endpoint string, payload, out any) error {
