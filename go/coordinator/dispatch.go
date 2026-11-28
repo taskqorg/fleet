@@ -1253,10 +1253,10 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 					if err := exec(q, "ROLLBACK TO SAVEPOINT start_command"); err != nil {
 						return err
 					}
-					if deref(e.WaitReason) == pending.reason {
+					if deref(e.WaitReason) == "permission" && deref(e.WaitDetail) == pending.reason {
 						return nil
 					}
-					queued.WaitReason = &pending.reason
+					queued.WaitReason, queued.WaitDetail = ptr("permission"), &pending.reason
 					if err := executionPut(q, &queued); err != nil {
 						return err
 					}
