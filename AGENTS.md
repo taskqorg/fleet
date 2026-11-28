@@ -10,7 +10,7 @@ Web UI, CSS or client-side JS work: before writing it, follow the `modern-web-gu
 
 **Browser support:** the current stable Chromium only. Features Chromium ships need no fallback or polyfill for other engines.
 
-For Fleet visual QA, use managed Linux Chromium through `project-browser` or the protected verifier’s isolated Linux Chromium. Never launch or fall back to user-installed macOS Chrome, including Playwright `channel: "chrome"`. If the required Linux browser is unavailable, record the affected check as unverified.
+For Fleet visual QA, follow the [browser rule in the shipped Design-first UI skill](config/skills/design-first-ui/SKILL.md#browser-for-fleet-visual-qa). When the skill is not injected, read that section at the task’s pinned Fleet revision before running browser checks.
 
 EGM artifact directory: .egm
 
