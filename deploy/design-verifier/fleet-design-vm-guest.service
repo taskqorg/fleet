@@ -18,7 +18,7 @@ PrivateNetwork=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/fleet-design-vm-guest
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LimitCORE=0
 UMask=0077
 
