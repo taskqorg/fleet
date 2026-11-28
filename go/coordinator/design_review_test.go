@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -125,7 +126,7 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = e.appStore.Write(e.ctx, &Request{app: e.app}, nil, func(q *Request) error {
-		_, err := claimDesignBuild(q, task.Id, newID(), "github.com/taskqorg/fleet")
+		_, err := claimDesignBuild(q, task.Id, newID(), newID(), "github.com/taskqorg/fleet")
 		return err
 	})
 	var pending *designBuildWait
@@ -167,22 +168,23 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	}
 	builder, builderSession := newID(), newID()
 	const builderHost = projectpublisher.Executor
+	const native = "invented-native-writer"
 	e.registerHost(t, builderHost)
-	exec("INSERT INTO session (id,project_id,task_id,directed_by) VALUES ($1,$2,$3,$4)", builderSession, project, task.Id, testOwnerEmail)
-	exec("INSERT INTO execution (id,kind,state,host_id,project_id,session_id,task_id,harness,started_at,data,observation,config_ref) VALUES ($1,'agent_run','running',$5,$2,$3,$4,'codex',now(),'{}','confirmed','{}')", builder, project, builderSession, task.Id, builderHost)
+	exec("INSERT INTO session (id,project_id,task_id,directed_by,payload) VALUES ($1,$2,$3,$4,$5)", builderSession, project, task.Id, testOwnerEmail, jsonBytes(doc{"nativeSessionId": native}))
+	addBuilder := func(id string) {
+		exec("INSERT INTO execution (id,kind,state,host_id,project_id,session_id,task_id,harness,started_at,data,observation,config_ref) VALUES ($1,'agent_run','running',$5,$2,$3,$4,'codex',now(),'{}','confirmed','{}')", id, project, builderSession, task.Id, builderHost)
+	}
+	addBuilder(builder)
 	write := func(fn func(q *Request) error) error {
 		return e.appStore.Write(e.ctx, &Request{app: e.app, person: e.app.peopleSnapshot().person(testOwnerEmail)}, nil, fn)
 	}
-	claim := func(id string) ([]contract.InputArtifact, error) {
-		var files []contract.InputArtifact
-		err := write(func(q *Request) error {
-			var err error
-			files, err = claimDesignBuild(q, task.Id, id, r.Repository)
+	claim := func(id string) error {
+		return write(func(q *Request) error {
+			_, err := claimDesignBuild(q, task.Id, id, newID(), r.Repository)
 			return err
 		})
-		return files, err
 	}
-	if _, err := claim(builder); err == nil {
+	if err := claim(builder); err == nil {
 		t.Fatal("writer started before selection")
 	}
 	if code, body := e.callJSON(t, "POST", "/api/ops/questions_answer", doc{"questionId": id, "answer": "A"}, e.ownerHeaders()); code != 200 {
@@ -193,11 +195,54 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	if review.State != "selected" || deref(review.Selected) != "A" || deref(review.Owner) != testOwnerEmail || review.Digest != offer.Digest {
 		t.Fatal("different selection")
 	}
-	files, err := claim(builder)
-	if err != nil || len(files) != 2 || files[0].ArtifactId != r.Options[0].SourceArtifactId || files[1].ArtifactId != c.RecipeArtifactId {
-		t.Fatalf("build inputs: %v %v", files, err)
+	ordinary := contract.InputArtifact{ArtifactId: "invented-ordinary-input", Path: "upstream/empty"}
+	seenPaths := map[string]bool{}
+	start := func(id string) {
+		t.Helper()
+		const requestText = "Continue implementing the selected design."
+		var command dispatchStartCommand
+		if err := write(func(q *Request) error {
+			run, err := executionGetAs[dispatchExecution](q, id)
+			if err != nil {
+				return err
+			}
+			run.Dispatch = &dispatchSpec{ProjectID: ptr(project), Last: ptr(builderHost), Input: ptr(requestText),
+				Payload: jsonBytes(dispatchPayload{Inputs: jsonBytes([]contract.InputArtifact{ordinary})})}
+			command, err = e.app.startCommand(q, &run, builderHost, nil)
+			if err != nil {
+				return err
+			}
+			stored, err := commandGet(q, command.ID)
+			if err != nil {
+				return err
+			}
+			sent, retained := agentView[contract.StartPayload](command.Payload), agentView[contract.StartPayload](stored.Payload)
+			if !slices.Equal(sent.Inputs, retained.Inputs) || deref(sent.Text) != deref(retained.Text) {
+				return errors.New("stored start changed its paths or turn text")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		p := agentView[contract.StartPayload](command.Payload)
+		if command.SessionID != builderSession || deref(p.NativeSessionId) != native {
+			t.Fatalf("writer start did not resume the native session: %+v", command)
+		}
+		if len(p.Inputs) != 3 || p.Inputs[0] != ordinary || !strings.HasPrefix(deref(p.Text), requestText) ||
+			p.Inputs[1].ArtifactId != r.Options[0].SourceArtifactId || p.Inputs[2].ArtifactId != c.RecipeArtifactId {
+			t.Fatalf("writer start did not carry the expected inputs and request: %+v", p.Inputs)
+		}
+		for _, file := range p.Inputs[1:] {
+			if !strings.HasPrefix(file.Path, "design-review/"+id+"/"+command.ID+"/") || seenPaths[file.Path] ||
+				!strings.Contains(deref(p.Text), "`$FLEET_INPUT_DIR/"+file.Path+"`") {
+				t.Fatalf("writer input path collided or was not announced: %q in %q", file.Path, deref(p.Text))
+			}
+			seenPaths[file.Path] = true
+		}
 	}
-	if _, err := claim(newID()); err == nil {
+	start(builder)
+	start(builder) // A newly issued start for the same claim has its own exclusive targets.
+	if err := claim(newID()); err == nil {
 		t.Fatal("two simultaneous writers")
 	}
 	if err := write(func(q *Request) error { return checkDesignPublication(q, task.Id, builder, r.Repository) }); err != nil {
@@ -275,6 +320,10 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	if code, _ := e.callJSON(t, "POST", "/api/ops/design_verifier_evidence", doc{"number": prNumber, "head": strings.Repeat("b", 40), "branch": branch}, e.ownerHeaders()); code != 404 {
 		t.Fatalf("new head inherited the former admission: %d", code)
 	}
+	exec("UPDATE execution SET state='succeeded', ended_at=now() WHERE id=$1", builder)
+	resumed := newID()
+	addBuilder(resumed)
+	start(resumed)
 	exec("UPDATE artifact SET state='failed' WHERE id=$1", c.Frames[0].ArtifactId)
 	if code, _ := e.callJSON(t, "POST", "/api/ops/design_review_get", doc{"taskId": task.Id}, e.ownerHeaders()); code != 409 {
 		t.Fatalf("missing evidence %d", code)

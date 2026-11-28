@@ -120,8 +120,11 @@ func designWriter(row db.Question) (string, error) {
 	return d.Execution, err
 }
 
-// claimDesignBuild runs in the transaction that hands a start to a host. A retry of the same start reuses its claim.
-func claimDesignBuild(q *Request, task, id, repo string) ([]contract.InputArtifact, error) {
+const designInputDirectory = "design-review"
+
+// claimDesignBuild runs in the transaction that creates a start. The claim belongs to the
+// execution, and a replacement command for that execution needs fresh exclusive targets.
+func claimDesignBuild(q *Request, task, id, commandID, repo string) ([]contract.InputArtifact, error) {
 	row, err := activeDesignOffer(q, task)
 	if err != nil || row.ID == "" {
 		return nil, err
@@ -148,7 +151,7 @@ func claimDesignBuild(q *Request, task, id, repo string) ([]contract.InputArtifa
 			return nil, err
 		}
 	}
-	prefix := "design-review/" + row.ID + "/"
+	prefix := designInputDirectory + "/" + id + "/" + commandID + "/"
 	inputs := []contract.InputArtifact{{ArtifactId: selected.SourceArtifactId, Path: prefix + "selected-source"}}
 	for i, c := range selected.Cases {
 		inputs = append(inputs, contract.InputArtifact{ArtifactId: c.RecipeArtifactId, Path: prefix + fmt.Sprintf("case-%d-recipe.json", i+1)})
@@ -156,7 +159,7 @@ func claimDesignBuild(q *Request, task, id, repo string) ([]contract.InputArtifa
 	return inputs, nil
 }
 
-func attachDesignSources(q *Request, task string, e *dispatchExecution, host string, p *contract.StartPayload) error {
+func attachDesignSources(q *Request, task string, e *dispatchExecution, host, commandID string, p *contract.StartPayload) error {
 	if task == "" {
 		return nil
 	}
@@ -165,16 +168,23 @@ func attachDesignSources(q *Request, task string, e *dispatchExecution, host str
 	_ = lenientDecode(e.ProjectSnapshot, &snap)
 	_ = lenientDecode(snap.Settings, &settings)
 	ref, _ := forgeSelectedRepoRef(settings, host)
-	inputs, err := claimDesignBuild(q, task, e.ID, ref.Host+"/"+ref.Slug)
+	inputs, err := claimDesignBuild(q, task, e.ID, commandID, ref.Host+"/"+ref.Slug)
 	if err != nil || len(inputs) == 0 {
 		return err
 	}
 	for _, old := range p.Inputs {
-		if strings.HasPrefix(old.Path, "design-review/") || old.Path == "design-review" {
+		if strings.HasPrefix(old.Path, designInputDirectory+"/") || old.Path == designInputDirectory {
 			return fail(409, "Input path collides with the selected design")
 		}
 	}
 	p.Inputs = append(p.Inputs, inputs...)
+	var text strings.Builder
+	text.WriteString(deref(p.Text))
+	text.WriteString("\n\nUse these selected design inputs for the current turn.\n")
+	for _, input := range inputs {
+		fmt.Fprintf(&text, "\n- `$FLEET_INPUT_DIR/%s`", input.Path)
+	}
+	p.Text = ptr(text.String())
 	return nil
 }
 
