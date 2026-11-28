@@ -12,7 +12,7 @@ These Node ESM scripts derive token CSS, build the static design book, and repor
 - `check-design.mjs` scans UI/app source, bundles the public UI entry, and prints the warning report used by `pnpm run check:design`.
 
 - `scenes.ts` discovers and validates scene manifests with Node's standard library.
-- `build-scene.mjs` serves one scene with a recipe and managed capture script under an execution-private output directory. `scene-build.mjs` builds the scene and hashes its actual inputs.
+- `build-scene.mjs` writes one scene, its recipe and the [managed capture script](../book/README.md#capture). A build under `FLEET_SCENE_DIR` passes the bundle to the managed browser without binding a port. `scene-build.mjs` builds the scene and hashes its actual inputs.
 - `design-sources.mjs` enforces hard source rules in both the local design report and the app candidate check.
 
 - `design-impact.mjs` maps changed scene and shared files and preserves unmapped impact. `design-candidate.mjs` produces unprivileged recipe inputs for exact PR and merge-group heads. Unmapped impact stays unknown.

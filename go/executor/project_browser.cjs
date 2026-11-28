@@ -3,14 +3,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
 const net = require('node:net');
+const { createHash, randomUUID } = require('node:crypto');
+const runFile = require('node:util').promisify(require('node:child_process').execFile);
 const cfg = JSON.parse(process.argv[1]);
 const {chromium} = require(cfg.module);
 const damOrigin = cfg.damVerification && cfg.production?.origin === 'https://revilio.com'
   ? cfg.production.origin : undefined;
 let browser, context, page, launched;
+let activeScene;
 const timeout=cfg.timeoutMs || 60000;
-function bounded(promise) {
- let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('browser-timeout-unknown-no-replay')),timeout);})]).finally(()=>clearTimeout(timer));
+function bounded(promise, onTimeout) {
+ let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>{
+   onTimeout?.();
+   reject(Error('browser-timeout-unknown-no-replay'));
+ },timeout);})]).finally(()=>clearTimeout(timer));
 }
 const previews = new Set(cfg.previewOrigins);
 const allowed = new Set(previews);
@@ -61,6 +67,66 @@ function requestOrigin(url) {
   } catch {}
 }
 function permitted(url) { return allowed.has(requestOrigin(url)); }
+function isSceneURL(raw) {
+  return typeof raw === 'string' && activeScene?.documentURL === raw.split('#', 1)[0];
+}
+
+async function openScene(args, signal) {
+  const {name, recipeDigest, htmlSha256} = args;
+  const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+  if (!cfg.privateScenes || Object.keys(args).length !== 3 ||
+      typeof name !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name) ||
+      !digest(recipeDigest) || !digest(htmlSha256)) throw Error('invalid private scene arguments');
+  const {stdout} = await runFile(cfg.ownedExecutor, ['mcp', 'project-browser', 'read-scene', name, htmlSha256],
+    {maxBuffer: 8 << 20, signal});
+  const bundle = JSON.parse(stdout);
+  const {digest: storedDigest, html: storedHTML, ...recipe} = JSON.parse(bundle.recipe);
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const html = Buffer.from(bundle.html,'base64');
+  if (recipe.version !== 1 || typeof recipe.path !== 'string' || !/^\/[a-z0-9_/-]*$/i.test(recipe.path) ||
+      storedDigest !== recipeDigest || storedHTML !== htmlSha256 || hash(html) !== htmlSha256 ||
+      hash('fleet:preview-recipe:v1\0' + JSON.stringify(recipe)) !== recipeDigest ||
+      !html.includes('data-preview-recipe="' + recipeDigest + '"')) throw Error('private scene recipe or SHA mismatch');
+
+  await close();
+  signal.throwIfAborted();
+  const scene = {documentURL:'https://fleet-scene.invalid/' + randomUUID()};
+  activeScene = scene;
+  productionContext = false;
+  usedProduction = false;
+  const isolated = await chromium.launch({
+    executablePath:path.join(process.env.PATH.split(path.delimiter)[0],'fleet-scene-chromium'),
+    chromiumSandbox:true, timeout,
+  });
+  if (activeScene !== scene) {
+    await isolated.close();
+    throw Error('private scene closed during launch');
+  }
+  browser = isolated;
+  context = await browser.newContext({deviceScaleFactor:1, serviceWorkers:'block', acceptDownloads:false});
+  const current = await context.newPage();
+  page = current;
+  await context.route('**/*', async route => {
+    const request = route.request();
+    if (request.url() !== scene.documentURL || request.method() !== 'GET' ||
+        !request.isNavigationRequest() || request.frame() !== current.mainFrame()) return route.abort();
+    // An opaque origin keeps storage and privileged APIs away from scene code. The kernel
+    // network fence also covers APIs that do not use intercepted HTTP requests.
+    return route.fulfill({body:html,headers:{
+      'content-type':'text/html; charset=utf-8',
+      'cache-control':'no-store',
+      'content-security-policy':"sandbox allow-scripts; default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'x-content-type-options':'nosniff',
+    }});
+  });
+  await context.routeWebSocket('**/*',socket=>socket.close());
+  const url = scene.documentURL + '#' + recipe.path;
+  await current.goto(url,{waitUntil:'domcontentloaded',timeout});
+  requireScopedPage(current);
+  if (await current.locator('body').getAttribute('data-preview-recipe',{timeout}) !== recipeDigest)
+    throw Error('wrong private scene document');
+  return textResult({url,recipeDigest,htmlSha256});
+}
 let damFrame;
 const damPages = new Map([
   ['/site/verification', []],
@@ -159,6 +225,8 @@ async function close() {
   closing=(async()=>{
     clearInterval(generationTimer);
     const owned=context, child=launched, directory=profileDir, socket=control;
+    const isolated=activeScene && browser;
+    activeScene=undefined;
     browser=context=page=launched=profileDir=undefined;
     for(const {reject} of pending.values())reject(Error('browser-closed'));
     pending.clear();
@@ -168,6 +236,7 @@ async function close() {
     let failed=false;
     try {
       try {if(owned)await bounded(owned.close());}catch {failed=true;}
+      try {if(isolated)await bounded(isolated.close());}catch {failed=true;}
       if(child && child.exitCode===null && !child.signalCode) {
         try {
           await bounded(new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',()=>reject(Error('browser-close-failed')));child.kill('SIGTERM');}));
@@ -355,7 +424,12 @@ const damTools = [
     inputSchema:{type:'object',properties:{check:{enum:[...damChecks.keys()]}},required:['check'],additionalProperties:false}},
   tools.find(tool=>tool.name==='close'),
 ];
-const projectTools = !damOrigin ? tools : previews.size ? [damTools[0],...tools.slice(1),damTools[1]] : damTools;
+const projectTools = !damOrigin ? [...tools] : previews.size ? [damTools[0],...tools.slice(1),damTools[1]] : damTools;
+if (cfg.privateScenes) projectTools.push({
+  name:'open_scene',description:'Open a private built scene from the current run. Build with preview:scene --build-only under FLEET_SCENE_DIR, then pass the directory name and the two recipe hashes. Use read, evaluate, emulate and screenshot on the opened document. Close before navigating to a project URL.',
+  inputSchema:{type:'object',properties:{name:{type:'string'},recipeDigest:{type:'string'},htmlSha256:{type:'string'}},
+    required:['name','recipeDigest','htmlSha256'],additionalProperties:false},
+});
 const missingLink = 'a.btn[href^="/project/missing?"]';
 const participantPrompt = '#scene-participant-prompt';
 async function damNavigate(current, url) {
@@ -411,7 +485,7 @@ async function damAssert(current, args) {
   }
 }
 function requireScopedPage(current) {
-  if (!current || current !== page || !permitted(current.url())) throw Error('page outside scope');
+  if (!current || current !== page || !(activeScene ? isSceneURL(current.url()) : permitted(current.url()))) throw Error('page outside scope');
 }
 async function press(current, {key, selector}) {
   if (typeof key !== 'string' || !key || (selector !== undefined && (typeof selector !== 'string' || !selector))) throw Error('invalid press arguments');
@@ -446,6 +520,7 @@ async function emulate(args) {
 }
 function requirePreview(current) {
   requireScopedPage(current);
+  if (activeScene) return;
   const origin = new URL(current.url());
   if(usedProduction || !previews.has(origin.origin) || origin.protocol!=='http:' ||
       !['localhost','127.0.0.1'].includes(origin.hostname)) throw Error('preview capture denied');
@@ -488,17 +563,18 @@ async function screenshot(current, args) {
     current.off('framenavigated',onNavigation);
   }
 }
-async function call(req) {
+async function call(req, signal) {
   if(req.method==='initialize') return {protocolVersion:req.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'project-browser',version:'1'},instructions:'Use these tools for browser checks. Shell Chromium is unsupported in the native sandbox. Granted origins: '+[...allowed].join(', ')};
   if(req.method==='tools/list') return {tools:projectTools};
   if(req.method!=='tools/call') throw Error('unsupported method');
   const {name,arguments:a={}}=req.params;
+  if(name==='open_scene') return openScene(a,signal);
   if(name==='close') {
     await close();
     if (damOrigin && (productionContext || !previews.size)) return textResult({closed:true});
     return {content:[{type:'text',text:'Browser closed'}]};
   }
-  if(name==='navigate' && !permitted(a.url)) throw Error('origin denied');
+  if(name==='navigate' && !(activeScene ? isSceneURL(a.url) : permitted(a.url))) throw Error('origin denied');
   const production = name === 'navigate' ? requestOrigin(a.url) === cfg.production?.origin : productionContext;
   if(production && productionContext && browser)await requireGeneration();
   if (damOrigin && production) {
@@ -525,7 +601,10 @@ async function call(req) {
   const current = page;
   if(name!=='navigate') requireScopedPage(current);
   let evaluated;
-  if(name==='navigate') await current.goto(a.url,{waitUntil:'domcontentloaded'});
+  if(name==='navigate') {
+    const response = await current.goto(a.url,{waitUntil:'domcontentloaded'});
+    if(activeScene && !response) await current.reload({waitUntil:'domcontentloaded'});
+  }
   else if(name==='evaluate') evaluated=await current.evaluate(a.expression);
   else if(name==='click') await current.locator(a.selector).click();
   else if(name==='fill') await current.locator(a.selector).fill(a.value);
@@ -625,7 +704,8 @@ async function checkProduction(grant) {
    let req; try { req=JSON.parse(line); } catch {continue;}
    if(!('id' in req))continue;
    let reply={jsonrpc:'2.0',id:req.id};
-   try { reply.result=await bounded(call(req)); } catch {try {await close();}catch {}reply.error={code:-32602,message:'Browser operation failed, denied or timed out; outcome unknown, no replay performed'};}
+   const abort = new AbortController();
+   try { reply.result=await bounded(call(req,abort.signal),()=>abort.abort()); } catch {try {await close();}catch {}reply.error={code:-32602,message:'Browser operation failed, denied or timed out; outcome unknown, no replay performed'};}
    process.stdout.write(JSON.stringify(reply)+'\n');
  }} finally{await close();}
 })().catch(async()=>{try {await close();}catch {}process.exitCode=1;});

@@ -66,6 +66,8 @@ type ownerRequest struct {
 	Dependency        string            `json:"dependency"`
 	Command           string            `json:"command"`
 	TargetSha256      string            `json:"targetSha256"`
+	Scene             string            `json:"scene"`
+	HTMLSHA           string            `json:"htmlSha256"`
 	Dependencies      map[string]string `json:"dependencies"`
 	OwnedDependencies []string          `json:"ownedDependencies"`
 }
@@ -196,8 +198,8 @@ func (o *mcpOwner) accept() {
 					answer["errorKind"], answer["errorCode"] = "system", int(errno)
 				}
 			}
-			writeErr := json.NewEncoder(c).Encode(answer)
 			o.mu.Unlock()
+			writeErr := json.NewEncoder(c).Encode(answer)
 			if keep && err == nil {
 				if writeErr == nil {
 					c.SetDeadline(time.Time{})
@@ -418,7 +420,9 @@ func mcpGuardian(args []string) error {
 	}
 	defer discard.Close()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, discard
-	// ExtraFiles is empty: the private lifetime descriptor cannot keep itself alive in server descendants.
+	if s.Dependency == sceneChromium {
+		cmd = sceneChromiumCommand(cmd, discard)
+	}
 	report["stage"] = "spawn"
 	// The server stays in this guardian's process group: the guardian's group kill ends it with its descendants.
 	var proc *supervise.Proc

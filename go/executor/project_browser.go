@@ -34,6 +34,8 @@ func projectBrowserServer(config M, managed bool) M {
 		arg = enc(config)
 	}
 	tools := []any{"navigate", "read", "evaluate", "click", "fill", "press", "drag", "emulate", "screenshot", "close"}
+	dependencies := M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}
+	owned := []any{"fleet-browser-chromium"}
 	// Match the adapter's discovery for the prepared grant. Preview tools are
 	// available in mixed sessions, with the adapter enforcing the current origin.
 	if jIsTrue(config, "damVerification") {
@@ -43,12 +45,17 @@ func projectBrowserServer(config M, managed bool) M {
 			tools = append(tools, "assert")
 		}
 	}
+	if jIsTrue(config, "privateScenes") {
+		tools = append(tools, "open_scene")
+		dependencies[sceneChromium] = dependencies["fleet-browser-chromium"]
+		owned = append(owned, sceneChromium)
+	}
 	return M{
 		"command":           exe(),
 		"args":              []any{"mcp", "project-browser", arg},
 		"tools":             tools,
-		"dependencies":      M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")},
-		"ownedDependencies": []any{"fleet-browser-chromium"},
+		"dependencies":      dependencies,
+		"ownedDependencies": owned,
 	}
 }
 
@@ -62,6 +69,7 @@ type browserAuthority struct {
 	Node   string                      `json:"node"`
 	Access contract.BrowserAccessReply `json:"access"`
 	Fence  *siteBrowserFence           `json:"fence,omitempty"`
+	Scene  *browserSceneScope          `json:"scene,omitempty"`
 }
 
 func browserProject(payload any) string {
@@ -193,6 +201,15 @@ func browserCommand(config any, home string, check bool) *exec.Cmd {
 	return browserNodeCommand("node", config, home, check)
 }
 
+func sceneChromiumCommand(chrome *exec.Cmd, stderr io.Writer) *exec.Cmd {
+	cmd := exec.Command(exe(), append([]string{"scene-chromium", chrome.Path}, chrome.Args[1:]...)...)
+	cmd.Dir, cmd.Env = os.Getenv("HOME"), mcpChildEnv(os.Getenv("PATH"))
+	cmd.Stderr = stderr
+	// Map the CDP streams to Chromium's fd 3 and 4. The guardian's lifetime and status stay private.
+	cmd.ExtraFiles = []*os.File{os.Stdin, os.Stdout}
+	return cmd
+}
+
 func browserNodeCommand(node string, config any, home string, check bool) *exec.Cmd {
 	args := []string{"-e", projectBrowserScript, enc(config)}
 	if check {
@@ -223,20 +240,22 @@ func serveProjectBrowser(arg string) error {
 			authority.Config["checkGeneration"] = true
 			authority.Config["generationCheckMs"] = (30 * time.Second).Milliseconds()
 		}
-		pipe, err := browserPipe(authority.Access)
-		if err != nil {
-			return err
-		}
-		defer pipe.Close()
 		cmd = browserNodeCommand(authority.Node, authority.Config, os.Getenv("HOME"), false)
-		cmd.ExtraFiles = []*os.File{pipe}
+		if authority.Config["production"] != nil {
+			pipe, err := browserPipe(authority.Access)
+			if err != nil {
+				return err
+			}
+			defer pipe.Close()
+			cmd.ExtraFiles = []*os.File{pipe}
+		}
 	} else {
 		cfg, err := dec(arg)
 		if err != nil {
 			return err
 		}
-		if obj, _ := cfg.(M); obj["production"] != nil {
-			return errors.New("production browser authority is ungranted")
+		if obj, _ := cfg.(M); obj["production"] != nil || jIsTrue(obj, "privateScenes") {
+			return errors.New("managed browser authority is ungranted")
 		}
 		cmd = browserCommand(cfg, os.Getenv("HOME"), false)
 	}
@@ -345,13 +364,21 @@ func newBrowserAuthority(payload any, access contract.BrowserAccessReply) (*brow
 	if siteManaged(access.Managed) {
 		config["production"] = M{"origin": origin, "managed": true}
 	}
+	node, err := managedBrowserRuntime(config)
+	if err != nil {
+		return nil, err
+	}
+	return &browserAuthority{Config: config, Node: node, Access: access}, nil
+}
+
+func managedBrowserRuntime(config M) (string, error) {
 	executable, err := trustedMCPExecutable(os.Getenv("FLEET_BROWSER_EXECUTABLE"))
 	if err != nil {
-		return nil, errors.New("browser-runtime-unready")
+		return "", errors.New("browser-runtime-unready")
 	}
 	module := os.Getenv("FLEET_PLAYWRIGHT_MODULE")
 	if !filepath.IsAbs(module) {
-		return nil, errors.New("browser-runtime-unready")
+		return "", errors.New("browser-runtime-unready")
 	}
 	config["executable"] = executable
 	node, err := exec.LookPath("node")
@@ -359,9 +386,9 @@ func newBrowserAuthority(payload any, access contract.BrowserAccessReply) (*brow
 		node, err = trustedMCPExecutable(node)
 	}
 	if err != nil {
-		return nil, errors.New("browser-runtime-unready")
+		return "", errors.New("browser-runtime-unready")
 	}
-	return &browserAuthority{Config: config, Node: node, Access: access}, nil
+	return node, nil
 }
 
 // prepareBrowser checks the same runtime used by MCP. An independently granted preview

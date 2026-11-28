@@ -670,6 +670,9 @@ func mcpRun(args []string) error {
 		return srv.Serve(os.Stdin, os.Stdout)
 	}
 	if server == "project-browser" {
+		if len(args) == 4 && args[1] == "read-scene" {
+			return serveBrowserScene(args[2], args[3])
+		}
 		if len(args) != 2 {
 			return errors.New("browser context required")
 		}

@@ -17,6 +17,11 @@ import (
 // Seatbelt already enforces the socket policy on macOS.
 func shellSocketFilter() (*os.File, error) { return nil, nil }
 
+func execSceneChromium(args []string) error {
+	tool := "/usr/bin/sandbox-exec"
+	return syscall.Exec(tool, append([]string{tool, "-p", noNetworkProfile}, args...), os.Environ())
+}
+
 // libproc through purego (no cgo): proc_pidinfo, and the private proc_signal_with_audittoken looked up at run time.
 var (
 	procPidinfo func(pid, flavor int32, arg uint64, buf *byte, size int32) int32

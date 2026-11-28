@@ -148,15 +148,20 @@ test('impact spots shared dependencies, unmapped app edits and removed scenes', 
 
 test('managed capture stops on a missing frame or stored receipt and still closes the browser', async () => {
   const url = 'http://127.0.0.1:4173/preview/invented#/tasks';
+  const scene = { name: 'test-scene', recipeDigest: hashA, htmlSha256: hashB };
   const recipe = { digest: hashA, clock: 123, scene: 'views/tasks/list', state: 'default', landmark: 'main', matrix: captureMatrix, timeZone: 'UTC', locale: 'en-US', dpr: 1 };
   const result = (value) => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
-  for (const failure of ['none', 'wrong-size', 'wrong-state', 'not-stored']) {
+  for (const failure of ['none', 'scene', 'wrong-scene', 'wrong-size', 'wrong-state', 'not-stored']) {
     let index = -1, closed = 0;
     const artifacts = [];
     const tools = {
       mcp__project_browser__close: async () => { closed++; return result({}); },
+      mcp__project_browser__open_scene: async args => {
+        assert.deepEqual(args, scene);
+        return result({ url, recipeDigest: failure === 'wrong-scene' ? hashB : hashA, htmlSha256: hashB });
+      },
       mcp__project_browser__emulate: async () => { index++; return result({}); },
-      mcp__project_browser__navigate: async () => result({}),
+      mcp__project_browser__navigate: async args => { assert.deepEqual(args, { url }); return result({}); },
       mcp__project_browser__evaluate: async () => result({ result: {
         ...captureMatrix[index], ready: failure !== 'wrong-state', href: url, digest: recipe.digest, clock: 123, dpr: 1,
         dark: captureMatrix[index].theme === 'dark', scheme: 'light dark', reducedMotion: true, timeZone: 'UTC', locale: 'en-US',
@@ -170,13 +175,14 @@ test('managed capture stops on a missing frame or stored receipt and still close
       },
       mcp__fleet__artifact_list: async () => result({ artifacts }),
     };
-    if (failure === 'none') {
-      const packet = await captureScene(tools, { url, recipe });
+    const target = ['scene', 'wrong-scene'].includes(failure) ? { scene, recipe } : { url, recipe };
+    if (failure === 'none' || failure === 'scene') {
+      const packet = await captureScene(tools, target);
       assert.equal(packet.frames.length, 4);
       assert.deepEqual(packet.frames.map((f) => f.sha256), Array(4).fill(hashA));
-    } else await assert.rejects(captureScene(tools, { url, recipe }), /unexpected|not confirmed/);
+    } else await assert.rejects(captureScene(tools, target), /different scene|unexpected|not confirmed/);
     assert.equal(closed, 2);
-    if (failure === 'wrong-size' || failure === 'wrong-state') assert.equal(artifacts.length, 0);
+    if (['wrong-size', 'wrong-state', 'wrong-scene'].includes(failure)) assert.equal(artifacts.length, 0);
   }
 });
 

@@ -5,8 +5,8 @@ export const captureMatrix = [
   { viewport: 'mobile', theme: 'light', width: 390, height: 844 },
 ];
 
-// This function is emitted by preview:scene for the managed tool runner. The shell only serves HTML.
-export async function captureScene(tools, { url, recipe }) {
+// This function is emitted by preview:scene for the managed tool runner.
+export async function captureScene(tools, { url, scene, recipe }) {
   async function call(tool, args) {
     const result = await tool(args);
     const content = result.content?.find(item => item.type === 'text')?.text;
@@ -18,6 +18,12 @@ export async function captureScene(tools, { url, recipe }) {
 
   try {
     await call(browser('close'), {});
+    if (scene) {
+      const opened = await call(browser('open_scene'), scene);
+      if (opened.recipeDigest !== recipe.digest || opened.htmlSha256 !== scene.htmlSha256)
+        throw new Error('Managed browser returned a different scene');
+      url = opened.url;
+    }
     for (const frame of recipe.matrix) {
       const { viewport, theme, width, height } = frame;
       await call(browser('emulate'), { viewport, colorScheme: theme });
