@@ -1,0 +1,24 @@
+[Unit]
+Description=Fleet isolated design VM fixed job supervisor
+After=dev-virtio\x2dports-org.fleet.design\x2dverifier.device
+Requires=dev-virtio\x2dports-org.fleet.design\x2dverifier.device
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /opt/fleet-design-verifier/current/deploy/design-verifier/vm-guest.py
+TimeoutStartSec=120s
+TimeoutStopSec=10s
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/fleet-design-vm-guest
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitCORE=0
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Protected Fleet design renderer broker socket
+
+[Socket]
+ListenStream=/run/fleet-design-vm/broker.sock
+SocketUser=root
+SocketGroup=fleet-design-vm-client
+SocketMode=0660
+DirectoryMode=0710
+Accept=no
+Backlog=8
+RemoveOnStop=yes
+Service=fleet-design-vm.service
+
+[Install]
+WantedBy=sockets.target
