@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 var captureRequestKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$`)
@@ -80,14 +83,18 @@ func designCaptureCaller(q *Request) (contract.DesignCaptureScope, error) {
 	return designCaptureAuthority(q, id, q.hostID())
 }
 
+func lockCaptureExecution(q *Request, id string) error {
+	if err := lockExecutionTask(q, id); err != nil {
+		return err
+	}
+	return q.db().DispExecLock(q.ctx(), id)
+}
+
 // Authenticated host callers resolve the originating director against the
 // same live grants as native MCP. MCP already carries its authenticated person.
 func designCaptureAuthority(q *Request, id, expectedHost string) (contract.DesignCaptureScope, error) {
 	var scope contract.DesignCaptureScope
-	if err := lockExecutionTask(q, id); err != nil {
-		return scope, err
-	}
-	if err := q.db().DispExecLock(q.ctx(), id); err != nil {
+	if err := lockCaptureExecution(q, id); err != nil {
 		return scope, err
 	}
 	e, err := getExecution(q, id)
@@ -107,6 +114,14 @@ func designCaptureAuthority(q *Request, id, expectedHost string) (contract.Desig
 		!fleetDesigner(deref(link.ProjectID), profile.ID) || e.State != "running" || e.unconfirmed() ||
 		isTrue(e.StopRequested) || isTrue(e.TaskStopRequested) || deref(link.TaskID) == "" {
 		return scope, fail(403, "Capture requires the active Fleet Design execution")
+	}
+	// Match execution_stop's task/row locks and project membership revocation's
+	// definition lock. Parent and child precede the membership read or grant.
+	if err := lockCaptureExecution(q, designCaptureJobID(id)); err != nil {
+		return scope, err
+	}
+	if _, err := q.db().DefProjectAccessShare(q.ctx(), "fleet"); err != nil {
+		return scope, err
 	}
 	project, err := projectContext(q, "fleet")
 	if err != nil {
@@ -152,6 +167,24 @@ func designCaptureAuthority(q *Request, id, expectedHost string) (contract.Desig
 	return contract.DesignCaptureScope{Project: "fleet", Task: task, Session: e.SessionID, Execution: id}, nil
 }
 
+// This pilot can return captures only to an origin running the signed native
+// Linux staging implementation. Read the authenticated poll, not host setup.
+func requireDesignCaptureOrigin(q *Request, host string) error {
+	observed, err := unscoped(q, func() (db.HostObservationOfRow, error) {
+		return q.db().HostObservationOf(q.ctx(), host)
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	var payload hostObservationPayload
+	if err != nil || observed.LastSeenAt == nil || float64(nowMs())-q.app.effectiveHostSeen(host, float64(observed.LastSeenAt.UnixMilli())) >= hostStaleMs ||
+		json.Unmarshal(observed.Payload, &payload) != nil || deref(payload.Platform) != string(contract.PlatformLinux) ||
+		deref(payload.Version) == "" || !contract.HasCapability(payload.Capabilities, contract.DesignCaptureStageCapability) {
+		return fail(403, "The designer origin needs the current signed Linux capture staging capability")
+	}
+	return nil
+}
+
 func captureCommandPayload(c agentCommand) (designCapturePayload, bool) {
 	var p designCapturePayload
 	ok := c.Kind == "script" && c.HostID == contract.DesignCaptureHost && c.ProjectID == "fleet" &&
@@ -178,6 +211,9 @@ func designCapture(q *Request, r *contract.DesignCaptureRequest) (contract.Desig
 	out.JobId = job
 	c, err := commandGet(q, job)
 	if errors.Is(err, errNotFound) && r.Action == contract.DesignCaptureActionStatus {
+		if err := requireDesignCaptureOrigin(q, q.hostID()); err != nil {
+			return out, err
+		}
 		cfg, err := loadDesignCaptureInstallation()
 		if err != nil {
 			return out, err
@@ -245,6 +281,9 @@ func designCapture(q *Request, r *contract.DesignCaptureRequest) (contract.Desig
 }
 
 func startDesignCapture(q *Request, scope contract.DesignCaptureScope, r *contract.DesignCaptureRequest, out contract.DesignCaptureReply) (contract.DesignCaptureReply, error) {
+	if err := requireDesignCaptureOrigin(q, q.hostID()); err != nil {
+		return out, err
+	}
 	cfg, err := loadDesignCaptureInstallation()
 	if err != nil {
 		return out, err

@@ -415,10 +415,14 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 	browserReady, browserProblems := e.productionBrowserStatus()
 	active := e.activeExecutions()
 	caps := capabilities(browserReady != nil && *browserReady)
+	platformID := contract.Platform(platform())
+	if platformID == contract.PlatformLinux && captureStageReady(e.root) {
+		caps = append(caps, contract.DesignCaptureStageCapability)
+	}
 	if e.host == contract.DesignCaptureHost && captureBrokerReady() {
 		caps = append(caps, contract.DesignCaptureCapability)
 	}
-	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: caps, BrowserProductionReady: browserReady, BrowserTargets: e.projectSiteStatus(active), Stores: e.stores(),
+	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: platformID, Capabilities: caps, BrowserProductionReady: browserReady, BrowserTargets: e.projectSiteStatus(active), Stores: e.stores(),
 		Problems: append(browserProblems, edgeProblems(pollRoute)...), ProjectRoots: roots, ForgeLogins: forgeLoginReport(), Version: &v, HarnessVersions: managedVersions(), ToolVersions: toolVersions(), Update: lastUpdate(e.root),
 		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: active, Load: e.sampleHostLoad()}
 	if diagnoseNext.Swap(false) {

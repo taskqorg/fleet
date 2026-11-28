@@ -45,8 +45,8 @@ func checkCaptureTransportRead(ctx context.Context, a *App, x *Artifact) error {
 }
 
 // The trusted executor supplies the owning native start command. Ordinary
-// result requests cannot speak for it. Hold the same task/execution locks as
-// cancel while issuing this one immutable artifact read.
+// result requests cannot speak for it. The authority check holds the parent,
+// child and membership revocation locks through the immutable read grant.
 func captureTransportView(q *Request, b *contract.HostArtifactGetRequest, artifact *Artifact) (contract.ArtifactView, error) {
 	var view contract.ArtifactView
 	if q.host == nil || deref(b.CommandId) == "" || deref(b.ExecutionId) == "" {
@@ -73,6 +73,9 @@ func captureTransportAuthority(q *Request, host, execution, startID string, arti
 	}
 	scope, err := designCaptureAuthority(q, execution, host)
 	if err != nil {
+		return empty, err
+	}
+	if err := requireDesignCaptureOrigin(q, host); err != nil {
 		return empty, err
 	}
 	if deref(artifact.ExecutionID) != designCaptureJobID(execution) {

@@ -20,6 +20,7 @@ const captureBrokerSocket = "/run/fleet-design-capture/broker.sock"
 const captureReceiptLimit = 8192
 
 var errCaptureBusy = errors.New("fixed Fleet design capture renderer is busy")
+var errCaptureExpired = errors.New("capture permit expired before renderer admission")
 
 var errCaptureBroker = errors.New("fixed Fleet design capture broker failed or unavailable")
 
@@ -82,36 +83,58 @@ func captureBrokerCLI(args []string) error {
 	client := newTransferClient(auth.URL, auth.Token, contract.DesignCaptureHost, auth.Access)
 	client.accessHosts = auth.Stores
 	auth.Token, auth.Access = "", nil
-	for attempt := range 3 {
-		conn, err := dialCaptureBroker()
-		if err != nil {
-			return errCaptureBroker
-		}
-		receipt, archive, err := captureBrokerResponse(conn, args[0], permit)
-		if err == nil {
-			err = uploadCaptureResponse(client, auth.Execution, conn, receipt, archive)
-			_ = conn.Close()
-			return err
-		}
-		_ = conn.Close()
-		if !errors.Is(err, errCaptureBusy) || attempt == 2 {
-			return err
-		}
-		time.Sleep(time.Duration(attempt+1) * time.Second)
+	jobDeadline := time.Now().Add(time.Duration(contract.DesignCaptureTimeoutMS) * time.Millisecond)
+	conn, receipt, archive, err := awaitCaptureBroker(dialCaptureBroker, args[0], permit,
+		time.Unix(auth.Permit.ExpiresAt, 0), jobDeadline, 2*time.Second)
+	if err != nil {
+		return err
 	}
-	return errCaptureBusy
+	defer conn.Close()
+	return uploadCaptureResponse(client, auth.Execution, conn, receipt, archive, jobDeadline)
 }
 
-func captureBrokerResponse(conn net.Conn, input string, permit []byte) (int64, int64, error) {
-	deadline := time.Now().Add(time.Duration(contract.DesignCaptureTimeoutMS) * time.Millisecond)
+// Only explicit pre-admission busy is retried. Once the broker admits the job,
+// any transport failure is terminal because the permit may have been spent.
+func awaitCaptureBroker(dial func() (net.Conn, error), input string, permit []byte, expires, deadline time.Time, interval time.Duration) (net.Conn, int64, int64, error) {
+	until := minTime(expires, deadline)
+	for time.Now().Before(until) {
+		conn, err := dial()
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		receipt, archive, err := captureBrokerResponse(conn, input, permit, until, deadline)
+		if err == nil {
+			return conn, receipt, archive, nil
+		}
+		_ = conn.Close()
+		if !errors.Is(err, errCaptureBusy) {
+			return nil, 0, 0, err
+		}
+		time.Sleep(min(interval, time.Until(until)))
+	}
+	return nil, 0, 0, errCaptureExpired
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func captureBrokerResponse(conn net.Conn, input string, permit []byte, until, deadline time.Time) (int64, int64, error) {
 	if err := conn.SetDeadline(deadline); err != nil {
 		return 0, 0, err
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := conn.SetReadDeadline(minTime(until, time.Now().Add(5*time.Second))); err != nil {
 		return 0, 0, err
 	}
 	var admission [4]byte
-	if _, err := io.ReadFull(conn, admission[:]); err != nil || string(admission[:]) != "FDCA" && string(admission[:]) != "FDB1" {
+	_, err := io.ReadFull(conn, admission[:])
+	if !time.Now().Before(until) {
+		return 0, 0, errCaptureExpired
+	}
+	if err != nil || string(admission[:]) != "FDCA" && string(admission[:]) != "FDB1" {
 		return 0, 0, errCaptureBroker
 	}
 	if string(admission[:]) == "FDB1" {
@@ -158,25 +181,30 @@ func captureBrokerResponse(conn net.Conn, input string, permit []byte) (int64, i
 	return receipt, archive, nil
 }
 
-func uploadCaptureResponse(client *transferClient, execution string, wire io.Reader, receipt, archive int64) error {
+func uploadCaptureResponse(client *transferClient, execution string, wire io.Reader, receipt, archive int64, deadline time.Time) error {
 	return collectPrivateCapture(wire, receipt, archive, func(name, path string) error {
 		// Same stable IDs as sessionless script artifacts, with no plaintext
 		// output or spool file. Unsettled partial uploads cannot pass the job gate.
 		sum := sha256.Sum256([]byte(execution + "\x00" + name))
 		id := fmt.Sprintf("script-%x", sum[:16])
 		body := transferJob{Path: path, ExecutionId: execution, Name: name, MediaType: mediaType(name), Required: true}
-		for attempt := range 3 {
-			_, f := runJob(client, nil, id, "upload", body)
-			if f == nil {
-				return nil
-			}
-			if !f.retry || attempt == 2 {
-				break
-			}
-			time.Sleep(time.Duration(attempt+1) * time.Second)
-		}
-		return errors.New("private capture artifact upload did not settle")
+		return settlePrivateCaptureUpload(client, id, &body, deadline, time.Second)
 	})
+}
+
+func settlePrivateCaptureUpload(client *transferClient, id string, body *transferJob, deadline time.Time, delay time.Duration) error {
+	for time.Now().Before(deadline) {
+		_, f := runUpload(client, nil, id, body)
+		if f == nil {
+			return nil
+		}
+		if !f.retry {
+			break
+		}
+		time.Sleep(min(delay, time.Until(deadline)))
+		delay = min(2*delay, 10*time.Second)
+	}
+	return errors.New("private capture artifact upload did not settle")
 }
 
 func collectPrivateCapture(wire io.Reader, receipt, archive int64, publish func(string, string) error) error {

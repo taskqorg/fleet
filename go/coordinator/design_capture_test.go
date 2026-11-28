@@ -1,13 +1,19 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"fleet/contract"
 )
@@ -72,6 +78,37 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		})
 		return result, err
 	}
+	reportOrigin := func(platform contract.Platform, caps []string) {
+		t.Helper()
+		code, reply := e.callJSON(t, "POST", contract.RoutePoll.Path, contract.PollRequest{
+			HostId: designerHost, Platform: platform, Version: ptr("signed-test"), Capabilities: caps,
+		}, map[string]string{"Authorization": "Bearer " + designerSecret})
+		if code != 200 {
+			t.Fatalf("test origin poll failed: %d %+v", code, reply)
+		}
+	}
+	t.Run("unsupported origin cannot reserve", func(t *testing.T) {
+		for _, tc := range []struct {
+			platform contract.Platform
+			caps     []string
+		}{
+			{contract.PlatformDarwin, []string{contract.DesignCaptureStageCapability}},
+			{contract.PlatformLinux, []string{"script"}},
+		} {
+			reportOrigin(tc.platform, tc.caps)
+			_, err := call(designerHost, eid, "start", "first", &overlay, &fixture)
+			if err == nil || !strings.Contains(err.Error(), "Linux capture staging capability") {
+				t.Fatalf("unsupported origin was admitted: %s %v", tc.platform, err)
+			}
+			var count int
+			if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT
+				(SELECT count(*) FROM execution WHERE id=$1) +
+				(SELECT count(*) FROM command WHERE id=$1)`, designCaptureJobID(eid)).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("unsupported origin left a job or command: %d %v", count, err)
+			}
+		}
+	})
+	reportOrigin(contract.PlatformLinux, []string{contract.DesignCaptureStageCapability})
 	for _, bad := range []struct{ host, turn, input string }{
 		{"", eid, overlay}, {"wrong-host", eid, overlay}, {designerHost, foreign, overlay}, {designerHost, eid, foreignOverlay},
 	} {
@@ -112,6 +149,18 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Fatalf("unready broker received work: %v %v", len(without), err)
 	}
 	caps := []string{"script", contract.DesignCaptureCapability}
+	t.Run("origin downgrade keeps the same unclaimed job", func(t *testing.T) {
+		reportOrigin(contract.PlatformDarwin, []string{contract.DesignCaptureStageCapability})
+		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
+		if err != nil || len(commands) != 0 {
+			t.Fatalf("downgraded origin obtained a permit: %d %v", len(commands), err)
+		}
+		var handed bool
+		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT handed_out FROM command WHERE id=$1", start.JobId).Scan(&handed); err != nil || handed {
+			t.Fatalf("origin downgrade claimed the durable job: %v %v", handed, err)
+		}
+		reportOrigin(contract.PlatformLinux, []string{contract.DesignCaptureStageCapability})
+	})
 	first, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
 	if err != nil || len(first) != 1 || first[0].Script == nil {
 		t.Fatalf("fixed host poll: %v %v", len(first), err)
@@ -159,11 +208,33 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Fatalf("stage grant: %+v %v", staged, err)
 	}
 
-	// The proof alone and project membership cannot fetch raw transport.
-	transport := func(command *string) int {
-		code, _ := e.callJSON(t, "POST", contract.RouteArtifactsGet.Path, contract.HostArtifactGetRequest{
+	// Use a real presigned store URL in the read ordering checks.
+	store := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("X-Amz-Signature") == "" || filepath.Base(r.URL.Path) != sha256hex([]byte("invented archive")) {
+			http.Error(w, "missing exact grant", 403)
+			return
+		}
+		_, _ = io.WriteString(w, "invented archive")
+	}))
+	t.Cleanup(store.Close)
+	savedSecrets := storeSecretsDir
+	storeSecretsDir = t.TempDir()
+	t.Cleanup(func() { storeSecretsDir = savedSecrets })
+	if err := os.WriteFile(filepath.Join(storeSecretsDir, "capture-store.key"), []byte(`{"accessKeyId":"invented","secretAccessKey":"invented"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sql("INSERT INTO store (id,host_id,bucket,endpoint,state) VALUES ('capture-store',$1,'fleet',$2,'reachable')", designerHost, store.URL)
+	sql("INSERT INTO artifact_copy (artifact_id,store_id,project_id,state) VALUES ($1,'capture-store','fleet','verified')", aid)
+	transportView := func(command *string) (int, contract.ArtifactView) {
+		code, reply := e.callJSON(t, "POST", contract.RouteArtifactsGet.Path, contract.HostArtifactGetRequest{
 			HostId: designerHost, ExecutionId: &eid, CommandId: command, ArtifactId: aid,
 		}, map[string]string{"Authorization": "Bearer " + designerSecret})
+		var view contract.ArtifactView
+		_ = json.Unmarshal(jsonBytes(reply), &view)
+		return code, view
+	}
+	transport := func(command *string) int {
+		code, _ := transportView(command)
 		return code
 	}
 	if code := transport(nil); code != 403 {
@@ -172,9 +243,103 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	if code, _ := e.callJSON(t, "GET", "/api/results/"+aid, nil, e.ownerHeaders()); code != 403 {
 		t.Fatalf("project result view exposed private capture transport: %d", code)
 	}
-	if code := transport(&startCommand); code != 200 {
-		t.Fatalf("mediator rejected a current verified execution: %d", code)
+	if code, view := transportView(&startCommand); code != 200 || view.Url == nil {
+		t.Fatalf("mediator rejected a current verified execution: %d %+v", code, view)
 	}
+	t.Run("child stop and membership revoke order the read grant", func(t *testing.T) {
+		member := "capture-order-member@example.invalid"
+		sql("INSERT INTO person(email,name,roles) VALUES ($1,'Synthetic grant member',ARRAY['operator'])", member)
+		people := map[string]*Person{member: {Email: member, Name: "Synthetic grant member", Roles: []string{"operator"}}}
+		for _, person := range e.app.peopleSnapshot().list() {
+			people[person.Email] = person
+		}
+		e.app.publishPeople(people)
+		// Keep the member's project access entirely in the initial definition row.
+		sql("UPDATE execution SET directed_by=$2,data=jsonb_set(data,'{directedBy}',to_jsonb($2::text)) WHERE id=$1", eid, member)
+		defer sql("UPDATE execution SET directed_by=$2,data=jsonb_set(data,'{directedBy}',to_jsonb($2::text)) WHERE id=$1", eid, testOwnerEmail)
+		revokeMembership := func(q *Request) error {
+			row, err := q.db().DefProjectAccess(q.ctx(), "fleet")
+			if err != nil {
+				return err
+			}
+			_, err = projectInitialRevokeOf(q, "fleet", row.AccessVersion)
+			return err
+		}
+		stopChild := func(q *Request) error {
+			_, err := requestExecutionStop(q, start.JobId, false)
+			return err
+		}
+		for _, tc := range []struct {
+			name   string
+			revoke func(*Request) error
+		}{{"child stop", stopChild}, {"membership revoke", revokeMembership}} {
+			t.Run(tc.name, func(t *testing.T) {
+				reset := func() {
+					sql("UPDATE definition SET initial_member=$1,initial_member_revoked_at=NULL WHERE kind='project' AND id='fleet'", member)
+					sql("UPDATE execution SET data=data-'stopRequested' WHERE id=$1", start.JobId)
+				}
+				reset()
+				// Revoke-first: prove the real host GET blocks on this transaction.
+				started, revokeCommitted, release := holdCaptureTestTx(t, e, tc.revoke)
+				select {
+				case <-started:
+				case err := <-revokeCommitted:
+					t.Fatalf("revoke did not acquire its lock: %v", err)
+				}
+				revokePID := release.pid
+				get := make(chan int, 1)
+				go func() { get <- transport(&startCommand) }()
+				waitCaptureTestBlocker(t, e, revokePID)
+				release.commit()
+				if err := <-revokeCommitted; err != nil {
+					t.Fatal(err)
+				}
+				if code := <-get; code != 403 {
+					t.Fatalf("revocation committed first, GET = %d", code)
+				}
+				reset()
+
+				// Grant-first: hold the real authority and presign locks until
+				// the competing revocation waits, then consume the granted URL.
+				var signed string
+				grant := func(q *Request) error {
+					a := &Artifact{ID: aid, ExecutionID: &start.JobId, State: "stored"}
+					if _, err := captureTransportAuthority(q, designerHost, eid, startCommand, a); err != nil {
+						return err
+					}
+					view, err := artifactView(context.WithValue(withTx(q), captureReadKey{}, aid), q.app, aid, designerHost)
+					signed = deref(view.Url)
+					return err
+				}
+				started, grantCommitted, release := holdCaptureTestTx(t, e, grant)
+				select {
+				case <-started:
+				case err := <-grantCommitted:
+					t.Fatalf("grant did not acquire its locks: %v", err)
+				}
+				stopped := make(chan error, 1)
+				go func() { stopped <- e.app.store.Write(e.ctx, nil, nil, tc.revoke) }()
+				waitCaptureTestBlocker(t, e, release.pid)
+				release.commit()
+				if err := <-grantCommitted; err != nil {
+					t.Fatal(err)
+				}
+				if err := <-stopped; err != nil {
+					t.Fatal(err)
+				}
+				resp, err := store.Client().Get(signed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				raw, err := io.ReadAll(resp.Body)
+				if err != nil || resp.StatusCode != 200 || string(raw) != "invented archive" {
+					t.Fatalf("grant committed first, read = %d %q %v", resp.StatusCode, raw, err)
+				}
+				reset()
+			})
+		}
+	})
 
 	if _, err := call(designerHost, eid, "cancel", "first", nil, nil); err != nil {
 		t.Fatal(err)
@@ -331,4 +496,64 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Fatal("stale people projection overrode a committed direct project revocation")
 	}
 
+}
+
+// Hold the real write transaction until pg_blocking_pids observes the ordering.
+// Cleanup releases the barrier even when an assertion fails.
+type captureLockBarrier struct {
+	pid    int
+	commit func()
+}
+
+func holdCaptureTestTx(t *testing.T, e *testCoordEnv, operation func(*Request) error) (<-chan struct{}, <-chan error, *captureLockBarrier) {
+	t.Helper()
+	acquired := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan error, 1)
+	barrier := &captureLockBarrier{commit: sync.OnceFunc(func() { close(release) })}
+	t.Cleanup(barrier.commit)
+	go func() {
+		ctx, cancel := context.WithTimeout(e.ctx, 8*time.Second)
+		defer cancel()
+		result <- e.app.store.writeOnce(ctx, nil, nil, func(q *Request) error {
+			if err := q.tx.QueryRow(q.ctx(), "SELECT pg_backend_pid()").Scan(&barrier.pid); err != nil {
+				return err
+			}
+			if err := operation(q); err != nil {
+				return err
+			}
+			close(acquired)
+			select {
+			case <-release:
+				return nil
+			case <-q.ctx().Done():
+				return q.ctx().Err()
+			}
+		})
+	}()
+	return acquired, result, barrier
+}
+
+func waitCaptureTestBlocker(t *testing.T, e *testCoordEnv, pid int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(e.ctx, 3*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked bool
+		err := e.ownerStore.pool.QueryRow(ctx, `SELECT EXISTS(SELECT FROM pg_stat_activity
+			WHERE $1 = ANY(pg_blocking_pids(pid)))`, pid).Scan(&blocked)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal("competing transaction did not wait for capture authority")
+		}
+	}
 }

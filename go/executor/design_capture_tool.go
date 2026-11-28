@@ -247,8 +247,12 @@ func downloadGrantedCapture(client *transferClient, view contract.ArtifactGetRep
 }
 
 // The signed producer and replay command share the one JS fixture grammar.
+func signedCaptureReplayEntry() string {
+	return filepath.Join(filepath.Dir(exe()), "deploy", "design-verifier", "designer.mjs")
+}
+
 func checkSignedCaptureReplay(raw []byte) error {
-	entry := filepath.Join(filepath.Dir(exe()), "deploy", "design-verifier", "designer.mjs")
+	entry := signedCaptureReplayEntry()
 	cmd := &exec.Cmd{Path: "/usr/bin/node", Args: []string{"node", entry, "validate-replay"}, Env: []string{}, Stdin: bytes.NewReader(raw)}
 	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Deadline: 10 * time.Second, KillLeftovers: true})
 	if err != nil {

@@ -601,41 +601,53 @@ def schedule(listeners, handlers, stop=None):
     # to reject contenders and reserve the next turn for waiting protected work.
     active = None
     client = None
-    fenced = threading.Event()
+    settled = False
     protected_waiting = False
     protected_until = 0
     ordered = [path for path in (PROTECTED_SOCKET, CAPTURE_SOCKET) if path in listeners]
 
     def worker(connection, handler, path):
+        nonlocal settled
         with connection:
             try:
                 if path == CAPTURE_SOCKET:
                     send_all(connection, b'FDCA', time.monotonic() + 1)
                 handler(connection)
             except CleanupUnconfirmed:
-                fenced.set()
                 print('renderer fenced: VM cleanup requires operator review', file=sys.stderr, flush=True)
+                return
             except (OSError, ValueError, EOFError, TimeoutError, RuntimeError, subprocess.SubprocessError) as error:
                 print('renderer job unconfirmed: ' + type(error).__name__, file=sys.stderr, flush=True)
+        settled = True
+
+    def retire():
+        nonlocal active, protected_waiting, protected_until
+        if active is None or active.is_alive():
+            return True
+        active.join()
+        active = None
+        if not settled:
+            return False
+        if protected_waiting:
+            protected_waiting = False
+            protected_until = time.monotonic() + 45
+        return True
 
     try:
-        while not fenced.is_set() and (stop is None or not stop.is_set()):
+        while (stop is None or not stop.is_set()) and retire():
             ready, _, _ = select.select(listeners.values(), [], [], 0.1)
-            if protected_waiting and active is not None and not active.is_alive():
-                # Start the bounded reservation only after cleanup completes.
-                protected_waiting = False
-                protected_until = time.monotonic() + 45
             for path in ordered:
-                if listeners[path] not in ready or fenced.is_set():
+                if listeners[path] not in ready:
                     continue
                 incoming, _ = listeners[path].accept()
                 incoming.setblocking(False)
-                busy = active is not None and active.is_alive()
+                # This is the admission check, after accept. A still-live
+                # worker stays installed and can only yield a busy response.
+                if not retire():
+                    incoming.close()
+                    return
                 now = time.monotonic()
-                if not busy and protected_waiting:
-                    protected_waiting = False
-                    protected_until = now + 45
-                if busy or (path == CAPTURE_SOCKET and now < protected_until):
+                if active is not None or (path == CAPTURE_SOCKET and now < protected_until):
                     if path == PROTECTED_SOCKET:
                         protected_waiting = True
                     frame = b'FVBU\x01' + bytes(35) if path == PROTECTED_SOCKET else b'FDB1'
@@ -648,6 +660,7 @@ def schedule(listeners, handlers, stop=None):
                 if path == PROTECTED_SOCKET:
                     protected_until = 0
                 client = incoming
+                settled = False
                 active = threading.Thread(target=worker, args=(client, handlers[path], path), daemon=True)
                 active.start()
     except StopRequested:

@@ -397,6 +397,71 @@ class CaptureTests(unittest.TestCase):
                 thread.join(2)
             self.assertFalse(thread.is_alive())
 
+    def test_failed_cleanup_during_accept_cannot_admit_either_listener(self):
+        for contender in (broker.PROTECTED_SOCKET, broker.CAPTURE_SOCKET):
+            with self.subTest(contender=contender), tempfile.TemporaryDirectory(dir='/tmp') as folder, ExitStack() as stack:
+                ending = threading.Event()
+                stop = threading.Event()
+                entered = threading.Event()
+                owner = []
+                starts = []
+
+                def fail_cleanup(_client):
+                    starts.append('capture')
+                    owner.append(threading.current_thread())
+                    entered.set()
+                    if not ending.wait(3):
+                        raise AssertionError('fixture did not reach accept')
+                    raise broker.CleanupUnconfirmed('invented teardown failure')
+
+                class Listener:
+                    def __init__(self, name, kind):
+                        self.address = str(Path(folder) / name)
+                        self.kind = kind
+                        self.sock = stack.enter_context(socket.socket(socket.AF_UNIX))
+                        self.sock.bind(self.address)
+                        self.sock.listen(2)
+                        self.calls = 0
+
+                    def fileno(self):
+                        return self.sock.fileno()
+
+                    def accept(self):
+                        incoming = self.sock.accept()
+                        self.calls += 1
+                        if self.kind == contender and (self.calls == 2 or contender == broker.PROTECTED_SOCKET):
+                            # The select and accept started with a live owner.
+                            # End it before the scheduler decides admission.
+                            ending.set()
+                            owner[0].join(2)
+                        return incoming
+
+                    def connect(self):
+                        client = stack.enter_context(socket.socket(socket.AF_UNIX))
+                        client.settimeout(2)
+                        client.connect(self.address)
+                        return client
+
+                listeners = {broker.PROTECTED_SOCKET: Listener('protected', broker.PROTECTED_SOCKET),
+                             broker.CAPTURE_SOCKET: Listener('capture', broker.CAPTURE_SOCKET)}
+                handlers = {broker.PROTECTED_SOCKET: lambda _client: starts.append('protected'),
+                            broker.CAPTURE_SOCKET: fail_cleanup}
+                scheduler = threading.Thread(target=broker.schedule, args=(listeners, handlers, stop), daemon=True)
+                scheduler.start()
+                try:
+                    first = listeners[broker.CAPTURE_SOCKET].connect()
+                    self.assertEqual(guest.read_exact(first.makefile('rb', buffering=0), 4), b'FDCA')
+                    self.assertTrue(entered.wait(1))
+                    second = listeners[contender].connect()
+                    self.assertEqual(second.recv(4), b'')
+                    scheduler.join(2)
+                    self.assertFalse(scheduler.is_alive())
+                    self.assertEqual(starts, ['capture'])
+                finally:
+                    ending.set()
+                    stop.set()
+                    scheduler.join(2)
+
     def test_static_guest_worker_runs_one_fixed_unprivileged_program(self):
         with patch.object(guest_worker.subprocess, 'run', return_value=type('Result', (), {'returncode': 0})()) as run:
             client = type('Client', (), {'recv': lambda _self, _size: b''})()

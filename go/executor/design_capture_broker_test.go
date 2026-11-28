@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -71,7 +73,7 @@ func TestDesignCaptureBrokerFixedFrames(t *testing.T) {
 		_, err := server.Write(reply.Bytes())
 		done <- err
 	}()
-	receipt, archive, err := captureBrokerResponse(client, input, []byte(fields[0].data))
+	receipt, archive, err := captureBrokerResponse(client, input, []byte(fields[0].data), time.Now().Add(time.Second), time.Now().Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,8 +188,133 @@ func TestDesignCaptureBrokerBusyIsRecognizedBeforeInput(t *testing.T) {
 		defer server.Close()
 		_, _ = io.WriteString(server, "FDB1")
 	}()
-	if _, _, err := captureBrokerResponse(client, "/nonexistent", []byte("unused")); !errors.Is(err, errCaptureBusy) {
+	if _, _, err := captureBrokerResponse(client, "/nonexistent", []byte("unused"), time.Now().Add(time.Second), time.Now().Add(time.Second)); !errors.Is(err, errCaptureBusy) {
 		t.Fatalf("busy renderer did not refuse before reading source: %v", err)
+	}
+}
+
+func TestDesignCaptureBusyKeepsOneUnspentPermitUntilAdmissionOrExpiry(t *testing.T) {
+	input := t.TempDir()
+	for _, name := range []string{"request.json", "base.bundle", "overlay.json", "fixture.json"} {
+		if err := os.WriteFile(filepath.Join(input, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const permit = "invented same permit"
+	for _, admitting := range []bool{false, true} {
+		t.Run(fmt.Sprintf("admits=%t", admitting), func(t *testing.T) {
+			var attempts, spent atomic.Int32
+			dial := func() (net.Conn, error) {
+				client, server := net.Pipe()
+				attempt := attempts.Add(1)
+				go func() {
+					defer server.Close()
+					_ = server.SetDeadline(time.Now().Add(time.Second))
+					if !admitting || attempt <= 6 {
+						_, _ = io.WriteString(server, "FDB1")
+						// Busy connections should close without one permit byte.
+						if n, _ := server.Read(make([]byte, 1)); n != 0 {
+							spent.Add(1)
+						}
+						return
+					}
+					if _, err := io.WriteString(server, "FDCA"); err != nil {
+						return
+					}
+					want := bytes.NewBufferString("FDC1")
+					for _, data := range []string{permit, "request.json", "base.bundle", "overlay.json", "fixture.json"} {
+						_ = binary.Write(want, binary.BigEndian, uint32(len(data)))
+						want.WriteString(data)
+					}
+					got := make([]byte, want.Len())
+					if _, err := io.ReadFull(server, got); err != nil || !bytes.Equal(got, want.Bytes()) {
+						t.Errorf("admission reused the wrong inputs or permit: %v", err)
+						return
+					}
+					spent.Add(1)
+					_, _ = server.Write([]byte("FDR1\x00\x00\x00\x01\x00\x00\x00\x01"))
+				}()
+				return client, nil
+			}
+			admission := 35 * time.Millisecond
+			if admitting {
+				admission = time.Second
+			}
+			conn, receipt, archive, err := awaitCaptureBroker(dial, input, []byte(permit),
+				time.Now().Add(admission), time.Now().Add(2*time.Second), time.Millisecond)
+			if conn != nil {
+				defer conn.Close()
+			}
+			if admitting && (err != nil || attempts.Load() != 7 || spent.Load() != 1 || receipt != 1 || archive != 1) {
+				t.Fatalf("one permit did not survive normal contention: attempts=%d spent=%d err=%v", attempts.Load(), spent.Load(), err)
+			}
+			if !admitting && (err == nil || !strings.Contains(err.Error(), "expired") || attempts.Load() < 4 || spent.Load() != 0) {
+				t.Fatalf("expiry spent a permit or stopped the job early: attempts=%d spent=%d err=%v", attempts.Load(), spent.Load(), err)
+			}
+		})
+	}
+}
+
+func TestDesignCapturePrivateUploadResumesDelayedRemoteVerification(t *testing.T) {
+	for _, acknowledged := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing-verification=%t", acknowledged), func(t *testing.T) {
+			archive := filepath.Join(t.TempDir(), "source")
+			const data = "invented private upload"
+			if err := os.WriteFile(archive, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var reserves, parts, commits, renews atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case contract.RouteArtifactsReserve.Path:
+					reserves.Add(1)
+					state := "pending"
+					if acknowledged {
+						state = "verifying"
+						_ = os.Remove(archive)
+					}
+					_ = json.NewEncoder(w).Encode(contract.ArtifactReserveReply{ArtifactId: "private-fixture", State: state, StoreId: optStr("remote")})
+				case contract.RouteArtifactsParts.Path:
+					parts.Add(1)
+					_, _ = fmt.Fprintf(w, `{"storeId":"remote","parts":[{"partNumber":1,"url":"http://%s/part"}]}`, r.Host)
+				case "/part":
+					raw, _ := io.ReadAll(r.Body)
+					if string(raw) != data {
+						t.Error("private multipart contents changed")
+					}
+					w.Header().Set("ETag", "invented")
+				case contract.RouteArtifactsCommit.Path:
+					commits.Add(1)
+					_ = os.Remove(archive)
+					_, _ = io.WriteString(w, `{"state":"verifying"}`)
+				case contract.RouteArtifactsRenew.Path:
+					var req contract.ArtifactLeaseRequest
+					if json.NewDecoder(r.Body).Decode(&req) != nil || req.ArtifactId != "private-fixture" || str0(req.StoreId) != "remote" {
+						t.Error("verification continuation lost immutable reservation")
+					}
+					state := "verifying"
+					if renews.Add(1) == 6 {
+						state = "stored"
+					}
+					_ = json.NewEncoder(w).Encode(contract.ArtifactStateReply{State: state})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			client := newTransferClient(server.URL, "invented", contract.DesignCaptureHost, nil)
+			job := &transferJob{Path: archive, ExecutionId: "invented-run", Name: "capture.tar", Required: true}
+			if err := settlePrivateCaptureUpload(client, "private-fixture", job, time.Now().Add(2*time.Second), time.Millisecond); err != nil {
+				t.Fatal(err)
+			}
+			uploads := int32(1)
+			if acknowledged {
+				uploads = 0
+			}
+			if reserves.Load() != 1 || parts.Load() != uploads || commits.Load() != uploads || renews.Load() != 6 {
+				t.Fatalf("upload restarted instead of waiting for store verification: %d %d %d %d", reserves.Load(), parts.Load(), commits.Load(), renews.Load())
+			}
+		})
 	}
 }
 

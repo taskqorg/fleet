@@ -529,6 +529,18 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 						}
 						continue
 					}
+					origin, err := getExecution(wq, request.Execution)
+					if err != nil {
+						return err
+					}
+					if err := requireDesignCaptureOrigin(wq, deref(origin.HostID)); err != nil {
+						var refused *HTTPError
+						if !errors.As(err, &refused) || refused.Code != 403 {
+							return err
+						}
+						// A short outage or rolling update may recover before the original permit expires.
+						continue
+					}
 					current, err := loadDesignCaptureInstallation()
 					producer, runtime := capture.DesignCapture.Producer, capture.DesignCapture.Runtime
 					if err != nil || len(capture.Inputs) != 3 || capture.Inputs[0].ArtifactId != current.BaseArtifact ||
