@@ -1219,6 +1219,11 @@ func (e *executor) drainWorkerEvents(execution string, l *live) error {
 
 func (e *executor) applyWorkerRecord(execution string, l *live, rec workerRecord) error {
 	return e.inTx(func() error {
+		// Reserve the SQLite writer before steer_result reads the command.
+		// The checkpoint rolls back with the record and its outbox writes.
+		if _, err := e.ex.Exec("UPDATE launches SET worker_seq=? WHERE execution=?", rec.Seq, execution); err != nil {
+			return err
+		}
 		switch rec.Kind {
 		case "owned":
 			if l.owned == nil {
@@ -1269,8 +1274,7 @@ func (e *executor) applyWorkerRecord(execution string, l *live, rec workerRecord
 		case "stopped":
 			l.stopped = true
 		}
-		_, err := e.ex.Exec("UPDATE launches SET worker_seq=? WHERE execution=?", rec.Seq, execution)
-		return err
+		return nil
 	})
 }
 
