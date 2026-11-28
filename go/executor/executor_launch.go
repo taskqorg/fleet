@@ -423,6 +423,20 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		}
 		captureDir = dir
 		browserCfg["captureDir"] = captureDir
+		if hasW && str0(sp.ProjectId) == "fleet" && profile.Id == "codex-designer" &&
+			sp.Branch != nil && !*sp.Branch && (sp.ReadOnly == nil || !*sp.ReadOnly) {
+			if browserAccess == nil {
+				node, err := managedBrowserRuntime(browserCfg)
+				if err != nil {
+					return fail(1, "private scene browser: "+err.Error())
+				}
+				browserAccess = &browserAuthority{Config: browserCfg, Node: node}
+			}
+			browserCfg["privateScenes"] = true
+			scope := browserSceneScope{Checkout: work, Execution: execution}
+			browserAccess.Scene = &scope
+			setEnvKV(cmd, "FLEET_SCENE_DIR="+scope.directory())
+		}
 		codeReadRoots = append(codeReadRoots, captureDir)
 		servers["project-browser"] = projectBrowserServer(browserCfg, browserAccess != nil)
 	}

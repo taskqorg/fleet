@@ -293,6 +293,10 @@ An environment provides:
   Hosts probe production readiness before launches. Generic file bindings send the configured same-origin
   request directly and reject redirects. Fleet's navigation and identity check is also reported in host observations.
   Preview grants remain separate. See [coding execution](docs/configuration.md#coding-execution).
+- Fleet's official designer can open a private scene built in its checkout through the managed browser without
+  listening on a port. The executor verifies the run-scoped recipe and HTML. It opens a fresh credential-free
+  Chromium process with OS network denial and serves only that document through browser interception.
+  See [scene capture](packages/ui/book/README.md#capture).
 - The DAM project grant for `https://revilio.com` applies the
   [DAM verification contract](https://gitlab.ufobe.com/gradus/dam/-/blob/d0ea9ef91e4480c7063de4e6cb26a0ac7499d914/deploy/README.md#agent-verification)
   to browser tool calls. Production results contain only fixed boolean or aggregate checks. Only

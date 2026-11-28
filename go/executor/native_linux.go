@@ -10,13 +10,12 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
-// shellSocketFilter is passed to bubblewrap as a classic BPF program. A read-only mount still permits connecting
-// to Unix sockets on it. Deny Unix socket creation on both network policies and block io_uring socket operations.
-func shellSocketFilter() (*os.File, error) {
+func socketFilter(scene bool) ([]unix.SockFilter, error) {
 	var arch uint32
 	switch runtime.GOARCH {
 	case "amd64":
@@ -32,7 +31,13 @@ func shellSocketFilter() (*os.File, error) {
 		jge  = unix.BPF_JMP | unix.BPF_JGE | unix.BPF_K
 		ret  = unix.BPF_RET | unix.BPF_K
 	)
-	filter := []unix.SockFilter{
+	family := unix.SockFilter{Code: jeq, Jf: 1, K: unix.AF_UNIX}
+	if scene {
+		// Chromium uses inherited CDP streams and Unix IPC. Deny every other socket
+		// family in all descendants, including DNS and WebRTC's direct sockets.
+		family.Jt, family.Jf = 1, 0
+	}
+	return []unix.SockFilter{
 		{Code: load, K: 4}, // seccomp_data.arch
 		{Code: jeq, Jt: 1, K: arch},
 		{Code: ret, K: unix.SECCOMP_RET_KILL_PROCESS},
@@ -42,9 +47,18 @@ func shellSocketFilter() (*os.File, error) {
 		{Code: jeq, Jt: 3, K: unix.SYS_IO_URING_SETUP},
 		{Code: jeq, Jf: 3, K: unix.SYS_SOCKET},
 		{Code: load, K: 16}, // seccomp_data.args[0], the socket family
-		{Code: jeq, Jf: 1, K: unix.AF_UNIX},
+		family,
 		{Code: ret, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
 		{Code: ret, K: unix.SECCOMP_RET_ALLOW},
+	}, nil
+}
+
+// bubblewrap's read-only mounts still permit connecting to sockets. Deny Unix socket creation under
+// either shell network policy, including via io_uring.
+func shellSocketFilter() (*os.File, error) {
+	filter, err := socketFilter(false)
+	if err != nil {
+		return nil, err
 	}
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -57,6 +71,24 @@ func shellSocketFilter() (*os.File, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+func execSceneChromium(args []string) error {
+	filter, err := socketFilter(true)
+	if err != nil {
+		return err
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+		return err
+	}
+	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
+	if err := unix.Prctl(unix.PR_SET_SECCOMP, unix.SECCOMP_MODE_FILTER, uintptr(unsafe.Pointer(&prog)), 0, 0); err != nil {
+		return err
+	}
+	runtime.KeepAlive(filter)
+	return syscall.Exec(args[0], args, os.Environ())
 }
 
 // processIdentity is /proc/<pid>/stat field 22 (start time in clock ticks).

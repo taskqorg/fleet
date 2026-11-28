@@ -36,13 +36,21 @@ Compose with the public UI exports. Reuse the shared preview clock and shell. Ke
 
 ## Capture
 
-Run this in the private source tree with the project dependencies installed.
+In a managed Fleet designer run, build in the private source tree with the project dependencies installed. Give each option and state a fresh name under the run directory.
+
+```sh
+pnpm run preview:scene -- pages/tasks/list --state waiting --build-only --out "$FLEET_SCENE_DIR/tasks-waiting"
+```
+
+Run the generated `capture.js` in the managed tool runner with `project-browser` and Fleet artifact tools. It opens the verified bundle, checks the recipe, landmark, fonts, viewport, theme, clock and reduced motion, captures the four viewport PNGs, confirms storage and closes the browser. For interactive inspection, call `project-browser.open_scene` with the JSON printed by the build. Use `read`, `evaluate`, `emulate`, pointer or keyboard tools, and `screenshot`. Call `close` before opening a project URL. The managed browser serves only the selected document from memory. Its temporary profile closes with the browser, and the ignored build files stay in the checkout for artifact retention or removal.
+
+For a local run, use a fresh output directory and the loopback preview.
 
 ```sh
 pnpm run preview:scene -- pages/tasks/list --state waiting --out .egm/task-preview
 ```
 
-Use a fresh output directory per run. The server claims a granted loopback port atomically and serves only its random preview path. Run the generated `capture.js` in the managed tool runner with `project-browser` and Fleet artifact tools. It opens a fresh browser, verifies the recipe, landmark, fonts, viewport, theme, clock and reduced motion, captures the four viewport PNGs, checks stored PNG receipts and closes the browser. Stop the owned server when it returns. Use `--build-only` to regenerate the recipe and standalone HTML without serving.
+The local server claims a loopback port atomically and serves only its random preview path. Stop it when capture ends. Use `--build-only` to generate the recipe and standalone HTML without serving.
 
 Read the originals back through Fleet to critique them. Retain the recipe, frame hashes and critique with the task. The capture summary identifies stored originals. Fleet's sealed decision and approval check are separate delivery steps described in [Design first](../../../docs/design-system/README.md#design-first).
 

@@ -143,15 +143,16 @@ func migrateJournal(db *sql.DB) (err error) {
 
 // subcommands: argv[1] -> handler. No argument runs the executor loop.
 var subcommands = map[string]func(args []string) error{
-	"mcp":          func(args []string) error { return runMCP(args) }, // part E2
-	"qualify-mcp":  qualifyMCP,
-	"mcp-guardian": mcpGuardian,
-	"code-shell":   codeShellGuardian,
-	"run-worker":   runWorker,
-	"reproject":    func([]string) error { return reproject() },
-	"selftest":     selftest,
-	"connection":   connectionCLI, // connection call <connection> <tool> [spec file]
-	"local-agent":  localAgentCLI, // local-agent <claude|codex|antigravity> <token name> [< token]
+	"mcp":            func(args []string) error { return runMCP(args) }, // part E2
+	"qualify-mcp":    qualifyMCP,
+	"mcp-guardian":   mcpGuardian,
+	"code-shell":     codeShellGuardian,
+	"scene-chromium": runSceneChromium,
+	"run-worker":     runWorker,
+	"reproject":      func([]string) error { return reproject() },
+	"selftest":       selftest,
+	"connection":     connectionCLI, // connection call <connection> <tool> [spec file]
+	"local-agent":    localAgentCLI, // local-agent <claude|codex|antigravity> <token name> [< token]
 }
 
 func main() {

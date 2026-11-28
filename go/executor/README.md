@@ -19,6 +19,7 @@
 - Confirmed publishing receipts retain the observation time in their journal result. The coordinator uses it to keep delayed receipts from clearing newer CI or delivery problems.
 - Call `ci_logs` on either publishing MCP server with `jobId` and `expectedHeadSha` to get job and failure metadata, error windows, a tail, and scan completeness. Window offsets point into the decoded, redacted `excerpt`. The job must be a GitHub Actions job with conclusion `failure` or a GitLab CI job with status `failed`. The repository grant, job branch and live branch head must match. This read requires the provider credential to have access to the job and its log.
 - The [project-browser MCP](../../docs/configuration.md#coding-execution) exposes trusted input, viewport and color-scheme emulation, loopback preview PNG capture, and redacted page summaries.
+- For the official Fleet designer, `open_scene` reads the two single-link build files below the current checkout's run directory. The adapter verifies their recipe and HTML hashes before serving one document from memory to an owned Chromium process. CDP uses pipes so the scene process can run with OS network denial and its own temporary profile. See [scene capture](../../packages/ui/book/README.md#capture).
 
 ## Invariants
 

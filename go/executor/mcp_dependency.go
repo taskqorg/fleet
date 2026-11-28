@@ -100,12 +100,19 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool
 	if gen == nil {
 		return nil, false, nil, errors.New("MCP generation is stale or unknown")
 	}
-	if action == "browser-authority" || action == "browser-generation" {
+	if action == "browser-authority" || action == "browser-generation" || action == "browser-scene" {
 		id, err := identity(gen.guardian)
 		target := gen.targets["fleet-browser-chromium"]
 		if o.browser == nil || err != nil || id != gen.guardianID || !descendant(pid, gen.guardian) ||
 			target.path != o.browser.Config["executable"] {
 			return nil, false, nil, errors.New("production browser authority is ungranted")
+		}
+		if action == "browser-scene" {
+			if o.browser.Scene == nil || gen.targets[sceneChromium] != target {
+				return nil, false, nil, errScene
+			}
+			reply, err := o.browser.Scene.read(request.Scene, request.HTMLSHA)
+			return reply, false, nil, err
 		}
 		if action == "browser-generation" {
 			if o.browser.Fence == nil || !o.browser.Fence.current() {
@@ -118,6 +125,7 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool
 		}
 		authority := *o.browser
 		authority.Fence = nil
+		authority.Scene = nil
 		return M{"authority": authority, "fenced": o.browser.Fence != nil}, false, nil, nil
 	}
 	dependency := request.Dependency
@@ -216,6 +224,19 @@ func mcpOwnedCommand() error {
 	root, err := os.Getwd()
 	if err != nil {
 		return err
+	}
+	if name == sceneChromium {
+		in, err := scenePipe(3)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := scenePipe(4)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		return mcpStdio(socket, spec, in, out, root, "owned-command", lease)
 	}
 	return mcpStdio(socket, spec, os.Stdin, os.Stdout, root, "owned-command", lease)
 }
