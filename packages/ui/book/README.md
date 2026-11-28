@@ -36,6 +36,8 @@ Compose with the public UI exports. Reuse the shared preview clock and shell. Ke
 
 ## Capture
 
+For originals from the real Conversation and Task Details routes, use the [normal app designer capture](../../../deploy/design-verifier/README.md#capture-app-originals-in-a-designer-execution).
+
 In a managed Fleet designer run, build in the private source tree with the project dependencies installed. Give each option and state a fresh name under the run directory.
 
 ```sh

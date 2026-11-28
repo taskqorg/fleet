@@ -24,7 +24,12 @@ async function fixtureKey(op, request) {
   return key(op, JSON.parse(Buffer.concat(chunks).toString('utf8')));
 }
 
-export async function openSite(files, scenario) {
+// The requested emulation is evidence only if the page has not overridden it.
+export function visualReady(visual, theme) {
+  return visual.imagesReady && visual.fontsReady && visual.scheme === theme && visual.routeScheme === theme;
+}
+
+export async function openSite(files, scenario, designer = false) {
   const allowed = new Set([scenario.start, scenario.target]);
   const fixtures = new Map(scenario.responses.map(f => [key(f.op, f.request), f.reply]));
   if (fixtures.size !== scenario.responses.length) throw new Error('duplicate fixture request');
@@ -36,8 +41,9 @@ export async function openSite(files, scenario) {
     if (media.has(item.path)) throw new Error('duplicate image fixture path');
     media.set(item.path, bytes);
   }
-  const used = new Set(), missing = new Set();
-  let origin, imageOpen = false;
+  const used = new Set(), missing = new Set(), unmatched = new Set();
+  const recordMissing = value => { if (!designer || missing.size < 48) missing.add(value); };
+  let origin, imageOpen = false, unmatchedOmitted = 0;
   const server = createServer(async (request, response) => {
     const reply = (code, type, body) => {
       response.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -71,21 +77,38 @@ export async function openSite(files, scenario) {
         let k;
         try { k = await fixtureKey(op, request); } catch { /* malformed input cannot match */ }
         if (!fixtures.has(k)) {
-          missing.add(op);
+          recordMissing(op);
+          if (designer) {
+            if (k && k.length <= 1024 && (unmatched.has(k) || unmatched.size < 12)) unmatched.add(k);
+            else unmatchedOmitted++;
+          }
           return reply(404, 'application/json', '{"error":"No protected fixture for request"}');
         }
         used.add(k);
         return reply(200, 'application/json', JSON.stringify(fixtures.get(k)));
       }
-      if (request.method !== 'GET') return reply(405, 'text/plain', '');
+      if (designer && url.pathname.startsWith('/api/ops/')) {
+        recordMissing('request:' + request.method + ' ' + (url.pathname + url.search).slice(0, 200));
+        return reply(405, 'text/plain', '');
+      }
+      if (request.method !== 'GET') {
+        if (designer) recordMissing('request:' + request.method + ' ' + (url.pathname + url.search).slice(0, 200));
+        return reply(405, 'text/plain', '');
+      }
       if (url.pathname === '/api/stream' && (!url.search || url.search === '?cursor=0')) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
         response.write('event: ready\ndata: {"cursor":0}\n\n');
         return;
       }
-      const name = allowed.has(url.pathname + url.search) ? '/index.html' : url.pathname;
+      // The app checks its served release assets with a same-origin GET /home.
+      // Keep this fixed bootstrap fetch distinct from the scenario's final route.
+      const releaseProbe = (designer || imageFlow) && url.pathname === '/home' && !url.search;
+      const name = allowed.has(url.pathname + url.search) || releaseProbe ? '/index.html' : url.pathname;
       const type = mime.get(name.split('.').at(-1));
-      if (!type || !Object.hasOwn(files, name)) return reply(404, 'text/plain', '');
+      if (!type || !Object.hasOwn(files, name)) {
+        if (designer) recordMissing('asset:' + name.slice(0, 240));
+        return reply(404, 'text/plain', '');
+      }
       used.add(name);
       reply(200, type, Buffer.from(files[name], 'base64'));
     } catch {
@@ -103,6 +126,8 @@ export async function openSite(files, scenario) {
     used,
     missing,
     openSignal,
+    unmatched,
+    unmatchedOmitted: () => unmatchedOmitted,
     unmet: () => [...scenario.responses.filter(f => f.required && !used.has(key(f.op, f.request))).map(f => f.op),
       ...[...media.keys()].filter(path => !used.has(path))],
     forbidden: () => scenario.forbiddenOps?.filter(op => [...used].some(k => k.startsWith(op + ':'))) ?? [],

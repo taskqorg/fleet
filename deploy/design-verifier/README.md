@@ -117,6 +117,71 @@ After startup, read `/var/lib/fleet-design-verifier/status.json`. Require `provi
 
 Each job starts without inherited environment or directory access. It gets a read-only rootfs and protected helpers, a fresh user, mount, PID and network namespace, and bounded scratch mounts under a watchdog and the service cgroup. Git archives enter the build guest over standard input after file types, paths and export attributes have been checked. Build and browser guests have separate writable filesystems. The browser gets only the normal `app/build.mjs` outputs and synthetic operation fixtures. The comparator runs in a third guest with only the two PNGs. Production data, tokens, cookies, verifier state and control sockets stay outside all three guests. The installer and protected service users never share a writable toolchain with a candidate.
 
+## Capture app originals in a designer execution
+
+The `pack` command runs in the Fleet Design preset's existing sandbox. Run `capture-job`, `capture`, `replay` and `compare` only in a separate credential-free Linux amd64 VM with no designer shell, no other execution under the importer uid and no designer access to its private storage. That VM must already have the approved renderer rootfs, bubblewrap, Chromium user namespaces and a bounded execution allocation. T-FLT-186 tracks integration proof of this separation; the CLI cannot establish it merely by creating a private directory. The caller must already run inside a unified cgroup with finite memory, PID and CPU limits; the CLI checks its actual cgroup before starting the renderer. Capture and replay also require `TMPDIR` to be a private, per-job tmpfs mount owned by the caller, mode 0700 and at most 256 MiB; the CLI verifies its mount and capacity before importing the Git bundle. Provision the mount outside the CLI and destroy it after the job. Use the `designer.mjs` from the signed Fleet release installed there. The same pinned rootfs supplies the app build, font inventory and browser used by protected rendering. Run one capture at a time. The command refuses other platforms.
+
+Capture uses an explicit list of edited files and a self-contained base bundle from the project at the exact signed release commit. A project operator or trusted producer retains that bundle as a Fleet result; generating and delivering it automatically is not yet built. The designer receives it as an input artifact. Use the authorized job boundary below to qualify the return path before offering new originals. Do not give the VM execution credentials or use another execution to retain the originals. The producer can create a bounded depth-one bundle from a trusted project checkout using `git init --bare`, then `git fetch --depth=1 --no-tags` of the signed commit into `refs/heads/release`, and `git bundle create ... refs/heads/release`. Verify the commit and its tree against the signed release before retaining the bundle. The importer declares that commit as the sole shallow boundary, verifies all included objects and signed build pins, and binds the base tree and bundle digest in the replay manifest. The base bundle may be at most 60 MiB; the complete retained source must fit the existing 64 MiB source limit. The pack step reads only the named allowed files and never invokes Git in the designer checkout. In the separate VM, the importer creates a private Git repository, checks the signed release commit and build pins, and does not access the designer checkout. Place private fixtures and outputs under `.egm/` and use invented data.
+
+```sh
+node "$FLEET_DESIGN_RELEASE/deploy/design-verifier/designer.mjs" pack \
+  --checkout . --base "$SIGNED_RELEASE_COMMIT" \
+  --paths .egm/design-paths.json --out .egm/design-overlay.json
+# Once a qualified transfer exists, deliver the overlay and base bundle to the trusted VM.
+node "$FLEET_DESIGN_RELEASE/deploy/design-verifier/designer.mjs" capture \
+  --base-bundle /path/to/received/base.bundle --overlay /path/to/received/design-overlay.json \
+  --nonce "$DESIGN_REQUEST_NONCE" --session "$DESIGN_SESSION_ID" --execution "$DESIGN_REQUEST_EXECUTION_ID" --out /path/to/trusted-vm-output/app-originals
+```
+
+`design-paths.json` is a JSON array of repository-relative files to include, including deleted files. The capture rejects symlinks, unsupported or protected paths, oversized input, and a base different from the signed release. Existing files preserve their Git executable mode. New files have mode `100644`. Only the named files are captured; the author must list every intended change.
+
+Set `FLEET_DESIGN_RELEASE` to the installed signed release directory. With no `--fixture`, the command uses the typed invented Conversation and Task Details cases in [app-originals-fixture.ts](../../scripts/app-originals-fixture.ts). The task case opens the normal project Tasks detail URL and selects the real **Details** tab. For a different synthetic state, write the output of `designer.mjs fixture` to a private JSON file, edit the exact request/reply pairs using the generated `Ops` contract, and pass its path as `--fixture`. A required read, unmatched request, wrong route or missing landmark blocks the whole capture. The isolated origin serves the regular app assets and the synthetic replies. Each frame uses a fresh sandboxed Chromium context, a frozen clock, UTC, en-US, reduced motion and DPR 1.
+
+For Image viewer originals, use a version 2 synthetic fixture with an `images` map and eight cases. Each case keeps the normal version 1 route scenario and adds a `journey` with `flow`, `entry`, `resultCode`, `resultTitle`, `image`, and optional `thumbnail`. Use the `open`, `fit`, `zoom` and `returned` states under `pages/conversations/image-viewer` and `pages/tasks/image-viewer`. The cases use the same fixed gestures as the protected image driver. Every frame retains the observed focus, and returned frames also retain the observed displaced source scroll. For Conversation, use the landed `session_view.includeQuestionArtifactIds: true` request and return the selected artifact in the question. Use the same exact result, preview and operation replies when mapping selected cases in the version 2 protected policy.
+
+### Host job contract
+
+The current Fleet Design execution calls `design_capture` with a stable `requestId`:
+
+1. Call `status` to read the configured release commit before packing. Save the packed `overlay.json` and exact `fixture.json` with the execution's existing artifact tool. Wait for those artifacts to be stored.
+2. Call `start` with `overlayArtifactId` and `fixtureArtifactId`. Fleet resolves the current project role, session, task and running execution. It chooses the approved base bundle and fixed `pds18-native` host. A repeated request reads its existing job. A different request or changed input in that execution returns a conflict.
+3. Use `status` while the job runs. Use `stage` after success. The executor downloads only the terminal job's stored receipt and capture archive, verifies them in the execution's temporary directory and checks current authority again before returning paths. The designer inspects the originals and saves the source, recipes and PNGs with that execution's existing artifact tool. Retry stage if a transfer is pending. A completed stage returns the same private directory on replay without downloading another copy. The regular scene capture path uses its existing tools.
+4. Use `cancel` to stop the capture or revoke its pending return. Cancelling or ending the originating execution also fences return. A later turn has a different execution ID. No capture result by itself creates an owner offer.
+
+Fleet reuses the durable script job envelope with a fixed capture discriminator. The executor selects the compiled host client directly. The job does not use the ordinary shell runner or MCP. The client stages only immutable artifact IDs owned by the designer or selected by the operator, verifies input sizes and SHA-256s, and sends bytes over the local broker socket. The broker starts the signed entry in the credential-free guest:
+
+```sh
+node "$FLEET_DESIGN_RELEASE/deploy/design-verifier/designer.mjs" capture-job \
+  --job-input "$CAPTURE_PRIVATE_INPUT" --out "$CAPTURE_PRIVATE_OUTPUT"
+```
+
+The guest reads `request.json`, `base.bundle`, `overlay.json` and `fixture.json`. The request records the project, task, session, designer execution, separate host job, nonce, signed base and exact artifact hashes. The guest reconstructs the packaged source against the overlay before returning `capture.tar` and `receipt.json`. The outer archive starts with the handoff and includes the source archive, recipes and PNGs. The receipt records the request, release, runtime, reconstructed source, and archive digests. Fleet releases stage only after an authenticated terminal host receipt and stored outputs. The host closes or withholds partial outputs on failure or cancellation.
+
+### PDS18 broker binding
+
+The operator selects the approved base artifact, signed producer and runtime in the coordinator's `FLEET_DESIGN_CAPTURE_INSTALLATION` JSON. The fields are `host` (only `pds18-native`), `baseArtifact`, `producer` and `runtime`. Configure the private Ed25519 seed file through `FLEET_DESIGN_CAPTURE_SIGNING_KEY_FILE` and configure its public key in the broker. The seed file holds 32 bytes encoded as hex and has no group or other permissions. The coordinator signs the immutable request's job, fixed host, digest and expiry. The permit travels in the authenticated host poll and to the broker only. A browser user or designer receives no broker credentials.
+
+The executor advertises `design-capture-broker-v1` on the selected host when the root-owned, access-restricted Unix socket `/run/fleet-design-capture/broker.sock` is present. It also checks the broker's Linux peer UID on connection. The socket protocol uses big-endian lengths:
+
+- Client sends `FDC1` followed by five frames, each prefixed by its 32-bit byte length. The first frame is `permit.json`. The next four are the request, base bundle, overlay JSON and fixture JSON, in that order. No host paths cross the socket.
+- The broker verifies the one-use permit before forwarding the four guest inputs. It verifies the configured signed release and bounded isolated runtime and starts only the fixed entry point. The permit, host filesystem and Fleet credentials stay outside the guest. A lost client connection cancels the owned guest.
+- After successful guest exit and confirmed teardown the broker writes `FDR1`, the 32-bit receipt and archive lengths, those exact bytes and EOF. Failed allocation, expired or reused authorization, unconfirmed cleanup and truncated output cannot produce this response.
+
+Install and qualify this dedicated capture endpoint on the approved PDS18 guest before enabling live use. The protected verifier's T199 socket has a separate authority and protocol. The executor's local tests simulate the capture endpoint and normal terminal protocol; they do not serve as a live broker qualification.
+
+`source.tar` contains four regular files: `base.bundle`, `overlay.json`, `overlay.patch` and `replay.json`. The replay manifest retains the frozen fixture and clock, base and reconstructed trees, renderer and release identities and ordered original hashes. The recipe records the effective product and installed dependency input hashes. Verify the retained archive digest before unpacking its four named files into a fresh private directory. Replay uses the same signed renderer and exact base:
+
+```sh
+node "$FLEET_DESIGN_RELEASE/deploy/design-verifier/designer.mjs" replay \
+  --base-bundle "$FLEET_INPUT_DIR/retained-source/base.bundle" --replay "$FLEET_INPUT_DIR/retained-source"
+```
+
+The admitted writer can apply the reviewed `overlay.patch` with `git apply --index --binary` on the recorded base. Carry the product overlay into delivery. The frozen fixture, clock and other replay data travel with the retained evidence. Fixtures and rendered application inputs must be deterministic; replay checks the resulting hashes and there is no random seed. Use `designer.mjs compare --before <capture-dir> --after <capture-dir>` to compare two complete captures of the same fixture on the same runtime. It verifies the PNG hashes and reports differing pixel counts and bounds using the existing comparator. Exit status 2 means a confirmed difference.
+
+The protected issuer still requires a separately reviewed operator route and impact mapping for the exact selection. The designer-only Details click supplies originals. The protected verifier's own route and gesture policy determines which cases it can qualify.
+
+Keep the full dependency pin list in each recipe. The released issuer and its matching build worker can carry identical pins once and encode a larger inventory for the existing 96 KiB transport. The worker checks each decoded file hash before the build. Install the matching signed controllers and worker together.
+
 ## Register a selected route and impact mapping
 
 The operator owns `/etc/fleet-design-verifier/parity.json`. Install it atomically as a root-owned regular file with mode `0644` in a root-owned directory with mode `0755`. Keep the source, fixture and impact review trace with the operator's task or release evidence. Start from the actual selected cases and original scene data. Translate that synthetic data into responses at the normal coordinator operation boundary. Do not take the policy, route scripts or fixture replies from the candidate checkout. The verifier never runs the book to establish production parity.

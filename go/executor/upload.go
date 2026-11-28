@@ -31,26 +31,28 @@ import (
 // reads) with the command and the spool folder; get and list carry the MCP call; done is the journaled per-part
 // progress of an upload or copy.
 type transferJob struct {
-	Path        string          `json:"path"`
-	Spool       string          `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
-	Name        string          `json:"name"`
-	MediaType   string          `json:"mediaType"`
-	ExecutionId string          `json:"executionId"`
-	DerivedFrom string          `json:"derivedFrom"`
-	Role        string          `json:"role"`
-	Required    bool            `json:"required"`
-	ArtifactId  *string         `json:"artifactId"`
-	StoreId     string          `json:"storeId"`
-	Url         string          `json:"url"`
-	StagingKey  *string         `json:"stagingKey"`
-	Size        *uint64         `json:"size"`
-	PartSize    *uint64         `json:"partSize"`
-	Source      transferSource  `json:"source"`
-	InputDir    string          `json:"inputDir"`
-	Filter      *transferFilter `json:"filter"`
-	Done        []donePart      `json:"done"`
-	Command     jsonValue       `json:"command"` // present (even null): the job sends the command's final receipt
-	Recoveries  int             `json:"recoveries"`
+	Path             string          `json:"path"`
+	Spool            string          `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
+	Name             string          `json:"name"`
+	MediaType        string          `json:"mediaType"`
+	ExecutionId      string          `json:"executionId"`
+	DerivedFrom      string          `json:"derivedFrom"`
+	Role             string          `json:"role"`
+	Required         bool            `json:"required"`
+	ArtifactId       *string         `json:"artifactId"`
+	StoreId          string          `json:"storeId"`
+	Url              string          `json:"url"`
+	StagingKey       *string         `json:"stagingKey"`
+	Size             *uint64         `json:"size"`
+	PartSize         *uint64         `json:"partSize"`
+	Source           transferSource  `json:"source"`
+	InputDir         string          `json:"inputDir"`
+	ExistingInputDir bool            `json:"existingInputDir"`
+	MaxDownloadBytes int64           `json:"maxDownloadBytes"`
+	Filter           *transferFilter `json:"filter"`
+	Done             []donePart      `json:"done"`
+	Command          jsonValue       `json:"command"` // present (even null): the job sends the command's final receipt
+	Recoveries       int             `json:"recoveries"`
 }
 
 type transferSource struct {
@@ -598,8 +600,10 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		// ponytail: per byte, so a multibyte character becomes several '_' where Rust wrote one.
 		name = string(safe)
 		dir := body.InputDir
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, ioFailure(err)
+		if !body.ExistingInputDir {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, ioFailure(err)
+			}
 		}
 		tag := "x"
 		if r.Id != "" {
@@ -634,8 +638,16 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			return nil, f
 		}
 		defer src.Close()
-		if _, err := io.Copy(out, src); err != nil {
+		var download io.Reader = src
+		if body.MaxDownloadBytes > 0 {
+			download = io.LimitReader(src, body.MaxDownloadBytes+1)
+		}
+		n, err := io.Copy(out, download)
+		if err != nil {
 			return nil, ioFailure(err)
+		}
+		if body.MaxDownloadBytes > 0 && n > body.MaxDownloadBytes {
+			return nil, permanentf("capture artifact exceeds its transport bound")
 		}
 		return M{"artifactId": r.Id, "path": target, "mediaType": r.MediaType, "size": r.Size}, nil
 	case "list":

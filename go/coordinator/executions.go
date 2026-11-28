@@ -648,6 +648,13 @@ func executionPutRaw(q *Request, e rawObject) error {
 			return err
 		}
 	}
+	stopping, _ := jsonBool(e["stopRequested"])
+	if kind == "agent_run" && project == "fleet" && profileID == designProfileID &&
+		(state != prev && executionEnds(state) || stopping) {
+		if err := stopDesignerCapture(q, id); err != nil {
+			return err
+		}
+	}
 	if !inserted {
 		if err := settleBotRun(q, id); err != nil {
 			return err

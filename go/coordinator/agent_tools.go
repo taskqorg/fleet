@@ -324,7 +324,7 @@ func init() {
 				profile, _ := profileOf(e.AgentConfig)
 				if fleetDesigner(e.dispatchProject(), profile.ID) {
 					switch rpc.Params.Name {
-					case "design_offer", "design_review_get", "execution_status", "project_context", "worker_done":
+					case "design_capture", "design_offer", "design_review_get", "execution_status", "project_context", "worker_done":
 					default:
 						return fail(403, "Operation is outside the Fleet designer grant")
 					}

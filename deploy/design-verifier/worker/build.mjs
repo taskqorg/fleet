@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync,
   readdirSync, realpathSync, symlinkSync } from 'node:fs';
+import { readDependencyWire } from './dependencies.mjs';
 
 const toolchain = '/opt/fleet-design-runtime/node_modules';
 const source = '/work/source';
@@ -22,7 +23,7 @@ function regular(path, limit) {
 }
 
 try {
-  for (const { path, sha256 } of JSON.parse(process.argv[2])) {
+  for (const { path, sha256 } of readDependencyWire(process.argv[2])) {
     if (!/^node_modules\/[A-Za-z0-9_.@+ /-]+$/.test(path) || path.split('/').some(p => ['.', '..'].includes(p)))
       process.exit(42);
     const file = realpathSync('/opt/fleet-design-runtime/' + path);
@@ -34,11 +35,13 @@ try {
 }
 
 try {
+  const designer = process.argv[3] === '--designer';
   mkdirSync(source);
   if (!run('/usr/bin/tar', ['--extract', '--no-same-owner', '--no-same-permissions', '--no-overwrite-dir'], 'inherit'))
     process.exit(43);
   symlinkSync(toolchain, source + '/node_modules', 'dir');
-  if (!run(process.execPath, ['app/build.mjs'])) process.exit(43);
+  const preload = designer ? ['--import', '/trusted/designer-inputs.mjs'] : [];
+  if (!run(process.execPath, [...preload, 'app/build.mjs'])) process.exit(43);
 
   const maxApp = 16 * 1024 * 1024;
   let remaining = maxApp;
@@ -64,7 +67,8 @@ try {
   const html = Buffer.from(files['/index.html'], 'base64').toString('utf8');
   const main = /<script type="module" src="(\/assets\/main-[A-Za-z0-9]+\.js)"><\/script>/.exec(html)?.[1];
   if (!main || !Object.hasOwn(files, main) || !html.includes('<div id="app"></div>')) process.exit(43);
-  process.stdout.write(JSON.stringify({ main, files }));
+  const inputs = designer ? JSON.parse(regular('/work/designer-inputs.json', 256 * 1024)) : undefined;
+  process.stdout.write(JSON.stringify({ main, files, inputs }));
 } catch {
   process.exitCode = 43;
 }

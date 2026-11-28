@@ -497,12 +497,40 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				Branchless: isBool && !branch && !isNull(row.PayloadProjectID), WorkspaceKey: row.WorkspaceKey != "", Attachments: row.HasAttachments}); missing {
 				continue
 			}
+			var permit *contract.DesignCapturePermit
+			if cv.Kind == "script" && host == contract.DesignCaptureHost {
+				cmd, err := commandGet(wq, cv.ID)
+				if err != nil {
+					return err
+				}
+				if capture, ok := captureCommandPayload(cmd); ok {
+					if !contract.HasCapability(caps, contract.DesignCaptureCapability) {
+						continue
+					}
+					parent, err := getExecution(wq, capture.DesignCapture.Request.Execution)
+					if err != nil {
+						return err
+					}
+					if parent.State != "running" || parent.unconfirmed() || isTrue(parent.StopRequested) ||
+						capture.PermitExpiresAt <= time.Now().Unix() {
+						if err := stopDesignerCapture(wq, parent.ID); err != nil {
+							return err
+						}
+						continue
+					}
+					p, err := capturePermit(capture.DesignCapture.Request, capture.PermitExpiresAt)
+					if err != nil {
+						continue
+					}
+					permit = &p
+				}
+			}
 			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
 			// its reason, and the rest of the poll goes on (2026-11-17: one stored run failed every poll for 2.5 h).
 			if err := exec(wq, "SAVEPOINT poll_command"); err != nil {
 				return err
 			}
-			fresh, err := a.pollReadyCommand(wq, hostDoc, cv, prepared, contract.HasCapability(caps, string(contract.CapabilityAgentSiteAccessV1)))
+			fresh, err := a.pollReadyCommand(wq, hostDoc, cv, prepared, contract.HasCapability(caps, string(contract.CapabilityAgentSiteAccessV1)), permit != nil)
 			if err != nil {
 				reason, outcome := pollCommandRefusal(err)
 				if outcome == pollFails {
@@ -547,6 +575,9 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			}
 			pollCommandWaits.forget(cv.ID) // prepared: no longer waiting on an error
 			if fresh != nil {
+				if permit != nil {
+					fresh = withCapturePermit(fresh, *permit)
+				}
 				out = append(out, *fresh)
 			}
 		}
@@ -637,6 +668,7 @@ func (p *preparedCommands) keep(host string, entries map[string]pollPreparedEntr
 
 // pollExecutionView: the fields of a command's execution the poll reads.
 type pollExecutionView struct {
+	StopRequested     *bool           `json:"stopRequested"`
 	TaskStopRequested *bool           `json:"taskStopRequested"`
 	ProjectID         json.RawMessage `json:"projectId"`
 	DirectedBy        json.RawMessage `json:"directedBy"`
@@ -644,7 +676,7 @@ type pollExecutionView struct {
 
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
-func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandView, prepared map[string]pollPreparedEntry, siteAccessSupported bool) (*contract.Command, error) {
+func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandView, prepared map[string]pollPreparedEntry, siteAccessSupported, fixedCapture bool) (*contract.Command, error) {
 	ok, err := agentReady(wq, cv.Kind, cv.ExecutionID)
 	if err != nil || !ok {
 		return nil, err
@@ -689,6 +721,9 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 		return nil, err
 	}
 	ev := agentView[pollExecutionView](e)
+	if fixedCapture && isTrue(ev.StopRequested) {
+		return nil, nil
+	}
 	// A previously handed-out start may already be in flight. Stop it on its
 	// owning host, while withholding further delivery of work after the stop.
 	if ev.TaskStopRequested != nil && *ev.TaskStopRequested && inList(stopWithheldKinds, cv.Kind) {
@@ -700,7 +735,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 			return nil, nil
 		}
 	}
-	if cv.Kind != "stop" {
+	if cv.Kind != "stop" && !fixedCapture {
 		ok, err := a.delegationReady(wq, e)
 		if err != nil || !ok {
 			return nil, err

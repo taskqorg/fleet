@@ -80,7 +80,7 @@ func TestStageDesignInputsAcrossWriterExecutions(t *testing.T) {
 		{ArtifactId: "source", Path: "design-review/first/start-one/selected-source"},
 		{ArtifactId: "recipe", Path: "design-review/first/start-one/case-1-recipe.json"},
 	}
-	if err := e.stageArtifactInputs(first, input, "first"); err != nil {
+	if err := e.stageArtifactInputs(first, input, "first", nil); err != nil {
 		t.Fatal(err)
 	}
 	// Even a stale old selection must leave the next writer free to fetch the same artifacts.
@@ -91,7 +91,7 @@ func TestStageDesignInputsAcrossWriterExecutions(t *testing.T) {
 		{ArtifactId: "source", Path: "design-review/resume/start-two/selected-source"},
 		{ArtifactId: "recipe", Path: "design-review/resume/start-two/case-1-recipe.json"},
 	}
-	if err := e.stageArtifactInputs(next, input, "resume"); err != nil {
+	if err := e.stageArtifactInputs(next, input, "resume", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(filepath.Join(input, first[0].Path)); err != nil || string(got) != "old session file" {
@@ -103,13 +103,13 @@ func TestStageDesignInputsAcrossWriterExecutions(t *testing.T) {
 		}
 	}
 	legacy := []contract.InputArtifact{{ArtifactId: "empty", Path: "design-review/empty-output"}}
-	if err := e.stageArtifactInputs(legacy, input, "pipeline"); err != nil {
+	if err := e.stageArtifactInputs(legacy, input, "pipeline", nil); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(filepath.Join(input, legacy[0].Path)); err != nil || !info.Mode().IsRegular() || info.Size() != 0 {
 		t.Fatalf("expected the valid empty pipeline output: %v, %v", info, err)
 	}
-	if err := e.stageArtifactInputs(legacy, input, "pipeline-retry"); !errors.Is(err, os.ErrExist) {
+	if err := e.stageArtifactInputs(legacy, input, "pipeline-retry", nil); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("ordinary input lost exclusive creation: %v", err)
 	}
 }

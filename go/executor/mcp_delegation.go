@@ -286,7 +286,9 @@ func delegationServer(ctx any, journal, contextFile string) (M, error) {
 	}
 	names := mcpToolNames(mcpTools(ctx))
 	server := M{"command": exe(), "args": []any{"mcp", "delegation", journal, "@" + contextFile}, "tools": names}
-	if slices.Contains(names, any("board_read")) {
+	if slices.Contains(names, any("design_capture")) {
+		server["toolTimeoutSec"] = 1250 // two journaled artifact transfers and terminal readback
+	} else if slices.Contains(names, any("board_read")) {
 		// Keep Codex's native MCP call open through the maximum journal wait, with time for the local handoff.
 		server["toolTimeoutSec"] = contract.BoardReadMaxWaitSeconds + agentToolReplySeconds + 10
 	}
@@ -401,6 +403,16 @@ type childArgs struct {
 
 // delegationCall answers one tools/call of the delegation server.
 func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
+	result, err := delegationCallRaw(name, q, ctx, db)
+	if err != nil || name != "design_capture" || typed[contract.DesignCaptureRequest](q).Action != contract.DesignCaptureActionStage {
+		return result, err
+	}
+	return stageCaptureTool(result, contextOf(ctx), db, func() (any, error) {
+		return delegationCallRaw(name, q, ctx, db)
+	})
+}
+
+func delegationCallRaw(name string, q, ctx any, db *sql.DB) (any, error) {
 	if !truth(q) {
 		q = M{}
 	}

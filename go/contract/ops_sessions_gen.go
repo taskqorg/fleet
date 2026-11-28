@@ -277,6 +277,54 @@ func (v *ChangesSinceRequest) Validate() error {
 	return nil
 }
 
+type DesignCaptureAction string
+
+const (
+	DesignCaptureActionStart  DesignCaptureAction = "start"
+	DesignCaptureActionStatus DesignCaptureAction = "status"
+	DesignCaptureActionStage  DesignCaptureAction = "stage"
+	DesignCaptureActionCancel DesignCaptureAction = "cancel"
+)
+
+// DesignCaptureActionValues lists every DesignCaptureAction in schema order.
+var DesignCaptureActionValues = []DesignCaptureAction{DesignCaptureActionStart, DesignCaptureActionStatus, DesignCaptureActionStage, DesignCaptureActionCancel}
+
+// Valid: v is one of the schema's values.
+func (v DesignCaptureAction) Valid() bool {
+	for _, x := range DesignCaptureActionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type DesignCaptureReply struct {
+	JobId  string                     `json:"jobId"`
+	Result map[string]json.RawMessage `json:"result,omitempty"`
+	State  string                     `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignCaptureReply) Validate() error {
+	return nil
+}
+
+type DesignCaptureRequest struct {
+	Action            DesignCaptureAction `json:"action"`
+	FixtureArtifactId *string             `json:"fixtureArtifactId,omitempty"`
+	OverlayArtifactId *string             `json:"overlayArtifactId,omitempty"`
+	RequestId         string              `json:"requestId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignCaptureRequest) Validate() error {
+	if err := Check(&v.Action, "action"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DesignOfferReply struct {
 	Digest         string               `json:"digest"`
 	ExecutionId    string               `json:"executionId"`
@@ -2566,6 +2614,7 @@ func init() {
 		"approval_ask":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Before a radical action (LIVE deploy, deleting or banning accounts, messages to real users, keys, money, dropping data) ask for approval and wait: Fleet rates the action by the project's risk rules (settings.risks, settings.approvals); a radical one becomes an approval card (a question with Approve / Not now, shown in its Telegram room and in Needs you) naming exactly what, where, version and rollback. Call again with the same requestId after the reply arrives to read the state; a changed scope withdraws the old card and asks again. Free and reversible actions answer not-needed: do them and report (reversible: say how to undo). Never take keys or secrets from chat: point to System > Access.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"action\":{\"$comment\":\"Action classes of approval_ask; settings.risks of a project may rate any of them free, reversible or radical.\",\"enum\":[\"read\",\"analyze\",\"mockup\",\"task\",\"dev-branch\",\"dev-deploy\",\"test-data\",\"live-deploy\",\"delete-accounts\",\"ban-accounts\",\"user-messages\",\"keys\",\"access\",\"money\",\"data-drop\",\"other-radical\"],\"type\":\"string\"},\"executionId\":{\"type\":\"string\"},\"requestId\":{\"$comment\":\"One id per action; the same id reads the card's state.\",\"type\":\"string\"},\"rollback\":{\"$comment\":\"How to undo it.\",\"type\":\"string\"},\"version\":{\"$comment\":\"The exact commit, release or data set.\",\"type\":\"string\"},\"what\":{\"$comment\":\"Exactly what will change, as the asker understood it (ban 114 accounts of the Nov 23-24 campaign).\",\"type\":\"string\"},\"where\":{\"$comment\":\"The environment or target (LIVE P\\u0026H).\",\"type\":\"string\"}},\"required\":[\"executionId\",\"requestId\",\"action\",\"what\",\"where\"],\"type\":\"object\"}")},
 		"ask":                     {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "bound:session", Description: "For a persistent CI or delivery access or diagnostic blocker use publishing_report_blocker. Otherwise ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{\"$comment\":\"Fresh ask text. Requires requestId; do not combine with resume.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"resume\":{\"$comment\":\"Existing question ID to read, never continuation prose. Do not combine with question or requestId.\",\"type\":\"string\"},\"taskId\":{\"$comment\":\"Fresh ask about this granted task; does not attach the PM session. Omit for a session-only question or bound-worker inference.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"changes_since":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).", InputSchema: json.RawMessage("{\"$comment\":\"No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).\",\"additionalProperties\":true,\"properties\":{\"cursor\":{\"type\":\"integer\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
+		"design_capture":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409, 503}, Auth: "person", Agent: "tool", Description: "For the active Fleet Design execution only. Start the fixed capture with requestId and the execution's stored overlay and fixture artifact IDs. Reuse requestId to check status, stage the verified originals, or cancel. The approved host and base are selected by Fleet.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"action\":{\"enum\":[\"start\",\"status\",\"stage\",\"cancel\"],\"type\":\"string\"},\"fixtureArtifactId\":{\"type\":\"string\"},\"overlayArtifactId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"action\",\"requestId\"],\"type\":\"object\"}")},
 		"design_offer":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Offer retained scene sources, live observations, recipes and four original PNGs per case to the Fleet owner. Execution and task must match the submitting design run. Supply the current question ID to replace an offer.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"options\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"cases\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"frames\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"critique\":{\"type\":\"string\"},\"sha256\":{\"type\":\"string\"},\"theme\":{\"type\":\"string\"},\"viewport\":{\"type\":\"string\"}},\"required\":[\"viewport\",\"theme\",\"artifactId\",\"sha256\",\"critique\"],\"type\":\"object\"},\"type\":\"array\"},\"recipe\":{\"type\":\"string\"},\"recipeArtifactId\":{\"type\":\"string\"},\"scopeKey\":{\"type\":\"string\"}},\"required\":[\"scopeKey\",\"recipeArtifactId\",\"recipe\",\"frames\"],\"type\":\"object\"},\"type\":\"array\"},\"key\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"},\"sourceArtifactId\":{\"type\":\"string\"}},\"required\":[\"key\",\"label\",\"sourceArtifactId\",\"cases\"],\"type\":\"object\"},\"type\":\"array\"},\"replaces\":{\"type\":\"string\"},\"repository\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"walkArtifactId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"repository\",\"walkArtifactId\",\"options\"],\"type\":\"object\"}")},
 		"design_review_get":       {Read: true, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Read the latest design offer and exact selected option for a task. Revalidates stored evidence. A selection alone does not attest production parity.", Changes: []string{"question", "task", "artifact"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"direct_search":           {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Run a direct search using an enabled method from catalogue for the selected project. Omit methodId to use the project recommendation. Idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
