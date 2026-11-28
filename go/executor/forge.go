@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/projectpublisher"
 )
 
 // forgeRepo preserves the strict GitHub HTTPS remote parser used by legacy callers and boundary tests.
@@ -55,6 +56,8 @@ type forgeContext struct {
 	ReadOnly         bool   `json:"readOnly,omitempty"`
 	SkipWorktreeHead bool   `json:"skipWorktreeHead,omitempty"`
 	ReportPublishing bool   `json:"reportPublishing,omitempty"`
+
+	requestAppPublishing func(contract.PublishingAppRequest) (contract.PublishingAppReply, error)
 }
 
 func resolveGlabStore(store string) string {
@@ -1590,6 +1593,9 @@ func checkExpectedHeadAndSource(ctx forgeContext, expectedHeadSha, sourceExecID 
 }
 
 func executePublishingAction(ctx forgeContext, action string, args publishingArgs) (M, error) {
+	if ref, ok := ctx.resolvedRef(); ok && projectpublisher.Required(ref) {
+		return appPublishing(ctx, ref, action, args)
+	}
 	ref, adapter, err := validatePublishingContext(ctx)
 	if err != nil {
 		return nil, err
@@ -1897,6 +1903,15 @@ func publishingReadiness(remote, forgeHint, hostHint string) string {
 	if !ok || !forgeRepoGrantedRef(ref) {
 		return "forge-repository-not-granted"
 	}
+	if projectpublisher.Required(ref) {
+		if os.Getenv("FLEET_HOST_ID") != projectpublisher.Executor {
+			return "repository-app-publisher-requires-pds18"
+		}
+		if v := appProbe(5 * time.Second); !v.Ready {
+			return firstStr(v.Reason, "repository-app-publisher-unready")
+		}
+		return ""
+	}
 	store := os.Getenv("FLEET_FORGE_CONFIG_DIR")
 	ctx := forgeContext{
 		Provider:       ref.Provider,
@@ -1976,6 +1991,14 @@ func (e *executor) runPublishingCommand(cmd contract.Command, execution, cid str
 		RepoId:           str0(p.RepoId),
 		Journal:          filepath.Join(e.root, "journal.sqlite"),
 		SkipWorktreeHead: skipHead,
+		requestAppPublishing: func(r contract.PublishingAppRequest) (contract.PublishingAppReply, error) {
+			client := newTransferClient(e.url, e.token, e.host, accessToken(accessFile()))
+			reply, f := transferReply(client, contract.RoutePublishingApp, r)
+			if f != nil {
+				return reply, f
+			}
+			return reply, nil
+		},
 	}
 	var mergeMethod *string
 	if p.MergeMethod != "" {
@@ -2019,10 +2042,8 @@ func (e *executor) runPublishingCommand(cmd contract.Command, execution, cid str
 		rec.Error = &msg
 		rec.State = "FAILED"
 	} else {
-		if n, ok := res["number"].(int64); ok && n > 0 {
+		if n := typed[forgePRView](res).Number; n > 0 {
 			rec.Number = n
-		} else if nf, ok := res["number"].(float64); ok && nf > 0 {
-			rec.Number = int64(nf)
 		}
 		if u, ok := res["url"].(string); ok {
 			rec.Url = u

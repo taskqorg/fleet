@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/projectpublisher"
 )
 
 // Requirement: publication stays in the configured GitHub repository; risk: an input URL redirects credentials.
@@ -397,5 +400,79 @@ func TestGlabErrorSanitizeAndLoginScopeCheck(t *testing.T) {
 	}
 	if !forgeLoginCheck("gitlab", "gitlab.ufobe.com") {
 		t.Fatal("forgeLoginCheck returned false for active api-scoped token")
+	}
+}
+
+// App operations use the same publishing result journal as the legacy host jobs. A branch-only operation must
+// retain the provider's PR number so the coordinator can attach the observation to the request and task.
+func TestPublishingAppHostJobRecord(t *testing.T) {
+	t.Setenv("FLEET_FORGE_REPOSITORIES", projectpublisher.Repo)
+	e, _ := scriptExecutor(t)
+	e.host = projectpublisher.Executor
+	const branch = "fleet/invented-host-job"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != contract.RoutePublishingApp.Path {
+			t.Errorf("unexpected broker request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var req contract.PublishingAppRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Action != "mark_ready" || req.CommandId != "app-job" {
+			t.Errorf("invalid App host request: %+v %v", req, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"result":{"number":42,"url":"https://github.com/taskqorg/fleet/pull/42","branch":"fleet/invented-host-job","isDraft":false}}`)
+	}))
+	defer server.Close()
+	e.url = server.URL
+	p := contract.PublishingCommandPayload{Action: "mark_ready", ProjectId: "fleet", Provider: "github", Host: "github.com", Repo: projectpublisher.Repo,
+		RequestId: "invented-request", BaseBranch: "main", Prefix: optStr("fleet"), Branch: optStr(branch), MergeMethod: "squash"}
+	if err := e.run(M{"id": "app-job", "executionId": "app-host-execution", "kind": "publishing", "payload": p}); err != nil {
+		t.Fatal(err)
+	}
+	var encoded string
+	if err := e.db.QueryRow("SELECT body FROM outbox WHERE route=?", contract.RoutePublishingRecord.Path).Scan(&encoded); err != nil {
+		t.Fatal(err)
+	}
+	var rec contract.PublishingHostRecord
+	if err := json.Unmarshal([]byte(encoded), &rec); err != nil || rec.Number != 42 || rec.Branch != branch || rec.Error != nil {
+		t.Fatalf("publishing observation lost the App request number: %+v, %v", rec, err)
+	}
+}
+
+// The normal project-publishing tools receive the App result through the executor journal. The result
+// is an object carried as json.RawMessage and must survive delivery and the journal wait intact.
+func TestPublishingAppMCPJournalResult(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), "journal.sqlite")
+	db, err := openJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != contract.RoutePublishingApp.Path {
+			t.Errorf("unexpected publisher journal request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"result":{"state":"OPEN","number":42,"isDraft":false}}`)
+	}))
+	defer server.Close()
+	ctx := forgeContext{Journal: journalPath, ExecutionId: "app-source-run", CommandId: "app-start-command", HostId: projectpublisher.Executor}
+	req := contract.PublishingAppRequest{HostId: ctx.HostId, ExecutionId: ctx.ExecutionId, CommandId: ctx.CommandId,
+		AgentToolKey: "invented-app-status-request", Action: "status"}
+	if err := journalOnce(db, req.AgentToolKey, enc(req), contract.RoutePublishingApp.Path, ctx.ExecutionId); err != nil {
+		t.Fatal(err)
+	}
+	if err := flush(db, server.URL, "invented-token", ctx.HostId); err != nil {
+		t.Fatal(err)
+	}
+	got, err := appJournalRequest(ctx, req)
+	pr := typedRaw[forgePRView](got.Result)
+	if err != nil || pr.Number != 42 || pr.State != "OPEN" || pr.IsDraft {
+		t.Fatalf("MCP journal dropped provider status: result=%s err=%v", got.Result, err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"fleet/contract"
+	"fleet/projectpublisher"
 )
 
 func setupCheck(kind contract.ProjectSetupCheckKind, state contract.ProjectSetupCheckState, reason, action string, observedAt *int64) contract.ProjectSetupCheck {
@@ -40,9 +41,11 @@ func projectRepositorySetup(q *Request, id string, p runSettings, hosts []projec
 			result[0] = setupCheck(git, contract.ProjectSetupCheckStateUnknown, "forge_unsupported", "configure", nil)
 			return result
 		}
+		app := projectpublisher.Required(ref)
 		var foundGit, foundConnection, foundPublishing int64
 		for _, h := range hosts {
-			if !hostHolderAllowsProject(q, h.holder, id) || !hostCapsHaveRepo(h.capabilities, ref) {
+			if (app && (id != "fleet" || h.id != projectpublisher.Executor)) ||
+				!hostHolderAllowsProject(q, h.holder, id) || !hostCapsHaveRepo(h.capabilities, ref) {
 				continue
 			}
 			foundGit = max(foundGit, h.seen)
@@ -58,6 +61,9 @@ func projectRepositorySetup(q *Request, id string, p runSettings, hosts []projec
 			}
 		}
 		if foundGit == 0 {
+			if app && needsPublishing {
+				result[2] = setupCheck(ci, contract.ProjectSetupCheckStateUnknown, "repository_app_unverified", "recheck", nil)
+			}
 			return result
 		}
 		gitAt = minPositive(gitAt, foundGit)

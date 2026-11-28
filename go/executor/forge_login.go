@@ -9,6 +9,7 @@ import (
 
 	"fleet/contract"
 	"fleet/errtrack"
+	"fleet/projectpublisher"
 )
 
 // Forge login checks behind the publishing capabilities (capabilities): a host advertises publishing:<provider>:<host>:*
@@ -30,7 +31,11 @@ func forgeLoginVerified(provider, host string) bool {
 	key := provider + "|" + strings.ToLower(host)
 	forgeLogins.Lock()
 	defer forgeLogins.Unlock()
-	if at, seen := forgeLogins.at[key]; (!seen || time.Since(at) > forgeLoginRecheck) && !forgeLogins.busy[key] {
+	recheck := forgeLoginRecheck
+	if provider == projectpublisher.Mode {
+		recheck = 30 * time.Second
+	}
+	if at, seen := forgeLogins.at[key]; (!seen || time.Since(at) > recheck) && !forgeLogins.busy[key] {
 		forgeLogins.busy[key] = true
 		errtrack.Go("forge-login", func() {
 			ok := forgeLoginCheck(provider, host)
@@ -44,6 +49,9 @@ func forgeLoginVerified(provider, host string) bool {
 
 // forgeLoginCheck: the forge CLI of provider answers its user endpoint on host from the forge store.
 func forgeLoginCheck(provider, host string) bool {
+	if provider == projectpublisher.Mode {
+		return appProbe(20 * time.Second).Ready
+	}
 	store := os.Getenv("FLEET_FORGE_CONFIG_DIR")
 	ctx := forgeContext{Provider: provider, Host: host, Store: store, GlabStore: resolveGlabStore(store), Home: os.TempDir(),
 		CredentialHome: os.Getenv("HOME"), Workdir: os.TempDir()}

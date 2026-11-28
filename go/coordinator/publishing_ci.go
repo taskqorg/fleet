@@ -71,7 +71,7 @@ func ciHostInEnvironment(host, repoID string, envs []projectEnvironment) bool {
 
 func publishingCIHost(h publishingHostView, ref contract.RepoRef, repoID string, envs []projectEnvironment) bool {
 	return ciHostInEnvironment(h.id, repoID, envs) && slices.Contains(h.caps, string(contract.CapabilityPublishingCiRerunV1)) &&
-		hostCapsHaveRepo(h.caps, ref) && publishingHostForgeRank(h, ref) == 0
+		hostCapsHaveLegacyRepo(h.caps, ref) && publishingHostForgeRank(h, ref) == 0
 }
 
 // ciSource checks both the execution's branch binding and the live grant. Calling it again at the

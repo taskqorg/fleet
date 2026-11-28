@@ -4,8 +4,10 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"fleet/contract"
+	"fleet/projectpublisher"
 )
 
 // Forge logins on System › Access: one row per forge host (gitlab.ufobe.com, github.com) that a project with
@@ -56,6 +58,7 @@ func accessForgeLogins(q *Request) ([]contract.AccessItem, error) {
 		projects       []string
 	}
 	needs := map[string]*need{}
+	needsApp := false
 	for _, id := range ids {
 		if q.person != nil && !q.person.mayAccess(id) {
 			continue
@@ -67,6 +70,10 @@ func accessForgeLogins(q *Request) ([]contract.AccessItem, error) {
 		for _, r := range s.Repos {
 			ref, ok := contract.ParseRepoRemote(r.Remote, r.Forge, r.Host)
 			if !ok {
+				continue
+			}
+			if projectpublisher.Required(ref) {
+				needsApp = needsApp || id == "fleet"
 				continue
 			}
 			key := ref.Provider + "|" + ref.Host
@@ -91,10 +98,29 @@ func accessForgeLogins(q *Request) ([]contract.AccessItem, error) {
 	}
 	sort.Strings(keys)
 	out := []contract.AccessItem{}
+	if needsApp {
+		key := projectpublisher.Mode + "|" + projectpublisher.Host
+		out = append(out, accessProjectPublisher(reported[projectpublisher.Executor][key]))
+	}
 	for _, key := range keys {
 		out = append(out, forgeLoginItem(needs[key].provider, needs[key].host, needs[key].hosts, needs[key].projects, reported))
 	}
 	return out, nil
+}
+
+func accessProjectPublisher(report contract.ForgeLogin) contract.AccessItem {
+	host := contract.AccessHost{HostId: projectpublisher.Executor, Binding: "repository GitHub App", Readiness: "unknown", ObservedAt: report.CheckedAt}
+	state, text := contract.AccessStateUnknown, "Waiting for the PDS18 publisher readiness report"
+	if report.CheckedAt != nil && time.Since(time.UnixMilli(*report.CheckedAt)) < 2*time.Minute {
+		if report.Ok {
+			host.Readiness, state, text = "ready", contract.AccessStateWorks, "Repository App verified on PDS18"
+		} else {
+			host.Readiness, state, text = "unavailable", contract.AccessStateFailing, "Repository App unavailable on PDS18"
+		}
+	}
+	return contract.AccessItem{Id: "forge:" + projectpublisher.Capability, Group: contract.AccessGroupService,
+		Name: projectpublisher.Actor, Provider: "github", Kind: "repository GitHub App", State: state, StateText: text,
+		Where: ptr(projectpublisher.Executor), Hosts: []contract.AccessHost{host}}
 }
 
 // forgeLoginItem: one forge host's row: which of the hosts that need it answered as a user.

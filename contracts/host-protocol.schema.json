@@ -25,12 +25,41 @@
     "/api/hosts/artifacts/list": {"$comment": "answers HostArtifactListReply with the full artifact rows", "request": "HostArtifactListRequest", "long": true, "decode": "checked"},
     "/api/hosts/publishing/ci-claim": {"request": "PublishingCIClaim", "reply": "OkReply", "decode": "checked"},
     "/api/hosts/publishing/ci-observation": {"request": "PublishingCIReport", "reply": "OkReply", "decode": "checked"},
+    "/api/hosts/publishing/app": {"request": "PublishingAppRequest", "reply": "PublishingAppReply", "long": true, "decode": "checked"},
     "/api/hosts/forge/review": {"request": "ForgeReviewRequest", "reply": "ForgeReviewReply", "long": true, "decode": "checked"},
     "/api/hosts/publishing/record": {"request": "PublishingHostRecord", "reply": "OkReply", "long": true, "decode": "checked"},
     "/api/hosts/browser/access": {"request": "BrowserAccessRequest", "reply": "BrowserAccessReply", "long": true, "decode": "checked"},
     "/api/hosts/stores": {"request": "StoresRequest", "reply": "StoresReply", "long": true, "decode": "checked"}
   },
   "$defs": {
+    "PublishingAppRequest": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["hostId", "executionId", "commandId", "action", "agentToolKey"],
+      "properties": {
+        "hostId": {"type":"string"},
+        "executionId": {"type":"string"},
+        "commandId": {"type":"string"},
+        "action": {"type":"string"},
+        "agentToolKey": {"type":"string"},
+        "requestId": {"type":"string"},
+        "expectedHeadSha": {"type":"string"},
+        "title": {"type":"string"},
+        "body": {"type":"string"},
+        "lease": {"type":"string"},
+        "mergeMethod": {"type":"string"},
+        "artifactId": {"type":"string"},
+        "description": {"type":"string"}
+      }
+    },
+    "PublishingAppReply": {
+      "type": "object",
+      "properties": {
+        "ticket": {"type":"string"},
+        "result": {},
+        "error": {"type":"string"}
+      }
+    },
     "BrowserAccessRequest": {
       "type": "object",
       "unevaluatedProperties": false,

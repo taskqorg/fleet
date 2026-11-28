@@ -2932,6 +2932,41 @@ func (v *ProtocolFailed) Validate() error {
 	return nil
 }
 
+type PublishingAppReply struct {
+	Error  *string         `json:"error,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Ticket *string         `json:"ticket,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingAppReply) Validate() error {
+	return nil
+}
+
+type PublishingAppRequest struct {
+	Action          string  `json:"action"`
+	AgentToolKey    string  `json:"agentToolKey"`
+	ArtifactId      *string `json:"artifactId,omitempty"`
+	Body            *string `json:"body,omitempty"`
+	CommandId       string  `json:"commandId"`
+	Description     *string `json:"description,omitempty"`
+	ExecutionId     string  `json:"executionId"`
+	ExpectedHeadSha *string `json:"expectedHeadSha,omitempty"`
+	HostId          string  `json:"hostId"`
+	Lease           *string `json:"lease,omitempty"`
+	MergeMethod     *string `json:"mergeMethod,omitempty"`
+	RequestId       *string `json:"requestId,omitempty"`
+	Title           *string `json:"title,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingAppRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*PublishingAppRequest) Closed() bool { return true }
+
 type PublishingCIClaim struct {
 	CommandId    string                  `json:"commandId"`
 	ExecutionId  string                  `json:"executionId"`
@@ -3883,6 +3918,7 @@ var (
 	RouteInventory               = HostRoute[HostInventoryRequest, HostInventoryReply]{Path: "/api/hosts/inventory", Long: true, Plain: false}
 	RoutePoll                    = HostRoute[PollRequest, PollReply]{Path: "/api/hosts/poll", Long: true, Plain: true}
 	RouteProjectOperations       = HostRoute[ProjectReceipt, any]{Path: "/api/hosts/project-operations", Long: true, Plain: false}
+	RoutePublishingApp           = HostRoute[PublishingAppRequest, PublishingAppReply]{Path: "/api/hosts/publishing/app", Long: true, Plain: false}
 	RoutePublishingCiClaim       = HostRoute[PublishingCIClaim, OkReply]{Path: "/api/hosts/publishing/ci-claim", Long: false, Plain: false}
 	RoutePublishingCiObservation = HostRoute[PublishingCIReport, OkReply]{Path: "/api/hosts/publishing/ci-observation", Long: false, Plain: false}
 	RoutePublishingRecord        = HostRoute[PublishingHostRecord, OkReply]{Path: "/api/hosts/publishing/record", Long: true, Plain: false}
@@ -3913,6 +3949,7 @@ var HostRoutes = []string{
 	"/api/hosts/inventory",
 	"/api/hosts/poll",
 	"/api/hosts/project-operations",
+	"/api/hosts/publishing/app",
 	"/api/hosts/publishing/ci-claim",
 	"/api/hosts/publishing/ci-observation",
 	"/api/hosts/publishing/record",
