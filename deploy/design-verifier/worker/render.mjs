@@ -1,7 +1,8 @@
 // The browser guest receives the release build output and protected synthetic fixtures.
-import { chromium } from '/opt/fleet-design-runtime/playwright/index.mjs';
+import { chromium, selectors } from '/opt/fleet-design-runtime/playwright/index.mjs';
 import { readFileSync } from 'node:fs';
 import { openSite } from './site.mjs';
+import { imageJourney, isImageFlow, registerImageOpenSelector } from './image-journey.mjs';
 
 const options = {
   executablePath: '/opt/fleet-design-runtime/chromium/chrome-headless-shell-linux64/chrome-headless-shell',
@@ -9,9 +10,10 @@ const options = {
   timeout: 15_000,
 };
 
-async function capture(browser, { files, main, scenario, clock }, { width, height, theme }) {
+async function capture(browser, { files, main, scenario, clock }, frame) {
+  const { width, height, theme } = frame;
   const site = await openSite(files, scenario);
-  let context;
+  let context, journey;
   try {
     context = await browser.newContext({
       viewport: { width, height }, deviceScaleFactor: 1, colorScheme: theme, reducedMotion: 'reduce',
@@ -32,11 +34,20 @@ async function capture(browser, { files, main, scenario, clock }, { width, heigh
       const url = new URL(page.url());
       observed.push(url.pathname + url.search);
     };
+    const settle = () => page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
     let landmark = scenario.landmark;
+    let step;
     try {
       const response = await page.goto(absolute(scenario.start));
       if (!response?.ok()) throw new Error('normal app entry failed');
-      if (scenario.flow === 'bot' || scenario.flow === 'back') {
+      if (isImageFlow(scenario.flow)) {
+        await at(scenario.start);
+        journey = await imageJourney(page, scenario, frame, site.origin, settle, value => { step = value; }, site.openSignal);
+        await at(scenario.target);
+      } else if (scenario.flow === 'bot' || scenario.flow === 'back') {
         await at(scenario.start);
         await page.getByRole('button', { name: 'Talk to it', exact: true }).click();
         await at(scenario.target);
@@ -49,25 +60,27 @@ async function capture(browser, { files, main, scenario, clock }, { width, heigh
       } else {
         await at(scenario.target);
       }
-      await page.locator(landmark).waitFor({ state: 'visible' });
-      await page.evaluate(async () => {
-        await document.fonts.ready;
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      });
+      if (!journey) await page.locator(landmark).waitFor({ state: 'visible' });
+      await settle();
+      await journey?.confirm();
       const png = await page.screenshot({ animations: 'disabled', caret: 'hide' });
+      await journey?.confirm();
       const observedEnd = scenario.flow === 'back' ? scenario.start : scenario.target;
       const unmet = site.unmet(), forbidden = site.forbidden();
       if (site.missing.size || unmet.length || forbidden.length || pageError || popup || !site.used.has(main) ||
           page.url() !== absolute(observedEnd)) return { blocked: { observed, missing: [...site.missing], unmet, forbidden, pageError, popup } };
-      return { observed, png: png.toString('base64') };
+      return { observed, png: png.toString('base64'), ...(journey && { imageJourney: journey.evidence }) };
     } catch {
-      return { blocked: { observed, missing: [...site.missing], routeOrLandmark: 'unconfirmed', pageError, popup } };
+      return { blocked: { observed, missing: [...site.missing], routeOrLandmark: 'unconfirmed', pageError, popup, ...(step && { step }) } };
     }
   } finally {
-    try { await context?.close(); } finally { await site.close(); }
+    try {
+      try { await journey?.dispose?.(); } finally { await context?.close(); }
+    } finally { await site.close(); }
   }
 }
 
+await registerImageOpenSelector(selectors);
 const browser = await chromium.launch(options);
 try {
   if (process.argv[2] === '--probe') {

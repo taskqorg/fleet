@@ -14,3 +14,7 @@ for b in "$new"/fleet-* "$darwin"/fleet-*; do
   printf '%s\n' "$info" | grep -q 'CGO_ENABLED=0' || { echo "$b: cgo enabled" >&2; exit 1; }
 done
 for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$new/$b" selftest); done
+# Older rollback archives predate the image runner. When the runner ships, require its archived selftest.
+if [ -f "$new/deploy/design-verifier/worker/image-journey.mjs" ]; then
+  node --test "$new/tests/ui/design-image-parity.test.mjs"
+fi

@@ -1,15 +1,119 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { designCredentialIsPrivate, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { appId, DesignBlocked, githubCandidates, repo, repositoryId } from '../../deploy/design-verifier/provider.mjs';
 import { openRepository } from '../../deploy/design-verifier/git.mjs';
 import { receiptStore } from '../../deploy/design-verifier/receipts.mjs';
 import { evaluate } from '../../deploy/design-verifier/verifier.mjs';
 import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
+import { registerImageOpenSelector } from '../../deploy/design-verifier/worker/image-journey.mjs';
+import { loadPolicy } from '../../deploy/design-verifier/parity.mjs';
+
+test('the pinned Playwright handle query runs the opener engine beyond main-world interception', async () => {
+  const require = createRequire(import.meta.url);
+  const requirePlaywright = createRequire(require.resolve('playwright/package.json'));
+  const core = dirname(requirePlaywright.resolve('playwright-core/package.json'));
+  const { Selectors: ClientSelectors } = require(join(core, 'lib/client/selectors.js'));
+  const { Selectors: ServerSelectors } = require(join(core, 'lib/server/selectors.js'));
+  const { ElementHandle: ClientHandle } = require(join(core, 'lib/client/elementHandle.js'));
+  const { ElementHandle: ServerHandle } = require(join(core, 'lib/server/dom.js'));
+  const { FrameSelectors } = require(join(core, 'lib/server/frameSelectors.js'));
+  const clientSelectors = new ClientSelectors({});
+  await registerImageOpenSelector(clientSelectors);
+  const { selectorEngines } = clientSelectors._withSelectorOptions({});
+  const [definition] = selectorEngines;
+  const serverSelectors = new ServerSelectors(selectorEngines);
+  const signal = '/_fleet_image_open/' + 'a'.repeat(32);
+  const sent = [];
+  let click;
+  class HTMLElement {}
+  const engine = runInNewContext(definition.source, {
+    HTMLElement,
+    window: { addEventListener: (_type, fn) => { click = fn; }, removeEventListener: () => { click = undefined; } },
+    XMLHttpRequest: class {
+      open(method, path, async) { assert.deepEqual([method, path, async], ['POST', signal, false]); }
+      send() { sent.push(signal); }
+    },
+  });
+  const main = { injectedScript() { assert.fail('candidate main world intercepted the opener binding'); } };
+  const delivered = { _context: main };
+  const utility = {
+    injectedScript: async () => ({
+      evaluateHandle: async (query, args) => ({
+        asElement: () => query({ querySelector: (parsed, root) => {
+          assert.equal(root, opener);
+          assert.equal(parsed.parts.length, 1);
+          return engine.queryAll(root, parsed.parts[0].body)[0];
+        } }, args) ? delivered : null,
+      }),
+    }),
+  };
+  const frame = {
+    _page: { browserContext: { _options: {}, selectors: () => serverSelectors } },
+    _context: async world => world === 'utility' ? utility : main,
+    _mainContext: async () => main,
+  };
+  frame.selectors = new FrameSelectors(frame);
+  const opener = Object.assign(new HTMLElement(), {
+    _frame: frame, isConnected: true, dispatchEvent() { assert.fail('candidate intercepted an event'); },
+  });
+  const handle = { _elementChannel: { querySelector: async ({ selector }) => ({
+    element: { _object: await ServerHandle.prototype.querySelector.call(opener, selector) },
+  }) } };
+  assert.equal(await ClientHandle.prototype.$.call(handle, definition.name + '=' + signal), delivered);
+  assert.deepEqual(sent, []);
+  click({ isTrusted: false, composedPath: () => [opener] });
+  click({ isTrusted: true, composedPath: () => [new HTMLElement()] });
+  assert.deepEqual(sent, []);
+  click({ isTrusted: true, composedPath: () => [opener] });
+  assert.deepEqual(sent, [signal]);
+  assert.equal(click, undefined);
+});
+
+test('image policy registration preserves the legacy policy used by the rollback release', async t => {
+  const fixture = { start: '/conversations/C-TST-1', target: '/conversations/C-TST-1',
+    recipe: 'a'.repeat(64), sourceSha256: 'b'.repeat(64),
+    responses: [{ op: 'session_view', request: { sessionId: 'invented' }, reply: { head: {} }, required: true }] };
+  const scope = 'pages/conversations/example:default';
+  const v1 = Buffer.from(JSON.stringify({ version: 1, paths: [], cases: { [scope]: { ...fixture, flow: 'direct', landmark: 'main' } } }));
+  const files = new Map([['/etc/fleet-design-verifier/parity.json', v1]]);
+  const read = path => {
+    if (!files.has(path)) throw Object.assign(new Error('fixture absent'), { code: 'ENOENT' });
+    return files.get(path);
+  };
+  const legacy = loadPolicy(read);
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ9sAAAAASUVORK5CYII=';
+  const v2 = '/etc/fleet-design-verifier/parity-v2.json';
+  const image = { ...fixture, flow: 'image-open', surface: 'conversation', entry: 'thumbnail',
+    resultTitle: 'Invented', resultCode: 'R-TST-1', image: 'sample',
+    responses: [...fixture.responses, { op: 'entity_refs', request: {}, reply: {}, required: true }] };
+  const policy = { version: 2, paths: [], cases: { ...legacy.cases, 'pages/conversations/example:image-open': image },
+    images: { sample: { path: '/api/results/invented', png, sha256: 'f86b5f3ad5f392fbfcd6915312c28ffeccd37adbd20bd5d02e4095c89711f26c' } } };
+  files.set(v2, Buffer.from(JSON.stringify(policy)));
+  const registered = loadPolicy(read);
+  assert.notEqual(registered.hash, legacy.hash);
+  assert.equal(registered.cases['pages/conversations/example:image-open'].flow, 'image-open');
+  // The previous release only reads parity.json. Its input should be byte-for-byte identical.
+  assert.deepEqual(read('/etc/fleet-design-verifier/parity.json'), v1);
+  for (const cases of [registered.cases, JSON.parse(read('/etc/fleet-design-verifier/parity.json')).cases]) {
+    const site = await openSite({ '/index.html': Buffer.from('<main>Legacy</main>').toString('base64') }, cases[scope]);
+    t.after(() => site.close());
+    assert.equal(await (await fetch(site.origin + fixture.start)).text(), '<main>Legacy</main>');
+    assert.deepEqual(await (await fetch(site.origin + '/api/ops/session_view',
+      { method: 'POST', body: JSON.stringify(fixture.responses[0].request) })).json(), { head: {} });
+    assert.deepEqual(site.unmet(), []);
+  }
+  files.set(v2, v1);
+  assert.throws(() => loadPolicy(read), /Invalid protected app route policy/);
+  files.delete(v2);
+  assert.equal(loadPolicy(read).hash, legacy.hash);
+});
 
 // T-FLT-181: exercise the real Git diff, complete queue membership, disk receipts and Check Run adapter together.
 // Fixture GitHub replies cannot qualify a live provider installation.

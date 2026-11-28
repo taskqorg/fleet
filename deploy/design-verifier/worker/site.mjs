@@ -1,6 +1,8 @@
 // In-memory HTTP for the normal release bundle inside the browser network namespace.
 // Only the operator's synthetic answers are served. There is no upstream.
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
+import { imageBytes, isImageFlow } from './image-journey.mjs';
 
 const mime = new Map([
   ['html', 'text/html; charset=utf-8'], ['js', 'text/javascript; charset=utf-8'], ['css', 'text/css; charset=utf-8'],
@@ -26,8 +28,16 @@ export async function openSite(files, scenario) {
   const allowed = new Set([scenario.start, scenario.target]);
   const fixtures = new Map(scenario.responses.map(f => [key(f.op, f.request), f.reply]));
   if (fixtures.size !== scenario.responses.length) throw new Error('duplicate fixture request');
+  const imageFlow = isImageFlow(scenario.flow);
+  const openSignal = imageFlow && scenario.thumbnail ? '/_fleet_image_open/' + randomBytes(16).toString('hex') : null;
+  const media = new Map();
+  if (imageFlow) for (const item of [scenario.image, ...(scenario.thumbnail ? [scenario.thumbnail] : [])]) {
+    const bytes = imageBytes(item);
+    if (media.has(item.path)) throw new Error('duplicate image fixture path');
+    media.set(item.path, bytes);
+  }
   const used = new Set(), missing = new Set();
-  let origin;
+  let origin, imageOpen = false;
   const server = createServer(async (request, response) => {
     const reply = (code, type, body) => {
       response.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -36,6 +46,26 @@ export async function openSite(files, scenario) {
     try {
       const url = new URL(request.url, origin);
       if (url.origin !== origin) return reply(404, 'text/plain', '');
+      if (openSignal && !imageOpen && request.method === 'POST' && request.url === openSignal) {
+        if (!used.has(scenario.thumbnail.path)) missing.add('image thumbnail missing before opening');
+        imageOpen = true;
+        return reply(204, 'text/plain', '');
+      }
+      if (imageFlow && url.pathname.startsWith('/api/results/')) {
+        const bytes = request.method === 'GET' && media.get(request.url);
+        if (!bytes) {
+          missing.add('image fixture');
+          return reply(404, 'text/plain', '');
+        }
+        if (scenario.thumbnail && !imageOpen && request.url === scenario.image.path) {
+          missing.add('image original requested before opening');
+          return reply(404, 'text/plain', '');
+        }
+        if (scenario.thumbnail && imageOpen && request.url === scenario.thumbnail.path && !used.has(request.url))
+          return reply(404, 'text/plain', '');
+        used.add(request.url);
+        return reply(200, 'image/png', bytes);
+      }
       if (request.method === 'POST' && /^\/api\/ops\/[a-z_]+$/.test(url.pathname) && !url.search) {
         const op = url.pathname.slice('/api/ops/'.length);
         let k;
@@ -72,7 +102,9 @@ export async function openSite(files, scenario) {
     origin,
     used,
     missing,
-    unmet: () => scenario.responses.filter(f => f.required && !used.has(key(f.op, f.request))).map(f => f.op),
+    openSignal,
+    unmet: () => [...scenario.responses.filter(f => f.required && !used.has(key(f.op, f.request))).map(f => f.op),
+      ...[...media.keys()].filter(path => !used.has(path))],
     forbidden: () => scenario.forbiddenOps?.filter(op => [...used].some(k => k.startsWith(op + ':'))) ?? [],
     close() {
       return new Promise(resolve => {
