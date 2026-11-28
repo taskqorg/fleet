@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { get as httpGet } from 'node:http';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { imageJourney, imageOpenSelector, imageScenarioOK, resolveImages, validateImages } from '../../deploy/design-verifier/worker/image-journey.mjs';
@@ -73,8 +74,16 @@ test('the isolated normal origin requires exact synthetic operations and both de
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
   }
   assert.deepEqual(site.unmet(), []);
-  for (const path of [original.path + '?', original.path + '?size=1', original.path + '/preview', '/api/results/unmapped'])
-    assert.equal((await get(path)).status, 404);
+  // Pass the raw request target so Node's fetch cannot normalize an empty query away.
+  for (const path of [original.path + '?', original.path + '?size=1', original.path + '/preview', '/api/results/unmapped']) {
+    const status = await new Promise((resolve, reject) => {
+      httpGet(site.origin, { path }, response => {
+        response.resume();
+        resolve(response.statusCode);
+      }).on('error', reject);
+    });
+    assert.equal(status, 404, path);
+  }
   assert.equal((await get(original.path, post({}))).status, 404);
   assert.deepEqual([...site.missing], ['task_get', 'image fixture']);
 });
