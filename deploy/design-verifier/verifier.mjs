@@ -1,5 +1,5 @@
 import { ProtectedDesignRejection, verifyProtectedDesignCandidate } from '../../packages/ui/scripts/design-protected.mjs';
-import { DesignAbsent, DesignBlocked, VerificationWait } from './provider.mjs';
+import { DesignAbsent, DesignBlocked, QueueModeUnconfirmed, VerificationWait } from './provider.mjs';
 
 const decision = ({ found, review, selected }) => ({
   number: found.number, head: found.head, branch: found.branch, writer: found.writer,
@@ -108,7 +108,8 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
     evidence.evidenceState = evidenceState;
     if (event.kind === 'pull_request') evidence.source = { branch: event.branch, repositoryId: event.sourceRepositoryId };
     if (event.kind === 'merge_group' && candidate) evidence.queue = {
-      ref: event.ref, commits: candidate.members.map(({ number, head, mergeCommit, branch, sourceRepositoryId, queueEntryId }) =>
+      ref: event.ref, mergeMethod: candidate.mergeMethod,
+      commits: candidate.members.map(({ number, head, mergeCommit, branch, sourceRepositoryId, queueEntryId }) =>
         ({ number, head, mergeCommit, branch, sourceRepositoryId, queueEntryId })),
       memberReceipts,
     };
@@ -143,8 +144,12 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
   try {
     return await publication(conclusion === 'success' && Boolean(visual.policy));
   } catch (err) {
-    if (!(err instanceof FreshnessError)) throw err;
-    failed(err.cause);
+    if (err instanceof QueueModeUnconfirmed) {
+      candidate = undefined;
+      failed(err);
+    } else if (err instanceof FreshnessError) {
+      failed(err.cause);
+    } else throw err;
     return publication();
   }
 }

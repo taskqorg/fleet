@@ -11,6 +11,7 @@ export const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(v
 const positive = value => Number.isSafeInteger(value) && value > 0;
 
 export class VerificationWait extends Error {}
+export class QueueModeUnconfirmed extends VerificationWait {}
 export class DesignBlocked extends Error {}
 export class DesignAbsent extends DesignBlocked {}
 const requireFact = (value, message) => { if (!value) throw new VerificationWait(message); };
@@ -55,16 +56,33 @@ export function githubCandidates(api) {
     return event;
   }
 
+  async function readQueueMode() {
+    const message = 'GitHub did not confirm one effective MERGE queue rule for Fleet main';
+    let rules;
+    try {
+      rules = await list('/rules/branches/' + target);
+    } catch {
+      throw new QueueModeUnconfirmed(message);
+    }
+    const queueRules = rules.filter(rule => rule?.type === 'merge_queue');
+    if (rules.some(rule => typeof rule?.type !== 'string' || !rule.type) ||
+        queueRules.length !== 1 || queueRules[0].parameters?.merge_method !== 'MERGE')
+      throw new QueueModeUnconfirmed(message);
+    return queueRules[0].parameters.merge_method;
+  }
+
   async function readQueue() {
     const entries = new Map();
+    const ids = new Set();
+    const cursors = new Set();
+    let total;
     let cursor = null;
-    do {
+    for (;;) {
       const result = await api('/graphql', { method: 'POST', body: { variables: { cursor }, query: `
         query FleetDesignQueue($cursor: String) {
           repository(owner: "taskqorg", name: "fleet") {
             databaseId nameWithOwner
             mergeQueue(branch: "main") {
-              configuration { mergeMethod }
               entries(first: 100, after: $cursor) {
                 totalCount pageInfo { hasNextPage endCursor }
                 nodes { id pullRequest { number headRefOid baseRefName state } }
@@ -72,30 +90,39 @@ export function githubCandidates(api) {
             }
           }
         }` } });
-      const owner = result.data?.repository;
-      const queue = owner?.mergeQueue;
-      const page = queue?.entries;
-      requireFact(!result.errors?.length && owner?.databaseId === repositoryId && owner.nameWithOwner === 'taskqorg/fleet' &&
-        queue?.configuration?.mergeMethod === 'MERGE' && Array.isArray(page?.nodes) && typeof page.pageInfo?.hasNextPage === 'boolean',
+      const owner = result?.data?.repository;
+      const page = owner?.mergeQueue?.entries;
+      requireFact((result?.errors === undefined || (Array.isArray(result.errors) && result.errors.length === 0)) &&
+        owner?.databaseId === repositoryId && owner.nameWithOwner === 'taskqorg/fleet' && Array.isArray(page?.nodes) &&
+        typeof page.pageInfo?.hasNextPage === 'boolean',
       'GitHub did not confirm the live merge queue');
+      total ??= page.totalCount;
+      requireFact(Number.isSafeInteger(total) && total >= 0 && page.totalCount === total,
+        'GitHub returned an inconsistent merge queue count');
       for (const row of page.nodes) {
         const pr = row?.pullRequest;
-        requireFact(row?.id && positive(pr?.number) && sha(pr.headRefOid) && pr.baseRefName === target && pr.state === 'OPEN' &&
-          !entries.has(pr.number), 'GitHub returned incomplete queue member facts');
+        requireFact(typeof row?.id === 'string' && row.id && !ids.has(row.id) && positive(pr?.number) &&
+          sha(pr.headRefOid) && pr.baseRefName === target && pr.state === 'OPEN' && !entries.has(pr.number),
+        'GitHub returned incomplete queue member facts');
+        ids.add(row.id);
         entries.set(pr.number, { id: row.id, number: pr.number, head: pr.headRefOid });
       }
-      const next = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-      requireFact(next ? next !== cursor && page.nodes.length > 0 : entries.size === page.totalCount && !page.pageInfo.hasNextPage,
+      if (!page.pageInfo.hasNextPage) {
+        requireFact(entries.size === total, 'GitHub returned an incomplete merge queue page');
+        return entries;
+      }
+      cursor = page.pageInfo.endCursor;
+      requireFact(typeof cursor === 'string' && cursor && !cursors.has(cursor) && page.nodes.length > 0 && entries.size < total,
         'GitHub returned an incomplete merge queue page');
-      cursor = next;
-    } while (cursor);
-    return entries;
+      cursors.add(cursor);
+    }
   }
 
   async function readGroup(event, git) {
     const match = queueRef.exec(event.ref);
     requireFact(match, 'GitHub returned an unsupported merge queue ref');
     await assertGroupRef(event);
+    const mergeMethod = await readQueueMode();
     const chain = await git.groupChain(event);
     requireFact(chain.length && chain[0].parent === match[2], 'The queue ref does not match its first parent');
     const queue = [...(await readQueue()).values()];
@@ -113,7 +140,7 @@ export function githubCandidates(api) {
       members.push({ ...member, mergeCommit: commit, queueEntryId: linked[0].id });
     }
     requireFact(members[0].number === Number(match[1]), 'The queue ref names a different final PR');
-    return { ...event, complete: true, members: members.reverse() };
+    return { ...event, complete: true, mergeMethod, members: members.reverse() };
   }
 
   return {
@@ -147,13 +174,17 @@ export function githubCandidates(api) {
       }
       if (candidate) {
         const queue = await readQueue();
+        const entries = [...queue.values()];
         for (const member of candidate.members) {
           const entry = queue.get(member.number);
           requireFact(entry?.id === member.queueEntryId && entry?.head === member.head &&
+            !entries.some(other => other.number !== member.number && other.head === member.head) &&
             samePR(await readPR(member.number), member), 'A merge group member has moved or left the queue');
         }
       }
       await assertGroupRef(event);
+      // Re-read the effective rule after membership, PR and ref checks, just before the check write.
+      if (candidate) await readQueueMode();
     },
   };
 }

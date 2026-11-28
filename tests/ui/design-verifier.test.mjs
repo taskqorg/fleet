@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -56,13 +56,25 @@ test('the verifier gives each original head its own receipt and fences the cumul
   let runId = 0;
   let groupTrusted = true;
   let queueMemberLimit = 2;
+  const mergeRule = { type: 'merge_queue', parameters: { merge_method: 'MERGE' } };
+  let effectiveRules = () => [mergeRule];
+  let mutateQueuePage = result => result;
   const api = async (endpoint, options) => {
-    if (endpoint === '/graphql') return { data: { repository: { databaseId: repositoryId, nameWithOwner: 'taskqorg/fleet',
-      mergeQueue: { configuration: { mergeMethod: 'MERGE' }, entries: { totalCount: queueMemberLimit, pageInfo: { hasNextPage: false },
-        nodes: prs.slice(0, queueMemberLimit).map(({ number, head: { sha } }) => ({ id: 'queued-' + number,
-          pullRequest: { number, headRefOid: sha, baseRefName: 'main', state: 'OPEN' } })) } } } } };
+    if (endpoint === '/graphql') {
+      const restricted = options.body.query.includes('configuration');
+      const cursor = options.body.variables.cursor;
+      const members = prs.slice(0, queueMemberLimit);
+      const hasNextPage = !cursor && members.length > 1;
+      return mutateQueuePage({ ...(restricted && { errors: [{ type: 'FORBIDDEN', path: ['repository', 'mergeQueue', 'configuration'] }] }),
+        data: { repository: { databaseId: repositoryId, nameWithOwner: 'taskqorg/fleet',
+          mergeQueue: { entries: { totalCount: members.length, pageInfo: { hasNextPage, endCursor: 'page-two' },
+            nodes: (cursor ? members.slice(1) : members.slice(0, 1)).map(({ number, head: { sha } }) => ({
+              id: 'queued-' + number, pullRequest: { number, headRefOid: sha, baseRefName: 'main', state: 'OPEN' },
+            })) } } } } }, cursor);
+    }
     const request = new URL(endpoint, 'https://api.github.com');
     const pathname = request.pathname.slice(repo.length);
+    if (pathname === '/rules/branches/main') return effectiveRules(request.searchParams.get('page'));
     if (pathname === '/pulls') return prs;
     if (pathname === '/pulls/1') return prs[0];
     if (pathname === '/pulls/2') return prs[1];
@@ -102,8 +114,43 @@ test('the verifier gives each original head its own receipt and fences the cumul
   assert.equal(grouped.conclusion, 'success');
   assert.equal(grouped.head, head);
   assert.equal(grouped.appId, appId);
+  const retained = JSON.parse(readFileSync(join(path, 'receipts', grouped.externalId + '.json'), 'utf8'));
+  assert.equal(retained.evidence.queue.mergeMethod, 'MERGE');
   assert.equal((await evaluate(group, deps)).checkRunId, grouped.checkRunId);
   const candidate = await provider.readCandidate(group, git);
+  const conflictingRule = { type: 'merge_queue', parameters: { merge_method: 'SQUASH' } };
+  let ruleReads = 0;
+  effectiveRules = () => [ruleReads++ === 0 ? mergeRule : conflictingRule];
+  const drifted = await evaluate(group, deps);
+  assert.equal(ruleReads, 2);
+  assert.equal(drifted.conclusion, null);
+  assert.notEqual(drifted.checkRunId, grouped.checkRunId);
+  assert.match(drifted.reason, /one effective MERGE queue rule/);
+
+  for (const rules of [[], [{ type: 'merge_queue' }], [conflictingRule], [mergeRule, mergeRule]]) {
+    effectiveRules = () => rules;
+    const pending = await evaluate(group, deps);
+    assert.equal(pending.conclusion, null);
+    assert.match(pending.reason, /one effective MERGE queue rule/);
+  }
+  effectiveRules = page => page === '1'
+    ? [mergeRule, ...Array.from({ length: 99 }, () => ({ type: 'deletion' }))]
+    : [conflictingRule];
+  assert.equal((await evaluate(group, deps)).conclusion, null);
+  effectiveRules = () => { throw Object.assign(new Error('Forbidden'), { status: 403 }); };
+  assert.equal((await evaluate(group, deps)).conclusion, null);
+
+  effectiveRules = () => [mergeRule];
+
+  mutateQueuePage = (result, cursor) => cursor ? { ...result, errors: [{ type: 'FORBIDDEN' }] } : result;
+  assert.match((await evaluate(group, deps)).reason, /did not confirm the live merge queue/);
+  mutateQueuePage = (result, cursor) => {
+    if (cursor) result.data.repository.mergeQueue.entries.totalCount++;
+    return result;
+  };
+  assert.match((await evaluate(group, deps)).reason, /inconsistent merge queue count/);
+  mutateQueuePage = result => result;
+
   queueMemberLimit = 1;
   await assert.rejects(provider.assertCurrent(group, candidate), /left the queue/);
   queueMemberLimit = 2;
