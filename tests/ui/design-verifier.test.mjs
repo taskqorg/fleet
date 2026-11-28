@@ -261,6 +261,19 @@ test('the verifier gives each original head its own receipt and fences the cumul
   groupTrusted = false;
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(unknown, deps)).conclusion, 'failure');
+  const stopped = new AbortController(); stopped.abort();
+  let stoppedWrites = 0;
+  await assert.rejects(evaluate(unknown, { ...deps, signal: stopped.signal,
+    checks: { publish: async () => { stoppedWrites++; } } }), /Verifier stopped/);
+  assert.equal(stoppedWrites, 0);
+  const during = new AbortController();
+  await assert.rejects(evaluate(unknown, { ...deps, signal: during.signal,
+    checks: { publish: async (_head, _id, _conclusion, _summary, assertCurrent) => {
+      during.abort(); await assertCurrent(); stoppedWrites++;
+    } } }), /Verifier stopped/);
+  assert.equal(stoppedWrites, 0);
+
+
   const pendingRenderer = await evaluate(unknown, { ...deps, rendererPending: true });
   assert.equal(pendingRenderer.conclusion, null);
   assert.match(pendingRenderer.reason, /temporarily unavailable/);

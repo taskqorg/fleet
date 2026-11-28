@@ -175,6 +175,23 @@ if (result.toString() !== '{\"probe\":\"fixture\"}') throw Error('unexpected rep
             broker.await_guest(listener, Process(), client, time.monotonic() + 1)
         listener.close(); client.close()
 
+    def test_unconfirmed_cleanup_leaves_a_durable_admission_fence(self):
+        from unittest.mock import patch
+        preflight = load('preflight', 'deploy/design-verifier/vm-preflight.py')
+        class Listener:
+            def bind(self, path): pass
+            def listen(self, count): pass
+            def close(self): pass
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(broker.socket, 'socket', return_value=Listener()), \
+                 patch.object(broker.os, 'chmod'), \
+                 patch.object(broker, 'run_checked', side_effect=ValueError('fixture startup')), \
+                 patch.object(broker, 'require_empty_job_cgroup', side_effect=RuntimeError('fixture cleanup')):
+                with self.assertRaises(broker.CleanupUnconfirmed):
+                    broker.run_vm(None, 1, b'n' * 32, H(b''), io.BytesIO(), 1, 2, root)
+            self.assertEqual(len(list(Path(root).glob('run.fence.*'))), 1)
+            with self.assertRaises(ValueError): preflight.check_clean_work(root)
+
     def test_cleanup_failure_cannot_send_success(self):
         client, server = socket.socketpair(); called = []
         def runner(*args): called.append('cleanup failed'); raise RuntimeError('cleanup')

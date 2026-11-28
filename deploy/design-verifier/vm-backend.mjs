@@ -104,7 +104,7 @@ export function validateVMProbe(bytes, expected, manifest) {
 }
 
 // connect is injected only by local tests; production callers use the fixed socket.
-export function vmBackend(expected, { connect = () => createConnection(VM_SOCKET), deadlineOverride } = {}) {
+export function vmBackend(expected, { connect = () => createConnection(VM_SOCKET), deadlineOverride, signal } = {}) {
   if (!hex(expected?.launchSha256)) throw new Error('Invalid protected VM launch identity');
   return {
     async run(job, args, bytes) {
@@ -116,7 +116,12 @@ export function vmBackend(expected, { connect = () => createConnection(VM_SOCKET
       const requestHash = sha(request.data), launch = Buffer.from(expected.launchSha256, 'hex');
       let socket, timer;
       try {
+        if (signal?.aborted) throw new Error('stopped');
         socket = connect();
+        const abort = () => socket.destroy(new Error('stopped'));
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+        socket.once('close', () => signal?.removeEventListener('abort', abort));
         timer = setTimeout(() => socket.destroy(new Error('deadline')), deadlineOverride ?? spec.deadline);
         const input = reader(socket);
         const challenge = await input.take(40);

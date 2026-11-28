@@ -68,7 +68,7 @@ async function fixture(t, behavior = {}) {
   });
   await new Promise((resolve, reject) => { server.on('error', reject); server.listen(path, resolve); });
   t.after(async () => { await new Promise(resolve => server.close(resolve)); rmSync(dir, { recursive: true, force: true }); });
-  return { seen, client: vmBackend({ launchSha256 }, { connect: () => createConnection(path), deadlineOverride: 200 }) };
+  return { seen, client: vmBackend({ launchSha256 }, { connect: () => createConnection(path), deadlineOverride: 200, signal: behavior.signal }) };
 }
 
 test('socket probe result matches the protected runtime', async t => {
@@ -149,4 +149,13 @@ test('installer stages exactly the supported fixed bwrap mount targets', t => {
   rmSync(join(root, 'trusted-compare')); writeFileSync(join(root, 'trusted-compare'), 'preserve');
   assert.notEqual(run().status, 0);
   assert.equal(readFileSync(join(root, 'trusted-compare'), 'utf8'), 'preserve');
+});
+
+test('stopping aborts an in-flight VM request', async t => {
+  const stop = new AbortController();
+  const { client } = await fixture(t, { stall: true, signal: stop.signal });
+  const pending = client.run('render', ['--probe']);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  stop.abort();
+  await assert.rejects(pending, VerificationWait);
 });

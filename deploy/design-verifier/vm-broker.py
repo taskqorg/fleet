@@ -342,7 +342,13 @@ def require_empty_job_cgroup():
         raise RuntimeError('job cgroup still has other processes')
 
 
+class CleanupUnconfirmed(Exception):
+    pass
+
+
 def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
+    # A durable marker fences socket reactivation if any teardown step fails.
+    fence = Path(tempfile.mkdtemp(prefix='run.fence.', dir=root))
     run = Path(tempfile.mkdtemp(prefix='run.', dir=root))
     overlay = run / 'overlay.qcow2'
     guest_path, qmp_path = str(run / 'guest.sock'), str(run / 'qmp.sock')
@@ -410,8 +416,12 @@ def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
             except OSError:
                 cleanup_failed = True
         if cleanup_failed or run.exists():
-            raise RuntimeError('VM cleanup incomplete')
-        require_empty_job_cgroup()
+            raise CleanupUnconfirmed('VM cleanup incomplete; operator review required')
+        try:
+            require_empty_job_cgroup()
+            fence.rmdir()
+        except (OSError, RuntimeError) as error:
+            raise CleanupUnconfirmed('VM cleanup unconfirmed; operator review required') from error
 
 
 def serve(client, manifest_loader=load_manifest, runner=run_vm, root=STATE):
@@ -464,6 +474,9 @@ def main():
             with client:
                 serve(client)
         except StopRequested:
+            break
+        except CleanupUnconfirmed:
+            print('renderer fenced: VM cleanup requires operator review', file=sys.stderr, flush=True)
             break
         except (OSError, ValueError, EOFError, TimeoutError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
             print('renderer job unconfirmed: ' + type(error).__name__, file=sys.stderr, flush=True)
