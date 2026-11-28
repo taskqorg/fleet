@@ -28,7 +28,9 @@ YAML has no renderer: its source is already its readable form.
 
 **Viewers.** Text and markdown (rendered, with raw toggle); diff (unified and split, file list on the left); image (fit in the result; enlarged view follows the rule below); video (poster frame, native controls); preview link (URL, last check, "Open preview"); 3D (placeholder until defined); unknown type (metadata and download only).
 
-**Enlarging images (owner).** An embedded enlarged view may be offered only when the visible image area occupies the entire available screen: navigation and panels do not take space from it. Where that is not possible, open the original file in the standard viewer. Prefer built-in platform capabilities to a custom copy of a system image viewer. This is the target for images opened from any result or question; zoom is not built yet.
+**Enlarging images (owner).** Offer inline enlargement only when the image stage can occupy the entire available area. Put controls over the image and keep the original file directly accessible from the trusted app. Where the stage cannot fill the area, use the standard viewer for the original file. Prefer native fullscreen, modal dismissal and file navigation.
+
+**Question images.** Conversation and Task Details use the same viewer for images linked from a question. It opens to fill the available area, with Fit, Actual size, zoom and pan based on the decoded original's dimensions. Back to question and Escape restore the source tab, scroll and focus. The original opens in the same tab and browser Back restores that question. Check both normal question routes at desktop and phone widths in both themes, including the original-file return. Enlargement for the Results view is pending.
 
 **States.** Loading (header shown at once, body skeleton), ready, unavailable ("No holding store is online. Last copy on windows, seen 2h ago"; never "lost"), too large to preview (download only), error.
 

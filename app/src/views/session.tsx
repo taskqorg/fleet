@@ -479,7 +479,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
             {/* Keyed by question: a live reread updates the card in place (its typed answer and focus stay). */}
             <div class="sv-questions" tabindex={0} aria-label="Open questions">
               <For each={openQs()} keyed={q => q.id}>
-                {oq => <OpenQuestion q={{ ...oq(), options: optionsOf(oq()) }} answers={answers} />}
+                {oq => <OpenQuestion q={{ ...oq(), options: optionsOf(oq()) }} answers={answers} showImages />}
               </For>
               <Show when={life() === 'failed' && !openQs().length}>
                 <QuestionCard tone="danger" question={`The last run failed${runError() ? `: ${runError()}` : ''}`} choices={[{ label: 'Retry', primary: true }]} onAnswer={retryLast} />

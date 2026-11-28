@@ -88,7 +88,7 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
       pan(offset().x + (e.key === 'ArrowLeft' ? 40 : e.key === 'ArrowRight' ? -40 : 0), offset().y + (e.key === 'ArrowUp' ? 40 : e.key === 'ArrowDown' ? -40 : 0));
     }
   };
-  return <section class="qiv" ref={el => { viewer = el; }} onKeyDown={key}>
+  return <section class="qiv th-dark" ref={el => { viewer = el; }} onKeyDown={key}>
     <header class={['qiv-header', { compact: !controls() }]}>
       <Button label="Back to question" icon="arrow-left" iconOnly onClick={p.onClose} />
       <Show when={controls()}>
@@ -108,7 +108,7 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
       ref={el => { stage = el; observer = new ResizeObserver(measure); observer.observe(el); }}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
       onWheel={e => { e.preventDefault(); zoom(scale() * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }}>
-      <Show when={failed()}><div role="alert">Image could not be loaded. <a href={p.src} target="_blank" rel="noopener noreferrer">Open original</a></div></Show>
+      <Show when={failed()}><div role="alert">Image could not be loaded. Return to the question to open the original.</div></Show>
       <img ref={el => { picture = el; }} onLoad={() => { setFailed(false); measure(); }} onError={() => setFailed(true)}
         draggable={false} src={p.src} alt={p.title} style={{ width: `${fitWidth() * scale()}px`, transform: `translate(${offset().x}px, ${offset().y}px)` }} />
     </div>

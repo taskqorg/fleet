@@ -307,8 +307,27 @@ dialog.side-sheet:has(> .qiv)::backdrop { background: transparent; overflow: hid
   .qiv-tools .btn:last-child { font-size:11px; padding-inline:5px; }
 }
 
-.qiv-attachments { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.qiv-attachment { display: grid; gap: var(--space-1); justify-items: start; max-width: 15rem; }
-.qiv-thumbnail { padding: 0; border: 0; background: transparent; cursor: pointer; max-width: 100%; }
-.qiv-thumbnail img { display: block; max-width: 100%; max-height: 9rem; object-fit: contain; }
+.qiv-attachments { display: grid; gap: var(--space-2); min-width: 0; }
+.qiv-attachments:empty { display: none; }
+.qiv-attachment {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0;
+  padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface);
+}
+.qiv-thumbnail {
+  flex: none; width: 110px; height: 70px; padding: 0; overflow: hidden; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-sunken);
+}
+.qiv-thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .qiv-thumbnail:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.qiv-file { flex: 1; min-width: 0; }
+.qiv-file > * { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qiv-file small, .qiv-original, .qiv-blocked { color: var(--fg-muted); font-size: var(--font-size-sm); }
+.qiv-original { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
+.qiv-blocked { flex-basis: 100%; }
+@media (max-width: 600px) {
+  .qiv-attachment { display: grid; grid-template-columns: 88px minmax(0, 1fr); justify-items: start; }
+  .qiv-thumbnail { width: 88px; height: 60px; }
+  .qiv-file { width: 100%; }
+  .qiv-attachment > .btn, .qiv-original { grid-column: 2; min-height: 44px; }
+  .qiv-blocked { grid-column: 1 / -1; }
+}

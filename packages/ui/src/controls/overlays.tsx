@@ -348,45 +348,108 @@ function EntityCardDialog(p: { cur: Shown; onImage: (src: string, title: string,
   );
 }
 
-// A question may name stored result codes in its own text. Resolve only those references through
-// the existing batched reference registry; never fetch the original bytes until the user opens an image.
+// Resolve question files through the existing access-checked reference registry.
 let openQuestionImage: ((src: string, title: string, anchor: HTMLElement, blocked: () => void) => void) | undefined;
-export function QuestionImages(p: { text: string }) {
-  const refs = createMemo(() => [...new Set([...p.text.matchAll(ENTITY_CODE)].map(m => m[0]).filter(code => code.startsWith('R-')))]);
-  return <div class="qiv-attachments"><For each={refs()}>{code => <QuestionImageReference code={code} />}</For></div>;
+export function QuestionImages(p: { text: string; questionId?: string | null; artifactIds?: unknown }) {
+  const refs = createMemo(() => [...new Set([
+    ...(Array.isArray(p.artifactIds) ? p.artifactIds.filter((id): id is string => typeof id === 'string') : []),
+    ...[...p.text.matchAll(UUID_REF)].map(m => m[0].toLowerCase()),
+    ...[...p.text.matchAll(ENTITY_CODE)].map(m => m[0]).filter(code => code.startsWith('R-')),
+  ])]);
+  return <div class="qiv-attachments"><For each={refs()}>{reference => <QuestionImageReference reference={reference} questionId={p.questionId} />}</For></div>;
 }
-function QuestionImageReference(p: { code: string }) {
+
+type OriginalReturn = { key: string; scroll: number[] };
+export function questionImageReturnPending(): boolean {
+  return typeof history !== 'undefined' && typeof history.state?.questionImageOriginal?.key === 'string';
+}
+
+function scrollParents(element: HTMLElement) {
+  const parents: HTMLElement[] = [];
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    if (parent === document.scrollingElement || /auto|scroll/.test(getComputedStyle(parent).overflowY)) parents.push(parent);
+  }
+  return parents;
+}
+
+function OriginalImageLink(p: { href: string; questionId?: string | null; label?: string }) {
+  let anchor: HTMLAnchorElement | undefined;
+  const key = () => JSON.stringify([p.questionId, p.href]);
+  const restore = () => {
+    const saved: OriginalReturn | undefined = history.state?.questionImageOriginal;
+    if (!anchor || saved?.key !== key()) return;
+    requestAnimationFrame(() => {
+      if (!anchor?.isConnected || history.state?.questionImageOriginal?.key !== saved.key) return;
+      scrollParents(anchor).forEach((parent, i) => { if (Number.isFinite(saved.scroll[i])) parent.scrollTop = saved.scroll[i]; });
+      anchor.focus({ preventScroll: true });
+      const state = { ...history.state };
+      delete state.questionImageOriginal;
+      history.replaceState(state, '');
+    });
+  };
+  onSettled(restore);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pageshow', restore);
+    onCleanup(() => window.removeEventListener('pageshow', restore));
+  }
+  return <a class="qiv-original" ref={el => { anchor = el; }} href={p.href} rel="noreferrer" onClick={e => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const scroll = scrollParents(e.currentTarget).map(parent => parent.scrollTop);
+    history.replaceState({ ...history.state, questionImageOriginal: { key: key(), scroll } }, '');
+  }}>{p.label ?? 'Open original'}</a>;
+}
+
+function QuestionImageReference(p: { reference: string; questionId?: string | null }) {
   const source = useContext(EntityCards);
-  const holder = source?.live?.({ kind: 'result', code: p.code });
+  const holder = source?.live?.(p.reference.startsWith('R-') ? { kind: 'result', code: p.reference } : { id: p.reference });
   onCleanup(() => holder?.release());
   const [blocked, setBlocked] = createSignal(false);
+  const [dimensions, setDimensions] = createSignal('');
   const data = () => holder?.read();
-  return <Show when={data()?.kind === 'result' && (data()?.preview?.view === 'image' || data()?.mediaType?.startsWith('image/')) && source?.src ? data() : null} keyed>{d =>
+  return <Show when={data()?.kind === 'result' && data()?.state === 'stored' && data()?.mediaType?.startsWith('image/') && source?.src ? data() : null}>{d => {
+    const original = () => source!.src!(d().id);
+    const open = (e: MouseEvent) => openQuestionImage?.(original(), d().title, e.currentTarget as HTMLElement, () => setBlocked(true));
+    return (
     <div class="qiv-attachment">
-      <button type="button" class="qiv-thumbnail" aria-label={`Open ${d.title}`} onClick={e => openQuestionImage?.(source!.src!(d.id), d.title, e.currentTarget, () => setBlocked(true))}>
-        <Show when={d.preview && d.preview.resultId !== d.id} fallback={<span>Open image: {d.title}</span>}><img src={source!.src!(d.preview!.resultId)} alt={d.title} loading="lazy" decoding="async" /></Show>
+      <button type="button" class="qiv-thumbnail" aria-label={`Open ${d().title}`} onClick={open}>
+        <img src={source!.src!(d().preview?.resultId ?? d().id)} alt="" loading="lazy" decoding="async"
+          onLoad={e => { if (d().preview?.resultId === undefined || d().preview?.resultId === d().id) setDimensions(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`); }} />
       </button>
-      <a href={source!.src!(d.id)} target="_blank" rel="noopener noreferrer">Open original</a>
-      <Show when={blocked()}><span role="status">Full-screen viewing is unavailable in this embedded view. Open the original from the surrounding app.</span></Show>
+      <span class="qiv-file"><strong>{d().title}</strong><Show when={dimensions()}><small>{dimensions()}</small></Show></span>
+      <Button label="Open image" name={`Open image: ${d().title}`} icon="maximize-2" onClick={open} />
+      <OriginalImageLink href={original()} questionId={p.questionId} label={d().mediaType === 'image/png' ? 'Open original PNG' : 'Open original'} />
+      <Show when={blocked()}><span class="qiv-blocked" role="status">Fullscreen is unavailable here. Use the original file link.</span></Show>
     </div>
-  }</Show>;
+    );
+  }}</Show>;
 }
 
 /** The floating card of the open EntityCode: mount once (AppShell does). A non-modal dialog (OR-14 informational, OR-16
  *  surface): under the code, above it when there is no room, kept inside the window. Escape, a click outside, a scroll,
  *  focus leaving it or the code again close it; Escape and the Open action give focus back to the code. */
 export function EntityCardLayer() {
-  const [image, setImage] = createSignal<{ src: string; title: string; anchor: HTMLElement } | null>(null);
+  const [image, setImage] = createSignal<{ src: string; title: string; anchor: HTMLElement; scroll: [HTMLElement, number][] } | null>(null);
   let fullscreen = false;
   let closing = false;
+  let opening = false;
   const openImage = (src: string, title: string, anchor: HTMLElement, blocked: () => void) => {
-    const open = () => { showCard(null); setImage({ src, title, anchor }); requestAnimationFrame(() => document.querySelector<HTMLElement>('.qiv-stage')?.focus({ preventScroll: true })); };
+    if (opening || closing || image()) return;
+    const scroll = scrollParents(anchor).map((parent): [HTMLElement, number] => [parent, parent.scrollTop]);
+    const open = () => {
+      showCard(null);
+      setImage({ src, title, anchor, scroll });
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('.qiv-stage')?.focus({ preventScroll: true }));
+    };
     const embedded = window.self !== window.top;
     if (!document.fullscreenEnabled || !document.documentElement.requestFullscreen) {
       if (!embedded) open(); else blocked();
       return;
     }
-    document.documentElement.requestFullscreen().then(() => { fullscreen = true; open(); }).catch(() => { if (!embedded) open(); else blocked(); });
+    opening = true;
+    document.documentElement.requestFullscreen().then(() => {
+      fullscreen = true;
+      open();
+    }, () => { if (!embedded) open(); else blocked(); }).finally(() => { opening = false; });
   };
   openQuestionImage = openImage;
   onCleanup(() => { if (openQuestionImage === openImage) openQuestionImage = undefined; });
@@ -395,9 +458,13 @@ export function EntityCardLayer() {
     if (!current || closing) return;
     closing = true;
     setImage(null);
+    const exit = fullscreen && document.fullscreenElement === document.documentElement ? document.exitFullscreen().catch(() => {}) : Promise.resolve();
     fullscreen = false;
-    const exit = document.fullscreenElement ? document.exitFullscreen().catch(() => {}) : Promise.resolve();
-    void exit.then(() => requestAnimationFrame(() => { if (current.anchor.isConnected) current.anchor.focus({ preventScroll: true }); closing = false; }));
+    void exit.then(() => requestAnimationFrame(() => {
+      current.scroll.forEach(([parent, top]) => { parent.scrollTop = top; });
+      if (current.anchor.isConnected) current.anchor.focus({ preventScroll: true });
+      closing = false;
+    }));
   };
   const onFullscreen = () => { if (fullscreen && !document.fullscreenElement && !closing) closeImage(); };
   document.addEventListener('fullscreenchange', onFullscreen);
@@ -488,7 +555,7 @@ function CardBody(p: { r: EntityRef; onOpen: () => void; imageAnchor: HTMLElemen
             <Show when={data.preview && source?.src ? data.preview : null} keyed>
               {pv => (
                 <a class="ec-pv" href={data.path ?? undefined} onClick={e => {
-                  if (pv.view === 'image' && data.kind === 'result' && p.imageAnchor.closest('[data-ui="question-card"], [data-ui="decision-block"]') && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+                  if (pv.view === 'image' && data.kind === 'result' && p.imageAnchor.closest('[data-question-images]') && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) {
                     e.preventDefault();
                     p.onImage(source!.src!(data.id), data.title, p.imageAnchor, () => setImageBlocked(true));
                   } else go(e);

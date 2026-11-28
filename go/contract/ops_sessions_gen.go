@@ -1707,6 +1707,7 @@ func (v *SessionUpdateRequest) Validate() error {
 }
 
 type SessionViewQuestion struct {
+	ArtifactIds       []string `json:"artifactIds,omitempty"`
 	DeliveryAuthority *bool    `json:"deliveryAuthority,omitempty"`
 	ExecutionId       *string  `json:"executionId"`
 	Id                string   `json:"id"`

@@ -7,6 +7,7 @@ import {
   ListDetail, LiveRow, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button, WorkFacts, peerFence,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
+  questionImageReturnPending,
   type TreeNode, type Harness, type StateOf, type Stat, states as states_, isFinished, openStates,
   type Tone, life, keyConnection, answerChoices, deliveryAuthorityContent, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
@@ -333,7 +334,8 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   const tDoc = useOp('task_get', () => ({ taskId: props.id }));
   const board = useSwarmBoard('task', () => props.id);
   const hasSwarm = createMemo(() => hasSwarmBoard(board.data));
-  const [tab, setTab] = createSignal<'history' | 'details' | 'swarm'>('history', { ownedWrite: true });
+  const initialTab = () => questionImageReturnPending() ? 'details' : 'history';
+  const [tab, setTab] = createSignal<'history' | 'details' | 'swarm'>(initialTab(), { ownedWrite: true });
   const [busy, setBusy] = createSignal<string | null>(null, { ownedWrite: true });
   const [failure, setFailure] = createSignal<string | null>(null, { ownedWrite: true });
   const answers = useAnswers();
@@ -342,7 +344,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   createEffect(
     () => props.id,
     () => {
-      setTab('history');
+      setTab(initialTab());
       setBusy(null);
       setFailure(null);
       setConfirming(false);
@@ -414,6 +416,8 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
               <>
                 <DecisionBlock
                   question={authority()?.title ?? q.text}
+                  questionId={q.id}
+                  artifactIds={q.artifactIds}
                   askedBy={actor(q.askedBy) || q.kind}
                   addressedTo="you"
                   since={ms(q.askedAt) ?? now()}
