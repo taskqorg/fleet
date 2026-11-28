@@ -342,6 +342,145 @@ func TestDeliveredTaskAcceptance(t *testing.T) {
 			})
 		}
 	})
+	t.Run("sequential GitLab merges with an open acceptance", func(t *testing.T) {
+		const project = "delivery-gitlab"
+		const repo = "example/project"
+		const host = "gitlab.example.com"
+		repoURL := "https://" + host + "/" + repo
+		e.opInto(t, "project_create", doc{"id": project, "requestId": project, "content": doc{
+			"settings": doc{"id": project, "name": project, "contextFiles": []string{"rules.md"},
+				"repos": []doc{{"remote": repoURL + ".git", "forge": "gitlab"}}, "integration": doc{"autoAccept": false}},
+			"contextFiles": []doc{{"path": "rules.md", "text": "Delivery fixture."}},
+		}}, headers, &doc{})
+		id, sid, firstRun, lastRun, artifact := newID(), newID(), newID(), newID(), newID()
+		lifecycleTask(t, e, id, sid, firstRun, "succeeded")
+		exec(t, "UPDATE task SET project_id=$2,result_destination='Deliver through GitLab and retain verification in Fleet.',created_at=$3 WHERE id=$1", id, project, landedAt.Add(-time.Hour))
+		exec(t, "UPDATE session SET project_id=$2 WHERE id=$1", sid, project)
+		exec(t, "UPDATE execution SET project_id=$2 WHERE id=$1", firstRun, project)
+		for _, run := range []string{newID(), newID(), lastRun} {
+			exec(t, `INSERT INTO execution (id,kind,state,observation,project_id,task_id,session_id,ended_at)
+				VALUES ($1,'agent_run','succeeded','confirmed',$2,$3,$4,$5)`, run, project, id, sid, landedAt)
+		}
+		exec(t, `UPDATE execution SET data='{"requiredArtifacts":["verification.txt"]}' WHERE id=$1`, lastRun)
+		exec(t, `INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,task_id,project_id,state)
+			VALUES($1,'prod',$2,5,'text/plain','verification.txt',$3,$4,$5,'stored')`, artifact, sha256hex([]byte("proof")), lastRun, id, project)
+		e.opInto(t, "worker_done", doc{"executionId": lastRun, "outcome": "succeeded", "summary": "Verified the delivered result."}, headers, &contract.WorkerDoneReply{})
+		get := func() contract.TaskDetail {
+			t.Helper()
+			var result contract.TaskDetail
+			e.opInto(t, "task_get", doc{"taskId": id}, headers, &result)
+			return result
+		}
+		task := get()
+		if task.NextAction == nil || task.NextAction.Kind != contract.TaskNextActionKindAcceptance {
+			t.Fatalf("expected acceptance after worker report, got %+v", task.NextAction)
+		}
+		offer := task.NextAction.Reference
+		branch := "fleet/" + sid
+		mr := func(number int64, opened, merged time.Time, hash string) glMR {
+			return glMR{IID: number, WebURL: fmt.Sprintf("%s/-/merge_requests/%d", repoURL, number), SourceBranch: branch,
+				SourceProjectID: 1, TargetBranch: "main", CreatedAt: opened.Format(time.RFC3339Nano), MergedAt: ptr(merged.Format(time.RFC3339Nano)),
+				SHA: strings.Repeat(hash, 40)}
+		}
+		first := mr(50, landedAt.Add(-30*time.Minute), landedAt.Add(-20*time.Minute), "a")
+		last := mr(53, landedAt.Add(-10*time.Minute), landedAt, "b")
+		_, deliveries := gitlabDeliveryStages(project, host, repo, glRepo{merged: []glMR{first, last}}, landedAt)
+		write := func(fn func(*Request) error) {
+			t.Helper()
+			if err := e.appStore.Write(e.ctx, nil, []string{GLOBAL}, fn); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Reproduce the already-retained ambiguity and fail-only decision on an older coordinator.
+		write(func(q *Request) error {
+			task, err := taskLoad(q, id)
+			if err != nil {
+				return err
+			}
+			old := deliveries[0]
+			old.Stage, old.Delivered = "ambiguous", false
+			return retainTaskDelivery(q, task, old)
+		})
+		runLifecycleWake(t, e, "task:"+id, time.Now().Add(time.Second))
+		task = get()
+		if task.NextAction == nil || task.NextAction.Kind != contract.TaskNextActionKindQuestion {
+			t.Fatalf("expected old delivery decision, got %+v", task.NextAction)
+		}
+		decision := task.NextAction.Reference
+		accept := doc{"questionId": offer, "answer": "accepted"}
+		if code, body := e.callJSON(t, "POST", "/api/ops/question_answer", accept, headers); code != 409 {
+			t.Fatalf("acceptance with old decision: %d %s", code, body)
+		}
+		write(func(q *Request) error {
+			if err := deliverySave(q, deliveryState{repos: map[string]*deliveryRepo{repo: {projects: []string{project}, delivered: deliveries}}}); err != nil {
+				return err
+			}
+			// An auditor replay must reach the same conclusion from the stored snapshot.
+			if err := restoreMissedTaskDeliveries(q); err != nil {
+				return err
+			}
+			return wakeTask(q, id)
+		})
+		runLifecycleWake(t, e, "task:"+id, time.Now().Add(time.Second))
+		task = get()
+		if task.AcceptedAt != nil || task.NextAction == nil || task.NextAction.Kind != contract.TaskNextActionKindAcceptance || task.NextAction.Reference != offer {
+			t.Fatalf("expected the original offer to await an explicit answer, got %+v", task.NextAction)
+		}
+		for _, question := range task.Questions {
+			if question.Id == decision && question.State != "withdrawn" {
+				t.Fatalf("stale delivery decision remains %s", question.State)
+			}
+		}
+		e.opInto(t, "question_answer", accept, headers, &contract.QuestionRow{})
+		task = get()
+		if task.State != "completed" || deref(task.AcceptedBy) != testOwnerEmail ||
+			len(task.AcceptedArtifactIds) != 1 || task.AcceptedArtifactIds[0] != artifact {
+			t.Fatalf("expected explicit acceptance with stored verification, got state=%s artifacts=%v", task.State, task.AcceptedArtifactIds)
+		}
+	})
+}
+
+func TestSequentialGitLabDeliveryKeepsCompetingMatchesAmbiguous(t *testing.T) {
+	const (
+		repo = "example/project"
+		host = "gitlab.example.com"
+		sid  = "11111111-2222-4333-8444-555555555555"
+	)
+	repoURL := "https://" + host + "/" + repo
+	start := time.Date(2026, 11, 28, 0, 0, 0, 0, time.UTC)
+	first := glMR{IID: 10, WebURL: repoURL + "/-/merge_requests/10", SourceBranch: "fleet/" + sid, TargetBranch: "main",
+		SourceProjectID: 1, CreatedAt: start.Format(time.RFC3339), MergedAt: ptr(start.Add(time.Minute).Format(time.RFC3339)), SHA: strings.Repeat("a", 40)}
+	last := glMR{IID: 20, WebURL: repoURL + "/-/merge_requests/20", SourceBranch: first.SourceBranch, TargetBranch: first.TargetBranch,
+		SourceProjectID: 1, CreatedAt: start.Add(2 * time.Minute).Format(time.RFC3339), MergedAt: ptr(start.Add(3 * time.Minute).Format(time.RFC3339)), SHA: strings.Repeat("b", 40)}
+	for _, tc := range []struct {
+		name, opened, target, requirements string
+		blocked, fork                      bool
+	}{
+		{name: "overlapping merge requests", opened: first.CreatedAt},
+		{name: "different target branch", target: "release"},
+		{name: "same branch name in a fork", fork: true},
+		{name: "explicit pull request selection", requirements: `{"prNumber":10}`},
+		{name: "blocked request on the branch", blocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := last
+			next.CreatedAt = firstString(tc.opened, next.CreatedAt)
+			next.TargetBranch = firstString(tc.target, next.TargetBranch)
+			if tc.fork {
+				next.SourceProjectID = 2
+			}
+			_, candidates := gitlabDeliveryStages("project", host, repo, glRepo{merged: []glMR{next, first}}, start.Add(time.Hour))
+			if tc.blocked {
+				candidates = append(candidates, deliveryMergedPR{Number: 30, Repo: repo, URL: repoURL + "/-/merge_requests/30",
+					Branch: first.SourceBranch, Stage: "pr-failed", HeadSHA: strings.Repeat("c", 40)})
+			}
+			pr, ok := matchTaskDeliveredPR(db.TaskDeliveryCandidatesRow{CreatedAt: start, CompletionRequirements: []byte(tc.requirements)},
+				deliveryProjectPolicy{repos: map[string]bool{host + "/" + repo: true}}, []string{sid}, nil, candidates)
+			if !ok || pr.Stage != "ambiguous" || pr.Delivered {
+				t.Fatalf("expected ambiguous delivery, got %+v, matched=%t", pr, ok)
+			}
+		})
+	}
 }
 
 // Requirement: deliveryMergedPR JSON payload stored on acceptance question data and audit_log omits internal-only flags.
