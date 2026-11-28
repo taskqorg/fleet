@@ -65,7 +65,8 @@ test('the isolated normal origin requires exact synthetic operations and both de
   assert.equal((await get('/api/ops/task_get', post({ taskId: 'another-task' }))).status, 404);
   for (const f of s.responses)
     assert.deepEqual(await (await get('/api/ops/' + f.op, post(f.request))).json(), f.reply);
-  for (const asset of [original, thumbnail]) {
+  for (const asset of [thumbnail, original]) {
+    if (asset === original) site.beginImageOpen();
     const response = await get(asset.path);
     assert.equal(response.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
@@ -77,15 +78,40 @@ test('the isolated normal origin requires exact synthetic operations and both de
   assert.deepEqual([...site.missing], ['task_get', 'image fixture']);
 });
 
-test('returned capture blocks scroll or focus drift without repairing either', async () => {
+test('media phases reject eager originals and late first thumbnails while allowing a single asset', async () => {
+  const s = { ...scenario('task', 'image-open'), responses: [], ...workerImages };
+  for (const [fixture, early, expected, missing] of [
+    [s, original, 404, 'image original requested before opening'],
+    [s, null, null, 'image thumbnail missing before opening'],
+    [{ ...s, thumbnail: undefined }, original, 200, null],
+  ]) {
+    const site = await openSite({}, fixture);
+    try {
+      if (early) assert.equal((await fetch(site.origin + early.path)).status, expected);
+      if (early === original && fixture.thumbnail)
+        assert.equal((await fetch(site.origin + thumbnail.path)).status, 200);
+      site.beginImageOpen();
+      assert.equal((await fetch(site.origin + original.path)).status, 200);
+      const late = fixture.thumbnail && !early;
+      if (fixture.thumbnail) assert.equal((await fetch(site.origin + thumbnail.path)).status, late ? 404 : 200);
+      assert.deepEqual(site.unmet(), late ? [thumbnail.path] : []);
+      assert.deepEqual([...site.missing], missing ? [missing] : []);
+    } finally { await site.close(); }
+  }
+});
+
+function journeyPage(flow) {
   const frame = { width: 390, height: 844 };
   const origin = 'http://synthetic.invalid';
+  const spec = { ...scenario('task', flow), image: original, thumbnail: undefined };
   const document = { activeElement: null };
   const parent = { scrollLeft: 0, scrollTop: 96 };
+  const stageEdges = { left: 0, top: 0, right: frame.width, bottom: frame.height };
+  const imageEdges = { left: -480, top: 0, right: 870, bottom: frame.height };
   const trigger = { isConnected: true, ownerDocument: document, parentElement: parent };
-  const stage = { isConnected: true, ownerDocument: document, clientWidth: frame.width, clientHeight: frame.height };
+  const stage = { isConnected: true, ownerDocument: document, getBoundingClientRect: () => stageEdges };
   const picture = { complete: true, naturalWidth: 1600, naturalHeight: 1000, currentSrc: origin + original.path,
-    offsetWidth: 1350, offsetHeight: 844, parentElement: stage, decode: async () => {} };
+    offsetWidth: 1350, offsetHeight: 844, parentElement: stage, decode: async () => {}, getBoundingClientRect: () => imageEdges };
   const calls = [];
   let opened = false;
   const handles = new Map([
@@ -113,12 +139,32 @@ test('returned capture blocks scroll or focus drift without repairing either', a
     evaluate: async callback => callback(el),
     elementHandle: async () => ({ evaluate: async callback => callback(el), value: el, dispose: async () => {} }),
   });
-  const page = { ...locator('page'), evaluate: async () => true,
+  const page = { ...locator('page'), evaluate: async () => true, url: () => origin + spec.start,
     waitForFunction: async (callback, handle) => assert.equal(callback(handle.value), true) };
-  const journey = await imageJourney(page, { ...scenario('task', 'image-returned'), ...workerImages },
-    frame, origin, async () => {}, () => {});
+  const start = () => imageJourney(page, spec, frame, origin, async () => {}, () => {}, () => calls.push('begin opening'));
+  return { start, calls, parent, document, stage, stageEdges, imageEdges };
+}
+
+test('an open capture rejects a displaced stage or image even at the same dimensions', async () => {
+  const { start, stageEdges, imageEdges } = journeyPage('image-open');
+  const journey = await start();
+  await journey.confirm();
+  stageEdges.left += 1;
+  stageEdges.right += 1;
+  await assert.rejects(journey.confirm(), /viewer does not fill viewport/);
+  stageEdges.left -= 1;
+  stageEdges.right -= 1;
+  imageEdges.top += 1;
+  imageEdges.bottom += 1;
+  await assert.rejects(journey.confirm(), /compact viewer state changed/);
+});
+
+test('returned capture blocks scroll or focus drift without repairing either', async () => {
+  const { start, calls, parent, document, stage } = journeyPage('image-returned');
+  const journey = await start();
   try {
     assert.equal(calls[0], 'tab:Details');
+    assert.equal(calls[calls.indexOf('begin opening') + 1], 'button:Open ' + resultTitle);
     assert.ok(calls.includes('tab:Details:selected:visible'));
     assert.deepEqual(journey.evidence, { sourceScroll: [[0, 96]], focus: 'source opener' });
     parent.scrollTop = 95;

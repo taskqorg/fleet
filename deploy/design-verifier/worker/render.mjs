@@ -45,7 +45,7 @@ async function capture(browser, { files, main, scenario, clock }, frame) {
       if (!response?.ok()) throw new Error('normal app entry failed');
       if (isImageFlow(scenario.flow)) {
         await at(scenario.start);
-        journey = await imageJourney(page, scenario, frame, site.origin, settle, value => { step = value; });
+        journey = await imageJourney(page, scenario, frame, site.origin, settle, value => { step = value; }, site.beginImageOpen);
         await at(scenario.target);
       } else if (scenario.flow === 'bot' || scenario.flow === 'back') {
         await at(scenario.start);

@@ -35,7 +35,7 @@ export async function openSite(files, scenario) {
     media.set(item.path, bytes);
   }
   const used = new Set(), missing = new Set();
-  let origin;
+  let origin, imageOpen = false;
   const server = createServer(async (request, response) => {
     const reply = (code, type, body) => {
       response.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -50,6 +50,12 @@ export async function openSite(files, scenario) {
           missing.add('image fixture');
           return reply(404, 'text/plain', '');
         }
+        if (scenario.thumbnail && !imageOpen && request.url === scenario.image.path) {
+          missing.add('image original requested before opening');
+          return reply(404, 'text/plain', '');
+        }
+        if (scenario.thumbnail && imageOpen && request.url === scenario.thumbnail.path && !used.has(request.url))
+          return reply(404, 'text/plain', '');
         used.add(request.url);
         return reply(200, 'image/png', bytes);
       }
@@ -89,6 +95,11 @@ export async function openSite(files, scenario) {
     origin,
     used,
     missing,
+    beginImageOpen() {
+      if (scenario.thumbnail && !used.has(scenario.thumbnail.path))
+        missing.add('image thumbnail missing before opening');
+      imageOpen = true;
+    },
     unmet: () => [...scenario.responses.filter(f => f.required && !used.has(key(f.op, f.request))).map(f => f.op),
       ...[...media.keys()].filter(path => !used.has(path))],
     forbidden: () => scenario.forbiddenOps?.filter(op => [...used].some(k => k.startsWith(op + ':'))) ?? [],

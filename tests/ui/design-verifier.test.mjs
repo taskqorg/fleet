@@ -10,6 +10,46 @@ import { openRepository } from '../../deploy/design-verifier/git.mjs';
 import { receiptStore } from '../../deploy/design-verifier/receipts.mjs';
 import { evaluate } from '../../deploy/design-verifier/verifier.mjs';
 import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
+import { loadPolicy } from '../../deploy/design-verifier/parity.mjs';
+
+test('image policy registration preserves the legacy policy used by the rollback release', async t => {
+  const fixture = { start: '/conversations/C-TST-1', target: '/conversations/C-TST-1',
+    recipe: 'a'.repeat(64), sourceSha256: 'b'.repeat(64),
+    responses: [{ op: 'session_view', request: { sessionId: 'invented' }, reply: { head: {} }, required: true }] };
+  const scope = 'pages/conversations/example:default';
+  const v1 = Buffer.from(JSON.stringify({ version: 1, paths: [], cases: { [scope]: { ...fixture, flow: 'direct', landmark: 'main' } } }));
+  const files = new Map([['/etc/fleet-design-verifier/parity.json', v1]]);
+  const read = path => {
+    if (!files.has(path)) throw Object.assign(new Error('fixture absent'), { code: 'ENOENT' });
+    return files.get(path);
+  };
+  const legacy = loadPolicy(read);
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ9sAAAAASUVORK5CYII=';
+  const v2 = '/etc/fleet-design-verifier/parity-v2.json';
+  const image = { ...fixture, flow: 'image-open', surface: 'conversation', entry: 'thumbnail',
+    resultTitle: 'Invented', resultCode: 'R-TST-1', image: 'sample',
+    responses: [...fixture.responses, { op: 'entity_refs', request: {}, reply: {}, required: true }] };
+  const policy = { version: 2, paths: [], cases: { ...legacy.cases, 'pages/conversations/example:image-open': image },
+    images: { sample: { path: '/api/results/invented', png, sha256: 'f86b5f3ad5f392fbfcd6915312c28ffeccd37adbd20bd5d02e4095c89711f26c' } } };
+  files.set(v2, Buffer.from(JSON.stringify(policy)));
+  const registered = loadPolicy(read);
+  assert.notEqual(registered.hash, legacy.hash);
+  assert.equal(registered.cases['pages/conversations/example:image-open'].flow, 'image-open');
+  // The previous release only reads parity.json. Its input should be byte-for-byte identical.
+  assert.deepEqual(read('/etc/fleet-design-verifier/parity.json'), v1);
+  for (const cases of [registered.cases, JSON.parse(read('/etc/fleet-design-verifier/parity.json')).cases]) {
+    const site = await openSite({ '/index.html': Buffer.from('<main>Legacy</main>').toString('base64') }, cases[scope]);
+    t.after(() => site.close());
+    assert.equal(await (await fetch(site.origin + fixture.start)).text(), '<main>Legacy</main>');
+    assert.deepEqual(await (await fetch(site.origin + '/api/ops/session_view',
+      { method: 'POST', body: JSON.stringify(fixture.responses[0].request) })).json(), { head: {} });
+    assert.deepEqual(site.unmet(), []);
+  }
+  files.set(v2, v1);
+  assert.throws(() => loadPolicy(read), /Invalid protected app route policy/);
+  files.delete(v2);
+  assert.equal(loadPolicy(read).hash, legacy.hash);
+});
 
 // T-FLT-181: exercise the real Git diff, complete queue membership, disk receipts and Check Run adapter together.
 // Fixture GitHub replies cannot qualify a live provider installation.

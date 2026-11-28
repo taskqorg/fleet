@@ -63,14 +63,20 @@ const scrollPosition = el => {
 const focused = el => el.isConnected && el.ownerDocument.activeElement === el;
 const viewportMatches = ({ width, height }) =>
   innerWidth === width && innerHeight === height && devicePixelRatio === 1 &&
-  visualViewport?.width === width && visualViewport?.height === height && visualViewport?.scale === 1;
-const pictureState = img => ({
-  src: img.currentSrc, loaded: img.complete && img.naturalWidth > 0 && img.naturalHeight > 0,
-  width: img.offsetWidth, height: img.offsetHeight, naturalWidth: img.naturalWidth,
-  stageWidth: img.parentElement.clientWidth, stageHeight: img.parentElement.clientHeight,
-});
+  visualViewport?.width === width && visualViewport?.height === height && visualViewport?.scale === 1 &&
+  visualViewport?.offsetLeft === 0 && visualViewport?.offsetTop === 0;
+const pictureState = img => {
+  const edges = ({ left, top, right, bottom }) => ({ left, top, right, bottom });
+  return {
+    src: img.currentSrc, loaded: img.complete && img.naturalWidth > 0 && img.naturalHeight > 0,
+    width: img.offsetWidth, height: img.offsetHeight, naturalWidth: img.naturalWidth,
+    imageEdges: edges(img.getBoundingClientRect()), stageEdges: edges(img.parentElement.getBoundingClientRect()),
+  };
+};
+const covers = (outer, inner) => outer.left <= inner.left && outer.top <= inner.top &&
+  outer.right >= inner.right && outer.bottom >= inner.bottom;
 
-export async function imageJourney(page, scenario, frame, origin, settle, checkpoint) {
+export async function imageJourney(page, scenario, frame, origin, settle, checkpoint, beginImageOpen) {
   const { surface, flow, entry, resultCode, resultTitle } = scenario;
   const openLabel = 'Open ' + resultTitle;
   const button = (within, name) => within.getByRole('button', { name, exact: true });
@@ -88,15 +94,34 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
   const zoomControls = button(dialog, 'Zoom controls');
   const zoomIn = button(dialog, 'Zoom in');
   const assert = (ok, reason) => { if (!ok) throw new Error(reason); };
-  const checkViewport = async () => assert(await page.evaluate(viewportMatches, frame), 'viewport changed');
+  const checkViewport = async () => {
+    assert(await page.evaluate(viewportMatches, frame), 'viewport changed');
+    assert(page.url() === origin + scenario.start, 'image journey left its source route');
+  };
   const waitFocused = async target => {
     const element = await target.elementHandle();
     try { await page.waitForFunction(focused, element); } finally { await element.dispose(); }
+  };
+  const decode = async (target, path) => {
+    await target.waitFor({ state: 'visible' });
+    const handle = await target.elementHandle();
+    try {
+      await page.waitForFunction(img => img.complete && img.naturalWidth > 0 && img.naturalHeight > 0, handle);
+      assert(await handle.evaluate(img => img.currentSrc) === origin + path, 'unexpected fixture image');
+      await handle.evaluate(img => img.decode());
+    } finally { await handle.dispose(); }
   };
   const returning = flow === 'image-returned';
 
   checkpoint('image-source');
   await trigger.waitFor({ state: 'visible' });
+  const loadThumbnail = async opener => {
+    if (scenario.thumbnail) {
+      await opener.scrollIntoViewIfNeeded();
+      await decode(opener.getByRole('img', { name: resultTitle, exact: true }), scenario.thumbnail.path);
+    }
+  };
+  if (entry === 'thumbnail') await loadThumbnail(trigger);
   await settle();
   await checkViewport();
   let source, offsets;
@@ -115,28 +140,31 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
       offsets = await source.evaluate(scrollPosition);
       assert(offsets.some(([, top]) => top > 0), 'no displaced source scroll position');
     }
-    await trigger.click();
-    if (entry === 'entity') await page.locator('[data-ui="entity-card"]')
-      .getByRole('link', { name: openLabel, exact: true }).click();
+    let opener = trigger;
+    if (entry === 'entity') {
+      await trigger.click();
+      opener = page.locator('[data-ui="entity-card"]').getByRole('link', { name: openLabel, exact: true });
+      await loadThumbnail(opener);
+    }
+    // Finish actionability checks before the protected origin starts serving the original.
+    if (!returning || entry === 'entity') await opener.click({ trial: true });
+    beginImageOpen();
+    await opener.click();
 
     checkpoint('image-loaded');
-    await picture.waitFor({ state: 'visible' });
-    const image = await picture.elementHandle();
-    try {
-      await page.waitForFunction(img => img.complete && img.naturalWidth > 0 && img.naturalHeight > 0, image);
-      await image.evaluate(img => img.decode());
-    } finally { await image.dispose(); }
+    await decode(picture, scenario.image.path);
     await waitFocused(stage);
     await settle();
     await checkViewport();
     const readPicture = async () => {
       const state = await picture.evaluate(pictureState);
       assert(state.loaded && state.src === origin + scenario.image.path, 'unexpected viewer image');
-      assert(state.stageWidth === frame.width && state.stageHeight === frame.height, 'viewer does not fill viewport');
+      const { left, top, right, bottom } = state.stageEdges;
+      assert(left === 0 && top === 0 && right === frame.width && bottom === frame.height, 'viewer does not fill viewport');
       return state;
     };
     const open = await readPicture();
-    assert(open.width >= open.stageWidth && open.height >= open.stageHeight, 'opening image does not cover viewport');
+    assert(covers(open.imageEdges, open.stageEdges), 'opening image does not cover viewport');
 
     if (returning) {
       checkpoint('image-returned');
@@ -178,11 +206,11 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
     }
     const confirm = async () => {
       await checkViewport();
-      const { width, height, stageWidth, stageHeight } = await readPicture();
+      const { width, height, stageEdges, imageEdges } = await readPicture();
       if (flow === 'image-fit')
-        assert(width <= stageWidth && height <= stageHeight && (width === stageWidth || height === stageHeight), 'image did not fit');
+        assert(covers(stageEdges, imageEdges) && (width === frame.width || height === frame.height), 'image did not fit');
       else if (flow === 'image-zoom') assert(width > actualWidth, 'image did not enlarge');
-      else assert(width >= stageWidth && height >= stageHeight && await zoomControls.isVisible(), 'compact viewer state changed');
+      else assert(covers(imageEdges, stageEdges) && await zoomControls.isVisible(), 'compact viewer state changed');
       const focus = flow === 'image-open' ? stage : zoomIn;
       assert(await focus.evaluate(focused), 'viewer focus changed');
     };

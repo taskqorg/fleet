@@ -12,7 +12,8 @@ import { imageScenarioOK, isImageFlow, resolveImages, validateImages } from './w
 const releaseDir = fileURLToPath(new URL('./', import.meta.url));
 const rootfs = '/opt/fleet-design-renderer/rootfs';
 const runtimeDir = '/opt/fleet-design-runtime';
-const policyFile = '/etc/fleet-design-verifier/parity.json';
+const legacyPolicyFile = '/etc/fleet-design-verifier/parity.json';
+const imagePolicyFile = '/etc/fleet-design-verifier/parity-v2.json';
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const fingerprint = value => value === null || typeof value === 'string' && /^100(?:644|755):[a-f0-9]{64}$/.test(value);
@@ -34,8 +35,10 @@ function trustedPath(path, file) {
 }
 
 function readTrusted(path, max) {
+  const info = lstatSync(path);
+  if (!info.isFile()) throw new Error('The operator input is not a regular file');
   trustedPath(path, true);
-  if (lstatSync(path).size > max) throw new Error('The operator input exceeds its size limit');
+  if (info.size > max) throw new Error('The operator input exceeds its size limit');
   return readFileSync(path);
 }
 
@@ -62,11 +65,18 @@ function scenarioOK(s) {
   }
 }
 
-function loadPolicy() {
-  const raw = readTrusted(policyFile, 1024 * 1024);
+function readPolicy(read) {
+  try { return { raw: read(imagePolicyFile, 1024 * 1024), expectedVersion: 2 }; }
+  catch (err) { if (err.code !== 'ENOENT') throw err; }
+  return { raw: read(legacyPolicyFile, 1024 * 1024), expectedVersion: 1 };
+}
+
+export function loadPolicy(read = readTrusted) {
+  const { raw, expectedVersion } = readPolicy(read);
   const { version, paths, cases, images = {} } = JSON.parse(raw);
-  if (version !== 1 || !Array.isArray(paths) || !cases || Array.isArray(cases) || typeof cases !== 'object' ||
-      Object.entries(cases).some(([key, scenario]) => !scopeKey(key) || !scenarioOK(scenario)))
+  if (version !== expectedVersion || !Array.isArray(paths) || !cases || Array.isArray(cases) || typeof cases !== 'object' ||
+      Object.entries(cases).some(([key, scenario]) => !scopeKey(key) || !scenarioOK(scenario) ||
+        version === 1 && isImageFlow(scenario.flow)))
     throw new Error('Invalid protected app route policy');
   validateImages(images);
   for (const scenario of Object.values(cases)) if (isImageFlow(scenario.flow)) resolveImages(scenario, images);
@@ -144,7 +154,7 @@ export function parityRunner() {
       return runtime;
     },
     policyIsCurrent(hash) {
-      return sha256(readTrusted(policyFile, 1024 * 1024)) === hash;
+      return sha256(readPolicy(readTrusted).raw) === hash;
     },
     impact(event, paths, git, evidence) {
       let policy;
