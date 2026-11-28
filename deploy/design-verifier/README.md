@@ -129,6 +129,18 @@ Use the installer-shipped diagnostic to print fingerprints once the daemon has f
 
 Replace the final three arguments for the genuine merge group. Use the reported object fingerprints to populate the corresponding reviewed entries. The release pins the executed build files and package lock. A changed pin needs a newly signed and provisioned verifier environment before the candidate can qualify. Changes to selected scene inputs or installed dependency bytes require current matching owner evidence.
 
+### Question image journeys
+
+Use a separate selected case for each state of each surface. Set `flow` to `image-open`, `image-fit`, `image-zoom` or `image-returned`. Keep the existing recipe and source pins. Use the same literal route for `start` and `target`. For `surface: "task"`, use the normal task detail route such as `/projects/TST/tasks/T-TST-1`. The runner selects Details. For `surface: "conversation"`, use the normal conversation route such as `/conversations/C-TST-1`.
+
+Set `resultCode` and `resultTitle` to the synthetic result resolved by the fixture. Set `entry` to `thumbnail` for the question's Open button or `entity` for its result code and the entity card's image link. Supply the exact operation requests from the normal shell. Require `task_get` or `session_view` as appropriate and `entity_refs` in both. Require `entity_card` for entity entry. Image journeys have fixed controls and landmarks.
+
+Add a top-level `images` map. Each key identifies one synthetic PNG with `path` set to its literal `/api/results/<id>` route, `png` to canonical base64 and `sha256` to the hash of the PNG bytes. Set the case's `image` to the original's key and its optional `thumbnail` to a separate key when the shell uses a distinct thumbnail. Every declared image request must be observed. The worker confirms the viewer has decoded the declared original at the requested viewport.
+
+For returned cases, use a long enough synthetic question to exercise a nonzero source scroll offset at each viewport. The worker opens and closes the viewer through the app controls and observes the same opener and ancestor scroll offsets after Back. Task cases also confirm Details remains selected after return. Receipts bind the synthetic image hashes and retain the per-frame state observations.
+
+The signed Linux archive contains the focused regression test at `tests/ui/design-image-parity.test.mjs`. Run it with Node's test runner to check fixture validation, loopback transport and return assertions. A live journey requires the qualified renderer and matching owner originals for the normal app.
+
 ## Render and check the live qualification
 
 The renderer uses the fixed clock, UTC timezone and en-US locale of the recipe, the release-pinned headless Chromium, DPR 1, reduced motion, and a fresh browser context for each frame. It waits for the expected app route, landmark, fonts and two animation frames, then captures the whole viewport with animations disabled and the caret hidden. It compares decoded PNG color and alpha samples at 1440×900 and 390×844 in dark and light. There are no masks or pixel tolerances. A receipt records both PNG hashes, the rectangle enclosing the different pixels and the number of different pixels. Any differing pixel blocks. A browser or runtime change that changes pixels requires a confirmed matching runtime or new owner evidence.

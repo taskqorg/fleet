@@ -41,6 +41,8 @@ for target in "$@"; do
   if [ -d "$work/verifier" ]; then
     cp "$work/verifier/"* "$stage/deploy/design-verifier/"
     if [ "$target" = linux/amd64 ]; then
+      mkdir -p "$stage/tests/ui"
+      cp tests/ui/design-image-parity.test.mjs "$stage/tests/ui/"
       runtime="$stage/deploy/design-verifier/runtime-lock"
       mkdir "$runtime"
       cp package.json pnpm-lock.yaml pnpm-workspace.yaml "$runtime/"

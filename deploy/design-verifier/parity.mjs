@@ -7,6 +7,7 @@ import { captureMatrix } from '../../packages/ui/scripts/capture-scene.mjs';
 import { designCheckDigest } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { sourcePath } from './git.mjs';
 import { DesignBlocked, VerificationWait } from './provider.mjs';
+import { imageScenarioOK, isImageFlow, resolveImages, validateImages } from './worker/image-journey.mjs';
 
 const releaseDir = fileURLToPath(new URL('./', import.meta.url));
 const rootfs = '/opt/fleet-design-renderer/rootfs';
@@ -40,11 +41,12 @@ function readTrusted(path, max) {
 
 function scenarioOK(s) {
   if (!s || !digest(s.recipe) || !digest(s.sourceSha256) || !appRoute(s.start) || !appRoute(s.target) ||
-      typeof s.landmark !== 'string' || !s.landmark ||
       !Array.isArray(s.responses) || !s.responses.length ||
       s.responses.some(f => !/^[a-z_]{1,60}$/.test(f?.op ?? '') || !Object.hasOwn(f, 'request') || !Object.hasOwn(f, 'reply')) ||
       !s.responses.some(f => f.required === true) ||
       s.forbiddenOps !== undefined && (!Array.isArray(s.forbiddenOps) || s.forbiddenOps.some(op => !/^[a-z_]{1,60}$/.test(op)))) return false;
+  if (isImageFlow(s.flow)) return imageScenarioOK(s);
+  if (typeof s.landmark !== 'string' || !s.landmark) return false;
   switch (s.flow) {
     case 'bot':
     case 'back':
@@ -62,10 +64,12 @@ function scenarioOK(s) {
 
 function loadPolicy() {
   const raw = readTrusted(policyFile, 1024 * 1024);
-  const { version, paths, cases } = JSON.parse(raw);
+  const { version, paths, cases, images = {} } = JSON.parse(raw);
   if (version !== 1 || !Array.isArray(paths) || !cases || Array.isArray(cases) || typeof cases !== 'object' ||
       Object.entries(cases).some(([key, scenario]) => !scopeKey(key) || !scenarioOK(scenario)))
     throw new Error('Invalid protected app route policy');
+  validateImages(images);
+  for (const scenario of Object.values(cases)) if (isImageFlow(scenario.flow)) resolveImages(scenario, images);
   const mapping = new Map();
   for (const row of paths) {
     if (!sourcePath(row?.path) || !fingerprint(row.before) || !fingerprint(row.after) || row.before === row.after ||
@@ -76,7 +80,7 @@ function loadPolicy() {
     if (mapping.has(key)) throw new Error('Duplicate protected impact path');
     mapping.set(key, row);
   }
-  return { hash: sha256(raw), mapping, cases };
+  return { hash: sha256(raw), mapping, cases, images };
 }
 
 function worker({ directory, scripts, compareFile }, job, args, bytes, max, timeout) {
@@ -178,7 +182,7 @@ export function parityRunner() {
         if (!s || s.recipe !== original.recipe || s.sourceSha256 !== sourceSha256 ||
             recipe.timeZone !== 'UTC' || recipe.locale !== 'en-US' || !Number.isSafeInteger(recipe.clock))
           throw new DesignBlocked('No protected normal-route fixture matches the selected recipe for ' + key);
-        return s;
+        return isImageFlow(s.flow) ? { ...s, ...resolveImages(s, policy.images) } : s;
       });
       const flows = new Set(scenarios.map(s => s.flow));
       if (['bot', 'back'].some(flow => flows.has(flow)) &&
@@ -206,6 +210,10 @@ export function parityRunner() {
           throw new VerificationWait('Isolated renderer returned no complete capture matrix');
         const measured = { scopeKey: key, recipe: original.recipe, recipeSha256: recipe.sha256, flow: scenario.flow,
           selectedSourceSha256: admission.found.sourceSha256, decision: admission.review.digest, frames: [] };
+        if (isImageFlow(scenario.flow)) {
+          const { surface, entry, image, thumbnail } = scenario;
+          measured.imageJourney = { surface, entry, imageSha256: image.sha256, ...(thumbnail && { thumbnailSha256: thumbnail.sha256 }) };
+        }
         evidence.rendered.push(measured);
         for (const [i, { viewport, theme, width, height }] of captureMatrix.entries()) {
           const frame = rendered.frames[i];
@@ -215,6 +223,10 @@ export function parityRunner() {
           if (frame.blocked) {
             cell.routeFailure = frame.blocked;
             continue;
+          }
+          if (isImageFlow(scenario.flow)) {
+            if (!frame.imageJourney) throw new VerificationWait('Isolated renderer omitted the image journey observation');
+            cell.imageJourney = frame.imageJourney;
           }
           const actual = Buffer.from(frame.png, 'base64');
           cell.actualSha256 = sha256(actual);
