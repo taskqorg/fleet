@@ -24,7 +24,8 @@ import (
 )
 
 // POST /api/hosts/poll (SL5). Decoupled from GLOBAL: heartbeat writes and readiness checks run under "host:"+hostID
-// only when host state/stores changed or >= 30s elapsed; global dispatch/promote/reconcile/problem sweeps run asynchronously
+// when host state/stores changed, >= 30s elapsed, or an active capture staging report needs its own timestamp. Global
+// dispatch/promote/reconcile/problem sweeps run asynchronously
 // in the single-flight background dispatcher. Supports ?wait=<duration> (clamped 0..25s) long-polling woken immediately
 // via per-host broadcast channels when commands are queued.
 
@@ -988,6 +989,14 @@ func pollObserved(q *Request, run func() (any, error)) (any, error) {
 	return out, err
 }
 
+func reportsCaptureStage(b *contract.PollRequest) bool {
+	return b.Platform == contract.PlatformLinux && deref(b.Version) != "" &&
+		slices.ContainsFunc(b.Capabilities, func(capability string) bool {
+			execution, ok := contract.DesignCaptureStageExecution(capability)
+			return ok && slices.Contains(b.ActiveExecutions, execution)
+		})
+}
+
 func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply, error) {
 	host := hostOf(q)
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
@@ -1074,6 +1083,10 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	// Store changes persist with host observations without triggering global state-change work.
 	obs.Stores = stores
 	flushObs = flushObs || flushStores
+	// Capture admission uses the persisted report's timestamp. An unchanged
+	// capture refresh must not postpone the ordinary host/store heartbeat.
+	captureRefresh := !flushObs && reportsCaptureStage(b)
+	flushObs = flushObs || captureRefresh
 
 	var flushGen uint64
 	ctx := q.ctx()
@@ -1092,6 +1105,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 					BrowserTargets []contract.BrowserTargetObservation `json:"browserTargets"`
 				}
 				if r, err := wq.db().HostObservationOf(wq.ctx(), host); err == nil {
+					if captureRefresh && r.LastSeenAt != nil && r.LastSeenAt.UnixMilli() >= now {
+						return nil // a concurrent, newer report already won the host lock
+					}
 					var p struct {
 						Update         json.RawMessage                     `json:"update"`
 						PollError      json.RawMessage                     `json:"pollError"`
@@ -1139,7 +1155,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 				}
 			}
 			afterCommit(wq, func() {
-				a.commitHostHeartbeat(host, stateSig, storesSig, now)
+				if !captureRefresh {
+					a.commitHostHeartbeat(host, stateSig, storesSig, now)
+				}
 				if stateChanged {
 					flushGen = a.triggerDispatch()
 				}

@@ -90,6 +90,7 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Helper()
 		code, reply := e.callJSON(t, "POST", contract.RoutePoll.Path, contract.PollRequest{
 			HostId: designerHost, Platform: platform, Version: ptr("signed-test"), Capabilities: caps,
+			ActiveExecutions: originExecutions,
 		}, map[string]string{"Authorization": "Bearer " + designerSecret})
 		if code != 200 {
 			t.Fatalf("test origin poll failed: %d %+v", code, reply)
@@ -185,7 +186,8 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	}
 	caps := []string{"script", contract.DesignCaptureCapability}
 	t.Run("withdrawn destination capability keeps the same unclaimed job", func(t *testing.T) {
-		reportOrigin(contract.PlatformLinux, []string{contract.DesignCaptureStageCapability(foreign)})
+		reportOrigin(contract.PlatformLinux, []string{"script"})
+		reportOrigin(contract.PlatformLinux, []string{"script"})
 		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
 		if err != nil || len(commands) != 0 {
 			t.Fatalf("unavailable destination obtained a permit: %d %v", len(commands), err)
@@ -198,6 +200,13 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	})
 	t.Run("a stale distinct origin report cannot authorize dispatch", func(t *testing.T) {
 		sql("UPDATE host_observation SET last_seen_at=now()-interval '2 minutes' WHERE id=$1", designerHost)
+		// An authenticated malformed poll updates generic liveness and poll
+		// health, but it supplies no new execution-bound capture evidence.
+		code, _ := e.callJSON(t, "POST", contract.RoutePoll.Path, doc{"hostId": designerHost, "platform": 123},
+			map[string]string{"Authorization": "Bearer " + designerSecret})
+		if code != 400 {
+			t.Fatalf("malformed liveness poll returned %d", code)
+		}
 		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
 		if err != nil || len(commands) != 0 {
 			t.Fatalf("stale origin obtained a permit: %d %v", len(commands), err)
@@ -209,6 +218,65 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		// A changed poll is persisted immediately even when the heartbeat
 		// normally coalesces repeated identical reports.
 		reportOrigin(contract.PlatformLinux, []string{"script"})
+		reportOriginReady()
+	})
+	t.Run("identical capture poll stays fresh past the ordinary flush window", func(t *testing.T) {
+		ordinaryPoll := func() {
+			t.Helper()
+			code, reply := e.callJSON(t, "POST", contract.RoutePoll.Path, contract.PollRequest{
+				HostId: contract.DesignCaptureHost, Platform: contract.PlatformLinux, Version: ptr("signed-test"),
+				Capabilities: []string{"script", contract.DesignCaptureStageCapability("not-an-execution")},
+			}, map[string]string{"Authorization": "Bearer " + rendererSecret})
+			if code != 200 {
+				t.Fatalf("ordinary poll: %d %+v", code, reply)
+			}
+		}
+		lastSeen := func(host string) time.Time {
+			t.Helper()
+			var seen time.Time
+			if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT last_seen_at FROM host_observation WHERE id=$1", host).Scan(&seen); err != nil {
+				t.Fatal(err)
+			}
+			return seen
+		}
+
+		// Persist t=0 through the real authenticated poll route. Normalize the
+		// test clock by aging both persisted and coalescer timestamps by 25s.
+		reportOriginReady()
+		ordinaryPoll()
+		t0 := time.Now().Add(-25 * time.Second).Truncate(time.Millisecond)
+		for _, host := range []string{designerHost, contract.DesignCaptureHost} {
+			sql("UPDATE host_observation SET last_seen_at=$2 WHERE id=$1", host, t0)
+			e.app.pollMu.Lock()
+			e.app.heartbeatOf(host).lastPersistedAt = t0.UnixMilli()
+			e.app.pollMu.Unlock()
+		}
+
+		// At t=25, both poll bodies are identical. Only the execution-bound
+		// capture report must persist before the regular 30s flush deadline.
+		reportOriginReady()
+		ordinaryPoll()
+		reported := lastSeen(designerHost)
+		e.app.pollMu.Lock()
+		ordinaryFlushAt := e.app.heartbeatOf(designerHost).lastPersistedAt
+		e.app.pollMu.Unlock()
+		if ordinaryFlushAt != t0.UnixMilli() {
+			t.Fatalf("capture-only refresh postponed the ordinary host/store heartbeat: %d", ordinaryFlushAt)
+		}
+		if ordinary := lastSeen(contract.DesignCaptureHost); !ordinary.Equal(t0) {
+			t.Fatalf("ordinary identical poll bypassed coalescing: %v, want %v", ordinary, t0)
+		}
+
+		// Advance authorization to t=35 without sleeping by shifting the
+		// recorded proof's timestamp another 10s. The cutoff stays real.
+		sql("UPDATE host_observation SET last_seen_at=last_seen_at-interval '10 seconds' WHERE id=$1", designerHost)
+		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
+		if err != nil || len(commands) != 1 || commands[0].Script == nil || commands[0].Script.ExecutionId != start.JobId {
+			t.Fatalf("fresh t=25 origin report did not authorize the t=35 dispatch: %d %v", len(commands), err)
+		}
+		if reported.Sub(t0) < 25*time.Second {
+			t.Fatalf("identical capture poll did not persist a new timestamp: %v", reported)
+		}
 		reportOriginReady()
 	})
 	first, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)

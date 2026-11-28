@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"regexp"
+	"strings"
 )
 
 // DesignCaptureScript selects only the executor's fixed renderer transport.
@@ -13,9 +14,17 @@ const DesignCaptureScript = "@fleet-design-capture/v1"
 const DesignCaptureHost = "pds18-native"
 const DesignCaptureCapability = "design-capture-broker-v2"
 
+const designCaptureStageCapabilityPrefix = "design-capture-stage-linux-v2:"
+
 // The value belongs to one active designer execution on its reporting host.
 func DesignCaptureStageCapability(execution string) string {
-	return "design-capture-stage-linux-v2:" + execution
+	return designCaptureStageCapabilityPrefix + execution
+}
+
+// DesignCaptureStageExecution parses only the current exact-execution capability.
+func DesignCaptureStageExecution(capability string) (string, bool) {
+	execution, ok := strings.CutPrefix(capability, designCaptureStageCapabilityPrefix)
+	return execution, ok && designCaptureID.MatchString(execution)
 }
 
 const DesignCaptureTimeoutMS = 900_000
