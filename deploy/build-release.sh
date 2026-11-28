@@ -26,7 +26,7 @@ corepack pnpm install --frozen-lockfile
 node app/build.mjs
 if [ -f deploy/design-verifier/service.mjs ]; then
   corepack pnpm exec esbuild deploy/design-verifier/service.mjs deploy/design-verifier/renderer-probe.mjs \
-    deploy/design-verifier/vm-guest-worker.mjs \
+    deploy/design-verifier/vm-guest-worker.mjs deploy/design-verifier/git-worker.mjs \
     --bundle --platform=node --format=esm --target=node22 --out-extension:.js=.mjs --outdir="$work/verifier"
   node deploy/design-verifier/build-pins.mjs > "$work/verifier/build-inputs.json"
 fi
