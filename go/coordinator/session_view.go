@@ -9,6 +9,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,7 +109,9 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 	if target.SessionId != nil && *target.SessionId != sid {
 		ids = append(ids, *target.SessionId)
 	}
-	qs, err := q.db().SessionViewOpenQuestions(q.ctx(), ids)
+	qs, err := q.db().SessionViewOpenQuestions(q.ctx(), db.SessionViewOpenQuestionsParams{
+		SessionIds: ids, IncludeQuestionArtifactIds: r.IncludeQuestionArtifactIds != nil && *r.IncludeQuestionArtifactIds,
+	})
 	if err != nil {
 		return out, err
 	}
@@ -116,6 +119,11 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 	for _, x := range qs {
 		question := contract.SessionViewQuestion{Id: x.ID, SessionId: x.SessionID, Kind: x.Kind, Text: x.Text,
 			Options: choiceLabels(x.Options), ExecutionId: x.ExecutionID}
+		var artifactIDs []string
+		// A null array element decodes as an empty string. Omit the entire malformed list.
+		if len(x.ArtifactIds) > 0 && json.Unmarshal(x.ArtifactIds, &artifactIDs) == nil && !slices.Contains(artifactIDs, "") {
+			question.ArtifactIds = artifactIDs
+		}
 		var authority deliveryAuthorityOptions
 		if json.Unmarshal(x.Options, &authority) == nil && authority.DeliveryAuthority {
 			question.Options, question.DeliveryAuthority = authority.Choices, ptr(true)

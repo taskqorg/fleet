@@ -2,6 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"fleet/contract"
@@ -69,6 +74,85 @@ func TestEntityRefs(t *testing.T) {
 	}
 	if _, err := entityRefs(&Request{}, &contract.EntityRefsRequest{Refs: make([]contract.EntityCardRequest, maxEntityRefs+1)}); err == nil {
 		t.Fatal("201 references accepted")
+	}
+}
+
+// The card and its batched projection use the same authorized result metadata. An out-of-scope result
+// must be absent from the batch and unreachable through the individual card and attachment routes.
+func TestEntityResultMetadata(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	resultHash, thumbnailHash := strings.Repeat("ab", 32), strings.Repeat("ac", 32)
+	lifecycleSQL(t, e, `INSERT INTO execution (id, kind, state, project_id) VALUES ('result-run', 'agent_run', 'running', 'desiign')`)
+	lifecycleSQL(t, e, `INSERT INTO artifact
+		(id, project_id, scope, content_hash, size, media_type, name, state, execution_id, role, derived_from_artifact_id) VALUES
+		('result-image', 'desiign', 'prod', $1, 5, 'image/png', 'result.png', 'stored', 'result-run', 'original', NULL),
+		('result-thumbnail', 'desiign', 'prod', $2, 5, 'image/png', 'thumb.png', 'stored', 'result-run', 'thumbnail', 'result-image'),
+		('result-legacy', 'desiign', 'prod', repeat('ad',32), 5, '', 'legacy', 'stored', 'result-run', 'original', NULL)`, resultHash, thumbnailHash)
+	store := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fleet/desiign/prod/" + resultHash, "/fleet/desiign/prod/" + thumbnailHash:
+			_, _ = w.Write([]byte("image"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(store.Close)
+	old := storeSecretsDir
+	storeSecretsDir = t.TempDir()
+	t.Cleanup(func() { storeSecretsDir = old })
+	if err := os.WriteFile(filepath.Join(storeSecretsDir, "result-store.key"), []byte(`{"accessKeyId":"test","secretAccessKey":"test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.registerHost(t, "result-store-host")
+	lifecycleSQL(t, e, `INSERT INTO store (id,host_id,bucket,endpoint,state) VALUES ('result-store','result-store-host','fleet',$1,'reachable')`, store.URL)
+	lifecycleSQL(t, e, `INSERT INTO artifact_copy (artifact_id,store_id,project_id,state)
+		VALUES ('result-image','result-store','desiign','verified'), ('result-thumbnail','result-store','desiign','verified')`)
+
+	member := e.ownerHeaders()
+	member["X-Fleet-Person"] = "member@trial.test"
+	outsider := e.ownerHeaders()
+	outsider["X-Fleet-Person"] = "outsider@trial.test"
+	kind := contract.EntityKindResult
+	image := contract.EntityCardRequest{Kind: &kind, Id: ptr("result-image")}
+	legacy := contract.EntityCardRequest{Kind: &kind, Id: ptr("result-legacy")}
+	preview := contract.EntityPreview{ResultId: "result-thumbnail", View: contract.EntityPreviewViewImage}
+	var card contract.EntityCardReply
+	e.opInto(t, "entity_card", image, member, &card)
+	if deref(card.MediaType) != "image/png" || card.Preview == nil || *card.Preview != preview {
+		t.Fatalf("card media type %q, preview %v", deref(card.MediaType), card.Preview)
+	}
+	refs := contract.EntityRefsRequest{Refs: []contract.EntityCardRequest{image, legacy, image}}
+	var batch contract.EntityRefsReply
+	e.opInto(t, "entity_refs", refs, member, &batch)
+	if len(batch.Items) != 3 {
+		t.Fatalf("batch items: %+v", batch.Items)
+	}
+	for _, i := range []int{0, 2} {
+		item := batch.Items[i]
+		if item.Ref != int64(i) || item.Id != card.Id || deref(item.MediaType) != "image/png" || item.Preview == nil || *item.Preview != preview {
+			t.Errorf("batch item %d: %+v", i, item)
+		}
+	}
+	var legacyCard contract.EntityCardReply
+	e.opInto(t, "entity_card", legacy, member, &legacyCard)
+	if legacyCard.MediaType != nil || legacyCard.Preview != nil || batch.Items[1].Id != "result-legacy" || batch.Items[1].MediaType != nil || batch.Items[1].Preview != nil {
+		t.Errorf("legacy result has media metadata: card %+v, ref %+v", legacyCard, batch.Items[1])
+	}
+	e.opInto(t, "entity_refs", refs, outsider, &batch)
+	if len(batch.Items) != 0 {
+		t.Errorf("outside the grant: batch items %+v", batch.Items)
+	}
+	if code, _ := e.callJSON(t, http.MethodPost, "/api/ops/entity_card", image, outsider); code != http.StatusNotFound {
+		t.Errorf("outside the grant: entity_card = %d", code)
+	}
+	for _, id := range []string{"result-image", preview.ResultId} {
+		path := "/api/results/" + id
+		if code, _ := e.callJSON(t, http.MethodGet, path, nil, member); code != http.StatusOK {
+			t.Errorf("member GET %s = %d", path, code)
+		}
+		if code, _ := e.callJSON(t, http.MethodGet, path, nil, outsider); code != http.StatusNotFound {
+			t.Errorf("outside the grant: GET %s = %d", path, code)
+		}
 	}
 }
 

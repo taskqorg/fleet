@@ -46,7 +46,8 @@ FROM execution e LEFT JOIN task t ON t.id = e.task_id WHERE e.id = ANY (@executi
 
 -- name: SessionViewOpenQuestions :many
 -- Open questions of the given sessions, oldest first.
-SELECT x.id, coalesce(x.session_id, '')::text AS session_id, x.kind::text AS kind, x.text, coalesce(x.options, '[]')::jsonb AS options, x.execution_id
+SELECT x.id, coalesce(x.session_id, '')::text AS session_id, x.kind::text AS kind, x.text, coalesce(x.options, '[]')::jsonb AS options, x.execution_id,
+ (CASE WHEN sqlc.arg(include_question_artifact_ids)::boolean THEN x.data->'artifactIds' END)::jsonb AS artifact_ids
 FROM question x WHERE x.session_id = ANY (@session_ids::text[]) AND x.state = 'open' ORDER BY x.asked_at;
 
 -- name: SessionViewTitle :one
