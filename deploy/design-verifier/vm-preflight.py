@@ -38,7 +38,7 @@ def check_io(text, devices):
         limits[parts[0]] = dict(part.split('=', 1) for part in parts[1:] if '=' in part)
     for device in devices:
         item = limits.get(device, {})
-        for key, maximum in [('rbps', 40 * 1024**2), ('wbps', 20 * 1024**2)]:
+        for key, maximum in [('rbps', 40_000_000), ('wbps', 20_000_000)]:
             value = item.get(key, '')
             if not value.isdecimal() or not 0 < int(value) <= maximum:
                 raise ValueError('I/O limit missing for device ' + device)
@@ -62,22 +62,55 @@ def check_clean_work(path):
             raise ValueError('stale per-boot work needs operator review')
 
 
-def main():
-    for hidden in ['/run', '/etc', '/home', '/root']:
+def io_device(device, sys_block=Path('/sys/dev/block')):
+    node = (sys_block / device).resolve(strict=True)
+    if (node / 'partition').exists():
+        node = node.parent
+    key = (node / 'dev').read_text().strip()
+    if not re.fullmatch(r'[0-9]+:[0-9]+', key):
+        raise ValueError('invalid whole-device identity')
+    return key
+
+
+def check_runtime_mounts():
+    if set(os.listdir('/run')) - {'host'}:
+        raise ValueError('unexpected directory in isolated /run')
+    # systemd creates /run/host when using RootDirectory. The unit masks it.
+    try:
+        entries = os.listdir('/run/host')
+        if entries:
+            link = Path('/run/host/os-release')
+            if entries != ['os-release'] or not link.is_symlink() or link.lstat().st_uid != 0 or os.readlink(link) != '.os-release-stage/os-release' or link.exists():
+                raise ValueError('unexpected host metadata in the isolated namespace')
+    except (PermissionError, FileNotFoundError):
+        pass
+    for hidden in ['/etc', '/home', '/root']:
         try:
             with os.scandir(hidden) as entries:
                 if any(entries):
                     raise ValueError('unexpected contents in isolated ' + hidden)
-        except PermissionError:
+        except (PermissionError, FileNotFoundError):
             if hidden not in ['/home', '/root']:
                 raise
     with os.scandir('/var') as entries:
         if any(entry.name != 'tmp' for entry in entries):
             raise ValueError('unexpected contents in isolated /var')
-    sockets = subprocess.run(['/usr/bin/find', '/usr', '/state', '-xdev', '-type', 's', '-print', '-quit'],
+    state_names = set(os.listdir(STATE))
+    if state_names - {'work', 'tmp', 'vartmp', 'lost+found'}:
+        raise ValueError('unexpected entry in bounded volume')
+    if 'lost+found' in state_names:
+        info = (STATE / 'lost+found').lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError('unexpected lost+found ownership or mode')
+    sockets = subprocess.run(['/usr/bin/find', '/state/work', '/state/tmp', '/state/vartmp', '-xdev', '-type', 's', '-print', '-quit'],
                              check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=60)
     if sockets.stdout:
-        raise ValueError('runtime or state contains a Unix socket')
+        raise ValueError('bounded scratch contains a Unix socket')
+def main():
+    check_runtime_mounts()
+    version = subprocess.check_output(['/usr/bin/qemu-system-x86_64', '--version'], timeout=5)
+    if not version.splitlines()[0].startswith(b'QEMU emulator version 10.2.1 '):
+        raise ValueError('review the shutdown trace for the installed QEMU version')
     image_hash = os.environ.get('IMAGE_SHA256', '')
     release_hash = os.environ.get('RELEASE_SHA256', '')
     probe_hash = os.environ.get('PROBE_SHA256', '')
@@ -86,13 +119,19 @@ def main():
     image_stat = IMAGE.lstat()
     if not stat.S_ISREG(image_stat.st_mode) or image_stat.st_uid != 0 or image_stat.st_mode & 0o022 or image_stat.st_size > 6 * 1024**3:
         raise ValueError('invalid golden image')
-    # Broker validates the opened image digest and qcow2 chain on the same FD it launches.
+    # Broker verifies the same opened image FD before inspection and launch.
     result = subprocess.run(['/usr/bin/findmnt', '--json', '--target', str(STATE), '--output', 'TARGET,FSTYPE,SOURCE,MAJ:MIN'],
                             check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
     info = json.loads(result.stdout)
     backing = Path('/volume/backing.img').lstat()
-    if not stat.S_ISREG(backing.st_mode) or backing.st_uid != 0 or backing.st_mode & 0o077 or backing.st_size != VOLUME_BYTES or backing.st_blocks * 512 < VOLUME_BYTES:
-        raise ValueError('bounded volume backing is not root-owned and fully allocated')
+    if not stat.S_ISREG(backing.st_mode) or backing.st_uid != 0 or backing.st_mode & 0o077 or backing.st_nlink != 1 or backing.st_size != VOLUME_BYTES:
+        raise ValueError('unexpected backing file ownership, links, mode or length')
+    # ext4/loop may release zeroed blocks after the original preallocation.
+    # Every new write is still confined to this fixed-length 6 GiB device.
+    host_fs = os.statvfs('/volume/backing.img')
+    remaining = max(0, VOLUME_BYTES - backing.st_blocks * 512)
+    if host_fs.f_bavail * host_fs.f_frsize < remaining + VOLUME_BYTES:
+        raise ValueError('insufficient physical headroom for the remaining backing blocks')
     device = info['filesystems'][0]['maj:min']
     if not re.fullmatch(r'[0-9]+:[0-9]+', device):
         raise ValueError('invalid device identity')
@@ -101,8 +140,9 @@ def main():
     loop_id = check_mount(info, (loop / 'loop/backing_file').read_text(), (loop / 'size').read_text(), fs.f_frsize * fs.f_blocks)
     if fs.f_bavail <= 0:
         raise ValueError('bounded state volume has no free blocks')
-    if STATE.stat().st_uid != os.getuid():
-        raise ValueError('bounded state has the wrong owner')
+    state_info = STATE.lstat()
+    if state_info.st_uid != 0 or state_info.st_mode & 0o022:
+        raise ValueError('operator must own bounded volume root')
     for name in ['work', 'tmp', 'vartmp']:
         path = STATE / name
         info = path.lstat()
@@ -116,7 +156,8 @@ def main():
         raise ValueError('unified cgroup unavailable')
     group = Path('/sys/fs/cgroup') / cgroup[4:]
     check_limits(*[(group / name).read_text() for name in ['memory.max', 'memory.high', 'memory.swap.max', 'cpu.max', 'pids.max']])
-    check_io((group / 'io.max').read_text(), {loop_id, f'{os.major(image_stat.st_dev)}:{os.minor(image_stat.st_dev)}', f'{os.major(backing.st_dev)}:{os.minor(backing.st_dev)}'})
+    source_devices = {loop_id, f'{os.major(image_stat.st_dev)}:{os.minor(image_stat.st_dev)}', f'{os.major(backing.st_dev)}:{os.minor(backing.st_dev)}'}
+    check_io((group / 'io.max').read_text(), {io_device(key) for key in source_devices})
     print('preflight passed: exact loop mount, image and effective I/O limits')
 
 

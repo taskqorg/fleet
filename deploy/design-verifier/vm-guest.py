@@ -119,6 +119,9 @@ def main():
     os.makedirs(WORKDIR, mode=0o700, exist_ok=True)
     try:
         with open(PORT, 'r+b', buffering=0) as stream:
+            if stream.write(b'FVGR\x01\0\0\0') != 8:
+                raise EOFError('guest readiness write failed')
+            stream.flush()
             serve(stream, WORKDIR)
     finally:
         # The host requires QMP guest-shutdown and QEMU exit before accepting.

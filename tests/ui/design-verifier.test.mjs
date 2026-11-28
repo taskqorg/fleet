@@ -261,6 +261,9 @@ test('the verifier gives each original head its own receipt and fences the cumul
   groupTrusted = false;
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(unknown, deps)).conclusion, 'failure');
+  const pendingRenderer = await evaluate(unknown, { ...deps, rendererPending: true });
+  assert.equal(pendingRenderer.conclusion, null);
+  assert.match(pendingRenderer.reason, /temporarily unavailable/);
   const runner = {
     impact: (event, paths) => ({ ...event, policy: {}, paths: { [paths[0]]: ['pages/conversations/detail:default'] } }),
   };

@@ -73,23 +73,33 @@ const exact = (value, keys) => value && typeof value === 'object' && !Array.isAr
   Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 
 export function validateVMConfig(config, build, release) {
-  if (!exact(config, ['version', 'launchSha256', 'releaseCommit', 'runtime']) || config.version !== 1 ||
-      !hex(config.launchSha256) || !/^[a-f0-9]{40}$/.test(config.releaseCommit) ||
-      config.releaseCommit !== release?.commit || release?.target !== 'linux-amd64' ||
-      !exact(config.runtime, runtimeKeys) || !['imageSha256', 'fontSha256', 'lockSha256'].every(k => hex(config.runtime[k])) ||
+  if (!exact(config, ['version', 'releaseCommit', 'runtime', 'launchManifest']) || config.version !== 1 ||
+      !/^[a-f0-9]{40}$/.test(config.releaseCommit) || config.releaseCommit !== release?.commit ||
+      release?.target !== 'linux-amd64' || typeof config.launchManifest !== 'string' ||
+      Buffer.byteLength(config.launchManifest) > 4096 || !exact(config.runtime, runtimeKeys) ||
+      !['imageSha256', 'fontSha256', 'lockSha256'].every(k => hex(config.runtime[k])) ||
       config.runtime.lockSha256 !== build?.files?.['pnpm-lock.yaml']?.split(':')[1] ||
       !['node', 'chromium', 'playwright'].every(k => typeof config.runtime[k] === 'string' && config.runtime[k] === build?.[k]))
     throw new Error('Protected VM identity does not match this signed release');
-  return config;
+  let manifest;
+  try { manifest = JSON.parse(config.launchManifest); } catch { throw new Error('Invalid protected launch manifest'); }
+  const keys = ['version', 'goldenSha256', 'biosSha256', 'releaseSha256', 'guestWorkerSha256', 'runtimeSha256', 'releaseCommit'];
+  if (!exact(manifest, keys) || manifest.version !== 1 || manifest.releaseCommit !== config.releaseCommit ||
+      !keys.filter(k => k.endsWith('Sha256')).every(k => hex(manifest[k])))
+    throw new Error('Protected launch manifest does not match this signed release');
+  return { ...config, manifest, launchSha256: sha(Buffer.from(config.launchManifest)).toString('hex') };
 }
 
-export function validateVMProbe(bytes, expected) {
+export function validateVMProbe(bytes, expected, manifest) {
   let probe;
   try { probe = JSON.parse(bytes); } catch { throw new VerificationWait('Protected VM probe is not valid JSON'); }
-  if (!exact(probe, ['node', 'chromium', 'runtime']) || !exact(probe.runtime, runtimeKeys) ||
+  if (!exact(probe, ['node', 'chromium', 'runtime', 'guest']) || !exact(probe.runtime, runtimeKeys) ||
+      !exact(probe.guest, ['releaseCommit', 'workerSha256', 'runtimeSha256']) ||
       probe.node !== expected.node || probe.chromium !== expected.chromium ||
-      !runtimeKeys.every(k => probe.runtime[k] === expected[k]))
-    throw new VerificationWait('Protected VM probe did not match the runtime pins');
+      !runtimeKeys.every(k => probe.runtime[k] === expected[k]) ||
+      probe.guest.releaseCommit !== manifest.releaseCommit || probe.guest.workerSha256 !== manifest.guestWorkerSha256 ||
+      probe.guest.runtimeSha256 !== manifest.runtimeSha256)
+    throw new VerificationWait('Protected VM probe did not match guest release and runtime pins');
   return expected;
 }
 

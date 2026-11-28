@@ -7,7 +7,8 @@ import { fleetVerifierClient } from './fleet.mjs';
 import { openRepository } from './git.mjs';
 import { receiptStore } from './receipts.mjs';
 import { evaluate } from './verifier.mjs';
-import { parityRunner } from './parity.mjs';
+import { parityRunner, vmBackendConfigured } from './parity.mjs';
+import { refreshRenderer } from './renderer-state.mjs';
 
 const once = process.argv[2] === '--once';
 if (process.argv.length !== (once ? 3 : 2)) throw new Error('Usage: service.mjs [--once]');
@@ -70,7 +71,7 @@ async function poll() {
       if (stop.signal.aborted) break;
       const [event] = candidates;
       try {
-        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet, runner }));
+        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet, runner, rendererPending: !runner && vmBackendConfigured() }));
         else {
           const reason = 'The SHA has multiple active provider identities';
           const evidence = { head, classification: 'pending', reason, candidates };
@@ -101,17 +102,9 @@ async function poll() {
 
 let ok;
 try {
-  try {
-    runner = parityRunner();
-    service.renderer = await runner.probe();
-    service.visualParity = 'ready';
-    service.rendererProbedAt = new Date().toISOString();
-  } catch {
-    runner = undefined;
-    service.visualParity = 'unavailable';
-    service.visualParityReason = 'Isolated renderer runtime or Chromium probe failed';
-  }
+
   do {
+    if (!runner) runner = await refreshRenderer(service, parityRunner);
     ok = await poll();
     if (!once) await delay(period * 1000, null, { signal: stop.signal });
   } while (!once && !stop.signal.aborted);

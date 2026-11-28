@@ -31,9 +31,10 @@ class TransportTests(unittest.TestCase):
         import json
         valid = {'format': 'qcow2', 'virtual-size': 12 * 1024**3}
         broker.validate_image_info(json.dumps([valid]).encode())
+        broker.validate_image_info(json.dumps([{**valid, 'virtual-size': 25 * 1024**3}]).encode())
         for image in ({**valid, 'backing-filename': '/other'}, {**valid, 'format':'raw'},
                       {**valid, 'format-specific': {'data': {'data-file':'/other'}}},
-                      {**valid, 'virtual-size': 17 * 1024**3}):
+                      {**valid, 'virtual-size': 26 * 1024**3}):
             with self.assertRaises(ValueError):
                 broker.validate_image_info(json.dumps([image]).encode())
         with self.assertRaises(ValueError):
@@ -64,7 +65,7 @@ class TransportTests(unittest.TestCase):
             return 0, b'{"ready":true}'
         def work():
             with server:
-                broker.serve(server, lambda: (b'i' * 32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)), runner, tempfile.gettempdir())
+                broker.serve(server, lambda _client: (b'i' * 32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)), runner, tempfile.gettempdir())
         thread = threading.Thread(target=work); thread.start()
         challenge = broker.recv_exact(client, 40, time.monotonic() + 3)
         self.assertEqual(challenge[:8], b'FVMB\x01\0\0\0')
@@ -90,7 +91,7 @@ class TransportTests(unittest.TestCase):
                 try:
                     client, _ = listener.accept()
                     with client:
-                        broker.serve(client, lambda: (b'i' * 32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)),
+                        broker.serve(client, lambda _client: (b'i' * 32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)),
                                      lambda *_: (0, b'{"probe":"fixture"}'), root)
                 except BaseException as error:
                     errors.append(error)
@@ -122,6 +123,21 @@ if (result.toString() !== '{\"probe\":\"fixture\"}') throw Error('unexpected rep
             with self.assertRaises(ValueError, msg=kind):
                 broker.read_request(server, nonce, tempfile.gettempdir(), time.monotonic() + 1)
             client.close(); server.close()
+
+    def test_guest_ready_is_required_before_job_clock(self):
+        guest_sock, peer = socket.socketpair(); client, cpeer = socket.socketpair()
+        class Process:
+            def poll(self): return None
+        try:
+            peer.sendall(b'FVGR\x01\0\0\0')
+            broker.wait_guest_ready(guest_sock, Process(), client, time.monotonic() + 1)
+            peer.sendall(b'notready')
+            with self.assertRaises(ValueError): broker.wait_guest_ready(guest_sock, Process(), client, time.monotonic() + 1)
+            with self.assertRaises(TimeoutError): broker.wait_guest_ready(guest_sock, Process(), client, time.monotonic() + 0.02)
+            cpeer.close()
+            with self.assertRaises(EOFError): broker.wait_guest_ready(guest_sock, Process(), client, time.monotonic() + 1)
+        finally:
+            for sock in (guest_sock, peer, client, cpeer): sock.close()
 
     def test_guest_shutdown_event_required_and_response_bound(self):
         qmp, qpeer = socket.socketpair(); worker, wpeer = socket.socketpair(); client, cpeer = socket.socketpair()
@@ -164,7 +180,7 @@ if (result.toString() !== '{\"probe\":\"fixture\"}') throw Error('unexpected rep
         def runner(*args): called.append('cleanup failed'); raise RuntimeError('cleanup')
         def work():
             with server:
-                try: broker.serve(server, lambda: (b'i' * 32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)), runner, tempfile.gettempdir())
+                try: broker.serve(server, lambda _client: (b'i' * 32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)), runner, tempfile.gettempdir())
                 except RuntimeError: pass
         thread = threading.Thread(target=work); thread.start()
         nonce = broker.recv_exact(client, 40, time.monotonic() + 3)[8:]

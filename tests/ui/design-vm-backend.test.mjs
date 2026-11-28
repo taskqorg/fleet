@@ -13,19 +13,23 @@ import { validateVMConfig, validateVMProbe, vmBackend } from '../../deploy/desig
 const hash = x => createHash('sha256').update(x).digest();
 const runtime = { imageSha256: '1'.repeat(64), fontSha256: '2'.repeat(64), lockSha256: '3'.repeat(64),
   node: 'v22.18.0', chromium: '140.0', playwright: '1.56.1' };
-const config = { version: 1, launchSha256: '4'.repeat(64), releaseCommit: '5'.repeat(40), runtime };
+const manifest = { version: 1, goldenSha256: 'a'.repeat(64), biosSha256: 'b'.repeat(64), releaseSha256: 'c'.repeat(64), guestWorkerSha256: 'd'.repeat(64), runtimeSha256: 'e'.repeat(64), releaseCommit: '5'.repeat(40) };
+const config = { version: 1, releaseCommit: manifest.releaseCommit, runtime, launchManifest: JSON.stringify(manifest) };
+const launchSha256 = hash(config.launchManifest).toString('hex');
+const guest = { releaseCommit: manifest.releaseCommit, workerSha256: manifest.guestWorkerSha256, runtimeSha256: manifest.runtimeSha256 };
 const build = { files: { 'pnpm-lock.yaml': '100644:' + runtime.lockSha256 },
   node: runtime.node, chromium: runtime.chromium, playwright: runtime.playwright };
 const release = { commit: config.releaseCommit, target: 'linux-amd64' };
 
 test('VM config and probe bind launch, signed release and every runtime pin', () => {
-  assert.equal(validateVMConfig(config, build, release), config);
-  const probe = Buffer.from(JSON.stringify({ node: runtime.node, chromium: runtime.chromium, runtime }));
-  assert.equal(validateVMProbe(probe, runtime), runtime);
+  assert.equal(validateVMConfig(config, build, release).launchSha256, launchSha256);
+  const probe = Buffer.from(JSON.stringify({ node: runtime.node, chromium: runtime.chromium, runtime, guest }));
+  assert.equal(validateVMProbe(probe, runtime, manifest), runtime);
   assert.throws(() => validateVMConfig({ ...config, releaseCommit: '6'.repeat(40) }, build, release));
   assert.throws(() => validateVMConfig({ ...config, runtime: { ...runtime, lockSha256: '7'.repeat(64) } }, build, release));
   assert.throws(() => validateVMProbe(Buffer.from(JSON.stringify({ node: runtime.node, chromium: runtime.chromium,
-    runtime: { ...runtime, fontSha256: '8'.repeat(64) } })), runtime), VerificationWait);
+    runtime: { ...runtime, fontSha256: '8'.repeat(64) }, guest })), runtime, manifest), VerificationWait);
+  for (const key of Object.keys(guest)) assert.throws(() => validateVMProbe(Buffer.from(JSON.stringify({ node: runtime.node, chromium: runtime.chromium, runtime, guest: { ...guest, [key]: 'bad' } })), runtime, manifest), VerificationWait);
 });
 
 async function fixture(t, behavior = {}) {
@@ -49,7 +53,7 @@ async function fixture(t, behavior = {}) {
       const value = behavior.output ?? Buffer.from('ok');
       const response = Buffer.alloc(144); response.write('FVMR'); response[4] = 1; response[5] = input[5];
       response[6] = behavior.status ?? 0;
-      nonce.copy(response, 8); hash(body).copy(response, 40); Buffer.from(config.launchSha256, 'hex').copy(response, 72);
+      nonce.copy(response, 8); hash(body).copy(response, 40); Buffer.from(launchSha256, 'hex').copy(response, 72);
       response.writeBigUInt64BE(BigInt(behavior.length ?? value.length), 104); hash(value).copy(response, 112);
       if (behavior.wrongOperation) response[5] ^= 1;
       if (behavior.wrongRequestHash) response[40] ^= 1;
@@ -64,14 +68,14 @@ async function fixture(t, behavior = {}) {
   });
   await new Promise((resolve, reject) => { server.on('error', reject); server.listen(path, resolve); });
   t.after(async () => { await new Promise(resolve => server.close(resolve)); rmSync(dir, { recursive: true, force: true }); });
-  return { seen, client: vmBackend(config, { connect: () => createConnection(path), deadlineOverride: 200 }) };
+  return { seen, client: vmBackend({ launchSha256 }, { connect: () => createConnection(path), deadlineOverride: 200 }) };
 }
 
 test('socket probe result matches the protected runtime', async t => {
-  const output = Buffer.from(JSON.stringify({ node: runtime.node, chromium: runtime.chromium, runtime }));
+  const output = Buffer.from(JSON.stringify({ node: runtime.node, chromium: runtime.chromium, runtime, guest }));
   const { client } = await fixture(t, { output });
   const bytes = await client.run('render', ['--probe']);
-  assert.equal(validateVMProbe(bytes, runtime), runtime);
+  assert.equal(validateVMProbe(bytes, runtime, manifest), runtime);
 });
 
 test('guest bridge accepts only fixed bounded operations', () => {

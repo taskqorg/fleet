@@ -10,7 +10,7 @@ const decision = ({ found, review, selected }) => ({
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const publicReason = reason => reason.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 400);
 
-export async function evaluate(event, { provider, git, receipts, checks, fleet, runner }) {
+export async function evaluate(event, { provider, git, receipts, checks, fleet, runner, rendererPending = false }) {
   let candidate, policy, evidence, conclusion, evidenceState;
   const memberReceipts = [];
   const visual = {};
@@ -71,6 +71,7 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
       measureImpact: async (_event, paths) => {
         if (!runner) {
           if (fleet && event.kind === 'pull_request') await select();
+          if (rendererPending) throw new VerificationWait('Protected VM renderer is temporarily unavailable');
           throw new DesignBlocked('Protected normal-route verification is unconfigured for this change');
         }
         const measured = runner.impact(event, paths, git, visual);

@@ -139,13 +139,14 @@ function localRuntime(build) {
   const directory = trustedPath(rootfs, false);
   const scripts = trustedPath(resolve(releaseDir, 'worker'), false);
   const compareFile = trustedPath(resolve(releaseDir, 'compare-png'), true);
-  const runtime = JSON.parse(readTrusted(directory + runtimeDir + '/runtime.json', 8192));
+  const runtimeBytes = readTrusted(directory + runtimeDir + '/runtime.json', 8192);
+  const runtime = JSON.parse(runtimeBytes);
   if (!digest(runtime.imageSha256) || !digest(runtime.fontSha256) ||
       runtime.lockSha256 !== build.files?.['pnpm-lock.yaml']?.split(':')[1] ||
       runtime.chromium !== build.chromium || runtime.playwright !== build.playwright || runtime.node !== build.node)
     throw new Error('The renderer runtime does not match the signed release');
   const where = { directory, scripts, compareFile };
-  return { runtime, run: (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout) };
+  return { runtime, runtimeSha256: sha256(runtimeBytes), run: (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout) };
 }
 
 // Parse before opening the local runtime. The protocol exposes no command, path or binary selector.
@@ -175,13 +176,22 @@ export function decodeVMJob(operation, bytes) {
 export async function isolatedVMJob(operation, bytes) {
   const input = decodeVMJob(operation, bytes);
   const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
-  const { runtime, run } = localRuntime(build);
+  const { runtime, runtimeSha256, run } = localRuntime(build);
   const result = await run(input.job, input.args, input.bytes, input.max, input.timeout);
   if (operation !== 1) return result;
   const probe = JSON.parse(result);
   if (probe.chromium !== runtime.chromium || probe.node !== runtime.node)
     throw new VerificationWait('Isolated Chromium or Node did not match the release pin');
-  return Buffer.from(JSON.stringify({ node: probe.node, chromium: probe.chromium, runtime }));
+  const release = JSON.parse(readTrusted(resolve(releaseDir, '../../release.json'), 8192));
+  if (!/^[a-f0-9]{40}$/.test(release.commit)) throw new VerificationWait('Guest release identity unavailable');
+  const workerSha256 = sha256(readTrusted(fileURLToPath(import.meta.url), 2 * 1024 * 1024));
+  return Buffer.from(JSON.stringify({ node: probe.node, chromium: probe.chromium, runtime,
+    guest: { releaseCommit: release.commit, workerSha256, runtimeSha256 } }));
+}
+
+export function vmBackendConfigured() {
+  try { lstatSync('/etc/fleet-design-verifier/vm-backend.json'); return true; }
+  catch (error) { if (error.code === 'ENOENT') return false; return true; }
 }
 
 export function parityRunner() {
@@ -190,12 +200,14 @@ export function parityRunner() {
   let configured;
   try { lstatSync(configPath); configured = true; }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  let runtime, run, vm = false, expectedRuntime;
+  let runtime, run, vm = false, expectedRuntime, manifest;
   if (configured) {
     const release = JSON.parse(readTrusted(resolve(releaseDir, '../../release.json'), 8192));
     const config = validateVMConfig(JSON.parse(readTrusted(configPath, 8192)), build, release);
     expectedRuntime = config.runtime;
-    runtime = { ...expectedRuntime, vm: { launchSha256: config.launchSha256, releaseCommit: config.releaseCommit } };
+    manifest = config.manifest;
+    runtime = { ...expectedRuntime, vm: { launchSha256: config.launchSha256, issuerReleaseCommit: config.releaseCommit,
+      guestReleaseCommit: manifest.releaseCommit, guestWorkerSha256: manifest.guestWorkerSha256, guestRuntimeSha256: manifest.runtimeSha256 } };
     const backend = vmBackend(config);
     run = (job, args, bytes) => backend.run(job, args, bytes);
     vm = true;
@@ -205,7 +217,7 @@ export function parityRunner() {
   return {
     async probe() {
       const result = await run('render', ['--probe'], undefined, 1024, 25_000);
-      if (vm) { validateVMProbe(result, expectedRuntime); return runtime; }
+      if (vm) { validateVMProbe(result, expectedRuntime, manifest); return runtime; }
       const probe = JSON.parse(result);
       if (probe.chromium !== runtime.chromium || probe.node !== runtime.node)
         throw new VerificationWait('Isolated Chromium or Node did not match the release pin');
