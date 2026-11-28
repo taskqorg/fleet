@@ -8,6 +8,7 @@ import { designCheckDigest } from '../../packages/ui/scripts/design-github-check
 import { sourcePath } from './git.mjs';
 import { DesignBlocked, VerificationWait } from './provider.mjs';
 import { imageScenarioOK, isImageFlow, resolveImages, validateImages } from './worker/image-journey.mjs';
+import { vmBackend, validateVMConfig, validateVMProbe } from './vm-backend.mjs';
 
 const releaseDir = fileURLToPath(new URL('./', import.meta.url));
 const rootfs = '/opt/fleet-design-renderer/rootfs';
@@ -134,21 +135,78 @@ function worker({ directory, scripts, compareFile }, job, args, bytes, max, time
   });
 }
 
-export function parityRunner() {
+function localRuntime(build) {
   const directory = trustedPath(rootfs, false);
   const scripts = trustedPath(resolve(releaseDir, 'worker'), false);
   const compareFile = trustedPath(resolve(releaseDir, 'compare-png'), true);
-  const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
   const runtime = JSON.parse(readTrusted(directory + runtimeDir + '/runtime.json', 8192));
   if (!digest(runtime.imageSha256) || !digest(runtime.fontSha256) ||
       runtime.lockSha256 !== build.files?.['pnpm-lock.yaml']?.split(':')[1] ||
       runtime.chromium !== build.chromium || runtime.playwright !== build.playwright || runtime.node !== build.node)
     throw new Error('The renderer runtime does not match the signed release');
   const where = { directory, scripts, compareFile };
-  const run = (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout);
+  return { runtime, run: (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout) };
+}
+
+// Parse before opening the local runtime. The protocol exposes no command, path or binary selector.
+export function decodeVMJob(operation, bytes) {
+  if (!Buffer.isBuffer(bytes)) throw new VerificationWait('Invalid isolated worker input');
+  const MiB = 1024 * 1024;
+  if (operation === 1 && bytes.length === 0)
+    return { job: 'render', args: ['--probe'], bytes: undefined, max: 1024, timeout: 25_000 };
+  if (operation === 2 && bytes.length >= 4) {
+    const n = bytes.readUInt32BE(0);
+    if (n > 96 * 1024 || n > bytes.length - 4 || bytes.length - 4 - n > 96 * MiB)
+      throw new VerificationWait('Invalid isolated build input');
+    let dependencies;
+    try { dependencies = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(4, 4 + n));
+      if (!Array.isArray(JSON.parse(dependencies))) throw new Error('not an array');
+    } catch { throw new VerificationWait('Invalid isolated build dependencies'); }
+    return { job: 'build', args: [dependencies], bytes: bytes.subarray(4 + n), max: 24 * MiB, timeout: 60_000 };
+  }
+  if (operation === 3 && bytes.length <= 32 * MiB)
+    return { job: 'render', args: [], bytes, max: 32 * MiB, timeout: 65_000 };
+  if (operation === 4 && bytes.length <= 64 * MiB + 2048)
+    return { job: 'compare', args: [], bytes, max: 1024, timeout: 10_000 };
+  throw new VerificationWait('Unsupported or oversized isolated worker operation');
+}
+
+// Guest supervisor entry: always the existing local bwrap, regardless of VM config.
+export async function isolatedVMJob(operation, bytes) {
+  const input = decodeVMJob(operation, bytes);
+  const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
+  const { runtime, run } = localRuntime(build);
+  const result = await run(input.job, input.args, input.bytes, input.max, input.timeout);
+  if (operation !== 1) return result;
+  const probe = JSON.parse(result);
+  if (probe.chromium !== runtime.chromium || probe.node !== runtime.node)
+    throw new VerificationWait('Isolated Chromium or Node did not match the release pin');
+  return Buffer.from(JSON.stringify({ node: probe.node, chromium: probe.chromium, runtime }));
+}
+
+export function parityRunner() {
+  const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
+  const configPath = '/etc/fleet-design-verifier/vm-backend.json';
+  let configured;
+  try { lstatSync(configPath); configured = true; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  let runtime, run, vm = false, expectedRuntime;
+  if (configured) {
+    const release = JSON.parse(readTrusted(resolve(releaseDir, '../../release.json'), 8192));
+    const config = validateVMConfig(JSON.parse(readTrusted(configPath, 8192)), build, release);
+    expectedRuntime = config.runtime;
+    runtime = { ...expectedRuntime, vm: { launchSha256: config.launchSha256, releaseCommit: config.releaseCommit } };
+    const backend = vmBackend(config);
+    run = (job, args, bytes) => backend.run(job, args, bytes);
+    vm = true;
+  } else {
+    ({ runtime, run } = localRuntime(build));
+  }
   return {
     async probe() {
-      const probe = JSON.parse(await run('render', ['--probe'], undefined, 1024, 25_000));
+      const result = await run('render', ['--probe'], undefined, 1024, 25_000);
+      if (vm) { validateVMProbe(result, expectedRuntime); return runtime; }
+      const probe = JSON.parse(result);
       if (probe.chromium !== runtime.chromium || probe.node !== runtime.node)
         throw new VerificationWait('Isolated Chromium or Node did not match the release pin');
       return runtime;

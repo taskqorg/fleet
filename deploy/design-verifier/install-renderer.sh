@@ -35,6 +35,7 @@ tar -xf "$stage/rootfs.tar" -C "$stage/rootfs" --no-same-owner --same-permission
 if find "$stage/rootfs" -xdev \( -type s -o -type b -o -type c -o -type p \) -print -quit | grep -q .; then
   echo 'The renderer base contains a special file' >&2; exit 1
 fi
+"$release/deploy/design-verifier/prepare-renderer-mounts.sh" "$stage/rootfs"
 mkdir -p "$stage/rootfs/work"
 for dir in opt usr proc dev run tmp work; do
   [ ! -L "$stage/rootfs/$dir" ] && [ -d "$stage/rootfs/$dir" ] || exit 1
