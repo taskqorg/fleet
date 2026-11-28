@@ -1386,6 +1386,47 @@ CREATE TABLE score (
   "seq" bigint NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE service_grant (
+  "name" text NOT NULL,
+  "project_id" text NOT NULL,
+  "request_id" text NOT NULL,
+  "question_id" text,
+  "asked_by" text NOT NULL,
+  "approved_at" timestamp with time zone,
+  "declined_at" timestamp with time zone,
+  "account_id" text,
+  "enrollment_reference" text,
+  "application_id" text,
+  "policy_id" text,
+  "token_id" text,
+  "client_id" text,
+  "adopted_at" timestamp with time zone,
+  "paused" boolean NOT NULL,
+  "checked_at" timestamp with time zone,
+  "provider_check" text,
+  "binding_check" text,
+  "expires_at" timestamp with time zone,
+  "provider_last_seen_at" timestamp with time zone,
+  "check_sequence" bigint NOT NULL,
+  "check_started_at" timestamp with time zone,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
+CREATE TABLE service_grant_renewal (
+  "grant_name" text NOT NULL,
+  "request_id" text NOT NULL,
+  "requested_by" text NOT NULL,
+  "requested_at" timestamp with time zone NOT NULL,
+  "baseline_expires_at" timestamp with time zone,
+  "baseline_secret_version" integer,
+  "dispatched_at" timestamp with time zone,
+  "acknowledged_expiry" timestamp with time zone,
+  "verified_expiry" timestamp with time zone,
+  "completed_at" timestamp with time zone,
+  "result" text,
+  "detail" text
+);
 CREATE TABLE session (
   "id" text NOT NULL,
   "code" text,

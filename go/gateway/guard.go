@@ -12,12 +12,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fleet/contract"
 )
 
 // Cloudflare Access application of fleet.ufobe.com.
 const (
 	accessIssuer   = "https://graduz.cloudflareaccess.com"
-	accessAudience = "352f4c75fdee7abac35e5ee8739ab622de4a368725eedac025c33b4e32df1ab0"
+	accessAudience = contract.FleetAccessAudience
 	keysLifetime   = 5 * time.Minute
 	// An unknown kid refetches a set older than this (a rotation); younger sets refuse it from the cache.
 	unknownRefetch = 30 * time.Second

@@ -1878,6 +1878,49 @@ type Score struct {
 	TombstonedAt      *time.Time
 }
 
+type ServiceGrant struct {
+	Name                string
+	ProjectID           string
+	RequestID           string
+	QuestionID          *string
+	AskedBy             string
+	ApprovedAt          *time.Time
+	DeclinedAt          *time.Time
+	AccountID           *string
+	EnrollmentReference *string
+	ApplicationID       *string
+	PolicyID            *string
+	TokenID             *string
+	ClientID            *string
+	AdoptedAt           *time.Time
+	Paused              bool
+	CheckedAt           *time.Time
+	ProviderCheck       *string
+	BindingCheck        *string
+	ExpiresAt           *time.Time
+	ProviderLastSeenAt  *time.Time
+	CheckSequence       int64
+	CheckStartedAt      *time.Time
+	Attempts            int32
+	NextAttemptAt       time.Time
+	LastError           *string
+}
+
+type ServiceGrantRenewal struct {
+	GrantName             string
+	RequestID             string
+	RequestedBy           string
+	RequestedAt           time.Time
+	BaselineExpiresAt     *time.Time
+	BaselineSecretVersion *int32
+	DispatchedAt          *time.Time
+	AcknowledgedExpiry    *time.Time
+	VerifiedExpiry        *time.Time
+	CompletedAt           *time.Time
+	Result                *string
+	Detail                *string
+}
+
 type Session struct {
 	ID                      string
 	Code                    *string

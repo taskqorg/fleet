@@ -27,6 +27,61 @@ target recovers or ceases to apply. Project setup readiness does not substitute 
 
 See [configuration and cutover](../configuration.md#agent-site-access-configuration) for the owner-managed store.
 
+## Machine service access
+
+A machine grant names one viewer project, one Cloudflare service token of 8760 hours, and one exact Service Auth
+policy on the existing `fleet.ufobe.com` Access app. The coordinator uses its existing Cloudflare account authority.
+Enrollment and the ingress guard share the same audience constant. The coordinator alone holds its Cloudflare account
+credential. The machine secret stays in its encrypted systemd credential on PDS18.
+
+### Enroll and verify
+
+1. For a new `fleet-machine-…` identity, call `service_grant_ask` with its project, name, request ID and reason.
+   The Fleet owner approves the exact scope in the existing decision flow. `fleet-design-verifier` in project `fleet`
+   has standing approval for its operator-provisioned grant.
+2. The trusted operator provisions the provider objects and installs the verifier credential in its encrypted service
+   store. This host delivery is operator-owned. Use the Fleet account authority and the existing application. Attach a
+   dedicated Service Auth policy with a single Include rule naming that token. The public people roster contains the
+   machine name, its Cloudflare client ID as `accessCommonName`, role `viewer` and one project
+   grant. Register the design verifier only after its restrictive API is available.
+3. As the Fleet owner, call `service_grant_enroll` with `projectId`, `name`, `applicationId`, `policyId`,
+   `serviceTokenId` and the nonsecret `enrollmentReference`. Fleet pins the configured account and supplied IDs.
+   Repeating the same enrollment is safe. The worker verifies the token by ID and name, the exact application
+   domain and audience, the attached policy, and the grant's effective Fleet roles and projects. It checks for
+   additional Service Auth bindings in the account, including rule group references.
+4. Read `service_grant_status` with `projectId` and `name`. Wait for adoption and fresh provider and binding
+   verification. Providers can report prior token activity. Fleet shows its timestamp separately from the latest
+   check and the last confirmed expiry. For the design verifier, a fresh authenticated service heartbeat after the
+   token's most recent refresh proves Fleet ingress. Fleet reports the heartbeat time and current service readiness
+   separately from Cloudflare's token activity and the verifier's GitHub provider status. For live acceptance, check
+   that the exact machine is admitted on its authorized routes, unrelated operations are refused and the anonymous
+   request is blocked at Access. Persist only the check results and times.
+
+### Refresh and recover
+
+The work kit checks enrolled grants hourly and queues automatic renewal within 30 days of expiry. The owner may
+queue a fresh check or renewal with `service_grant_maintain` and action `check` or `renew`. Give each manual renewal
+a stable `requestId` and reuse it on retry. Read that exact attempt with `service_grant_status` and the same ID.
+Fleet persists the pre-refresh expiry and dispatch before calling Cloudflare's refresh endpoint. Success requires an
+independent provider lookup with advanced expiry, the same token and client IDs, the configured duration, and the
+same application, policy and viewer binding. The refresh endpoint preserves the secret. If Cloudflare reports its
+version, Fleet compares it too. The live acceptance check repeats the trusted credential probe after the renewed
+expiry has been verified.
+
+An explicit provider refusal names the failed operation in the attempt. Fix the existing account authority or
+provider binding, check the grant again, then use a new renewal request ID. After a timeout, interruption or stale
+lookup, Fleet only reads back the outstanding attempt. `verified_by_readback` records the observed expiry
+advancement in the recorded dispatch interval when acknowledgement was lost. An unconfirmed attempt blocks another
+refresh. The owner may pause the grant and use `close_unconfirmed` with the exact request ID once in-flight work has
+settled and trusted provider activity confirms it is safe to retry. Resume with `resume`. Expired tokens require an
+owner recovery decision.
+
+Pause renewal during an authorized rotation or access removal. The trusted operator rotates the exact existing token
+when separately approved, installs the replacement in the existing encrypted service credential and reloads the
+service. Check the original token and client IDs and the live service probe before resuming. For suspected exposure,
+follow the provider's revoke procedure immediately. For removal, revoke the exact Access policy and remove the public
+viewer binding through the trusted operator. Fleet pause only stops future refresh dispatch.
+
 ## Terms
 
 - **Access server:** a project server Fleet may provision, `{id, address, via?}`; `via` names the jump server it is reached through.

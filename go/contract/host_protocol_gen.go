@@ -2715,10 +2715,12 @@ const (
 	ProjectOperationConnectionsKeyRequest ProjectOperation = "connections_key_request"
 	ProjectOperationAccessGrants          ProjectOperation = "access_grants"
 	ProjectOperationAccessGrantAsk        ProjectOperation = "access_grant_ask"
+	ProjectOperationServiceGrantStatus    ProjectOperation = "service_grant_status"
+	ProjectOperationServiceGrantAsk       ProjectOperation = "service_grant_ask"
 )
 
 // ProjectOperationValues lists every ProjectOperation in schema order.
-var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList, ProjectOperationConnectionsKeyRequest, ProjectOperationAccessGrants, ProjectOperationAccessGrantAsk}
+var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList, ProjectOperationConnectionsKeyRequest, ProjectOperationAccessGrants, ProjectOperationAccessGrantAsk, ProjectOperationServiceGrantStatus, ProjectOperationServiceGrantAsk}
 
 // Valid: v is one of the schema's values.
 func (v ProjectOperation) Valid() bool {

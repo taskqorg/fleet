@@ -810,5 +810,60 @@
       ],
       "additionalProperties": false
     }
+  },
+  {
+    "name": "service_grant_status",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Read this project's Cloudflare machine service grant, including its confirmed expiry and renewal result. Supply name and optionally the renewal requestId.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "service_grant_ask",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Ask the owner for a one-year machine service grant for this project. The request covers the existing Fleet Access application and a viewer in this project only. Reuse requestId on retry.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "requestId",
+        "reason"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
   }
 ]

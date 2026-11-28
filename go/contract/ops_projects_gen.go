@@ -606,6 +606,145 @@ func (v *ProjectUpdateRequest) Validate() error {
 	return nil
 }
 
+type ServiceGrantAction string
+
+const (
+	ServiceGrantActionCheck            ServiceGrantAction = "check"
+	ServiceGrantActionRenew            ServiceGrantAction = "renew"
+	ServiceGrantActionPause            ServiceGrantAction = "pause"
+	ServiceGrantActionResume           ServiceGrantAction = "resume"
+	ServiceGrantActionCloseUnconfirmed ServiceGrantAction = "close_unconfirmed"
+)
+
+// ServiceGrantActionValues lists every ServiceGrantAction in schema order.
+var ServiceGrantActionValues = []ServiceGrantAction{ServiceGrantActionCheck, ServiceGrantActionRenew, ServiceGrantActionPause, ServiceGrantActionResume, ServiceGrantActionCloseUnconfirmed}
+
+// Valid: v is one of the schema's values.
+func (v ServiceGrantAction) Valid() bool {
+	for _, x := range ServiceGrantActionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ServiceGrantAskReply = ServiceGrantStatusReply
+
+type ServiceGrantAskRequest struct {
+	Name      string `json:"name"`
+	ProjectId string `json:"projectId"`
+	Reason    string `json:"reason"`
+	RequestId string `json:"requestId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ServiceGrantAskRequest) Validate() error {
+	return nil
+}
+
+type ServiceGrantEnrollReply = ServiceGrantStatusReply
+
+type ServiceGrantEnrollRequest struct {
+	ApplicationId       string `json:"applicationId"`
+	EnrollmentReference string `json:"enrollmentReference"`
+	Name                string `json:"name"`
+	PolicyId            string `json:"policyId"`
+	ProjectId           string `json:"projectId"`
+	ServiceTokenId      string `json:"serviceTokenId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ServiceGrantEnrollRequest) Validate() error {
+	return nil
+}
+
+type ServiceGrantMaintainReply = ServiceGrantStatusReply
+
+type ServiceGrantMaintainRequest struct {
+	Action    ServiceGrantAction `json:"action"`
+	Name      string             `json:"name"`
+	ProjectId string             `json:"projectId"`
+	RequestId *string            `json:"requestId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ServiceGrantMaintainRequest) Validate() error {
+	if err := Check(&v.Action, "action"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ServiceGrantRenewal struct {
+	AcknowledgedExpiry *int64  `json:"acknowledgedExpiry,omitempty"`
+	BaselineExpiry     *int64  `json:"baselineExpiry,omitempty"`
+	CompletedAt        *int64  `json:"completedAt,omitempty"`
+	Detail             *string `json:"detail,omitempty"`
+	DispatchedAt       *int64  `json:"dispatchedAt,omitempty"`
+	RequestId          string  `json:"requestId"`
+	RequestedAt        int64   `json:"requestedAt"`
+	RequestedBy        string  `json:"requestedBy"`
+	Result             string  `json:"result"`
+	VerifiedExpiry     *int64  `json:"verifiedExpiry,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ServiceGrantRenewal) Validate() error {
+	return nil
+}
+
+type ServiceGrantStatusReply struct {
+	AccountId                  *string              `json:"accountId,omitempty"`
+	Application                string               `json:"application"`
+	ApplicationId              *string              `json:"applicationId,omitempty"`
+	Audience                   string               `json:"audience"`
+	BindingProblem             *string              `json:"bindingProblem,omitempty"`
+	BindingReadiness           string               `json:"bindingReadiness"`
+	ClientId                   *string              `json:"clientId,omitempty"`
+	DurationHours              int64                `json:"durationHours"`
+	Enrollment                 string               `json:"enrollment"`
+	EnrollmentReference        *string              `json:"enrollmentReference,omitempty"`
+	LastCheckedAt              *int64               `json:"lastCheckedAt,omitempty"`
+	LastConfirmedExpiry        *int64               `json:"lastConfirmedExpiry,omitempty"`
+	LastServiceAuthenticatedAt *int64               `json:"lastServiceAuthenticatedAt,omitempty"`
+	Name                       string               `json:"name"`
+	NextCheckAt                *int64               `json:"nextCheckAt,omitempty"`
+	Paused                     bool                 `json:"paused"`
+	PolicyId                   *string              `json:"policyId,omitempty"`
+	ProjectId                  string               `json:"projectId"`
+	ProviderLastSeenAt         *int64               `json:"providerLastSeenAt,omitempty"`
+	ProviderProblem            *string              `json:"providerProblem,omitempty"`
+	ProviderReadiness          string               `json:"providerReadiness"`
+	QuestionId                 *string              `json:"questionId,omitempty"`
+	ReconcileError             *string              `json:"reconcileError,omitempty"`
+	Renewal                    *ServiceGrantRenewal `json:"renewal,omitempty"`
+	Role                       string               `json:"role"`
+	ServiceReadiness           string               `json:"serviceReadiness"`
+	ServiceTokenId             *string              `json:"serviceTokenId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ServiceGrantStatusReply) Validate() error {
+	if v.Renewal != nil {
+		if err := Check(v.Renewal, "renewal"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ServiceGrantStatusRequest struct {
+	Name      string  `json:"name"`
+	ProjectId string  `json:"projectId"`
+	RequestId *string `json:"requestId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ServiceGrantStatusRequest) Validate() error {
+	return nil
+}
+
 func init() {
 	for n, o := range map[string]Operation{
 		"apps_edge_setup":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Asks the owner (one approval card) to let Fleet create the Cloudflare service token fleet-apps and the Access application for fleet.ufobe.com/api/apps/* through the Cloudflare API, then probes it. requestId; rotate true refreshes the token's secret instead. Read the state with apps_edge_status.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"requestId\":{\"type\":\"string\"},\"rotate\":{\"type\":\"boolean\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},
@@ -621,6 +760,10 @@ func init() {
 		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create a project (requestId, id, content)", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"properties\":{\"agentSiteAccess\":{\"properties\":{\"defaultTargetId\":{\"type\":\"string\"},\"mode\":{\"enum\":[\"web\",\"not_a_web_app\"],\"type\":\"string\"},\"targets\":{\"items\":{\"properties\":{\"authKind\":{\"enum\":[\"cloudflare_access\",\"verification_header\",\"none\"],\"type\":\"string\"},\"expectedIdentity\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"origin\":{\"type\":\"string\"},\"probe\":{\"properties\":{\"expectedStatus\":{\"type\":\"integer\"},\"identityField\":{\"type\":\"string\"},\"method\":{\"enum\":[\"GET\",\"HEAD\",\"POST\"],\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"path\",\"method\",\"expectedStatus\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"scope\":{\"enum\":[\"verify_read_only\",\"operator\"],\"type\":\"string\"}},\"required\":[\"id\",\"origin\",\"scope\",\"roles\",\"authKind\",\"probe\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"}},\"required\":[\"mode\"],\"type\":\"object\",\"unevaluatedProperties\":false}},\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
 		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Revoke a project's initial access grants (projectId, baseAccessVersion)", InputSchema: json.RawMessage("{\"properties\":{\"baseAccessVersion\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"baseAccessVersion\"],\"type\":\"object\"}")},
 		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "bound:project", Description: "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved. content.settings carries name and the optional description (one line, at most 160 characters) and domain (a host name such as example.com) that the project head shows, and the identity color (rose, violet, sky, teal, lime, sand, coral, slate) and pattern (solid, hatch) of its tile, absent for automatic; read the current content with project_detail first", InputSchema: json.RawMessage("{\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"properties\":{\"agentSiteAccess\":{\"properties\":{\"defaultTargetId\":{\"type\":\"string\"},\"mode\":{\"enum\":[\"web\",\"not_a_web_app\"],\"type\":\"string\"},\"targets\":{\"items\":{\"properties\":{\"authKind\":{\"enum\":[\"cloudflare_access\",\"verification_header\",\"none\"],\"type\":\"string\"},\"expectedIdentity\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"origin\":{\"type\":\"string\"},\"probe\":{\"properties\":{\"expectedStatus\":{\"type\":\"integer\"},\"identityField\":{\"type\":\"string\"},\"method\":{\"enum\":[\"GET\",\"HEAD\",\"POST\"],\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"path\",\"method\",\"expectedStatus\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"scope\":{\"enum\":[\"verify_read_only\",\"operator\"],\"type\":\"string\"}},\"required\":[\"id\",\"origin\",\"scope\",\"roles\",\"authKind\",\"probe\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"}},\"required\":[\"mode\"],\"type\":\"object\",\"unevaluatedProperties\":false}},\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"projectId\":{\"type\":\"string\"},\"repoSha\":{\"type\":[\"string\",\"null\"]},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"projectId\",\"baseRevision\",\"content\"],\"type\":\"object\"}")},
+		"service_grant_ask":             {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "bound:project", Description: "Ask Fleet's owner for a one-year service token on the existing Fleet Cloudflare Access application, bound to viewer in one project. The fleet-machine- name, projectId and reason are explicit. Approval permits enrollment of that scope after trusted provider and credential installation.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"name\",\"requestId\",\"reason\"],\"type\":\"object\"}")},
+		"service_grant_enroll":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Enroll previously approved, operator-provisioned Cloudflare objects. Accepts only nonsecret IDs and an enrollment receipt reference. Fleet reconciles exact provider and roster bindings before adopting.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"applicationId\":{\"type\":\"string\"},\"enrollmentReference\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"policyId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"serviceTokenId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"name\",\"applicationId\",\"policyId\",\"serviceTokenId\",\"enrollmentReference\"],\"type\":\"object\"}")},
+		"service_grant_maintain":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner operation for an enrolled service grant. Actions check, renew, pause, resume, or close_unconfirmed. Renew requires a stable requestId. Close_unconfirmed requires the paused grant and the exact outstanding requestId after provider audit.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"action\":{\"enum\":[\"check\",\"renew\",\"pause\",\"resume\",\"close_unconfirmed\"],\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"name\",\"action\"],\"type\":\"object\"}")},
+		"service_grant_status":          {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a Fleet machine service grant by projectId and name. Includes approved scope, enrollment, separate Cloudflare, Fleet binding and authenticated service readiness, observation timestamps and the latest refresh attempt. Optional requestId reads a specific attempt.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"name\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

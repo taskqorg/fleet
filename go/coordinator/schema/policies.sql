@@ -569,6 +569,18 @@ CREATE POLICY live ON score AS RESTRICTIVE FOR SELECT TO public USING ((fleet_sh
 DROP POLICY IF EXISTS project_scope ON score;
 CREATE POLICY project_scope ON score FOR ALL TO public USING (fleet_visible(project_id));
 
+-- service_grant
+ALTER TABLE service_grant ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON service_grant;
+CREATE POLICY project_scope ON service_grant FOR ALL TO public USING (fleet_visible(project_id)) WITH CHECK (fleet_visible(project_id));
+
+-- service_grant_renewal
+ALTER TABLE service_grant_renewal ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON service_grant_renewal;
+CREATE POLICY project_scope ON service_grant_renewal FOR ALL TO public USING ((EXISTS ( SELECT 1
+   FROM service_grant g
+  WHERE (g.name = service_grant_renewal.grant_name))));
+
 -- session
 ALTER TABLE session ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS directed_session ON session;

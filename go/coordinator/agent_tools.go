@@ -541,7 +541,7 @@ func init() {
 					}
 				}
 			}
-			if name == "project_update" || name == "project_context" || name == "project_readiness" || isResourceRead(name) {
+			if name == "project_update" || name == "project_context" || name == "project_readiness" || name == "service_grant_ask" || name == "service_grant_status" || isResourceRead(name) {
 				out, err := projectAgentArguments(q, a, executionID, isResourceRead(name))
 				if err != nil {
 					return nil, err
@@ -905,7 +905,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		}
 	case name == "reconcile":
 		return nil, fail(403, "Not available to host agents")
-	case name == "project_readiness" || name == "project_context" || name == "project_update" || name == "session_presets" || name == "question_ask" || isResourceRead(name):
+	case name == "project_readiness" || name == "project_context" || name == "project_update" || name == "session_presets" || name == "question_ask" || name == "service_grant_ask" || name == "service_grant_status" || isResourceRead(name):
 		// Bound to the caller's own project: another project's readiness is not the agent's to read.
 		p, err := ownProject()
 		if err != nil {

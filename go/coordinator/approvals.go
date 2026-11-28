@@ -84,7 +84,10 @@ func approvers(q *Request, projectID, action string) []*Person {
 	out := []*Person{}
 	for _, p := range q.app.peopleSnapshot().list() {
 		switch {
-		case p.Owner, hasNamed && slices.Contains(named, p.Email):
+		case p.Owner:
+			out = append(out, p)
+		case action == serviceGrantApproval:
+		case hasNamed && slices.Contains(named, p.Email):
 			out = append(out, p)
 		case hasNamed || slices.Contains(approvalOwnerOnly, action) || fullAccess(p):
 		case mayAccessProjectID(p, projectID):
