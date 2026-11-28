@@ -398,7 +398,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   );
 
   const renderDetailsBody = () => {
-    const task = t()!;
+    const task = () => t()!;
     return (
       <>
         <Show when={unconfirmed()}>
@@ -409,30 +409,31 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             actions={conversation() ? [{ label: 'Open conversation', onClick: () => go(`/conversations/${encodeURIComponent(conversation()!)}`) }] : []}
           />
         </Show>
-        <For each={openQs()}>
+        <For each={openQs()} keyed={q => q.id}>
           {q => {
-            const authority = () => deliveryAuthorityContent(q);
+            const authority = () => deliveryAuthorityContent(q());
+            const answer = () => answers.answered(q().id);
             return (
               <>
                 <DecisionBlock
-                  question={authority()?.title ?? q.text}
-                  questionId={q.id}
-                  artifactIds={q.artifactIds}
-                  askedBy={actor(q.askedBy) || q.kind}
+                  question={authority()?.title ?? q().text}
+                  questionId={q().id}
+                  artifactIds={q().artifactIds}
+                  askedBy={actor(q().askedBy) || q().kind}
                   addressedTo="you"
-                  since={ms(q.askedAt) ?? now()}
+                  since={ms(q().askedAt) ?? now()}
                   now={now()}
                   context={authority()
                     ? <Markdown text={authority()!.evidence} />
-                    : <TaskQuestionContext question={q} />}
-                  typed={typedAnswer(q)}
-                  options={answerChoices(q).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
-                  answered={answers.answered(q.id) ? { by: 'you', answer: answers.answered(q.id)!.answer, at: answers.answered(q.id)!.at, delivered: true } : undefined}
-                  answering={answers.answering(q.id)}
-                  onAnswer={a => answers.send(q, a)}
-                  onSecret={keyConnection(q.options) ? v => answers.addKey(q, v) : undefined}
+                    : <TaskQuestionContext question={q()} />}
+                  typed={typedAnswer(q())}
+                  options={answerChoices(q()).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
+                  answered={answer() ? { by: 'you', answer: answer()!.answer, at: answer()!.at, delivered: true } : undefined}
+                  answering={answers.answering(q().id)}
+                  onAnswer={a => answers.send(q(), a)}
+                  onSecret={keyConnection(q().options) ? v => answers.addKey(q(), v) : undefined}
                 />
-                <AnswerNote answers={answers} id={q.id} />
+                <AnswerNote answers={answers} id={q().id} />
               </>
             );
           }}
@@ -444,7 +445,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             </DetailSection>
           )}
         </Show>
-        <Show when={task.completionReportMissing}>
+        <Show when={task().completionReportMissing}>
           <p class="muted">The latest run finished successfully. No completion report is available for that run.</p>
         </Show>
         <Show when={reported()} keyed>
@@ -470,10 +471,10 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             </For>
           </DetailSection>
         </Show>
-        <Show when={task.expectedOutcome || req().length > 0 || task.dependencies.length > 0}>
-          <OutcomeBlock outcome={task.expectedOutcome ?? ''} requirements={req()} inputs={[]} depends={task.dependencies.length ? dependsOn(task.dependencies) : undefined} />
+        <Show when={task().expectedOutcome || req().length > 0 || task().dependencies.length > 0}>
+          <OutcomeBlock outcome={task().expectedOutcome ?? ''} requirements={req()} inputs={[]} depends={task().dependencies.length ? dependsOn(task().dependencies) : undefined} />
         </Show>
-        <ScopedRollupBar rollup={task.resources} cost={task.cost} />
+        <ScopedRollupBar rollup={task().resources} cost={task().cost} />
         <Show when={nodes().length > 0}>
           <DetailSection title="Executions">
             <ExecTree nodes={nodes()} now={now()} label="Executions" />
