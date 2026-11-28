@@ -378,14 +378,17 @@ function OriginalImageLink(p: { href: string; questionId?: string | null; label?
   const restore = () => {
     const saved: OriginalReturn | undefined = history.state?.questionImageOriginal;
     if (!anchor || saved?.key !== key()) return;
-    requestAnimationFrame(() => {
+    // Back can reload the app. Let the route's initial focus and layout settle
+    // before restoring the link inside its source panel.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       if (!anchor?.isConnected || history.state?.questionImageOriginal?.key !== saved.key) return;
       scrollParents(anchor).forEach((parent, i) => { if (Number.isFinite(saved.scroll[i])) parent.scrollTop = saved.scroll[i]; });
       anchor.focus({ preventScroll: true });
+      if (document.activeElement !== anchor) return;
       const state = { ...history.state };
       delete state.questionImageOriginal;
       history.replaceState(state, '');
-    });
+    }));
   };
   onSettled(restore);
   if (typeof window !== 'undefined') {
