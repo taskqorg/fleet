@@ -394,6 +394,23 @@ test('stopping a stalled provider request releases the poll and revokes its toke
   assert.deepEqual(calls.at(-1), { path: '/installation/token', token: 'fixture', method: 'DELETE' });
 });
 
+test('GitHub renews and reads under independent budgets with the service stop signal', async t => {
+  const stop = new AbortController();
+  const timeout = t.mock.method(AbortSignal, 'timeout');
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'https://api.github.com/fixture');
+    assert.equal(options.signal.aborted, false);
+    return { ok: true, status: 200, json: async () => ({ ready: true }) };
+  });
+  const api = fleetDesignGitHub({}, { signal: stop.signal, connect: async (_, signal) => {
+    assert.equal(signal, stop.signal);
+    assert.equal(timeout.mock.callCount(), 0);
+    return { token: 'invented', expires: Date.now() + 120_000 };
+  } });
+  assert.deepEqual(await api('/fixture'), { ready: true });
+  assert.deepEqual(timeout.mock.calls.map(call => call.arguments[0]), [30_000, 30_000]);
+});
+
 test('stopping cancels an in-flight Fleet evidence request', async t => {
   const { fleetVerifierClient } = await import('../../deploy/design-verifier/fleet.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'fleet-evidence-stop-'));

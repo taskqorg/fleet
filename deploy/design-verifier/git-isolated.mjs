@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, readdir, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DesignBlocked, VerificationWait } from './provider.mjs';
@@ -65,8 +65,63 @@ export function runGitProcess(command, args, { input, signal, timeout = 120_000,
   });
 }
 
+const packName = /^pack-[a-f0-9]{40}\.pack$/;
+const packIndex = name => name.replace(/\.pack$/, '.idx');
+
+async function ifPresent(read, path) {
+  try { return await read(path); }
+  catch (err) { if (err.code !== 'ENOENT') throw err; }
+}
+
+async function discardFetchSlot(slot, objects) {
+  const source = join(slot, 'objects', 'pack');
+  for (const name of await ifPresent(readdir, source) ?? []) {
+    if (!packName.test(name)) continue;
+    const cached = join(objects, 'pack', name);
+    const published = await ifPresent(lstat, cached);
+    if (!published || await ifPresent(lstat, join(objects, 'pack', packIndex(name)))) continue;
+    const staged = await ifPresent(lstat, join(source, name));
+    // A matching inode proves this slot owns the unindexed link from interrupted promotion.
+    if (staged?.isFile() && staged.dev === published.dev && staged.ino === published.ino) await unlink(cached);
+  }
+  await rm(slot, { recursive: true });
+}
+
+async function reapFetchSlots(directory, objects) {
+  await mkdir(directory, { mode: 0o700, recursive: true });
+  const info = await lstat(directory);
+  if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o077))
+    throw new VerificationWait('Untrusted Git fetch slot directory');
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^slot-[a-zA-Z0-9]{6}$/.test(entry.name))
+      throw new VerificationWait('Unexpected Git fetch slot entry');
+    // The sole owner is the verifier unit. Each Git fetch writes only to its own unique slot.
+    await discardFetchSlot(join(directory, entry.name), objects);
+  }
+}
+
+export async function retainFetchPacks(slot, objects, signal) {
+  const source = join(slot, 'objects', 'pack');
+  const entries = await readdir(source, { withFileTypes: true });
+  const files = new Set(entries.filter(entry => entry.isFile()).map(entry => entry.name));
+  const packs = [...files].filter(name => packName.test(name));
+  for (const pack of packs) {
+    const index = packIndex(pack);
+    if (!files.has(index)) throw new VerificationWait('Git fetch pack has no complete index');
+    // Hard links publish only completed files. Git discovers the pack through the index, linked last.
+    for (const name of [pack, index]) {
+      signal?.throwIfAborted();
+      try { await link(join(source, name), join(objects, 'pack', name)); }
+      catch (err) { if (err.code !== 'EEXIST') throw err; }
+    }
+  }
+}
+
 export function openAsyncRepository(state, { signal, onUnconfirmed } = {}) {
   let poisoned = false;
+  let slotsReady;
+  const slots = join(state, 'git-fetch');
+  const objects = join(state, 'git', 'objects');
   const fail = () => { poisoned = true; onUnconfirmed?.(); };
   const worker = fileURLToPath(new URL('./git-worker.mjs', import.meta.url));
   async function call(method, ...args) {
@@ -85,10 +140,15 @@ export function openAsyncRepository(state, { signal, onUnconfirmed } = {}) {
     return method === 'archive' ? Buffer.from(reply.value, 'base64') : reply.value;
   }
   return { dir: join(state, 'git'), async ensure(value) {
-    // The unit's PrivateTmp is reaped on restart, including slots left by an unconfirmed group.
-    const slot = await mkdtemp('/tmp/fleet-design-fetch-');
-    try { await call('ensure', value, slot); }
-    finally { if (!poisoned) await rm(slot, { recursive: true }); }
+    await (slotsReady ??= reapFetchSlots(slots, objects));
+    const slot = await mkdtemp(join(slots, 'slot-'));
+    try {
+      if (await call('ensure', value, slot)) {
+        await retainFetchPacks(slot, objects, signal);
+        await call('ensure', value);
+      }
+    }
+    finally { if (!poisoned) await discardFetchSlot(slot, objects); }
   },
     diffBase: value => call('diffBase', value), fingerprint: (head, path) => call('fingerprint', head, path),
     archive: (head, files) => call('archive', head, files),

@@ -94,7 +94,7 @@ export function loadPolicy(read = readTrusted) {
   return { hash: sha256(raw), mapping, cases, images };
 }
 
-function worker({ directory, scripts, compareFile }, job, args, bytes, max, timeout, signal) {
+function worker({ directory, scripts, compareFile }, job, args, bytes, max, timeout, signal, onUnconfirmed) {
   const params = [
     '--unshare-all', '--unshare-user', '--uid', '1000', '--gid', '1000', '--cap-drop', 'ALL',
     '--new-session', '--die-with-parent', '--clearenv',
@@ -110,14 +110,33 @@ function worker({ directory, scripts, compareFile }, job, args, bytes, max, time
   if (job === 'compare') params.push('--ro-bind', compareFile, '/trusted-compare', '--', '/trusted-compare');
   else params.push('--ro-bind', scripts, '/trusted', '--', runtimeDir + '/node/bin/node', '/trusted/' + job + '.mjs', ...args);
 
+  if (signal?.aborted) return Promise.reject(new VerificationWait('Isolated worker stopped'));
+  const child = spawn('/usr/bin/bwrap', params, { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] });
+  return collectLocalWorker(child, { job, bytes, max, timeout, signal, onUnconfirmed });
+}
+
+export function collectLocalWorker(child, { job, bytes, max, timeout, signal, onUnconfirmed, cleanupTimeout = 3000 }) {
   return new Promise((accept, reject) => {
-    if (signal?.aborted) return reject(new VerificationWait('Isolated worker stopped'));
-    const child = spawn('/usr/bin/bwrap', params, { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] });
-    let failure;
-    const kill = reason => { failure ??= reason; child.kill('SIGKILL'); };
+    let failure, cleanupTimer;
+    const clear = () => {
+      clearTimeout(timer);
+      clearTimeout(cleanupTimer);
+      signal?.removeEventListener('abort', abort);
+    };
+    const kill = reason => {
+      if (failure) return;
+      failure = reason;
+      cleanupTimer = setTimeout(() => {
+        clear();
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.unref();
+        reject(new VerificationWait('Isolated ' + job + ' cleanup unconfirmed'));
+        onUnconfirmed?.();
+      }, cleanupTimeout);
+      try { child.kill('SIGKILL'); } catch { /* The cleanup deadline still applies. */ }
+    };
     const abort = () => kill('stopped');
-    signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) abort();
     const timer = setTimeout(() => kill('watchdog expired'), timeout);
     const chunks = [];
     let size = 0;
@@ -129,18 +148,19 @@ function worker({ directory, scripts, compareFile }, job, args, bytes, max, time
     });
     child.on('error', () => kill('could not start'));
     child.on('close', (code) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', abort);
+      clear();
       if (!failure && code === 0) return accept(Buffer.concat(chunks));
-      if (job === 'build' && code === 42) return reject(new DesignBlocked('A selected dependency fingerprint differs in the isolated toolchain'));
-      if (job === 'build' && code === 43) return reject(new DesignBlocked('The isolated production build or its output was invalid'));
+      if (!failure && job === 'build' && code === 42) return reject(new DesignBlocked('A selected dependency fingerprint differs in the isolated toolchain'));
+      if (!failure && job === 'build' && code === 43) return reject(new DesignBlocked('The isolated production build or its output was invalid'));
       reject(new VerificationWait('Isolated ' + job + ' ' + (failure ?? 'exited with status ' + code)));
     });
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdin.end(bytes);
   });
 }
 
-function localRuntime(build, signal) {
+function localRuntime(build, signal, onUnconfirmed) {
   const directory = trustedPath(rootfs, false);
   const scripts = trustedPath(resolve(releaseDir, 'worker'), false);
   const compareFile = trustedPath(resolve(releaseDir, 'compare-png'), true);
@@ -151,7 +171,8 @@ function localRuntime(build, signal) {
       runtime.chromium !== build.chromium || runtime.playwright !== build.playwright || runtime.node !== build.node)
     throw new Error('The renderer runtime does not match the signed release');
   const where = { directory, scripts, compareFile };
-  return { runtime, runtimeSha256: sha256(runtimeBytes), run: (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout, signal) };
+  return { runtime, runtimeSha256: sha256(runtimeBytes),
+    run: (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout, signal, onUnconfirmed) };
 }
 
 // Parse before opening the local runtime. The protocol exposes no command, path or binary selector.
@@ -199,7 +220,7 @@ export function vmBackendConfigured() {
   catch (error) { if (error.code === 'ENOENT') return false; return true; }
 }
 
-export function parityRunner({ signal, onUnavailable = () => {} } = {}) {
+export function parityRunner({ signal, onUnavailable = () => {}, onUnconfirmed } = {}) {
   const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
   const configPath = '/etc/fleet-design-verifier/vm-backend.json';
   let configured;
@@ -220,7 +241,7 @@ export function parityRunner({ signal, onUnavailable = () => {} } = {}) {
     };
     vm = true;
   } else {
-    ({ runtime, run } = localRuntime(build, signal));
+    ({ runtime, run } = localRuntime(build, signal, onUnconfirmed));
   }
   return {
     async probe() {

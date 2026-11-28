@@ -48,10 +48,11 @@ async function gitHubJWT({ appId, keyFile }) {
 }
 
 async function github(path, token, { method = 'GET', body, signal } = {}) {
+  const deadline = AbortSignal.timeout(30_000);
   const response = await fetch('https://api.github.com' + path, {
     method,
     redirect: 'error',
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000),
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json',
       'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2026-03-10' },
     body: body ? JSON.stringify(body) : undefined,
@@ -109,6 +110,7 @@ async function fleetInstallation(config, signal) {
 
 // Stop and deadlines must release the poll even if an injected transport stalls.
 async function bounded(promise, signal) {
+  if (!signal) return promise;
   signal.throwIfAborted();
   let abort;
   const stopped = new Promise((_, reject) => {
@@ -137,12 +139,11 @@ export function fleetDesignGitHub(config, { connect = fleetInstallation, send = 
     } finally { clearTimeout(timer); }
   };
   const api = async (path, options = {}) => {
-    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(8_000)]) : AbortSignal.timeout(8_000);
-    requestSignal.throwIfAborted();
+    signal?.throwIfAborted();
     if (!access || access.expires - Date.now() < 60_000) {
-      const pending = Promise.resolve().then(() => connect(config, requestSignal));
+      const pending = Promise.resolve().then(() => connect(config, signal));
       let next;
-      try { next = await bounded(pending, requestSignal); }
+      try { next = await bounded(pending, signal); }
       catch (error) {
         // A custom connector may ignore cancellation and return a token later.
         track(pending.then(late => late?.token && revoke(late.token), error => {
@@ -150,15 +151,17 @@ export function fleetDesignGitHub(config, { connect = fleetInstallation, send = 
         }));
         throw error;
       }
-      if (requestSignal.aborted) {
+      if (signal?.aborted) {
         if (next?.token) track(revoke(next.token));
-        requestSignal.throwIfAborted();
+        signal.throwIfAborted();
       }
       const previous = access;
       access = next;
       if (previous?.token && previous.token !== next?.token) track(revoke(previous.token));
     }
-    requestSignal.throwIfAborted();
+    signal?.throwIfAborted();
+    const deadline = AbortSignal.timeout(30_000);
+    const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
     try {
       return await bounded(Promise.resolve().then(() => {
         requestSignal.throwIfAborted();

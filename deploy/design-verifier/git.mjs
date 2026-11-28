@@ -11,11 +11,10 @@ export const sourcePath = path => typeof path === 'string' && path.length < 512 
 
 export function fetchGitObjects(gitAt, slot, objects, remote, source, negotiationTip) {
   gitAt(slot, ['init', '--bare', '.']);
-  // Only Git's content-addressed objects are shared. Refs and fetch metadata stay in the disposable slot.
-  gitAt(slot, ['fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules',
+  gitAt(slot, ['fetch', '--keep', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules',
     '--no-auto-maintenance', '--no-write-commit-graph', '--refmap=',
     ...(negotiationTip ? ['--negotiation-tip=' + negotiationTip] : []), '--', remote, 'refs/heads/main', source],
-  { GIT_OBJECT_DIRECTORY: objects });
+  { GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(objects) });
 }
 
 // This Git process only reads objects. It has no checkout, hooks, helpers or credentials.
@@ -47,11 +46,17 @@ export function openRepository(state) {
     ensure({ base, head, kind, number, ref }, fetchSlot) {
       if (!sha(base) || !sha(head)) throw new VerificationWait('Invalid Git commit identity');
       const basePresent = has(base);
-      if (!basePresent || !has(head)) {
-        const source = kind === 'merge_group' ? ref : 'refs/pull/' + number + '/head';
-        fetchGitObjects(gitAt, fetchSlot, join(dir, 'objects'), remote, source, basePresent ? base : undefined);
+      if (basePresent && has(head)) return false;
+      if (!fetchSlot) throw new VerificationWait('The provider commits are not available');
+      const source = kind === 'merge_group' ? ref : 'refs/pull/' + number + '/head';
+      const objects = join(dir, 'objects');
+      fetchGitObjects(gitAt, fetchSlot, objects, remote, source, basePresent ? base : undefined);
+      const env = { GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(objects) };
+      for (const oid of [base, head]) {
+        if (gitAt(fetchSlot, ['cat-file', '-t', oid], env).toString().trim() !== 'commit')
+          throw new VerificationWait('The provider commits are not available');
       }
-      if (!has(base) || !has(head)) throw new VerificationWait('The provider commits are not available');
+      return true;
     },
     fingerprint(head, path) {
       const file = blob(head, path);
