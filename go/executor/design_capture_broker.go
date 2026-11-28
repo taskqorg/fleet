@@ -20,6 +20,7 @@ const captureBrokerSocket = "/run/fleet-design-capture/broker.sock"
 const captureReceiptLimit = 8192
 
 var errCaptureBusy = errors.New("fixed Fleet design capture renderer is busy")
+var errCaptureStageUnavailable = errors.New("the designer input directory no longer supports atomic capture publication")
 var errCaptureExpired = errors.New("capture permit expired before renderer admission")
 
 var errCaptureBroker = errors.New("fixed Fleet design capture broker failed or unavailable")
@@ -49,13 +50,60 @@ func fixedCaptureCommand(c contract.Command, host, execution string) (contract.D
 	return job, permit, nil
 }
 
+// The launch spec supplies the very input directory given to artifact_get.
+// Re-resolving the session root could select a different legacy workspace.
+func (e *executor) captureStageInput(execution, session string) string {
+	if e.db == nil || !captureID.MatchString(execution) {
+		return ""
+	}
+	spec, ok := readWorkerSpec(workerDirFor(e.root, execution))
+	if !ok || spec.Kind != "harness" || spec.Execution != execution || spec.DataDir != e.root ||
+		!captureID.MatchString(spec.Session) || (session != "" && spec.Session != session) ||
+		spec.InputDir != filepath.Join(spec.Dir, "input") || !filepath.IsAbs(spec.InputDir) || !e.insideDirs(spec.Dir) {
+		return ""
+	}
+	var raw string
+	if e.db.QueryRow("SELECT body FROM commands WHERE id=? AND terminal=0", spec.CommandId).Scan(&raw) != nil {
+		return ""
+	}
+	cmd := commandOf(raw)
+	sp, err := startPayload(cmd)
+	if err != nil || str0(sp.ProjectId) != "fleet" {
+		return ""
+	}
+	owner, err := idOf(cmd, "executionId")
+	if err != nil || owner != execution {
+		return ""
+	}
+	sid, err := idOf(cmd, "sessionId")
+	if err != nil || sid != spec.Session {
+		return ""
+	}
+	var profile string
+	if json.Unmarshal(sp.AgentConfig["id"], &profile) != nil || profile != "codex-designer" {
+		return ""
+	}
+	return spec.InputDir
+}
+
+func (e *executor) captureStageCapabilities(active []string, preflight func(string) bool) []string {
+	var ready []string
+	for _, execution := range active {
+		if input := e.captureStageInput(execution, ""); input != "" && preflight(input) {
+			ready = append(ready, contract.DesignCaptureStageCapability(execution))
+		}
+	}
+	return ready
+}
+
 type captureUploadAuthority struct {
-	URL       string                       `json:"url"`
-	Token     string                       `json:"token"`
-	Access    *[2]string                   `json:"access"`
-	Stores    []string                     `json:"stores"`
-	Execution string                       `json:"execution"`
-	Permit    contract.DesignCapturePermit `json:"permit"`
+	URL        string                       `json:"url"`
+	Token      string                       `json:"token"`
+	Access     *[2]string                   `json:"access"`
+	Stores     []string                     `json:"stores"`
+	Execution  string                       `json:"execution"`
+	StageInput string                       `json:"stageInput"`
+	Permit     contract.DesignCapturePermit `json:"permit"`
 }
 
 // The supervisor passes host authority on a private inherited pipe. Neither
@@ -73,7 +121,7 @@ func captureBrokerCLI(args []string) error {
 	decoder.DisallowUnknownFields()
 	err := decoder.Decode(&auth)
 	_ = pipe.Close()
-	if err != nil || auth.URL == "" || auth.Token == "" || !captureID.MatchString(auth.Execution) {
+	if err != nil || auth.URL == "" || auth.Token == "" || !captureID.MatchString(auth.Execution) || !filepath.IsAbs(auth.StageInput) {
 		return errCaptureBroker
 	}
 	permit, err := json.Marshal(auth.Permit)
@@ -85,7 +133,7 @@ func captureBrokerCLI(args []string) error {
 	auth.Token, auth.Access = "", nil
 	jobDeadline := time.Now().Add(time.Duration(contract.DesignCaptureTimeoutMS) * time.Millisecond)
 	conn, receipt, archive, err := awaitCaptureBroker(dialCaptureBroker, args[0], permit,
-		time.Unix(auth.Permit.ExpiresAt, 0), jobDeadline, 2*time.Second)
+		time.Unix(auth.Permit.ExpiresAt, 0), jobDeadline, 2*time.Second, func() bool { return captureStageReady(auth.StageInput) })
 	if err != nil {
 		return err
 	}
@@ -95,14 +143,14 @@ func captureBrokerCLI(args []string) error {
 
 // Only explicit pre-admission busy is retried. Once the broker admits the job,
 // any transport failure is terminal because the permit may have been spent.
-func awaitCaptureBroker(dial func() (net.Conn, error), input string, permit []byte, expires, deadline time.Time, interval time.Duration) (net.Conn, int64, int64, error) {
+func awaitCaptureBroker(dial func() (net.Conn, error), input string, permit []byte, expires, deadline time.Time, interval time.Duration, ready func() bool) (net.Conn, int64, int64, error) {
 	until := minTime(expires, deadline)
 	for time.Now().Before(until) {
 		conn, err := dial()
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		receipt, archive, err := captureBrokerResponse(conn, input, permit, until, deadline)
+		receipt, archive, err := captureBrokerResponse(conn, input, permit, until, deadline, ready)
 		if err == nil {
 			return conn, receipt, archive, nil
 		}
@@ -122,7 +170,7 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
-func captureBrokerResponse(conn net.Conn, input string, permit []byte, until, deadline time.Time) (int64, int64, error) {
+func captureBrokerResponse(conn net.Conn, input string, permit []byte, until, deadline time.Time, ready func() bool) (int64, int64, error) {
 	if err := conn.SetDeadline(deadline); err != nil {
 		return 0, 0, err
 	}
@@ -152,11 +200,18 @@ func captureBrokerResponse(conn net.Conn, input string, permit []byte, until, de
 		name string
 		max  int64
 	}{{"request.json", 8192}, {"base.bundle", 60 << 20}, {"overlay.json", 3 << 20}, {"fixture.json", 256 << 10}}
-	if _, err := io.WriteString(conn, "FDC1"); err != nil {
-		return 0, 0, err
-	}
 	if len(permit) == 0 || len(permit) > 1024 {
 		return 0, 0, errCaptureBroker
+	}
+	// Check after broker admission and immediately before sending any permit.
+	if !ready() {
+		return 0, 0, errCaptureStageUnavailable
+	}
+	if !time.Now().Before(until) {
+		return 0, 0, errCaptureExpired
+	}
+	if _, err := io.WriteString(conn, "FDC1"); err != nil {
+		return 0, 0, err
 	}
 	if err := binary.Write(conn, binary.BigEndian, uint32(len(permit))); err != nil {
 		return 0, 0, err

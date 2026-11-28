@@ -581,6 +581,10 @@ func runUpload(c *transferClient, db *sql.DB, id string, body *transferJob) (any
 	}
 }
 
+func openArtifactInputDir(path string) (int, error) {
+	return unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+}
+
 func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (any, *failure) {
 	switch kind {
 	case "upload":
@@ -672,7 +676,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			tag = tag[:8]
 		}
 		// The folder is opened once without following a link, and the file is created relative to that descriptor.
-		dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		dfd, err := openArtifactInputDir(dir)
 		if err != nil {
 			return nil, permanentf("input folder is not a directory")
 		}

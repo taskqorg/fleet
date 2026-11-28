@@ -12,7 +12,12 @@ import (
 const DesignCaptureScript = "@fleet-design-capture/v1"
 const DesignCaptureHost = "pds18-native"
 const DesignCaptureCapability = "design-capture-broker-v2"
-const DesignCaptureStageCapability = "design-capture-stage-linux-v1"
+
+// The value belongs to one active designer execution on the fixed host.
+func DesignCaptureStageCapability(execution string) string {
+	return "design-capture-stage-linux-v2:" + execution
+}
+
 const DesignCaptureTimeoutMS = 900_000
 
 type DesignCaptureScope struct {

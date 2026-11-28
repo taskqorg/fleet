@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -94,23 +95,34 @@ func publishCaptureArchive(dirfd int, tag, name string, source io.Reader, size i
 	return "", unix.EEXIST
 }
 
-func captureStageReady(root string) bool {
+func captureStageReady(input string) bool {
 	if st, err := os.Stat("/usr/bin/node"); err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 {
 		return false
 	}
 	if st, err := os.Stat(signedCaptureReplayEntry()); err != nil || !st.Mode().IsRegular() {
 		return false
 	}
+	return captureDestinationReady(input)
+}
+
+func captureDestinationReady(input string) bool {
 	memory, err := anonymousCaptureFile()
 	if err != nil {
 		return false
 	}
-	_ = memory.Close()
-	fd, err := unix.Open(root, unix.O_TMPFILE|unix.O_WRONLY|unix.O_CLOEXEC, 0600)
+	defer memory.Close()
+	const sample = "x"
+	if _, err := io.Copy(memory, strings.NewReader(sample)); err != nil {
+		return false
+	}
+	if _, err := memory.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
+	dirfd, err := openArtifactInputDir(input)
 	if err != nil {
 		return false
 	}
-	reopen, err := unix.Open(fmt.Sprintf("/proc/self/fd/%d", fd), unix.O_RDONLY|unix.O_CLOEXEC, 0)
-	closeErr := unix.Close(fd)
-	return err == nil && unix.Close(reopen) == nil && closeErr == nil
+	defer unix.Close(dirfd)
+	name, err := publishCaptureArchive(dirfd, ".fleet-capture-preflight", newID(), memory, int64(len(sample)))
+	return err == nil && unix.Unlinkat(dirfd, name, 0) == nil
 }

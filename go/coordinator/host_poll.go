@@ -533,7 +533,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 					if err != nil {
 						return err
 					}
-					if err := requireDesignCaptureOrigin(wq, deref(origin.HostID)); err != nil {
+					if err := requireDesignCaptureOrigin(wq, deref(origin.HostID), request.Execution); err != nil {
 						var refused *HTTPError
 						if !errors.As(err, &refused) || refused.Code != 403 {
 							return err

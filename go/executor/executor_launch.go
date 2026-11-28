@@ -909,11 +909,16 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		return refuse("invalid script payload: " + err.Error())
 	}
 	var captureJob contract.DesignCaptureCommand
+	var captureStageDir string
 	var permit contract.DesignCapturePermit
 	if capture {
 		captureJob, permit, err = fixedCaptureCommand(c, e.host, execution)
 		if err != nil || !captureBrokerReady() {
 			return refuse(errCaptureBroker.Error())
+		}
+		captureStageDir = e.captureStageInput(captureJob.Request.Execution, captureJob.Request.Session)
+		if captureStageDir == "" || !captureStageReady(captureStageDir) {
+			return refuse(errCaptureStageUnavailable.Error())
 		}
 	}
 	command := sp.Command
@@ -1030,7 +1035,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	var captureAuthority *captureUploadAuthority
 	if capture {
 		captureAuthority = &captureUploadAuthority{URL: e.url, Token: e.token, Access: accessToken(accessFile()),
-			Execution: execution, Permit: permit, Stores: storeAccessHosts()}
+			Execution: execution, StageInput: captureStageDir, Permit: permit, Stores: storeAccessHosts()}
 	}
 	l, err := e.spawnWorkerWithCapture(c, spec, nil, captureAuthority)
 	if err != nil {

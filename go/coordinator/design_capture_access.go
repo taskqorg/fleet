@@ -75,7 +75,7 @@ func captureTransportAuthority(q *Request, host, execution, startID string, arti
 	if err != nil {
 		return empty, err
 	}
-	if err := requireDesignCaptureOrigin(q, host); err != nil {
+	if err := requireDesignCaptureOrigin(q, host, execution); err != nil {
 		return empty, err
 	}
 	if deref(artifact.ExecutionID) != designCaptureJobID(execution) {

@@ -73,7 +73,7 @@ func TestDesignCaptureBrokerFixedFrames(t *testing.T) {
 		_, err := server.Write(reply.Bytes())
 		done <- err
 	}()
-	receipt, archive, err := captureBrokerResponse(client, input, []byte(fields[0].data), time.Now().Add(time.Second), time.Now().Add(time.Second))
+	receipt, archive, err := captureBrokerResponse(client, input, []byte(fields[0].data), time.Now().Add(time.Second), time.Now().Add(time.Second), func() bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestDesignCaptureBrokerBusyIsRecognizedBeforeInput(t *testing.T) {
 		defer server.Close()
 		_, _ = io.WriteString(server, "FDB1")
 	}()
-	if _, _, err := captureBrokerResponse(client, "/nonexistent", []byte("unused"), time.Now().Add(time.Second), time.Now().Add(time.Second)); !errors.Is(err, errCaptureBusy) {
+	if _, _, err := captureBrokerResponse(client, "/nonexistent", []byte("unused"), time.Now().Add(time.Second), time.Now().Add(time.Second), func() bool { return true }); !errors.Is(err, errCaptureBusy) {
 		t.Fatalf("busy renderer did not refuse before reading source: %v", err)
 	}
 }
@@ -241,7 +241,7 @@ func TestDesignCaptureBusyKeepsOneUnspentPermitUntilAdmissionOrExpiry(t *testing
 				admission = time.Second
 			}
 			conn, receipt, archive, err := awaitCaptureBroker(dial, input, []byte(permit),
-				time.Now().Add(admission), time.Now().Add(2*time.Second), time.Millisecond)
+				time.Now().Add(admission), time.Now().Add(2*time.Second), time.Millisecond, func() bool { return true })
 			if conn != nil {
 				defer conn.Close()
 			}

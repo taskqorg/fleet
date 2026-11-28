@@ -34,13 +34,20 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	}}, e.ownerHeaders(), &project)
 	var task contract.TaskDetail
 	e.opInto(t, "task_create", doc{"title": "Synthetic capture", "projectId": "fleet"}, e.ownerHeaders(), &task)
-	designerSecret := e.registerHost(t, "capture-designer")
-	e.registerHost(t, contract.DesignCaptureHost)
-	const designerHost = "capture-designer"
+	const designerHost = contract.DesignCaptureHost
+	designerSecret := e.registerHost(t, designerHost)
+	var originExecutions []string
+	var reportOriginReady func()
 	turn := func(role string) (string, string) {
 		sid, eid := newID(), newID()
 		sql("INSERT INTO session (id,project_id,task_id,directed_by,payload) VALUES ($1,'fleet',$2,$3,$4)", sid, task.Id, testOwnerEmail, jsonBytes(doc{"role": role}))
 		sql("INSERT INTO execution (id,kind,state,host_id,project_id,session_id,task_id,harness,started_at,data,observation,config_ref,profile_id,directed_by) VALUES ($1,'agent_run','running',$2,'fleet',$3,$4,'codex',now(),$5,'confirmed','{}','codex-designer',$6)", eid, designerHost, sid, task.Id, jsonBytes(doc{"agentConfig": doc{"id": "codex-designer"}}), testOwnerEmail)
+		if role == "designer" {
+			originExecutions = append(originExecutions, eid)
+			if reportOriginReady != nil {
+				reportOriginReady()
+			}
+		}
 		return sid, eid
 	}
 	_, eid := turn("designer")
@@ -87,13 +94,21 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 			t.Fatalf("test origin poll failed: %d %+v", code, reply)
 		}
 	}
+	reportOriginReady = func() {
+		var caps []string
+		for _, execution := range originExecutions {
+			caps = append(caps, contract.DesignCaptureStageCapability(execution))
+		}
+		reportOrigin(contract.PlatformLinux, caps)
+	}
 	t.Run("unsupported origin cannot reserve", func(t *testing.T) {
 		for _, tc := range []struct {
 			platform contract.Platform
 			caps     []string
 		}{
-			{contract.PlatformDarwin, []string{contract.DesignCaptureStageCapability}},
-			{contract.PlatformLinux, []string{"script"}},
+			{contract.PlatformDarwin, []string{contract.DesignCaptureStageCapability(eid)}},
+			{contract.PlatformLinux, []string{"design-capture-stage-linux-v1"}},
+			{contract.PlatformLinux, []string{contract.DesignCaptureStageCapability(foreign)}},
 		} {
 			reportOrigin(tc.platform, tc.caps)
 			_, err := call(designerHost, eid, "start", "first", &overlay, &fixture)
@@ -108,7 +123,24 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 			}
 		}
 	})
-	reportOrigin(contract.PlatformLinux, []string{contract.DesignCaptureStageCapability})
+	t.Run("an exact capability from a different Linux host cannot reserve", func(t *testing.T) {
+		const other = "capture-foreign-origin"
+		secret := e.registerHost(t, other)
+		caps := []string{contract.DesignCaptureStageCapability(eid)}
+		code, reply := e.callJSON(t, "POST", contract.RoutePoll.Path, contract.PollRequest{
+			HostId: other, Platform: contract.PlatformLinux, Version: ptr("signed-test"), Capabilities: caps,
+		}, map[string]string{"Authorization": "Bearer " + secret})
+		if code != 200 {
+			t.Fatalf("foreign test origin poll: %d %+v", code, reply)
+		}
+		sql("UPDATE execution SET host_id=$2 WHERE id=$1", eid, other)
+		defer sql("UPDATE execution SET host_id=$2 WHERE id=$1", eid, designerHost)
+		_, err := call(other, eid, "start", "first", &overlay, &fixture)
+		if err == nil || !strings.Contains(err.Error(), "fixed PDS18") {
+			t.Fatalf("foreign Linux origin was admitted: %v", err)
+		}
+	})
+	reportOriginReady()
 	for _, bad := range []struct{ host, turn, input string }{
 		{"", eid, overlay}, {"wrong-host", eid, overlay}, {designerHost, foreign, overlay}, {designerHost, eid, foreignOverlay},
 	} {
@@ -149,17 +181,17 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Fatalf("unready broker received work: %v %v", len(without), err)
 	}
 	caps := []string{"script", contract.DesignCaptureCapability}
-	t.Run("origin downgrade keeps the same unclaimed job", func(t *testing.T) {
-		reportOrigin(contract.PlatformDarwin, []string{contract.DesignCaptureStageCapability})
+	t.Run("withdrawn destination capability keeps the same unclaimed job", func(t *testing.T) {
+		reportOrigin(contract.PlatformLinux, []string{contract.DesignCaptureStageCapability(foreign)})
 		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
 		if err != nil || len(commands) != 0 {
-			t.Fatalf("downgraded origin obtained a permit: %d %v", len(commands), err)
+			t.Fatalf("unavailable destination obtained a permit: %d %v", len(commands), err)
 		}
 		var handed bool
 		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT handed_out FROM command WHERE id=$1", start.JobId).Scan(&handed); err != nil || handed {
-			t.Fatalf("origin downgrade claimed the durable job: %v %v", handed, err)
+			t.Fatalf("unavailable destination claimed the durable job: %v %v", handed, err)
 		}
-		reportOrigin(contract.PlatformLinux, []string{contract.DesignCaptureStageCapability})
+		reportOriginReady()
 	})
 	first, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
 	if err != nil || len(first) != 1 || first[0].Script == nil {
