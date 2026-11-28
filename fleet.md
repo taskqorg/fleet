@@ -429,6 +429,10 @@ Pull requests reach `main` only through the GitHub merge queue. A worker runs `/
 
 **Target — visual delivery.** Every visible Fleet UI change follows [OR-62 and OR-69](docs/design-system/owner-rules.md#rules). Owner selection of a retained preview recipe precedes production implementation. A trusted `design-approval` check covers the exact PR head and the combined merge-queue tree. Cutover requires qualified decision, admission, issuer and host evidence.
 
+Fleet tasks declare visual impact at intake as `completionRequirements.visualImpact` (`visual`, `unknown` or `nonvisual`). An existing task can declare or promote visual impact through `task_update.visualImpact` before its first production writer. Declared visual and unknown tasks require a sealed owner selection before a production writer can start.
+
+The Fleet designer uses an isolated preview worktree with no delivery branch or forge grant. The protected verifier classifies the actual PR and merge-group changes independently of the task declaration.
+
 Every change passes `scripts/check.sh` (`pnpm run check`), the same in CI and locally ([checks per change](docs/designs/fleet-delivery-pipeline.md#checks-per-change)).
 
 Its `go` part: `go generate` leaves no diff, `go vet`, the four binaries built with `CGO_ENABLED=0`, `go test ./...` (design rules, pure logic, the schema drift checks) and the smoke `node tests/trial/run.ts` (the coordinator binary on a fresh database, 11 checks over HTTP and SSE). Its `app` part: typecheck and bundle, the app unit tests.

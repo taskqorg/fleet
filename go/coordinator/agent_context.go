@@ -368,6 +368,12 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 	}
 	current, _ := s.profile()
 	pid := firstString(b.ProfileID, current.ID)
+	if fleetDesigner(s.ProjectID, current.ID) && b.WorkingDirectory != nil {
+		return none, fail(409, "Fleet design uses the configured preview checkout")
+	}
+	if pid != current.ID && (fleetDesigner(s.ProjectID, pid) || fleetDesigner(s.ProjectID, current.ID)) {
+		return none, fail(409, "Start a separate Fleet conversation to change between design and implementation")
+	}
 	selecting, project := len(b.ProjectID) > 0, ""
 	if selecting {
 		focus := s.Focus
@@ -382,6 +388,9 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 		project = p
 		if dir := q.peopleSnapshot().person(firstString(s.DirectedBy, director(q))); !mayAccessProjectID(dir, p) {
 			return none, fail(403, "Project outside director grants")
+		}
+		if p != s.ProjectID && (fleetDesigner(s.ProjectID, current.ID) || fleetDesigner(p, pid)) {
+			return none, fail(409, "Start a separate Fleet design conversation in its project")
 		}
 		if s.TaskID != "" && s.ProjectID != p {
 			return none, fail(409, "Task-bound session cannot change project")
@@ -545,6 +554,10 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	source, err := sessionLocked(q, sid)
 	if err != nil {
 		return none, err
+	}
+	profile, _ := source.profile()
+	if fleetDesigner(source.ProjectID, profile.ID) {
+		return none, fail(409, "Start a separate Fleet design conversation for another preview")
 	}
 	rid := r.RequestId
 	if rid == "" {
@@ -818,6 +831,19 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 		return none, err
 	}
 	if active {
+		if s.ProjectID == "fleet" {
+			if err := q.db().TaskLifecycleLock(q.ctx(), tid); err != nil {
+				return none, err
+			}
+		}
+		t, err := taskLoad(q, tid)
+		if err != nil {
+			return none, err
+		}
+		prof, _ := s.profile()
+		if needsDesignSelection(t) && s.Access != "read" && !fleetDesigner(s.ProjectID, prof.ID) {
+			return none, fail(409, "Start a task-bound implementation conversation so Fleet can admit its writer")
+		}
 		if err := taskAllowsWork(q, tid); err != nil {
 			return none, err
 		}
@@ -885,7 +911,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 	// A preset (presets.go) gives the role or profile, access, branch and starter; explicit fields win over it.
 	var pre *preset
 	if id := deref(r.Preset); id != "" {
-		ps, _, err := presetsOf(project)
+		ps, _, err := presetsOf(project, pid)
 		if err != nil {
 			return none, err
 		}
@@ -914,6 +940,16 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 				return none, fail(403, "Profile not in project roles")
 			}
 		}
+	}
+	design := fleetDesigner(pid, profileID)
+	if pid == "fleet" && (role == "designer" || pre != nil && pre.ID == "design") && !design {
+		return none, fail(403, "Fleet Design requires the codex-designer profile")
+	}
+	if design {
+		if presetSettingsOf(project).Roles["designer"] != designProfileID || role != "" && role != "designer" {
+			return none, fail(403, "Fleet Design requires the official designer role")
+		}
+		role = "designer"
 	}
 	profile := roleProfile(q, profileID)
 	if profileID == "" || profile == nil {
@@ -951,7 +987,12 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 		branch = *r.Branch
 	}
 	// Write work needs its own branch: commits on a detached worktree could never be delivered.
-	if access == "write" && !branch {
+	if design {
+		if given["branch"] && branch {
+			return none, fail(400, "Fleet design uses a detached preview worktree")
+		}
+		branch = false
+	} else if access == "write" && !branch {
 		return none, fail(400, "Write access needs a branch")
 	}
 	if callerRead && access == "write" {

@@ -10,7 +10,7 @@ import (
 // fields take their defaults, and a project without presets gets the system presets, each with a shipped profile to fall
 // back on. Risk: a project definition with a broken preset is saved, or a project without roles (cs) cannot start.
 func TestPresets(t *testing.T) {
-	ps, source, err := presetsOf(nil)
+	ps, source, err := presetsOf(nil, "")
 	if err != nil || source != "system" || len(ps) != 5 {
 		t.Fatal(ps, source, err)
 	}
@@ -22,14 +22,14 @@ func TestPresets(t *testing.T) {
 			t.Errorf("system preset %s: branch %v with access %s", p.ID, p.Branch, p.Access)
 		}
 	}
-	got, source, err := presetsOf(doc{"presets": []any{map[string]any{"id": "triage", "name": "Triage", "role": "pm", "access": "read"}, map[string]any{"id": "ship", "name": "Ship", "profile": "coding-worker"}}})
+	got, source, err := presetsOf(doc{"presets": []any{map[string]any{"id": "triage", "name": "Triage", "role": "pm", "access": "read"}, map[string]any{"id": "ship", "name": "Ship", "profile": "coding-worker"}}}, "")
 	if err != nil || source != "project" || len(got) != 2 {
 		t.Fatal(got, source, err)
 	}
 	if got[0].Branch || got[0].Access != "read" || got[1].Access != "write" || !got[1].Branch {
 		t.Fatalf("defaults: %+v", got)
 	}
-	if _, _, err := presetsOf(doc{"presets": []any{}}); err != nil {
+	if _, _, err := presetsOf(doc{"presets": []any{}}, ""); err != nil {
 		t.Fatal("an empty list is the system presets", err)
 	}
 	for _, bad := range []any{

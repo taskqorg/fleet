@@ -717,7 +717,8 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 	}
 	requirements := settings.Execution
 	prof, _ := profileOf(e.AgentConfig)
-	if requirements != nil && len(requirements.Profiles) > 0 && !slices.Contains(requirements.Profiles, prof.ID) {
+	design := fleetDesigner(deref(projectID), prof.ID)
+	if !design && requirements != nil && len(requirements.Profiles) > 0 && !slices.Contains(requirements.Profiles, prof.ID) {
 		requirements = nil
 	}
 	cos := settings.Environments
@@ -843,7 +844,7 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			}
 			// A read-only or branchless start (a preset), a workspace key or message attachments run only where the
 			// executor honours them (contract.MissingCapability, the same gate the poll applies).
-			if mc, missing := contract.MissingCapability(k.caps[id], contract.StartNeeds{ReadOnly: deref(x.Access) == "read", Branchless: x.Branch != nil && !*x.Branch && projectID != nil,
+			if mc, missing := contract.MissingCapability(k.caps[id], contract.StartNeeds{ReadOnly: deref(x.Access) == "read", Branchless: design || x.Branch != nil && !*x.Branch && projectID != nil,
 				WorkspaceKey: deref(x.WorkspaceKey) != "", Attachments: len(dp.Attachments) > 0}); missing {
 				switch mc {
 				case contract.CapabilityStartAccessV1:
@@ -1247,6 +1248,20 @@ func (a *App) dispatchOne(q *Request, id string, k *dispatchContext, polling str
 				return err
 			}
 			if _, err := a.startCommand(q, claimed, best.Host, best.binding); err != nil {
+				var pending *designBuildWait
+				if errors.As(err, &pending) {
+					if err := exec(q, "ROLLBACK TO SAVEPOINT start_command"); err != nil {
+						return err
+					}
+					if deref(e.WaitReason) == "permission" && deref(e.WaitDetail) == pending.reason {
+						return nil
+					}
+					queued.WaitReason, queued.WaitDetail = ptr("permission"), &pending.reason
+					if err := executionPut(q, &queued); err != nil {
+						return err
+					}
+					return q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id, WaitReason: queued.WaitReason})
+				}
 				var he *HTTPError
 				if !asHTTP(err, &he) {
 					return err // database or transport: retried by the next pass
@@ -1444,6 +1459,9 @@ func isBackpressureCause(cause string) bool {
 // and never publishes, nor does a read-only start. A run that does not publish needs no forge login (DAM Lab,
 // 2026-11-25: Claude trials failed forge-actor-auth-unready on owner-mac).
 func publishes(e *dispatchExecution) bool {
+	if p, ok := profileOf(e.AgentConfig); ok && fleetDesigner(deref(e.projectID()), p.ID) {
+		return false
+	}
 	if deref(e.ExperimentID) != "" || e.Dispatch != nil && deref(e.Dispatch.Access) == "read" {
 		return false
 	}
@@ -1640,14 +1658,25 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if err != nil {
 		return none, err
 	}
-	if err := taskAllowsWork(q, firstString(e.DeliveryID, liveSession.DeliveryID, liveSession.TaskID)); err != nil {
-		return none, err
-	}
+	task := firstString(e.DeliveryID, liveSession.DeliveryID, liveSession.TaskID)
 	var d dispatchSpec
 	if e.Dispatch != nil {
 		d = *e.Dispatch
 	}
 	dp := d.payload()
+	profile, _ := profileOf(liveSession.AgentConfig)
+	design := fleetDesigner(deref(d.ProjectID), profile.ID)
+	writes := deref(d.ProjectID) == "fleet" && !design && deref(liveSession.Access) != "read" && deref(d.Access) != "read"
+	if design {
+		if deref(liveSession.Role) != "designer" || presetSettingsOf(projectSettingsOf(q, "fleet")).Roles["designer"] != designProfileID {
+			return none, fail(403, "Fleet Design requires the official designer role")
+		}
+	}
+	if !writes {
+		if err := taskAllowsWork(q, task); err != nil {
+			return none, err
+		}
+	}
 	e.HostID = &host
 	if liveSession.Account != nil || binding != nil {
 		if liveSession.Account != nil {
@@ -1717,7 +1746,11 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		if snapshot != nil && len(snapshot.Settings) > 0 {
 			_ = json.Unmarshal(snapshot.Settings, &p.Project)
 		}
-		if !publishes(e) {
+		if design {
+			if err := restrictFleetDesignStart(p, cfg, host); err != nil {
+				return none, err
+			}
+		} else if !publishes(e) {
 			withoutForge(p.Project)
 		}
 	}
@@ -1725,7 +1758,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if snapshot != nil {
 		snapSettings = snapshot.Settings
 	}
-	if gitNetworkOf(q, struct {
+	if !design && gitNetworkOf(q, struct {
 		AgentConfig     json.RawMessage `json:"agentConfig"`
 		ProjectID       *string         `json:"projectId"`
 		Role            *string         `json:"role"`
@@ -1737,7 +1770,16 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	var opsList []agentOperation
 	if cfg != nil {
 		p.AgentConfig, p.Instructions = cfg, ptr("")
-		if prof.FleetOperations { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
+		if design {
+			if dir := q.peopleSnapshot().person(deref(e.DirectedBy)); dir != nil {
+				for _, operation := range fleetOperations(dir) {
+					if operation.Name == "design_offer" || operation.Name == "design_review_get" {
+						opsList = append(opsList, operation)
+					}
+				}
+				p.FleetOperations = rawList(opsList)
+			}
+		} else if prof.FleetOperations { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
 			if dir := q.peopleSnapshot().person(firstString(deref(e.DirectedBy), ownerEmail(q))); dir != nil {
 				opsDirector, opsList = dir, fleetOperations(dir)
 				p.FleetOperations = rawList(opsList)
@@ -1752,6 +1794,14 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if len(dp.Attachments) > 0 {
 		inputs, attachments := startAttachments(e.ID, dp.Attachments)
 		p.Inputs, p.Attachments = append(p.Inputs, inputs...), attachments
+	}
+	if writes {
+		if err := attachDesignSources(q, task, e, host, p); err != nil {
+			return none, err
+		}
+		if err := taskAllowsWork(q, task); err != nil {
+			return none, err
+		}
 	}
 	p.Skills, p.WebRoute = dp.Skills, strPtr(dp.WebRoute)
 	if snapshot != nil {
@@ -1786,10 +1836,10 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		e.WorkspaceSnapshot = workspaces[key]
 	}
 	// The session's preset (presets.go): read access, no branch and its starter instruction, on every turn.
-	if deref(liveSession.Access) == "read" {
+	if deref(liveSession.Access) == "read" || deref(d.Access) == "read" {
 		p.ReadOnly = ptr(true)
 	}
-	if liveSession.Branch != nil && !*liveSession.Branch {
+	if design || liveSession.Branch != nil && !*liveSession.Branch {
 		p.Branch = ptr(false)
 	}
 	if st := liveSession.Starter; st != "" {
@@ -1845,7 +1895,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	}
 	var runConns []connSpec
 	granted := runConnections(jsonStrings(prof.Connections))
-	if e.PipelineRunID == nil {
+	if !design && e.PipelineRunID == nil {
 		minted, err := mintGrantFor(q, mintRun{ExecutionID: &e.ID, DirectedBy: e.DirectedBy, ProjectID: d.ProjectID,
 			ExperimentID: e.ExperimentID, PipelineRunID: liveSession.PipelineRunID}, granted)
 		if err != nil {

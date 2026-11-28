@@ -949,6 +949,9 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 			}
 		}
 		prof, _ := profileOf(se.AgentConfig)
+		if fleetDesigner(projectID, prof.ID) {
+			return "", "", "", fail(403, "The Fleet design execution creates a proposal and cannot publish it")
+		}
 		if len(settings.Execution.Profiles) > 0 && prof.ID != "" && !slices.Contains(settings.Execution.Profiles, prof.ID) {
 			return "", "", "", fail(403, "Execution profile is not granted forge access")
 		}
@@ -998,6 +1001,23 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 		return "", "", "", fail(404, "Repository is not granted by project")
 	}
 
+	if projectID == "fleet" && sourceExec != nil && slices.Contains([]string{"publish_draft", "mark_ready", "request_merge"}, p.action) {
+		link, err := q.db().TaskExecutionLink(q.ctx(), sourceExec.ID)
+		if err != nil {
+			return "", "", "", err
+		}
+		task := deref(link.TaskID)
+		if task == "" && sourceExec.SessionID != "" {
+			session, err := sessionByID(q, sourceExec.SessionID)
+			if err != nil {
+				return "", "", "", err
+			}
+			task = firstString(session.TaskID, session.DeliveryID)
+		}
+		if err := checkDesignPublication(q, task, sourceExec.ID, chosenRef.Host+"/"+chosenRef.Slug); err != nil {
+			return "", "", "", err
+		}
+	}
 	branch := deref(p.branch)
 	if branch == "" && sourceSessionBranch != "" {
 		branch = sourceSessionBranch

@@ -69,3 +69,37 @@ export function verifyDesignEvidence({ project, repository, cases, unknown }, se
   }
   return { classification: 'selected-preview-matches' };
 }
+
+// The protected issuer supplies both lookups from Fleet. The candidate supplies neither a decision nor an artifact row.
+export async function verifyRetainedDesignEvidence(candidate, taskIds, readReview, readOriginal) {
+  if (candidate.unknown.length || !candidate.cases.length) return verifyDesignEvidence(candidate, [], () => undefined);
+  const originals = new Map();
+  const selections = [];
+  const decisions = [];
+  for (const task of new Set(taskIds)) {
+    const r = await readReview(task);
+    if (!r || r.state !== 'selected' || r.taskId !== task || r.projectId !== candidate.project ||
+        r.repository !== candidate.repository || !digest(r.digest) || !nonempty(r.owner) || !nonempty(r.selected))
+      invalid('Fleet has no active owner selection for this task');
+    if (!nonempty(r.questionId) || !nonempty(r.executionId) || !Array.isArray(r.options)) invalid('invalid retained Fleet review');
+    const options = r.options.map(o => ({ ...o, cases: o.cases.map(c => ({ ...c, frames: c.frames.map((f, i) => {
+      const expected = captureMatrix[i];
+      if (!expected || f.theme !== expected.theme || f.viewport !== expected.viewport) invalid('unexpected retained matrix cell');
+      return { ...f, width: expected.width, height: expected.height };
+    }) })) }));
+    const packet = { project: r.projectId, repository: r.repository, task, scope: options[0]?.cases.map(c => c.scopeKey),
+      liveWalk: r.walkArtifactId, options };
+    const decision = { state: r.state, project: r.projectId, repository: r.repository, task, question: r.questionId,
+      executionId: r.executionId, ownerActor: r.owner, option: r.selected, packet: packetDigest(packet) };
+    for (const o of options) for (const c of o.cases) for (const f of c.frames) {
+      if (!originals.has(f.artifactId)) originals.set(f.artifactId, await readOriginal(f.artifactId));
+    }
+    selections.push({ decision, packet });
+    decisions.push({ task, question: r.questionId, digest: r.digest, option: r.selected });
+  }
+  const result = verifyDesignEvidence(candidate, selections, id => originals.get(id));
+  const selectedFrames = Object.fromEntries(selections.flatMap(({ decision, packet }) =>
+    packet.options.find(option => option.key === decision.option).cases.map(item =>
+      [item.scopeKey, item.frames.map(frame => frame.sha256)])));
+  return { ...result, decisions, selectedFrames };
+}

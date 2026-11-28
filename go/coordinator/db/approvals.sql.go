@@ -87,3 +87,136 @@ func (q *Queries) ApprovalOpenForSession(ctx context.Context, sessionID *string)
 	}
 	return items, nil
 }
+
+const assignDesignWriter = `-- name: AssignDesignWriter :exec
+UPDATE question SET data=jsonb_set(data,'{designBuildExecution}',to_jsonb($1::text))
+WHERE id=$2 AND state='answered' AND data ? 'designOffer'
+`
+
+type AssignDesignWriterParams struct {
+	ExecutionID string
+	QuestionID  string
+}
+
+// Mutable build ownership is outside the sealed designOffer. The task lock serializes retries and replacements.
+func (q *Queries) AssignDesignWriter(ctx context.Context, arg AssignDesignWriterParams) error {
+	_, err := q.db.Exec(ctx, assignDesignWriter, arg.ExecutionID, arg.QuestionID)
+	return err
+}
+
+const designOfferArtifact = `-- name: DesignOfferArtifact :one
+SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id, code, use_case_id, summary FROM artifact WHERE id=$1 AND tombstoned_at IS NULL AND state='stored' FOR SHARE
+`
+
+// Share-lock the retained original while sealing or deciding. Legacy IDs are not packet identities.
+func (q *Queries) DesignOfferArtifact(ctx context.Context, id string) (Artifact, error) {
+	row := q.db.QueryRow(ctx, designOfferArtifact, id)
+	var i Artifact
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Scope,
+		&i.ContentHash,
+		&i.Size,
+		&i.MediaType,
+		&i.Name,
+		&i.ExecutionID,
+		&i.TaskID,
+		&i.Required,
+		&i.PreviousArtifactID,
+		&i.DerivedFromArtifactID,
+		&i.Role,
+		&i.State,
+		&i.LastError,
+		&i.DeletedAt,
+		&i.DeletedBy,
+		&i.LegacyID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Seq,
+		&i.ApprovedAt,
+		&i.TombstonedAt,
+		&i.SessionID,
+		&i.Code,
+		&i.UseCaseID,
+		&i.Summary,
+	)
+	return i, err
+}
+
+const designOfferRequest = `-- name: DesignOfferRequest :one
+SELECT id, kind, project_id, task_id, execution_id, session_id, text, options, asked_by, asked_at, answer, answered_by, answered_at, state, updated_at, data, seq, cause, addressed_to, request_id, code, tombstoned_at FROM question WHERE task_id=$1 AND execution_id=$2
+AND data->'designOffer'->>'requestId'=$3::text ORDER BY (data->'designOffer'->>'revision')::bigint DESC LIMIT 1
+`
+
+type DesignOfferRequestParams struct {
+	TaskID      *string
+	ExecutionID *string
+	RequestKey  string
+}
+
+func (q *Queries) DesignOfferRequest(ctx context.Context, arg DesignOfferRequestParams) (Question, error) {
+	row := q.db.QueryRow(ctx, designOfferRequest, arg.TaskID, arg.ExecutionID, arg.RequestKey)
+	var i Question
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.ExecutionID,
+		&i.SessionID,
+		&i.Text,
+		&i.Options,
+		&i.AskedBy,
+		&i.AskedAt,
+		&i.Answer,
+		&i.AnsweredBy,
+		&i.AnsweredAt,
+		&i.State,
+		&i.UpdatedAt,
+		&i.Data,
+		&i.Seq,
+		&i.Cause,
+		&i.AddressedTo,
+		&i.RequestID,
+		&i.Code,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const latestDesignOffer = `-- name: LatestDesignOffer :one
+SELECT id, kind, project_id, task_id, execution_id, session_id, text, options, asked_by, asked_at, answer, answered_by, answered_at, state, updated_at, data, seq, cause, addressed_to, request_id, code, tombstoned_at FROM question WHERE task_id=$1 AND data ? 'designOffer'
+ORDER BY (data->'designOffer'->>'revision')::bigint DESC LIMIT 1
+`
+
+// The newest sealed revision owns admission even after rework or withdrawal.
+func (q *Queries) LatestDesignOffer(ctx context.Context, taskID *string) (Question, error) {
+	row := q.db.QueryRow(ctx, latestDesignOffer, taskID)
+	var i Question
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.ExecutionID,
+		&i.SessionID,
+		&i.Text,
+		&i.Options,
+		&i.AskedBy,
+		&i.AskedAt,
+		&i.Answer,
+		&i.AnsweredBy,
+		&i.AnsweredAt,
+		&i.State,
+		&i.UpdatedAt,
+		&i.Data,
+		&i.Seq,
+		&i.Cause,
+		&i.AddressedTo,
+		&i.RequestID,
+		&i.Code,
+		&i.TombstonedAt,
+	)
+	return i, err
+}

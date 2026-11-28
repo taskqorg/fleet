@@ -3313,16 +3313,17 @@ func (v *TaskTakeRequest) Validate() error {
 
 type TaskUpdateReply = TaskDetail
 
-// TaskUpdateRequest: action pause, resume, cancel or fail; the other fields replace the stored value when present.
+// TaskUpdateRequest: action pause, resume, cancel or fail. A Fleet task can declare visualImpact before its first writer. A visual or unknown task cannot be changed to nonvisual.
 type TaskUpdateRequest struct {
-	Action              *string `json:"action,omitempty"`
-	ExpectedOutcome     *string `json:"expectedOutcome,omitempty"`
-	Priority            *string `json:"priority,omitempty"`
-	ReplaceDependencyId *string `json:"replaceDependencyId,omitempty"`
-	ResultDestination   *string `json:"resultDestination,omitempty"`
-	TaskId              string  `json:"taskId"`
-	Title               *string `json:"title,omitempty"`
-	WaiveDependencyId   *string `json:"waiveDependencyId,omitempty"`
+	Action              *string           `json:"action,omitempty"`
+	ExpectedOutcome     *string           `json:"expectedOutcome,omitempty"`
+	Priority            *string           `json:"priority,omitempty"`
+	ReplaceDependencyId *string           `json:"replaceDependencyId,omitempty"`
+	ResultDestination   *string           `json:"resultDestination,omitempty"`
+	TaskId              string            `json:"taskId"`
+	Title               *string           `json:"title,omitempty"`
+	VisualImpact        *TaskVisualImpact `json:"visualImpact,omitempty"`
+	WaiveDependencyId   *string           `json:"waiveDependencyId,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -3344,7 +3345,33 @@ func (v *TaskUpdateRequest) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskUpdateRequest) Validate() error {
+	if v.VisualImpact != nil {
+		if err := Check(v.VisualImpact, "visualImpact"); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+type TaskVisualImpact string
+
+const (
+	TaskVisualImpactVisual    TaskVisualImpact = "visual"
+	TaskVisualImpactUnknown   TaskVisualImpact = "unknown"
+	TaskVisualImpactNonvisual TaskVisualImpact = "nonvisual"
+)
+
+// TaskVisualImpactValues lists every TaskVisualImpact in schema order.
+var TaskVisualImpactValues = []TaskVisualImpact{TaskVisualImpactVisual, TaskVisualImpactUnknown, TaskVisualImpactNonvisual}
+
+// Valid: v is one of the schema's values.
+func (v TaskVisualImpact) Valid() bool {
+	for _, x := range TaskVisualImpactValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
@@ -3386,7 +3413,7 @@ func init() {
 		"task_release":            {Read: false, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Release a held task (taskId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_request_acceptance": {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "No artifactIds: the task's stored originals.", InputSchema: json.RawMessage("{\"$comment\":\"No artifactIds: the task's stored originals.\",\"additionalProperties\":true,\"properties\":{\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_take":               {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Take a task (taskId) onto your own subscription", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
-		"task_update":             {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "action pause, resume, cancel or fail; the other fields replace the stored value when present.", InputSchema: json.RawMessage("{\"$comment\":\"action pause, resume, cancel or fail; the other fields replace the stored value when present.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"expectedOutcome\":{\"type\":\"string\"},\"priority\":{\"type\":\"string\"},\"replaceDependencyId\":{\"type\":\"string\"},\"resultDestination\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"waiveDependencyId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
+		"task_update":             {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "action pause, resume, cancel or fail; the other fields replace the stored value when present.", InputSchema: json.RawMessage("{\"$comment\":\"action pause, resume, cancel or fail. A Fleet task can declare visualImpact before its first writer. A visual or unknown task cannot be changed to nonvisual.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"expectedOutcome\":{\"type\":\"string\"},\"priority\":{\"type\":\"string\"},\"replaceDependencyId\":{\"type\":\"string\"},\"resultDestination\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"visualImpact\":{\"enum\":[\"visual\",\"unknown\",\"nonvisual\"],\"type\":\"string\"},\"waiveDependencyId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

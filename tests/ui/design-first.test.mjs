@@ -192,3 +192,99 @@ test('check:design propagates the book build failure', t => {
   assert.equal(result.status, 7, result.stderr);
   assert.equal(result.stdout, '');
 });
+
+test('protected verification fences provider members, derives actual impact and binds parity to the retained selection', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'fleet-protected-design-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => {
+    const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return run.stdout.trim();
+  };
+  git('init', '--quiet');
+  git('config', 'user.name', 'Invented verifier');
+  git('config', 'user.email', 'invented@example.invalid');
+  git('commit', '--quiet', '--allow-empty', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  writeFileSync(join(root, 'README.md'), 'Maintenance notes');
+  git('add', 'README.md');
+  git('commit', '--quiet', '-m', 'documentation');
+  const docs = git('rev-parse', 'HEAD');
+  const uiPath = 'app/src/view.tsx';
+  mkdirSync(join(root, 'app/src'), { recursive: true });
+  writeFileSync(join(root, uiPath), 'visible change');
+  git('add', uiPath);
+  git('commit', '--quiet', '-m', 'visible change');
+  const visual = git('rev-parse', 'HEAD');
+  git('commit', '--quiet', '--allow-empty', '-m', 'combined tree');
+  const groupHead = git('rev-parse', 'HEAD');
+
+  const pr = { kind: 'pull_request', head: visual, base, target: 'main', repository: 'github.com/taskqorg/fleet', number: 1 };
+  const group = { ...pr, kind: 'merge_group', head: groupHead, number: undefined };
+  const members = [{ ...pr }];
+  const design = packet(scopeKey, hashA, task);
+  const review = { state: 'selected', projectId: 'fleet', taskId: task, executionId: 'design execution',
+    repository: pr.repository, owner: 'invented owner', questionId: 'sealed question', digest: hashB,
+    selected: 'A', walkArtifactId: design.liveWalk, options: design.options };
+  const adapter = {
+    repositoryDir: root,
+    readCandidate: async event => ({ ...event, complete: true, members }),
+    readSceneInventory: async () => [],
+    measureImpact: async (event, paths) => {
+      assert.deepEqual(paths, [uiPath]);
+      return { ...event, paths: { [uiPath]: [scopeKey] } };
+    },
+    measureParity: async (event, scopes) => {
+      assert.deepEqual(scopes, [scopeKey]);
+      return { ...event, cases: [{ scopeKey, recipe: hashA, receipt: hashB, appMatches: true,
+        originalSha256: captureMatrix.map(() => hashA) }] };
+    },
+    readAdmittedTasks: async () => [{ number: 1, head: visual, task }],
+    readReview: async () => review,
+    readOriginal: async () => ({ project: 'fleet', repository: pr.repository, task, executionId: review.executionId,
+      state: 'stored', mediaType: 'image/png', sha256: hashA }),
+  };
+  const { verifyProtectedDesignCandidate: verify } = await import('../../packages/ui/scripts/design-protected.mjs');
+  assert.equal((await verify({ ...pr, head: docs }, adapter)).classification, 'nonvisual');
+  await assert.rejects(verify({ ...pr, visualImpact: 'nonvisual' }, {
+    ...adapter, measureImpact: async event => ({ ...event, paths: {} }),
+  }), /visual impact is unverified/);
+  await assert.rejects(verify(pr, { ...adapter, readAdmittedTasks: async () => [{ number: 1, head: docs, task }] }), /member head/);
+  await assert.rejects(verify(pr, { ...adapter, readReview: async () => ({ ...review, state: 'inactive' }) }), /no active owner selection/);
+  await assert.rejects(verify(pr, { ...adapter, measureParity: async event => {
+    const parity = await adapter.measureParity(event, [scopeKey]);
+    parity.cases[0].originalSha256[0] = hashB;
+    return parity;
+  } }), /selected originals/);
+  const receipt = await verify(pr, adapter);
+  assert.equal(receipt.classification, 'selected-preview-matches');
+  assert.equal(receipt.decisions[0].digest, review.digest);
+  await assert.rejects(verify(group, {
+    ...adapter, readCandidate: async event => ({ ...event, complete: false, members }),
+  }), /membership is unknown/);
+  await assert.rejects(verify(group, { ...adapter, readPRReceipt: async () => ({ ...receipt, head: docs }) }), /exact member head/);
+  await assert.rejects(verify(group, { ...adapter, readPRReceipt: async () => receipt, measureParity: async event => {
+    const parity = await adapter.measureParity(event, [scopeKey]);
+    parity.cases[0].recipe = hashB;
+    return parity;
+  } }), /missing current selection/);
+  const combined = await verify(group, { ...adapter, readPRReceipt: async () => receipt });
+  assert.equal(combined.head, groupHead);
+  assert.deepEqual(combined.members, [{ number: 1, head: visual }]);
+});
+
+
+test('the protected GitHub check signature is read back by App, receipt and exact head', async () => {
+  const { designGitHubConfig, readDesignCheckReceipt } = await import('../../packages/ui/scripts/design-github-checks.mjs');
+  const env = { FLEET_DESIGN_GITHUB_APP_ID: '123', FLEET_DESIGN_GITHUB_INSTALLATION_ID: '456',
+    FLEET_DESIGN_GITHUB_APP_KEY_FILE: '/run/credentials/fleet-design-verifier.service/github-app.pem' };
+  assert.deepEqual(designGitHubConfig(env), { appId: 123, installationId: 456, keyFile: env.FLEET_DESIGN_GITHUB_APP_KEY_FILE });
+  assert.throws(() => designGitHubConfig({ ...env, FLEET_DESIGN_GITHUB_APP_KEY_FILE: 'candidate.pem' }), /absolute key file/);
+  const expected = { appId: 123, head: 'a'.repeat(40), externalId: hashB };
+  const row = { id: 7, app: { id: 123 }, name: 'design-approval', head_sha: expected.head,
+    status: 'completed', conclusion: 'success', external_id: hashB };
+  assert.deepEqual(readDesignCheckReceipt(row, expected), { ...expected, checkRunId: 7, conclusion: 'success' });
+  for (const override of [{ app: { id: 456 } }, { head_sha: 'b'.repeat(40) }, { external_id: hashA }, { conclusion: 'neutral' }]) {
+    assert.throws(() => readDesignCheckReceipt({ ...row, ...override }, expected), /did not match/);
+  }
+});
