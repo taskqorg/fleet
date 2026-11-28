@@ -315,6 +315,39 @@ jobs:
             const old = comments.find(c => c.body.includes('<!-- fleet-design-report -->'));
             if (old) await github.rest.issues.updateComment({ ...context.repo, comment_id: old.id, body });
             else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+  # Undo check (scripts/undo-check.ts): names the merged pull requests whose change this one reverts in a file (a rebase or
+  # a conflict resolved to the branch's side, 2026-11-26 #1200 undid #1199). A comment only: it never fails the run.
+  undo-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Find reverted lines
+        continue-on-error: true
+        run: node scripts/undo-check.ts --base origin/main --head HEAD --out undo.md
+      - name: Comment on the PR
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '';
+            try { body = fs.readFileSync('undo.md', 'utf8'); } catch {}
+            const marker = '<!-- fleet-undo-check -->';
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
+            const old = comments.find(c => c.body.includes(marker));
+            if (body && old) await github.rest.issues.updateComment({ ...context.repo, comment_id: old.id, body });
+            else if (body) await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            else if (old) await github.rest.issues.deleteComment({ ...context.repo, comment_id: old.id });
   # One open issue carries the docs report findings from main (docs/designs/fleet-docs-governance.md#from-warning-to-work):
   # updated each push, created with label docs when missing, closed when only docs.size and docs.delta remain.
   docs-order:
