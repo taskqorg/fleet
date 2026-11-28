@@ -109,9 +109,9 @@ function journeyPage(flow) {
   const stageEdges = { left: 0, top: 0, right: frame.width, bottom: frame.height };
   const imageEdges = { left: -480, top: 0, right: 870, bottom: frame.height };
   const trigger = { isConnected: true, ownerDocument: document, parentElement: parent };
-  const stage = { isConnected: true, ownerDocument: document, getBoundingClientRect: () => stageEdges };
+  const stage = { isConnected: true, ownerDocument: document, getBoundingClientRect: () => ({ toJSON: () => stageEdges }) };
   const picture = { complete: true, naturalWidth: 1600, naturalHeight: 1000, currentSrc: origin + original.path,
-    offsetWidth: 1350, offsetHeight: 844, parentElement: stage, decode: async () => {}, getBoundingClientRect: () => imageEdges };
+    offsetWidth: 1350, offsetHeight: 844, decode: async () => {}, getBoundingClientRect: () => ({ toJSON: () => imageEdges }) };
   const calls = [];
   let opened = false;
   const handles = new Map([

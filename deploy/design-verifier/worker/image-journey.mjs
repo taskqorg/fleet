@@ -65,14 +65,11 @@ const viewportMatches = ({ width, height }) =>
   innerWidth === width && innerHeight === height && devicePixelRatio === 1 &&
   visualViewport?.width === width && visualViewport?.height === height && visualViewport?.scale === 1 &&
   visualViewport?.offsetLeft === 0 && visualViewport?.offsetTop === 0;
-const pictureState = img => {
-  const edges = ({ left, top, right, bottom }) => ({ left, top, right, bottom });
-  return {
-    src: img.currentSrc, loaded: img.complete && img.naturalWidth > 0 && img.naturalHeight > 0,
-    width: img.offsetWidth, height: img.offsetHeight, naturalWidth: img.naturalWidth,
-    imageEdges: edges(img.getBoundingClientRect()), stageEdges: edges(img.parentElement.getBoundingClientRect()),
-  };
-};
+const pictureState = img => ({
+  src: img.currentSrc, loaded: img.complete && img.naturalWidth > 0 && img.naturalHeight > 0,
+  width: img.offsetWidth, height: img.offsetHeight, naturalWidth: img.naturalWidth,
+  imageEdges: img.getBoundingClientRect().toJSON(),
+});
 const covers = (outer, inner) => outer.left <= inner.left && outer.top <= inner.top &&
   outer.right >= inner.right && outer.bottom >= inner.bottom;
 
@@ -159,9 +156,10 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
     const readPicture = async () => {
       const state = await picture.evaluate(pictureState);
       assert(state.loaded && state.src === origin + scenario.image.path, 'unexpected viewer image');
-      const { left, top, right, bottom } = state.stageEdges;
+      const stageEdges = await stage.evaluate(el => el.getBoundingClientRect().toJSON());
+      const { left, top, right, bottom } = stageEdges;
       assert(left === 0 && top === 0 && right === frame.width && bottom === frame.height, 'viewer does not fill viewport');
-      return state;
+      return { ...state, stageEdges };
     };
     const open = await readPicture();
     assert(covers(open.imageEdges, open.stageEdges), 'opening image does not cover viewport');
