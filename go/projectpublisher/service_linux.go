@@ -45,6 +45,12 @@ type pushTicket struct {
 
 // Serve runs only as the dedicated system service. Worker and coordinator UIDs have distinct IPC authority.
 func Serve() error {
+	l, err := activatedPublisherListener(Socket, 0)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+
 	raw, err := readCredential()
 	if err != nil {
 		return err
@@ -71,19 +77,6 @@ func Serve() error {
 		return errors.New("publisher requires its dedicated service account")
 	}
 
-	// Socket parent belongs to the service, so neither caller can replace the socket.
-	// Restart may leave the previous socket inode after an unclean exit.
-	if err := os.Remove(Socket); err != nil && !os.IsNotExist(err) {
-		return errors.New("publisher socket cleanup failed")
-	}
-	l, err := net.Listen("unix", Socket)
-	if err != nil {
-		return errors.New("publisher socket unavailable")
-	}
-	defer l.Close()
-	if err := os.Chmod(Socket, 0666); err != nil {
-		return errors.New("publisher socket permissions unavailable")
-	}
 	p := publisher{installation: &installation{app: app, id: id, key: key, do: githubClient().Do},
 		coordinator: coordinator, executor: executor, tickets: make(map[string]pushTicket)}
 	s := http.Server{Handler: &p, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute,
