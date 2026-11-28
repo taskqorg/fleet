@@ -56,6 +56,9 @@ func questionTransition(q *Request, id string, ev questionEvent) (bool, error) {
 	if err == nil { // an app or edge card's answer (apps.go)
 		err = appQuestionEnded(q, id, ev)
 	}
+	if err == nil {
+		err = serviceGrantQuestionEnded(q, id, ev)
+	}
 	if err == nil && ev.To == "withdrawn" {
 		err = wakeAfterQuestionWithdrawal(q, id)
 	}
@@ -84,6 +87,9 @@ func questionsWithdraw(q *Request, ids []string) error {
 			return err
 		}
 		if err := appQuestionEnded(q, id, questionEvent{To: "withdrawn"}); err != nil {
+			return err
+		}
+		if err := serviceGrantQuestionEnded(q, id, questionEvent{To: "withdrawn"}); err != nil {
 			return err
 		}
 		if err := wakeAfterQuestionWithdrawal(q, id); err != nil {

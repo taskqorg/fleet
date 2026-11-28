@@ -118,7 +118,24 @@ func (e *cfDenied) Error() string {
 	return "the Cloudflare API token lacks " + e.Permission
 }
 
+type cfHTTPError struct {
+	Status int
+	msg    string
+}
+
+func (e *cfHTTPError) Error() string { return e.msg }
+
+type cfPage struct {
+	Page       int `json:"page"`
+	TotalPages int `json:"total_pages"`
+	TotalCount int `json:"total_count"`
+}
+
 func (c *cloudflareAccountAPI) call(ctx context.Context, method, path string, body any, perm string, out any) error {
+	return c.callPage(ctx, method, path, body, perm, out, nil)
+}
+
+func (c *cloudflareAccountAPI) callPage(ctx context.Context, method, path string, body any, perm string, out any, page *cfPage) error {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(jsonBytes(body))
@@ -128,6 +145,9 @@ func (c *cloudflareAccountAPI) call(ctx context.Context, method, path string, bo
 		return errors.New("Could not build the Cloudflare request")
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	if method == http.MethodGet {
+		req.Header.Set("Cache-Control", "no-cache")
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -139,6 +159,7 @@ func (c *cloudflareAccountAPI) call(ctx context.Context, method, path string, bo
 	var reply struct {
 		Success bool            `json:"success"`
 		Result  json.RawMessage `json:"result"`
+		Page    json.RawMessage `json:"result_info"`
 		Errors  []struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
@@ -153,7 +174,12 @@ func (c *cloudflareAccountAPI) call(ctx context.Context, method, path string, bo
 		if len(reply.Errors) > 0 {
 			msg = fmt.Sprintf(": %d %s", reply.Errors[0].Code, reply.Errors[0].Message)
 		}
-		return fmt.Errorf("Cloudflare %s %s answered HTTP %d%s", method, path, resp.StatusCode, msg)
+		return &cfHTTPError{resp.StatusCode, fmt.Sprintf("Cloudflare %s %s answered HTTP %d%s", method, path, resp.StatusCode, msg)}
+	}
+	if page != nil && len(reply.Page) != 0 {
+		if err := json.Unmarshal(reply.Page, page); err != nil {
+			return errors.New("Invalid Cloudflare pagination metadata")
+		}
 	}
 	if out != nil {
 		return json.Unmarshal(reply.Result, out)

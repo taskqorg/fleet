@@ -81,8 +81,8 @@ func projectReceipt(q *Request, operation string, args map[string]json.RawMessag
 	switch operation {
 	case "connections_key_request", "access_grant_ask": // its question shows in the asking agent's conversation
 		sub.agent = "execution:" + executionID
-	case "pipeline_run", "direct_search":
-		if err := pipelineReceiptCaller(q, sub, operation, executionID, session); err != nil {
+	case "pipeline_run", "direct_search", "service_grant_status", "service_grant_ask":
+		if err := projectReceiptCaller(q, sub, operation, executionID, session); err != nil {
 			return nil, err
 		}
 		return op.h(sub)
@@ -95,9 +95,9 @@ func projectReceipt(q *Request, operation string, args map[string]json.RawMessag
 	return op.h(sub)
 }
 
-// pipelineReceiptCaller makes sub a native agent's pipeline_run or direct_search caller: its execution in the receipt's
+// projectReceiptCaller makes sub the caller of an authority-checked native project operation: its execution in the receipt's
 // session and project, as the person the run works for, with that person's current access and scope.
-func pipelineReceiptCaller(q, sub *Request, operation, executionID string, session agentSession) error {
+func projectReceiptCaller(q, sub *Request, operation, executionID string, session agentSession) error {
 	if executionID == "" {
 		return fail(403, "Execution rejected")
 	}
@@ -106,10 +106,10 @@ func pipelineReceiptCaller(q, sub *Request, operation, executionID string, sessi
 		return err
 	}
 	if deref(row.SessionID) != session.ID {
-		return fail(403, "Pipeline caller session ownership mismatch")
+		return fail(403, "Project caller session ownership mismatch")
 	}
 	if deref(row.ProjectID) != session.ProjectID {
-		return fail(403, "Pipeline caller project mismatch")
+		return fail(403, "Project caller project mismatch")
 	}
 	execution, err := executionAs[agentExecution](row)
 	if err != nil {
