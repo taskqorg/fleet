@@ -282,6 +282,12 @@ func artifactCall(context any, name string, q any, db dbExec) (any, error) {
 		key := newID()
 		kind, seconds := "get", 600
 		body := M{"executionId": ctx.ExecutionId.V, "artifactId": args.ArtifactId.V, "inputDir": ctx.InputDir.V}
+		if name == "artifact_get" {
+			artifact, _ := valStr(args.ArtifactId)
+			if command := captureDownloadCommand(db.DB, ctx, artifact); command != "" {
+				body["captureCommandId"] = command
+			}
+		}
 		if name == "artifact_list" {
 			kind, seconds = "list", 20
 			for k, isText := range text {

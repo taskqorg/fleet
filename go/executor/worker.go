@@ -293,7 +293,7 @@ func (w *workerLogWriter) emit(rec workerRecord) error {
 }
 
 func runWorker(args []string) error {
-	if len(args) != 1 && (len(args) != 2 || args[1] != "browser-authority") {
+	if len(args) != 1 && (len(args) != 2 || args[1] != "browser-authority" && args[1] != "capture-authority") {
 		return errors.New("run-worker requires worker directory")
 	}
 	workerDir := args[0]
@@ -312,7 +312,16 @@ func runWorker(args []string) error {
 	defer sendReply(workerStartReply{Ok: false, FailReason: "worker exited before starting"})
 
 	var authority *browserAuthority
-	if len(args) == 2 {
+	var capturePipe *os.File
+	if len(args) == 2 && args[1] == "capture-authority" {
+		if err := protectCaptureMemory(); err != nil {
+			return err
+		}
+		unix.CloseOnExec(4)
+		capturePipe = os.NewFile(4, "capture-authority")
+		defer capturePipe.Close()
+	}
+	if len(args) == 2 && args[1] == "browser-authority" {
 		unix.CloseOnExec(4)
 		pipe := os.NewFile(4, "browser-authority")
 		err := json.NewDecoder(pipe).Decode(&authority)
@@ -401,6 +410,12 @@ func runWorker(args []string) error {
 	}
 
 	cmd := &exec.Cmd{Path: spec.CmdPath, Args: append([]string(nil), spec.CmdArgs...), Env: append([]string(nil), spec.CmdEnv...), Dir: spec.CmdDir}
+	if capturePipe != nil {
+		if spec.Kind != "script" || spec.UseMCP || cmd.Path != exe() || len(cmd.Args) != 3 || cmd.Args[1] != "design-capture-client" {
+			return errCaptureBroker
+		}
+		cmd.ExtraFiles = []*os.File{capturePipe}
+	}
 	var sess Session
 	if spec.Kind == "harness" {
 		servers := spec.Servers
@@ -967,6 +982,10 @@ type liveWorker struct {
 }
 
 func (e *executor) spawnWorker(c contract.Command, spec workerSpec, authority *browserAuthority) (*live, error) {
+	return e.spawnWorkerWithCapture(c, spec, authority, nil)
+}
+
+func (e *executor) spawnWorkerWithCapture(c contract.Command, spec workerSpec, authority *browserAuthority, capture *captureUploadAuthority) (*live, error) {
 	wdir := workerDirFor(e.root, spec.Execution)
 	if err := os.MkdirAll(wdir, 0o700); err != nil {
 		return nil, err
@@ -1000,6 +1019,21 @@ func (e *executor) spawnWorker(c contract.Command, spec workerSpec, authority *b
 		}
 		defer pipe.Close()
 		cmd.Args = append(cmd.Args, "browser-authority")
+		cmd.ExtraFiles = append(cmd.ExtraFiles, pipe)
+	}
+
+	if capture != nil {
+		if authority != nil || !isDesignCaptureJob(c) || capture.Execution != spec.Execution || protectCaptureMemory() != nil {
+			pw.Close()
+			return nil, errCaptureBroker
+		}
+		pipe, err := browserPipe(capture)
+		if err != nil {
+			pw.Close()
+			return nil, errCaptureBroker
+		}
+		defer pipe.Close()
+		cmd.Args = append(cmd.Args, "capture-authority")
 		cmd.ExtraFiles = append(cmd.ExtraFiles, pipe)
 	}
 

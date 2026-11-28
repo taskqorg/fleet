@@ -246,7 +246,7 @@ export function parityRunner({ signal, onUnavailable = () => {}, onUnconfirmed }
     const backend = vmBackend(config, { signal });
     run = async (job, args, bytes) => {
       try { return await backend.run(job, args, bytes); }
-      catch (error) { if (error instanceof VerificationWait) onUnavailable(); throw error; }
+      catch (error) { if (error instanceof VerificationWait) onUnavailable(error); throw error; }
     };
     vm = true;
   } else {

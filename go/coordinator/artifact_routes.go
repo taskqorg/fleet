@@ -40,6 +40,9 @@ func init() {
 		replyOf[contract.ArtifactDeclareRequest, contract.OkReply](artifactDeclare)))
 	hostRoute(contract.RouteArtifactsGet, replyOf[contract.HostArtifactGetRequest, contract.ArtifactGetReply](func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
 		x, err := hostMayRead(q, b)
+		if errors.Is(err, errCaptureTransport) {
+			return captureTransportView(q, b, x)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -47,6 +50,9 @@ func init() {
 	}))
 	hostRoute(contract.RouteArtifactsRead, func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
 		x, err := hostMayRead(q, b)
+		if errors.Is(err, errCaptureTransport) {
+			return nil, fail(403, "Capture transport is available only through the owning execution")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -232,6 +238,13 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 	x, err := artifactRow(ctx, a, truncate(b.ArtifactId, 200))
 	if err != nil {
 		return nil, err
+	}
+	capture, err := isCaptureTransport(ctx, a, x)
+	if err != nil {
+		return nil, err
+	}
+	if capture {
+		return x, errCaptureTransport
 	}
 	hostID := q.hostID()
 	if x.ProjectID != nil {

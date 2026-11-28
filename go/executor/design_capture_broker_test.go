@@ -3,11 +3,17 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,12 +22,15 @@ import (
 
 // Simulate a successful broker without namespaces, Chromium or elevated privileges.
 func TestDesignCaptureBrokerFixedFrames(t *testing.T) {
-	input, output := t.TempDir(), t.TempDir()
+	if runtime.GOOS != "linux" {
+		t.Skip("the fixed PDS18 host uses Linux anonymous descriptors")
+	}
+	input := t.TempDir()
 	fields := []struct{ name, data string }{
 		{"permit.json", "invented private authorization"},
 		{"request.json", "invented guest request"}, {"base.bundle", "base"}, {"overlay.json", "overlay"}, {"fixture.json", "fixture"},
 	}
-	for _, f := range fields {
+	for _, f := range fields[1:] {
 		if err := os.WriteFile(filepath.Join(input, f.name), []byte(f.data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -33,6 +42,10 @@ func TestDesignCaptureBrokerFixedFrames(t *testing.T) {
 	go func() {
 		defer server.Close()
 		_ = server.SetDeadline(time.Now().Add(2 * time.Second))
+		if _, err := io.WriteString(server, "FDCA"); err != nil {
+			done <- err
+			return
+		}
 		magic := make([]byte, 4)
 		if _, err := io.ReadFull(server, magic); err != nil || string(magic) != "FDC1" {
 			done <- errCaptureBroker
@@ -58,55 +71,124 @@ func TestDesignCaptureBrokerFixedFrames(t *testing.T) {
 		_, err := server.Write(reply.Bytes())
 		done <- err
 	}()
-	if err := captureBrokerExchange(client, input, output); err != nil {
+	receipt, archive, err := captureBrokerResponse(client, input, []byte(fields[0].data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	err = collectPrivateCapture(client, receipt, archive, func(name, path string) error {
+		target, err := os.Readlink(path)
+		if err != nil || !strings.HasPrefix(target, "/memfd:fleet-capture") {
+			t.Fatalf("raw artifact used a named host file: %q %v", target, err)
+		}
+		b, err := os.ReadFile(path)
+		files[name] = string(b)
+		return err
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]string{"receipt.json": "receipt", "capture.tar": "archive"} {
-		b, err := os.ReadFile(filepath.Join(output, name))
-		if err != nil || string(b) != want {
-			t.Fatalf("fixed output %s: %q %v", name, b, err)
-		}
+	if files["receipt.json"] != "receipt" || files["capture.tar"] != "archive" || len(files) != 2 {
+		t.Fatal("fixed outputs were not transferred", files)
 	}
-	if _, err := os.Stat(filepath.Join(output, "permit.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("host permit escaped to an output")
+	if _, err := os.Stat(filepath.Join(input, "permit.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("host permit escaped to a named input")
+	}
+}
+
+func TestDesignCaptureMediatedDownloadChecksBytesBeforeMaterializing(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the fixed PDS18 host uses Linux anonymous descriptors")
+	}
+	exact := "invented capture archive"
+	artifactID, command := "capture-fixture", "origin-command"
+	for _, tc := range []struct{ name, wire string }{
+		{"exact", exact}, {"interrupted", exact[:7]}, {"wrong digest", strings.Repeat("z", len(exact))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case contract.RouteArtifactsGet.Path:
+					var req contract.HostArtifactGetRequest
+					if json.NewDecoder(r.Body).Decode(&req) != nil || str0(req.CommandId) != command || req.ArtifactId != artifactID {
+						http.Error(w, "missing grant proof", http.StatusForbidden)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(contract.ArtifactGetReply{Id: artifactID, Name: "capture.tar",
+						Size: int64(len(exact)), Sha256: captureTestSHA([]byte(exact)), Url: optStr("http://" + r.Host + "/archive")})
+				case "/archive":
+					_, _ = io.WriteString(w, tc.wire)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			value, f := runJob(newTransferClient(server.URL, "invented", contract.DesignCaptureHost, nil), nil, "fixture", "get",
+				transferJob{ArtifactId: &artifactID, CaptureCommand: &command, ExecutionId: "invented-origin", InputDir: dir})
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wire == exact {
+				if f != nil || len(files) != 1 {
+					t.Fatalf("granted exact archive did not materialize: %v %v", files, f)
+				}
+				if data, err := os.ReadFile(value.(M)["path"].(string)); err != nil || string(data) != exact {
+					t.Fatalf("downloaded bytes differ: %v", err)
+				}
+			} else if f == nil || f.retry != (tc.name == "interrupted") || len(files) != 0 {
+				t.Fatalf("invalid download was exposed or misclassified: %v %v", files, f)
+			}
+		})
+	}
+}
+
+func TestDesignCapturePermitIsAbsentFromJournal(t *testing.T) {
+	command := M{"kind": "script", "id": "invented", "executionId": "invented", "payload": M{
+		"command": contract.DesignCaptureScript, "designCapturePermit": "invented single-use permit", "designCapture": M{"requestId": "synthetic"},
+	}}
+	recorded := captureJournalBody(command, typedCommand(command))
+	if strings.Contains(recorded, "invented single-use permit") || !strings.Contains(recorded, "synthetic") ||
+		!strings.Contains(enc(command), "invented single-use permit") {
+		t.Fatal("journal did not remove only the transient permit")
 	}
 }
 
 func TestDesignCaptureBrokerOutputCleanup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the fixed PDS18 host uses Linux anonymous descriptors")
+	}
 	for _, test := range []struct{ name, wire string }{
 		{"cancelled before archive completes", "receiptpart"},
 		{"cancelled before receipt completes", "rec"},
 		{"extra output after framed result", "receiptarchiveuntrusted"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if receiveCaptureOutputs(bytes.NewBufferString(test.wire), dir, 7, 7) == nil {
-				t.Fatal("unconfirmed broker result accepted")
-			}
-			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
-				t.Fatalf("partial output survived: %v %v", entries, err)
+			called := false
+			if collectPrivateCapture(bytes.NewBufferString(test.wire), 7, 7, func(_, _ string) error {
+				called = true
+				return nil
+			}) == nil || called {
+				t.Fatal("unconfirmed broker result reached artifact upload")
 			}
 		})
 	}
-	t.Run("existing owner file survives refusal", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "capture.tar")
-		if err := os.WriteFile(path, []byte("owned"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if receiveCaptureOutputs(bytes.NewBufferString("receiptarchive"), dir, 7, 7) == nil {
-			t.Fatal("existing archive replaced")
-		}
-		if b, err := os.ReadFile(path); err != nil || string(b) != "owned" {
-			t.Fatalf("owner file changed: %q %v", b, err)
-		}
-		if _, err := os.Stat(filepath.Join(dir, "receipt.json")); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("partial receipt survived")
-		}
-	})
+}
+
+func TestDesignCaptureBrokerBusyIsRecognizedBeforeInput(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	go func() {
+		defer server.Close()
+		_, _ = io.WriteString(server, "FDB1")
+	}()
+	if _, _, err := captureBrokerResponse(client, "/nonexistent", []byte("unused")); !errors.Is(err, errCaptureBusy) {
+		t.Fatalf("busy renderer did not refuse before reading source: %v", err)
+	}
 }
 
 func TestDesignCaptureToolOnlyAcceptsTerminalReturn(t *testing.T) {
@@ -125,44 +207,28 @@ func TestDesignCaptureToolOnlyAcceptsTerminalReturn(t *testing.T) {
 	}
 }
 
-func TestDesignCaptureStageRechecksCallerAndKeepsVerifiedBytesPrivate(t *testing.T) {
+func TestDesignCaptureVerificationDoesNotPublishAndChecksCurrentCaller(t *testing.T) {
 	scope, job, measured, archive, _ := measuredCaptureFixture(t)
 	raw := []byte(enc(measured))
 	job.ReceiptSHA256 = captureTestSHA(raw)
 	proof := contract.DesignCaptureReturn{Job: job, ReceiptArtifact: "receipt-id", CaptureArtifact: "archive-id"}
-	for _, name := range []string{"ready and replay", "cancelled during transfer", "foreign execution", "preexisting designer directory"} {
+	for _, name := range []string{"verified", "cancelled after validation", "foreign execution"} {
 		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
 			request := captureStageRequest{scope.Execution, scope.Session, "test-stage"}
 			if name == "foreign execution" {
 				request.ExecutionID = scope.Task
 			}
-			designer := runTempDir(root, request.ExecutionID)
-			if err := os.MkdirAll(designer, 0700); err != nil {
-				t.Fatal(err)
-			}
-			if name == "preexisting designer directory" {
-				if err := os.Mkdir(filepath.Join(designer, "design-originals-"+job.Request.Job), 0700); err != nil {
-					t.Fatal(err)
-				}
-			}
 			authCount, downloads := 0, 0
 			authorize := func() (contract.DesignCaptureReturn, *failure) {
 				authCount++
-				if authCount == 2 {
-					entries, err := os.ReadDir(designer)
-					if err != nil || len(entries) != 0 {
-						t.Fatal("verified bytes exposed before authorization", entries, err)
-					}
-					if name == "cancelled during transfer" {
-						return contract.DesignCaptureReturn{}, permanentf("cancelled")
-					}
+				if authCount == 2 && name == "cancelled after validation" {
+					return contract.DesignCaptureReturn{}, permanentf("cancelled")
 				}
 				return proof, nil
 			}
-			get := func(id string, pin captureTransferPin) (io.ReadCloser, *failure) {
+			get := func(original captureStageRequest, pin captureTransferPin) (io.ReadCloser, *failure) {
 				downloads++
-				if id != scope.Execution || pin.Job != job.Request.Job {
+				if original != request || pin.Job != job.Request.Job {
 					t.Fatal("download belongs to another capture")
 				}
 				var data []byte
@@ -179,41 +245,92 @@ func TestDesignCaptureStageRechecksCallerAndKeepsVerifiedBytesPrivate(t *testing
 				}
 				return io.NopCloser(bytes.NewReader(data)), nil
 			}
-			published, f := executeCaptureStage(root, request, authorize, get)
-			if name == "foreign execution" || name == "preexisting designer directory" {
+			verified, f := executeCaptureStage(request, authorize, get, validateReplayFixture)
+			switch name {
+			case "foreign execution":
 				if f == nil || downloads != 0 {
-					t.Fatalf("foreign source became staged: %+v (%d downloads)", f, downloads)
+					t.Fatalf("foreign source became verified: %+v (%d downloads)", f, downloads)
 				}
-				return
-			}
-			if _, err := os.Stat(filepath.Join(capturePrivateDir(root, request.ExecutionID), "verify")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatal("verification scratch survived", err)
-			}
-			if name == "cancelled during transfer" {
-				entries, err := os.ReadDir(designer)
-				if f == nil || downloads != 2 || err != nil || len(entries) != 0 {
-					t.Fatalf("cancelled result became visible: %v %v %v", f, entries, err)
+			case "cancelled after validation":
+				if f == nil || downloads != 2 || verified.Capture.ManifestSHA256 != "" {
+					t.Fatalf("cancelled result returned evidence: %v %+v", f, verified)
 				}
-				return
-			}
-			if f != nil || downloads != 2 || !checkCapturePublication(published.Capture) {
-				t.Fatalf("verified archive unavailable: %v", f)
-			}
-			// The durable marker, not a new download, recovers a crash after rename.
-			replayed, f := executeCaptureStage(root, request, authorize, get)
-			if f != nil || downloads != 2 || replayed.Capture.ManifestSHA256 != published.Capture.ManifestSHA256 {
-				t.Fatalf("stage replay created a new transfer: %v", f)
-			}
-			if err := os.WriteFile(filepath.Join(published.Capture.Directory, "case-1-recipe.json"), []byte("{}"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if _, f := executeCaptureStage(root, request, authorize, get); f == nil || checkCapturePublication(published.Capture) {
-				t.Fatal("mutated staged files were accepted on replay")
+			default:
+				if f != nil || downloads != 2 || verified.Capture.Directory != "" || !sceneSHA.MatchString(verified.Capture.ManifestSHA256) {
+					t.Fatalf("validated producer archive unavailable or exposed by a path: %v %+v", f, verified)
+				}
 			}
 		})
 	}
 }
 
+type interruptedCaptureBody struct {
+	bytes.Reader
+	failure error
+}
+
+func (r *interruptedCaptureBody) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if err == io.EOF {
+		return n, r.failure
+	}
+	return n, err
+}
+
+func TestDesignCaptureInterruptedBodyRetriesTheSameDurableRow(t *testing.T) {
+	scope, job, measured, archive, _ := measuredCaptureFixture(t)
+	raw := []byte(enc(measured))
+	job.ReceiptSHA256 = captureTestSHA(raw)
+	proof := contract.DesignCaptureReturn{Job: job, ReceiptArtifact: "receipt-id", CaptureArtifact: "archive-id"}
+	request := captureStageRequest{scope.Execution, scope.Session, "interrupt"}
+	db := journal(t)
+	if err := enqueue(db, request.key(), captureStageKind, request); err != nil {
+		t.Fatal(err)
+	}
+	authorize := func() (contract.DesignCaptureReturn, *failure) { return proof, nil }
+	get := func(source io.Reader) func(captureStageRequest, captureTransferPin) (io.ReadCloser, *failure) {
+		return func(_ captureStageRequest, pin captureTransferPin) (io.ReadCloser, *failure) {
+			if pin.ID == proof.ReceiptArtifact {
+				return io.NopCloser(bytes.NewReader(raw)), nil
+			}
+			return io.NopCloser(source), nil
+		}
+	}
+	for attempt, interrupt := range []error{syscall.ECONNRESET, os.ErrDeadlineExceeded} {
+		interrupted := &interruptedCaptureBody{*bytes.NewReader(archive[:len(archive)/2]), interrupt}
+		_, f := executeCaptureStage(request, authorize, get(interrupted), validateReplayFixture)
+		if f == nil || !f.retry {
+			t.Fatalf("mid-body %v was permanent: %v", interrupt, f)
+		}
+		if err := (dbExec{db}).tx(func(x execer) error {
+			return settleJob(x, "fixture", request.key(), captureStageKind, readJob(enc(request)), int64(attempt), nil, f)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var state string
+		if err := db.QueryRow("SELECT state FROM transfers WHERE id=?", request.key()).Scan(&state); err != nil || state != "queued" {
+			t.Fatalf("interrupted transfer lost its row: %q %v", state, err)
+		}
+	}
+	bad := bytes.Clone(archive)
+	bad[len(bad)-1] ^= 1
+	if _, f := executeCaptureStage(request, authorize, get(bytes.NewReader(bad)), validateReplayFixture); f == nil || f.retry {
+		t.Fatalf("invalid bytes were retried: %v", f)
+	}
+	v, f := executeCaptureStage(request, authorize, get(bytes.NewReader(archive)), validateReplayFixture)
+	if f != nil {
+		t.Fatal(f)
+	}
+	if err := (dbExec{db}).tx(func(x execer) error {
+		return settleJob(x, "fixture", request.key(), captureStageKind, readJob(enc(request)), 1, v, nil)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM transfers WHERE kind=? AND state='done'", captureStageKind).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("retry did not finish the original row: %v %v", count, err)
+	}
+}
 func TestDesignCaptureLateAgentToolResultResumesVerifiedStage(t *testing.T) {
 	scope, job, measured, archive, _ := measuredCaptureFixture(t)
 	raw := []byte(enc(measured))
@@ -225,14 +342,14 @@ func TestDesignCaptureLateAgentToolResultResumesVerifiedStage(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	publication, f := executeCaptureStage(root, request, func() (contract.DesignCaptureReturn, *failure) {
+	publication, f := executeCaptureStage(request, func() (contract.DesignCaptureReturn, *failure) {
 		return proof, nil
-	}, func(_ string, pin captureTransferPin) (io.ReadCloser, *failure) {
+	}, func(_ captureStageRequest, pin captureTransferPin) (io.ReadCloser, *failure) {
 		if pin.ID == proof.ReceiptArtifact {
 			return io.NopCloser(bytes.NewReader(raw)), nil
 		}
 		return io.NopCloser(bytes.NewReader(archive)), nil
-	})
+	}, validateReplayFixture)
 	if f != nil {
 		t.Fatal(f)
 	}
@@ -273,9 +390,19 @@ func TestDesignCaptureLateAgentToolResultResumesVerifiedStage(t *testing.T) {
 	ctx := M{"hostId": "fixture", "commandId": request.CommandID, "executionId": scope.Execution,
 		"projectId": "fleet", "tempDir": dir, "operations": []M{{"name": "design_capture"}}}
 	answer, err := delegationCall("agent_tool_result", M{"requestKey": oldKey}, ctx, db)
-	if err != nil || !bytes.Contains(captureToolText(answer), []byte("staged")) ||
-		bytes.Contains(captureToolText(answer), []byte(proof.CaptureArtifact)) {
+	if err != nil || !bytes.Contains(captureToolText(answer), []byte("verified")) ||
+		!bytes.Contains(captureToolText(answer), []byte(proof.CaptureArtifact)) ||
+		bytes.Contains(captureToolText(answer), []byte(proof.ReceiptArtifact)) {
 		t.Fatalf("late response bypassed verified staging: %v %v", answer, err)
+	}
+	c := contextOf(ctx)
+	if captureDownloadCommand(db, c, proof.CaptureArtifact) != request.CommandID ||
+		captureDownloadCommand(db, c, proof.ReceiptArtifact) != "" {
+		t.Fatal("archive mediation was not scoped to the verified artifact")
+	}
+	c.CommandId = &scope.Task
+	if captureDownloadCommand(db, c, proof.CaptureArtifact) != "" {
+		t.Fatal("another command inherited a verified download")
 	}
 	var jobs, auth int
 	if err := db.QueryRow("SELECT count(*) FROM transfers WHERE kind=?", captureStageKind).Scan(&jobs); err != nil || jobs != 1 {

@@ -23,6 +23,7 @@ type designCaptureInstallation struct {
 	BaseArtifact string                         `json:"baseArtifact"`
 	Producer     contract.DesignCaptureProducer `json:"producer"`
 	Runtime      contract.DesignCaptureRuntime  `json:"runtime"`
+	LaunchSHA256 string                         `json:"launchSha256"`
 }
 
 type designCapturePayload struct {
@@ -46,7 +47,7 @@ func loadDesignCaptureInstallation() (designCaptureInstallation, error) {
 	d := json.NewDecoder(strings.NewReader(os.Getenv("FLEET_DESIGN_CAPTURE_INSTALLATION")))
 	d.DisallowUnknownFields()
 	if d.Decode(&cfg) != nil || d.Decode(new(json.RawMessage)) != io.EOF || cfg.Host != contract.DesignCaptureHost || cfg.BaseArtifact == "" ||
-		!cfg.Producer.Valid() || !cfg.Runtime.Valid() {
+		!cfg.Producer.Valid() || !cfg.Runtime.Valid() || !validDesignHash(cfg.LaunchSHA256) {
 		return cfg, fail(503, "An approved PDS18 designer renderer is unconfigured")
 	}
 	return cfg, nil
@@ -79,8 +80,8 @@ func designCaptureCaller(q *Request) (contract.DesignCaptureScope, error) {
 	return designCaptureAuthority(q, id, q.hostID())
 }
 
-// An empty expected host is used only by authenticated poll dispatch. Resolve
-// the current originating host and its effective director just as agent tools do.
+// Authenticated host callers resolve the originating director against the
+// same live grants as native MCP. MCP already carries its authenticated person.
 func designCaptureAuthority(q *Request, id, expectedHost string) (contract.DesignCaptureScope, error) {
 	var scope contract.DesignCaptureScope
 	if err := lockExecutionTask(q, id); err != nil {
@@ -114,7 +115,7 @@ func designCaptureAuthority(q *Request, id, expectedHost string) (contract.Desig
 	if presetSettingsOf(project.object("settings")).Roles["designer"] != designProfileID {
 		return scope, fail(403, "The official Fleet designer role is unavailable")
 	}
-	if expectedHost == "" {
+	if q.person == nil {
 		origin, err := hostRecordByID(q, deref(e.HostID))
 		if err != nil {
 			return scope, err
@@ -125,6 +126,12 @@ func designCaptureAuthority(q *Request, id, expectedHost string) (contract.Desig
 		sub := *q
 		sub.host = &authHost{HostID: origin.ID, Holder: deref(origin.Holder)}
 		person, err := hostAgentPerson(&sub, firstString(e.DirectedBy, s.DirectedBy, sub.host.Holder), e.TakenFrom)
+		if err != nil {
+			return scope, err
+		}
+		// Mirror the native MCP proof followed by its live database refresh.
+		// Keep the outer host poll unscoped for its other commands.
+		person, err = resolveAccessShareTx(q.ctx(), q.tx, person.Email)
 		if err != nil {
 			return scope, err
 		}
@@ -151,7 +158,7 @@ func captureCommandPayload(c agentCommand) (designCapturePayload, bool) {
 		json.Unmarshal(c.Payload, &p) == nil && p.Command == contract.DesignCaptureScript &&
 		p.DesignCapture.Request.Valid() && p.DesignCapture.Request.Job == c.ExecutionID && c.ID == c.ExecutionID &&
 		p.DesignCapture.Producer.Valid() && p.DesignCapture.Producer.Commit == p.DesignCapture.Request.Base &&
-		p.DesignCapture.Runtime.Valid()
+		p.DesignCapture.InstallationDigest() != ""
 	return p, ok
 }
 
@@ -270,12 +277,13 @@ func startDesignCapture(q *Request, scope contract.DesignCaptureScope, r *contra
 		return out, fail(409, "Invalid capture job identity")
 	}
 	expires := time.Now().Add(15 * time.Minute).Unix()
-	if _, err := capturePermit(request, expires); err != nil {
+	launch := contract.DesignCaptureCommand{RequestID: r.RequestId, Request: request, Producer: cfg.Producer, Runtime: cfg.Runtime, LaunchSHA256: cfg.LaunchSHA256}
+	if _, err := capturePermit(launch, expires); err != nil {
 		return out, err
 	}
 	p := designCapturePayload{Command: contract.DesignCaptureScript, TimeoutMs: contract.DesignCaptureTimeoutMS, PermitExpiresAt: expires,
 		Inputs:        []contract.InputArtifact{{ArtifactId: base.ID, Path: "base.bundle"}, {ArtifactId: overlay.ID, Path: "overlay.json"}, {ArtifactId: fixture.ID, Path: "fixture.json"}},
-		DesignCapture: contract.DesignCaptureCommand{RequestID: r.RequestId, Request: request, Producer: cfg.Producer, Runtime: cfg.Runtime}}
+		DesignCapture: launch}
 	record := struct {
 		ID                string   `json:"id"`
 		ExecutionID       string   `json:"executionId"`
@@ -353,7 +361,7 @@ func init() { op("design_capture", designCapture) }
 
 // The permit exists only in the host poll reply and its private command journal.
 // The persisted command and every designer-facing reply omit it.
-func capturePermit(job contract.DesignCaptureJobRequest, expires int64) (contract.DesignCapturePermit, error) {
+func capturePermit(job contract.DesignCaptureCommand, expires int64) (contract.DesignCapturePermit, error) {
 	var empty contract.DesignCapturePermit
 	path := os.Getenv("FLEET_DESIGN_CAPTURE_SIGNING_KEY_FILE")
 	fd, err := os.Open(path)
@@ -370,8 +378,12 @@ func capturePermit(job contract.DesignCaptureJobRequest, expires int64) (contrac
 	if err != nil || decode != nil || len(seed) != ed25519.SeedSize {
 		return empty, fail(503, "The PDS18 capture authorization signer is unavailable")
 	}
-	signature := ed25519.Sign(ed25519.NewKeyFromSeed(seed), job.PermitMessage(expires))
-	return contract.DesignCapturePermit{ExpiresAt: expires, Signature: hex.EncodeToString(signature)}, nil
+	installation := job.InstallationDigest()
+	if installation == "" {
+		return empty, fail(503, "The PDS18 capture installation is invalid")
+	}
+	signature := ed25519.Sign(ed25519.NewKeyFromSeed(seed), job.Request.PermitMessage(expires, installation))
+	return contract.DesignCapturePermit{ExpiresAt: expires, InstallationSHA256: installation, Signature: hex.EncodeToString(signature)}, nil
 }
 
 func withCapturePermit(cmd *contract.Command, permit contract.DesignCapturePermit) *contract.Command {

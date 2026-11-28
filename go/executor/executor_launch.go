@@ -20,6 +20,23 @@ import (
 	"fleet/projectpublisher"
 )
 
+// A retained command proves identity and supports cleanup. The broker permit
+// is needed only for the first launch and is never written to the journal.
+func captureJournalBody(c M, cmd contract.Command) string {
+	if !isDesignCaptureJob(cmd) {
+		return enc(c)
+	}
+	payload, ok := c["payload"].(M)
+	if !ok {
+		return enc(c)
+	}
+	body := maps.Clone(c)
+	privatePayload := maps.Clone(payload)
+	delete(privatePayload, "designCapturePermit")
+	body["payload"] = privatePayload
+	return enc(body)
+}
+
 func (e *executor) run(c M) error {
 	cid, err := cmdID(c, "id")
 	if err != nil {
@@ -43,6 +60,9 @@ func (e *executor) run(c M) error {
 	}
 	if typedErr != nil {
 		cmd = contract.Command{Raw: json.RawMessage(body)} // receipts and events still read its identities
+	}
+	if isDesignCaptureJob(cmd) {
+		body = captureJournalBody(c, cmd)
 	}
 	if old, ok := e.commandBody(cid, false); ok {
 		if old != body {
@@ -931,23 +951,20 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		return refuse(err.Error())
 	}
 	if capture {
-		for name, data := range map[string][]byte{"request.json": captureJob.Request.Bytes(), "permit.json": []byte(enc(permit))} {
-			path := filepath.Join(input, name)
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err != nil {
-				return refuse("stage private capture request")
-			}
-			_, writeErr := f.Write(data)
-			if errors.Join(writeErr, f.Close()) != nil {
-				return refuse("stage private capture request")
-			}
+		f, err := os.OpenFile(filepath.Join(input, "request.json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return refuse("stage fixed capture request")
+		}
+		_, writeErr := f.Write(captureJob.Request.Bytes())
+		if errors.Join(writeErr, f.Close()) != nil {
+			return refuse("stage fixed capture request")
 		}
 	}
 	work := dir
 	var trial *[2]string
 	var cmd *exec.Cmd
 	if capture {
-		cmd = cleanCmd(exe(), "design-capture-client", input, output)
+		cmd = cleanCmd(exe(), "design-capture-client", input)
 		cmd.Dir, cmd.Env = dir, []string{}
 	} else {
 		project, err := projectContext(sp.Project)
@@ -1010,7 +1027,12 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		Trial:      trial,
 		InitialSeq: 2,
 	}
-	l, err := e.spawnWorker(c, spec, nil)
+	var captureAuthority *captureUploadAuthority
+	if capture {
+		captureAuthority = &captureUploadAuthority{URL: e.url, Token: e.token, Access: accessToken(accessFile()),
+			Execution: execution, Permit: permit, Stores: storeAccessHosts()}
+	}
+	l, err := e.spawnWorkerWithCapture(c, spec, nil, captureAuthority)
 	if err != nil {
 		if personal && errors.Is(err, errWorkerStartUnknown) {
 			return e.finishUnconfirmedScript(c)

@@ -7,14 +7,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image/png"
 	"io"
-	"os"
 	"path"
 	"reflect"
 	"regexp"
@@ -148,12 +146,7 @@ func captureFiles(m appCaptureManifest, requested appCaptureRequest) (map[string
 
 // Verify the retained source names the exact base and overlay requested by the
 // designer before publishing any paths. No archive member is extracted here.
-func verifyAppCaptureSource(ctx context.Context, staged *os.Root, requested appCaptureRequest, manifest appCaptureManifest) error {
-	source, err := staged.Open("source.tar")
-	if err != nil {
-		return errAppCapture
-	}
-	defer source.Close()
+func verifyAppCaptureSource(ctx context.Context, source io.Reader, requested appCaptureRequest, manifest appCaptureManifest, validateReplay func([]byte) error) error {
 	tr := tar.NewReader(&captureContextReader{ctx: ctx, reader: source})
 	allowed := map[string]int64{"base.bundle": 60 << 20, "overlay.json": 3 << 20, "overlay.patch": 2 << 20, "replay.json": maxCaptureManifest}
 	hashes := map[string]string{}
@@ -165,6 +158,8 @@ func verifyAppCaptureSource(ctx context.Context, staged *os.Root, requested appC
 		BaseTree         string                 `json:"baseTree"`
 		Tree             string                 `json:"tree"`
 		ArchiveSHA256    string                 `json:"archiveSha256"`
+		AppSHA256        string                 `json:"appSha256"`
+		Paths            []string               `json:"paths"`
 		Runtime          designerCaptureRuntime `json:"runtime"`
 		BaseBundleSHA256 string                 `json:"baseBundleSha256"`
 		OverlaySHA256    string                 `json:"overlaySha256"`
@@ -187,7 +182,7 @@ func verifyAppCaptureSource(ctx context.Context, staged *os.Root, requested appC
 		}
 		if header.Name == "replay.json" {
 			raw, e := io.ReadAll(io.LimitReader(tr, limit+1))
-			if e != nil || int64(len(raw)) != header.Size || exactKeys(raw, "version", "producer", "commit", "target", "kind", "base", "baseTree", "tree", "archiveSha256", "runtime", "imageSha256", "fontSha256", "lockSha256", "node", "chromium", "playwright", "baseBundleSha256", "overlaySha256", "fixtureSha256", "fixture", "patchSha256", "cases", "scopeKey", "recipe", "recipeFile", "recipeSha256", "frames", "viewport", "theme", "width", "height", "file", "sha256", "bytes", "routes", "imageJourney", "focus", "sourceScroll") != nil || json.Unmarshal(raw, &replay) != nil {
+			if e != nil || int64(len(raw)) != header.Size || exactKeys(raw, "version", "producer", "commit", "target", "kind", "base", "baseTree", "tree", "archiveSha256", "appSha256", "paths", "runtime", "imageSha256", "fontSha256", "lockSha256", "node", "chromium", "playwright", "baseBundleSha256", "overlaySha256", "fixtureSha256", "fixture", "patchSha256", "cases", "scopeKey", "recipe", "recipeFile", "recipeSha256", "frames", "viewport", "theme", "width", "height", "file", "sha256", "bytes", "routes", "imageJourney", "focus", "sourceScroll") != nil || json.Unmarshal(raw, &replay) != nil || validateReplay != nil && validateReplay(raw) != nil {
 				return errAppCapture
 			}
 		} else {
@@ -211,7 +206,7 @@ func verifyAppCaptureSource(ctx context.Context, staged *os.Root, requested appC
 			replay.PatchSHA256 != proof.Source.PatchSHA256 || replay.Runtime != proof.Runtime) {
 		return errAppCapture
 	}
-	if len(allowed) != 0 || replay.Version != 1 || replay.Producer != manifest.Producer || replay.Kind != "fleet-normal-app" || replay.Base != requested.Base ||
+	if len(allowed) != 0 || !sceneSHA.MatchString(replay.AppSHA256) || replay.Paths == nil || replay.Version != 1 || replay.Producer != manifest.Producer || replay.Kind != "fleet-normal-app" || replay.Base != requested.Base ||
 		replay.BaseBundleSHA256 != requested.BaseSHA256 || hashes["base.bundle"] != requested.BaseSHA256 ||
 		replay.OverlaySHA256 != requested.OverlaySHA256 || hashes["overlay.json"] != requested.OverlaySHA256 || replay.FixtureSHA256 != requested.FixtureSHA256 ||
 		len(replay.Fixture) == 0 || !sceneSHA.MatchString(replay.PatchSHA256) ||
@@ -240,40 +235,11 @@ func (r *captureContextReader) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
-// stageAppCapture admits a single bounded tar with handoff.json first and only
-// the manifest's named files. It publishes the directory by one final rename.
-func stageAppCapture(ctx context.Context, root string, requested appCaptureRequest, source io.Reader) (receipt appCaptureReceipt, err error) {
-	info, err := os.Lstat(root)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 || owner(info) != os.Geteuid() {
-		return receipt, errAppCapture
-	}
-	temp, err := os.MkdirTemp(root, ".app-capture-")
-	if err != nil {
-		return receipt, errAppCapture
-	}
-	originalDir, err := os.Lstat(temp)
-	if err != nil || !originalDir.IsDir() || originalDir.Mode()&os.ModeSymlink != 0 {
-		return receipt, errAppCapture
-	}
-	defer func() {
-		if err != nil {
-			current, statErr := os.Lstat(temp)
-			if statErr == nil && os.SameFile(originalDir, current) {
-				if removeErr := os.RemoveAll(temp); removeErr != nil {
-					err = errors.New("private capture cleanup failed")
-				}
-			}
-		}
-	}()
-	staged, err := os.OpenRoot(temp)
-	if err != nil {
-		return receipt, errAppCapture
-	}
-	defer staged.Close()
-	opened, err := staged.Stat(".")
-	if err != nil || !os.SameFile(originalDir, opened) {
-		return receipt, errAppCapture
-	}
+// Verify while streaming. The production mediator supplies no writer and
+// never materializes an unverified member in a filesystem namespace.
+func verifyAppCapture(ctx context.Context, requested appCaptureRequest, source io.Reader,
+	validateReplay func([]byte) error, write func(string, []byte) error,
+) (receipt appCaptureReceipt, err error) {
 	archiveDigest := sha256.New()
 	limited := &io.LimitedReader{R: io.TeeReader(&captureContextReader{ctx: ctx, reader: source}, archiveDigest), N: maxCaptureWire + 1}
 	tr := tar.NewReader(limited)
@@ -295,13 +261,7 @@ func stageAppCapture(ctx context.Context, root string, requested appCaptureReque
 	if err != nil {
 		return receipt, errAppCapture
 	}
-	manifestFile, e := staged.OpenFile("handoff.json", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if e != nil {
-		return receipt, errAppCapture
-	}
-	_, e = manifestFile.Write(raw)
-	closeManifest := manifestFile.Close()
-	if e != nil || closeManifest != nil {
+	if write != nil && write("handoff.json", raw) != nil {
 		return receipt, errAppCapture
 	}
 	files := []string{"handoff.json"}
@@ -317,53 +277,35 @@ func stageAppCapture(ctx context.Context, root string, requested appCaptureReque
 		if !ok || h.Size <= 0 || h.Size > want.limit || want.width != 0 && h.Size != want.size {
 			return receipt, errAppCapture
 		}
-		dst, e := staged.OpenFile(h.Name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if e != nil {
-			return receipt, errAppCapture
-		}
-		digest := sha256.New()
-		var first bytes.Buffer
-		writer := io.MultiWriter(dst, digest)
-		// At most a PNG header is kept in memory; image bodies are streamed.
-		var written int64
-		if want.width != 0 {
-			head := make([]byte, 24)
-			if _, e = io.ReadFull(tr, head); e == nil {
-				_, _ = first.Write(head)
-				_, e = writer.Write(head)
-				written = int64(len(head))
-			}
-		}
-		if e == nil {
-			var n int64
-			n, e = io.Copy(writer, tr)
-			written += n
-		}
-		closeErr := dst.Close()
-		if e != nil || closeErr != nil || written != h.Size || hex.EncodeToString(digest.Sum(nil)) != want.digest {
-			return receipt, errAppCapture
-		}
-		if want.width != 0 {
-			b := first.Bytes()
-			if len(b) < 24 || !bytes.Equal(b[:8], []byte{137, 80, 78, 71, 13, 10, 26, 10}) || binary.BigEndian.Uint32(b[8:12]) != 13 || string(b[12:16]) != "IHDR" ||
-				int(binary.BigEndian.Uint32(b[16:20])) != want.width || int(binary.BigEndian.Uint32(b[20:24])) != want.height {
+		if h.Name == "source.tar" && write == nil {
+			memberHash := sha256.New()
+			if err := verifyAppCaptureSource(ctx, io.TeeReader(tr, memberHash), requested, manifest, validateReplay); err != nil ||
+				hex.EncodeToString(memberHash.Sum(nil)) != want.digest {
 				return receipt, errAppCapture
 			}
-			imageFile, openErr := staged.Open(h.Name)
-			if openErr != nil {
+		} else {
+			data, err := io.ReadAll(tr)
+			if err != nil || int64(len(data)) != h.Size || digestCaptureBytes(data) != want.digest {
 				return receipt, errAppCapture
 			}
-			image, decodeErr := png.Decode(&captureContextReader{ctx: ctx, reader: imageFile})
-			tail, tailErr := io.ReadAll(io.LimitReader(imageFile, 1))
-			closeErr := imageFile.Close()
-			if decodeErr != nil || tailErr != nil || closeErr != nil || len(tail) != 0 ||
-				image.Bounds().Dx() != want.width || image.Bounds().Dy() != want.height {
+			if h.Name == "source.tar" && verifyAppCaptureSource(ctx, bytes.NewReader(data), requested, manifest, validateReplay) != nil {
 				return receipt, errAppCapture
 			}
-		}
-		if want.recipe != nil {
-			raw, err := staged.ReadFile(h.Name)
-			if err != nil || !validAppCaptureRecipe(raw, *want.recipe) {
+			if want.width != 0 {
+				reader := bytes.NewReader(data)
+				config, err := png.DecodeConfig(reader)
+				if err != nil || config.Width != want.width || config.Height != want.height {
+					return receipt, errAppCapture
+				}
+				reader.Reset(data)
+				if _, err := png.Decode(reader); err != nil || reader.Len() != 0 {
+					return receipt, errAppCapture
+				}
+			}
+			if want.recipe != nil && !validAppCaptureRecipe(data, *want.recipe) {
+				return receipt, errAppCapture
+			}
+			if write != nil && write(h.Name, data) != nil {
 				return receipt, errAppCapture
 			}
 		}
@@ -384,36 +326,10 @@ func stageAppCapture(ctx context.Context, root string, requested appCaptureReque
 	if proof := requested.measured; proof != nil && maxCaptureWire+1-limited.N != proof.Capture.Bytes {
 		return receipt, errAppCapture
 	}
-	if verifyAppCaptureSource(ctx, staged, requested, manifest) != nil {
-		return receipt, errAppCapture
-	}
 	if ctx.Err() != nil {
 		return receipt, errAppCapture
 	}
-	currentDir, e := os.Lstat(temp)
-	if e != nil || !os.SameFile(originalDir, currentDir) {
-		return receipt, errAppCapture
-	}
-	final := temp + ".ready"
-	if _, e = os.Lstat(final); !errors.Is(e, os.ErrNotExist) {
-		return receipt, errAppCapture
-	}
-	if e = os.Rename(temp, final); e != nil {
-		return receipt, errAppCapture
-	}
-	moved, e := os.Lstat(final)
-	if e != nil || !os.SameFile(originalDir, moved) {
-		return receipt, errAppCapture
-	}
-	if ctx.Err() != nil {
-		current, statErr := os.Lstat(final)
-		if statErr == nil && os.SameFile(originalDir, current) {
-			_ = os.RemoveAll(final)
-		}
-		return receipt, errAppCapture
-	}
-	sum := sha256.Sum256(raw)
-	return appCaptureReceipt{Directory: final, ManifestSHA256: hex.EncodeToString(sum[:]), Files: files}, nil
+	return appCaptureReceipt{ManifestSHA256: digestCaptureBytes(raw), Files: files}, nil
 }
 
 func validAppCaptureRecipe(raw []byte, c appCaptureCase) bool {

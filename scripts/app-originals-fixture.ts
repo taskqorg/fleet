@@ -81,7 +81,7 @@ const taskResponses = [
   response('entity_card', { kind: 'task', id: task }, { ...taskEntity, projectId: project, uuid: task, facts: [] }),
   response('publishing_status', { projectId: project }, { source: 'none', items: [], records: [], capabilities: [], samples: [], landing: 0 }),
   response('project_view', { projectId: project }, { conversations: [], conversationsTotal: 0, decisions: [], delivery: [], inWork: [], inWorkTotal: 0, lastMergedAt: null, merged: 0, pipelines: [], results: [], resultsTotal: 0, waiting: [], waitingTotal: 0 }),
-  response('task_page', { ...toPageParams({ view: 'tasks', project: [project] }), limit: 100 }, { tasks: [], ...emptyPage }, true),
+  response('task_page', { filter: { projectId: [project] }, group: 'project', sort: '-changed', limit: 100 }, { tasks: [], ...emptyPage }, true),
   response('task_get', { taskId: task }, {
     id: task, code: 'T-TST-1', projectId: project, title: taskTitle, expectedOutcome: 'Confirm that the synthetic source replays.',
     state: 'waiting', waitReason: null, priority: 'normal', completionRequirements: null, resultDestination: null,

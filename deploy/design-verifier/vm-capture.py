@@ -66,16 +66,27 @@ def request_of(raw):
     return obj
 
 
-def permit_of(raw, request, request_raw, now):
+def installation_digest(config):
+    producer = {k: config['producer'][k] for k in ('commit', 'version', 'target')}
+    runtime = {k: config['runtime'][k] for k in ('imageSha256', 'fontSha256', 'lockSha256', 'node', 'chromium', 'playwright')}
+    # Keep this wire encoding aligned with Go's signed installation digest.
+    raw = encode({'producer': producer, 'runtime': runtime, 'launchSha256': config['launchSha256']})
+    for before, after in ((b'<', b'\\u003c'), (b'>', b'\\u003e'), (b'&', b'\\u0026')):
+        raw = raw.replace(before, after)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def permit_of(raw, request, request_raw, installation, now):
     obj = exact_json(raw)
-    if set(obj) != {'expiresAt', 'signature'}:
+    if set(obj) != {'expiresAt', 'installationSha256', 'signature'} or obj['installationSha256'] != installation:
         raise ValueError('invalid capture permit')
     expires, signature = obj['expiresAt'], obj['signature']
     if (type(expires) is not int or not now < expires <= now + PERMIT_SECONDS or
             not matches(signature, re.compile(r'[0-9a-f]{128}'))):
         raise ValueError('expired or invalid capture permit')
-    message = b'fleet:design-capture-permit:v1\n' + encode({
-        'job': request['job'], 'host': HOST, 'requestSha256': hashlib.sha256(request_raw).hexdigest(), 'expiresAt': expires,
+    message = b'fleet:design-capture-permit:v2\n' + encode({
+        'job': request['job'], 'host': HOST, 'requestSha256': hashlib.sha256(request_raw).hexdigest(),
+        'installationSha256': installation, 'expiresAt': expires,
     })
     return expires, bytes.fromhex(signature), message
 

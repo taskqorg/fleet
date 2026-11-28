@@ -31,6 +31,7 @@ broker = load('vm-broker')
 host = load('vm-capture-host')
 guest = load('vm-guest')
 capture_guest = load('vm-capture-guest')
+guest_worker = load('vm-guest-worker')
 capture = broker.capture
 HASH = lambda data: hashlib.sha256(data).hexdigest()
 SIGNING_SEED = '9d61b19deffd5a60ba844af492ec2cc4' + '4449c5697b326919703bac031cae7f60'
@@ -72,8 +73,10 @@ class CaptureTests(unittest.TestCase):
         request = self.request if request is None else request
         signing = request if sign_request is None else sign_request
         expiry = self.expires if expires is None else expires
-        message = b'fleet:design-capture-permit:v1\n' + capture.encode({
-            'job': signing['job'], 'host': 'pds18-native', 'requestSha256': HASH(capture.encode(signing)), 'expiresAt': expiry,
+        installation = capture.installation_digest(self.config)
+        message = b'fleet:design-capture-permit:v2\n' + capture.encode({
+            'job': signing['job'], 'host': 'pds18-native', 'requestSha256': HASH(capture.encode(signing)),
+            'installationSha256': installation, 'expiresAt': expiry,
         })
         if mutation:
             message = mutation(message)
@@ -81,7 +84,7 @@ class CaptureTests(unittest.TestCase):
         msg.write_bytes(message)
         signature = subprocess.check_output(['/usr/bin/openssl', 'pkeyutl', '-sign', '-keyform', 'DER', '-rawin',
                                              '-inkey', str(self.key), '-in', str(msg)], timeout=3)
-        return frame(capture.encode({'expiresAt': expiry, 'signature': signature.hex()})) + frame(capture.encode(request))
+        return frame(capture.encode({'expiresAt': expiry, 'installationSha256': installation, 'signature': signature.hex()})) + frame(capture.encode(request))
 
     def wire(self, **kwargs):
         return b'FDC1' + self.signed(**kwargs) + b''.join(map(frame, self.files))
@@ -166,6 +169,9 @@ class CaptureTests(unittest.TestCase):
         for name, raw, config in (
             ('wrong peer uid', self.wire(), {**self.config, 'clientUid': os.getuid() + 1}),
             ('wrong key', self.wire(), {**self.config, 'publicKey': '2' * 64}),
+            ('wrong producer version', self.wire(), {**self.config, 'producer': {**self.config['producer'], 'version': 'other'}}),
+            ('wrong renderer runtime', self.wire(), {**self.config, 'runtime': {**self.config['runtime'], 'node': 'other'}}),
+            ('wrong golden launch pin', self.wire(), {**self.config, 'launchSha256': '4' * 64}),
             ('purpose', self.wire(mutation=lambda msg: msg.replace(b'capture-permit', b'preview-permit')), self.config),
             ('host', self.wire(mutation=lambda msg: msg.replace(b'pds18-native', b'another-host')), self.config),
             ('request digest', self.wire(request=other, sign_request=self.request), self.config),
@@ -323,23 +329,113 @@ class CaptureTests(unittest.TestCase):
                 capture_guest.fixed_job(capture, guest.read_exact, io.BytesIO(raw), self.staging,
                                         runner=fixed, worker=worker)
 
-    def test_guest_exec_is_fixed_and_drops_privilege_and_environment(self):
-        worker = type('Worker', (), {'pw_uid': 2001, 'pw_gid': 2002})
-        operations = []
-        with patch.object(capture_guest.pwd, 'getpwnam', return_value=worker), \
-             patch.object(capture_guest.os, 'chown', side_effect=lambda *args: operations.append(args)), \
-             patch.object(capture_guest.os, 'setgroups', side_effect=lambda *args: operations.append(args)), \
-             patch.object(capture_guest.os, 'setgid', side_effect=lambda *args: operations.append(args)), \
-             patch.object(capture_guest.os, 'setuid', side_effect=lambda *args: operations.append(args)), \
-             patch.object(capture_guest.os, 'execve') as run:
-            capture_guest.run_worker()
-        self.assertEqual(operations, [('/tmp', 2001, 2002), ([],), (2002,), (2001,)])
-        binary, argv, env = run.call_args.args
-        self.assertEqual(binary, '/usr/bin/node')
-        self.assertEqual(argv[1:], [capture_guest.RELEASE + '/designer.mjs', 'capture-job', '--job-input',
-                                   str(capture_guest.STATE / 'job/input'), '--out',
-                                   str(capture_guest.STATE / 'job/results/output')])
-        self.assertEqual(env, {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8', 'TMPDIR': '/tmp'})
+    def test_capture_contention_answers_stock_probe_and_reserves_next_slot(self):
+        gate = threading.Event()
+        capture_finished = threading.Event()
+        stop = threading.Event()
+
+        def long_capture(_client):
+            try:
+                self.assertTrue(gate.wait(3))
+            finally:
+                capture_finished.set()
+
+        with tempfile.TemporaryDirectory(dir='/tmp') as folder, ExitStack() as stack:
+            def listener(name):
+                sock = stack.enter_context(socket.socket(socket.AF_UNIX))
+                address = str(Path(folder)/name)
+                sock.bind(address)
+                sock.listen(4)
+                return sock, address
+
+            def connect(address):
+                client = stack.enter_context(socket.socket(socket.AF_UNIX))
+                client.settimeout(1)
+                client.connect(address)
+                return client
+
+            protected, protected_address = listener('protected')
+            capture_socket, capture_address = listener('capture')
+            def probe(client):
+                broker.serve(client, manifest_loader=lambda _: (
+                    b'i'*32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)),
+                    runner=lambda *_: (0, b'{"probe":true}'), root=self.staging)
+            thread = threading.Thread(target=broker.schedule,
+                args=({broker.PROTECTED_SOCKET: protected, broker.CAPTURE_SOCKET: capture_socket},
+                      {broker.PROTECTED_SOCKET: probe, broker.CAPTURE_SOCKET: long_capture}, stop), daemon=True)
+            thread.start()
+            try:
+                capture_client = connect(capture_address)
+                self.assertEqual(guest.read_exact(capture_client.makefile('rb', buffering=0),4), b'FDCA')
+                first = connect(protected_address)
+                self.assertEqual(guest.read_exact(first.makefile('rb', buffering=0),40), b'FVBU\x01'+bytes(35))
+                self.assertEqual(first.recv(1), b'')
+                gate.set()
+                self.assertTrue(capture_finished.wait(1))
+                self.assertEqual(capture_client.recv(1), b'')
+                competing = connect(capture_address)
+                self.assertEqual(guest.read_exact(competing.makefile('rb', buffering=0),4), b'FDB1')
+                self.assertEqual(competing.recv(1), b'')
+                for delay in (0, 0.25, 0.5):
+                    time.sleep(delay)
+                    retry = connect(protected_address)
+                    challenge = guest.read_exact(retry.makefile('rb', buffering=0), 40)
+                    if challenge[:4] == b'FVMB':
+                        break
+                    self.assertEqual(challenge, b'FVBU\x01' + bytes(35))
+                    self.assertEqual(retry.recv(1), b'')
+                self.assertEqual(challenge[:4], b'FVMB')
+                empty = hashlib.sha256(b'').digest()
+                retry.sendall(broker.REQUEST.pack(b'FVMQ',1,1,b'\0\0',challenge[8:],0,empty))
+                header = broker.RESPONSE.unpack(guest.read_exact(retry.makefile('rb', buffering=0),broker.RESPONSE.size))
+                self.assertEqual(header[2:4], (1,0))
+                self.assertEqual(guest.read_exact(retry.makefile('rb', buffering=0),header[8]), b'{"probe":true}')
+                self.assertEqual(retry.recv(1), b'')
+            finally:
+                gate.set()
+                stop.set()
+                thread.join(2)
+            self.assertFalse(thread.is_alive())
+
+    def test_static_guest_worker_runs_one_fixed_unprivileged_program(self):
+        with patch.object(guest_worker.subprocess, 'run', return_value=type('Result', (), {'returncode': 0})()) as run:
+            client = type('Client', (), {'recv': lambda _self, _size: b''})()
+            self.assertEqual(guest_worker.run_job(5, client), (0, b''))
+            with self.assertRaises(ValueError):
+                guest_worker.run_job(9, client)
+        argv, = run.call_args.args
+        self.assertEqual(argv, ['/usr/bin/node', str(guest_worker.RELEASE / 'designer.mjs'), 'capture-job',
+                                '--job-input', str(guest_worker.STATE / 'input'),
+                                '--out', str(guest_worker.STATE / 'results' / 'output')])
+        self.assertEqual(run.call_args.kwargs['env'], guest_worker.ENV)
+
+    def test_private_guest_handoff_requires_root_and_has_fixed_reply(self):
+        with tempfile.TemporaryDirectory() as temp, socket.socket(socket.AF_UNIX) as listener:
+            path = str(Path(temp) / 'worker')
+            listener.bind(path)
+            listener.listen(1)
+            calls = []
+            def run(op, client):
+                calls.append((op, client.recv(8), client.recv(1)))
+                return 0, b'probe-measured'
+            with patch.object(guest_worker.struct, 'unpack', return_value=(1, 0, 0)):
+                worker = threading.Thread(target=guest_worker.serve, args=(listener, run))
+                worker.start()
+                with socket.socket(socket.AF_UNIX) as root:
+                    root.settimeout(2)
+                    root.connect(path)
+                    with root.makefile('rb', buffering=0) as ready:
+                        self.assertEqual(guest.read_exact(ready, 8), b'FVWK\x01\0\0\0')
+                    self.assertEqual(guest.worker_job(root, 1, io.BytesIO(b'payload'), 32, 2), (0, b'probe-measured'))
+                worker.join(2)
+                self.assertFalse(worker.is_alive())
+            self.assertEqual(calls, [(1, b'payload', b'')])
+            with socket.socket(socket.AF_UNIX) as foreign:
+                foreign.connect(path)
+                with patch.object(guest_worker.struct, 'unpack', return_value=(1, 65533, 65533)):
+                    with self.assertRaisesRegex(ValueError, 'untrusted guest supervisor'):
+                        guest_worker.serve(listener, run)
+            self.assertEqual(len(calls), 1)
 
     def test_protected_socket_does_not_admit_internal_capture_operation(self):
         nonce = b'n'*32

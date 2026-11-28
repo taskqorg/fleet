@@ -80,9 +80,15 @@ func (e *executor) finishPersonalScriptRun(execution string, l *live, ex *worker
 		result.CollectionFailed = !e.insideDirs(dir) || e.artifacts(dir, []string{"output"}, execution, &result.Names) != nil
 	} else {
 		if !captured {
-			result, err = e.queuePersonalScriptOutputs(dir, execution)
-			if err != nil {
-				return err
+			if isDesignCaptureJob(c) {
+				// The worker exits successfully only after both private streams
+				// were uploaded and verified using the existing artifact store.
+				result.Names = []string{"receipt.json", "capture.tar"}
+			} else {
+				result, err = e.queuePersonalScriptOutputs(dir, execution)
+				if err != nil {
+					return err
+				}
 			}
 			if err := saveScriptOutputs(e.db, execution, result); err != nil {
 				return err

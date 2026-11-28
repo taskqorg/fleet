@@ -39,10 +39,18 @@ type designerCaptureReceipt struct {
 // confirmed teardown and stored artifact rows. They never come from tool args.
 type designerCaptureStoredJob = contract.DesignCaptureStoredJob
 
-// stageDesignerCapture is the receiving boundary for the fixed host job.
-// Authenticated job/transfer lookup precedes this call. The guest receipt is
-// evidence only when its identity and bytes match those retained Fleet facts.
-func stageDesignerCapture(ctx context.Context, root string, active designerCaptureScope, job designerCaptureStoredJob, raw []byte, archive io.Reader) (appCaptureReceipt, error) {
+func verifyDesignerCapture(ctx context.Context, active designerCaptureScope, job designerCaptureStoredJob, raw []byte,
+	archive io.Reader, validateReplay func([]byte) error) (appCaptureReceipt, error) {
+	if validateReplay == nil {
+		return appCaptureReceipt{}, errAppCapture
+	}
+	return checkDesignerCapture(active, job, raw, func(request appCaptureRequest) (appCaptureReceipt, error) {
+		return verifyAppCapture(ctx, request, archive, validateReplay, nil)
+	})
+}
+
+func checkDesignerCapture(active designerCaptureScope, job designerCaptureStoredJob, raw []byte,
+	verify func(appCaptureRequest) (appCaptureReceipt, error)) (appCaptureReceipt, error) {
 	r := job.Request
 	rt := job.Runtime
 	if r.DesignCaptureScope != active || active.Project != "fleet" || r.Version != 1 ||
@@ -69,9 +77,9 @@ func stageDesignerCapture(ctx context.Context, root string, active designerCaptu
 		job.Capture.Name != "capture.tar" || job.Capture.Bytes <= 0 || job.Capture.Bytes > maxCaptureWire {
 		return appCaptureReceipt{}, errAppCapture
 	}
-	return stageAppCapture(ctx, root, appCaptureRequest{
+	return verify(appCaptureRequest{
 		Project: active.Project, Session: active.Session, Execution: active.Execution,
 		Nonce: r.Nonce, Base: r.Base, BaseSHA256: r.BaseSHA256, OverlaySHA256: r.OverlaySHA256,
 		FixtureSHA256: r.FixtureSHA256, CaptureSHA256: job.Capture.SHA256, measured: &measured,
-	}, archive)
+	})
 }

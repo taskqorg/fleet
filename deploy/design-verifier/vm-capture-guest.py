@@ -6,20 +6,15 @@ from pathlib import Path
 import pwd
 import shutil
 import stat
-import subprocess
 
 STATE = Path('/var/lib/fleet-design-capture-job')
 GUEST_WORKER = 'fleet-render-worker'
-UNIT = 'fleet-design-capture-worker.service'
-RELEASE = '/opt/fleet-design-verifier/current/deploy/design-verifier'
 OUTPUT_FILES = ('receipt.json', 'capture.tar')
 
 
-def fixed_job(schema, read_exact, source, state=STATE, *, runner=None, worker=None):
+def fixed_job(schema, read_exact, source, state=STATE, *, runner, worker=None):
     if worker is None:
         worker = pwd.getpwnam(GUEST_WORKER)
-    if runner is None:
-        runner = start_worker
     if list(state.iterdir()):
         raise ValueError('capture guest allocation contains leftovers')
     work = state / 'job'
@@ -87,29 +82,3 @@ def read_output(directory, name, maximum, worker_uid):
         if len(data) != st.st_size:
             raise ValueError('guest output length changed')
         return data
-
-
-def start_worker():
-    subprocess.run(['/usr/bin/systemctl', 'start', UNIT], check=True, timeout=605,
-                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C'})
-
-
-def run_worker():
-    worker = pwd.getpwnam('fleet-render-worker')
-    if worker.pw_uid == 0 or worker.pw_gid == 0:
-        raise ValueError('capture requires a dedicated unprivileged renderer user')
-    # The unit mounts this private tmpfs. Only its root inode needs ownership
-    # transferred before the final uid/gid switch. No mount privilege is used.
-    os.chown('/tmp', worker.pw_uid, worker.pw_gid)
-    os.setgroups([])
-    os.setgid(worker.pw_gid)
-    os.setuid(worker.pw_uid)
-    job = str(STATE / 'job')
-    os.execve('/usr/bin/node', ['/usr/bin/node', RELEASE + '/designer.mjs', 'capture-job',
-                              '--job-input', job + '/input', '--out', job + '/results/output'],
-              {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8', 'TMPDIR': '/tmp'})
-
-
-if __name__ == '__main__':
-    run_worker()

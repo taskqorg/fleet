@@ -2,9 +2,14 @@
 
 package main
 
-import "net"
+import (
+	"net"
+	"os"
+)
 
 func captureBrokerReady() bool             { return false }
 func dialCaptureBroker() (net.Conn, error) { return nil, errCaptureBroker }
 
-func publishCaptureDirectory(_, _ string) error { return errAppCapture }
+func protectCaptureMemory() error { return errAppCapture }
+
+func anonymousCaptureFile() (*os.File, error) { return nil, errAppCapture }

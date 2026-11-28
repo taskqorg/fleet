@@ -11,7 +11,7 @@ import (
 // Coordinator-created script jobs carry an additional DesignCaptureCommand.
 const DesignCaptureScript = "@fleet-design-capture/v1"
 const DesignCaptureHost = "pds18-native"
-const DesignCaptureCapability = "design-capture-broker-v1"
+const DesignCaptureCapability = "design-capture-broker-v2"
 const DesignCaptureTimeoutMS = 900_000
 
 type DesignCaptureScope struct {
@@ -54,10 +54,11 @@ type DesignCaptureArchive struct {
 }
 
 type DesignCaptureCommand struct {
-	RequestID string                  `json:"requestId"`
-	Request   DesignCaptureJobRequest `json:"request"`
-	Producer  DesignCaptureProducer   `json:"producer"`
-	Runtime   DesignCaptureRuntime    `json:"runtime"`
+	RequestID    string                  `json:"requestId"`
+	Request      DesignCaptureJobRequest `json:"request"`
+	Producer     DesignCaptureProducer   `json:"producer"`
+	Runtime      DesignCaptureRuntime    `json:"runtime"`
+	LaunchSHA256 string                  `json:"launchSha256"`
 }
 
 type DesignCaptureStoredJob struct {
@@ -110,16 +111,31 @@ func (r DesignCaptureRuntime) Valid() bool {
 // Only the host transport sends the permit to the broker. The guest reads the
 // request and three immutable inputs from the subsequent, credential-free frame.
 type DesignCapturePermit struct {
-	ExpiresAt int64  `json:"expiresAt"`
-	Signature string `json:"signature"`
+	ExpiresAt          int64  `json:"expiresAt"`
+	InstallationSHA256 string `json:"installationSha256"`
+	Signature          string `json:"signature"`
 }
 
-func (r DesignCaptureJobRequest) PermitMessage(expiresAt int64) []byte {
+func (c DesignCaptureCommand) InstallationDigest() string {
+	if !c.Producer.Valid() || !c.Runtime.Valid() || !designCaptureHash.MatchString(c.LaunchSHA256) {
+		return ""
+	}
+	raw, _ := json.Marshal(struct {
+		Producer     DesignCaptureProducer `json:"producer"`
+		Runtime      DesignCaptureRuntime  `json:"runtime"`
+		LaunchSHA256 string                `json:"launchSha256"`
+	}{c.Producer, c.Runtime, c.LaunchSHA256})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func (r DesignCaptureJobRequest) PermitMessage(expiresAt int64, installation string) []byte {
 	b, _ := json.Marshal(struct {
-		Job           string `json:"job"`
-		Host          string `json:"host"`
-		RequestSHA256 string `json:"requestSha256"`
-		ExpiresAt     int64  `json:"expiresAt"`
-	}{r.Job, DesignCaptureHost, r.Digest(), expiresAt})
-	return append([]byte("fleet:design-capture-permit:v1\n"), b...)
+		Job                string `json:"job"`
+		Host               string `json:"host"`
+		RequestSHA256      string `json:"requestSha256"`
+		InstallationSHA256 string `json:"installationSha256"`
+		ExpiresAt          int64  `json:"expiresAt"`
+	}{r.Job, DesignCaptureHost, r.Digest(), installation, expiresAt})
+	return append([]byte("fleet:design-capture-permit:v2\n"), b...)
 }

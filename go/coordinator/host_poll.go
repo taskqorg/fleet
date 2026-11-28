@@ -532,13 +532,13 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 					current, err := loadDesignCaptureInstallation()
 					producer, runtime := capture.DesignCapture.Producer, capture.DesignCapture.Runtime
 					if err != nil || len(capture.Inputs) != 3 || capture.Inputs[0].ArtifactId != current.BaseArtifact ||
-						producer != current.Producer || runtime != current.Runtime {
+						producer != current.Producer || runtime != current.Runtime || capture.DesignCapture.LaunchSHA256 != current.LaunchSHA256 {
 						if err := stopDesignerCapture(wq, request.Execution, "design-capture-installation-changed"); err != nil {
 							return err
 						}
 						continue
 					}
-					p, err := capturePermit(request, capture.PermitExpiresAt)
+					p, err := capturePermit(capture.DesignCapture, capture.PermitExpiresAt)
 					if err != nil {
 						continue
 					}

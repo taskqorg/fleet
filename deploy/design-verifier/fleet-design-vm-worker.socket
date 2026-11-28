@@ -1,0 +1,9 @@
+[Unit]
+Description=Private handoff for the Fleet isolated design VM worker
+
+[Socket]
+ListenStream=/run/fleet-design-vm-worker.sock
+SocketMode=0600
+SocketUser=root
+SocketGroup=root
+Backlog=1

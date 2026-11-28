@@ -109,7 +109,7 @@ def receive_request(broker, client, root, config, payload):
     request = schema.request_of(request_raw)
     if request['base'] != config['producer']['commit']:
         raise ValueError('unapproved capture source release')
-    expires, signature, message = schema.permit_of(permit_raw, request, request_raw, int(time.time()))
+    expires, signature, message = schema.permit_of(permit_raw, request, request_raw, schema.installation_digest(config), int(time.time()))
     verify_permit(broker, root, config['publicKey'], signature, message)
     now = int(time.time())
     if now >= expires:

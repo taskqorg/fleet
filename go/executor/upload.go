@@ -31,27 +31,28 @@ import (
 // reads) with the command and the spool folder; get and list carry the MCP call; done is the journaled per-part
 // progress of an upload or copy.
 type transferJob struct {
-	Path         string              `json:"path"`
-	Spool        string              `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
-	Name         string              `json:"name"`
-	MediaType    string              `json:"mediaType"`
-	ExecutionId  string              `json:"executionId"`
-	DerivedFrom  string              `json:"derivedFrom"`
-	Role         string              `json:"role"`
-	Required     bool                `json:"required"`
-	ArtifactId   *string             `json:"artifactId"`
-	StoreId      string              `json:"storeId"`
-	Url          string              `json:"url"`
-	StagingKey   *string             `json:"stagingKey"`
-	Size         *uint64             `json:"size"`
-	PartSize     *uint64             `json:"partSize"`
-	Source       transferSource      `json:"source"`
-	InputDir     string              `json:"inputDir"`
-	CaptureStage captureStageRequest `json:"-"`
-	Filter       *transferFilter     `json:"filter"`
-	Done         []donePart          `json:"done"`
-	Command      jsonValue           `json:"command"` // present (even null): the job sends the command's final receipt
-	Recoveries   int                 `json:"recoveries"`
+	CaptureCommand *string             `json:"captureCommandId"`
+	Path           string              `json:"path"`
+	Spool          string              `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
+	Name           string              `json:"name"`
+	MediaType      string              `json:"mediaType"`
+	ExecutionId    string              `json:"executionId"`
+	DerivedFrom    string              `json:"derivedFrom"`
+	Role           string              `json:"role"`
+	Required       bool                `json:"required"`
+	ArtifactId     *string             `json:"artifactId"`
+	StoreId        string              `json:"storeId"`
+	Url            string              `json:"url"`
+	StagingKey     *string             `json:"stagingKey"`
+	Size           *uint64             `json:"size"`
+	PartSize       *uint64             `json:"partSize"`
+	Source         transferSource      `json:"source"`
+	InputDir       string              `json:"inputDir"`
+	CaptureStage   captureStageRequest `json:"-"`
+	Filter         *transferFilter     `json:"filter"`
+	Done           []donePart          `json:"done"`
+	Command        jsonValue           `json:"command"` // present (even null): the job sends the command's final receipt
+	Recoveries     int                 `json:"recoveries"`
 }
 
 type transferSource struct {
@@ -146,16 +147,22 @@ func isLoopback(url string) bool {
 // accessAllowed: the Access service token goes only to a store tunnel: the host of this host's own store endpoint
 // (FLEET_STORE_CONFIG) or a host in FLEET_STORE_ENDPOINT_HOSTS (comma-separated; ".example.com" matches subdomains), the
 // list the coordinator accepts store endpoints from. Never to loopback or any other presigned URL.
-func accessAllowed(raw string) bool {
+func storeAccessHosts() []string {
+	hosts := append([]string{}, storeEndpointHosts()...)
+	if own, err := neturl.Parse(storeConfig().endpoint()); err == nil && own.Hostname() != "" {
+		hosts = append(hosts, own.Hostname())
+	}
+	return hosts
+}
+
+func accessAllowed(raw string) bool { return accessAllowedOn(raw, storeAccessHosts()) }
+
+func accessAllowedOn(raw string, hosts []string) bool {
 	u, err := neturl.Parse(raw)
 	if err != nil || u.Scheme != "https" || isLoopback(raw) {
 		return false
 	}
 	h := u.Hostname()
-	hosts := storeEndpointHosts()
-	if own, err := neturl.Parse(storeConfig().endpoint()); err == nil && own.Hostname() != "" {
-		hosts = append(hosts, own.Hostname())
-	}
 	for _, x := range hosts {
 		x = strings.TrimSpace(x)
 		if x != "" && (h == x || strings.HasPrefix(x, ".") && strings.HasSuffix(h, x)) {
@@ -167,8 +174,8 @@ func accessAllowed(raw string) bool {
 
 type transferClient struct {
 	url, token, host string
-	root             string
 	access           *[2]string
+	accessHosts      []string
 	coordinator      *http.Client
 	store            *http.Client
 }
@@ -261,9 +268,15 @@ func (c *transferClient) storeDo(method, url string, body []byte) (*http.Respons
 	if err != nil {
 		return nil, permanentf("%s", err)
 	}
-	if c.access != nil && accessAllowed(url) {
-		req.Header.Set("CF-Access-Client-Id", c.access[0])
-		req.Header.Set("CF-Access-Client-Secret", c.access[1])
+	if c.access != nil {
+		hosts := c.accessHosts
+		if hosts == nil {
+			hosts = storeAccessHosts()
+		}
+		if accessAllowedOn(url, hosts) {
+			req.Header.Set("CF-Access-Client-Id", c.access[0])
+			req.Header.Set("CF-Access-Client-Secret", c.access[1])
+		}
 	}
 	rest := url
 	if _, r, ok := strings.Cut(url, "://"); ok {
@@ -343,7 +356,9 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	}
 	count := max((size+partSize-1)/partSize, 1)
 	var bodyText string
-	db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
+	if db != nil {
+		db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
+	}
 	done := readJob(bodyText).Done
 	f, err := os.Open(file)
 	if err != nil {
@@ -391,7 +406,9 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 			}
 			done = append(done, donePart{n, etag})
 			// progress: the backoff starts over
-			db.Exec("UPDATE transfers SET body=json_set(body,'$.done',json(?)),attempts=0 WHERE id=?", enc(done), jobID)
+			if db != nil {
+				db.Exec("UPDATE transfers SET body=json_set(body,'$.done',json(?)),attempts=0 WHERE id=?", enc(done), jobID)
+			}
 		}
 	}
 	req := contract.ArtifactCommitRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
@@ -580,14 +597,14 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		return out, f
 	case captureStageKind:
 		request := body.CaptureStage
-		if c.root == "" || !request.valid() || id != request.key() {
+		if !request.valid() || id != request.key() || protectCaptureMemory() != nil {
 			return nil, permanentf("Invalid private capture stage request")
 		}
-		return executeCaptureStage(c.root, request, func() (contract.DesignCaptureReturn, *failure) {
+		return executeCaptureStage(request, func() (contract.DesignCaptureReturn, *failure) {
 			return c.captureAuthority(request)
-		}, c.captureArtifact)
+		}, c.captureArtifact, checkSignedCaptureReplay)
 	case "get":
-		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId), ArtifactId: str0(body.ArtifactId)})
+		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId), ArtifactId: str0(body.ArtifactId), CommandId: body.CaptureCommand})
 		if f != nil {
 			return nil, f
 		}
@@ -597,6 +614,17 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 				av = r.Availability
 			}
 			return nil, permanentf("artifact %s", av)
+		}
+		var verifiedCapture *os.File
+		if body.CaptureCommand != nil {
+			if r.Id != str0(body.ArtifactId) {
+				return nil, permanentf("Capture download does not match the requested artifact")
+			}
+			verifiedCapture, f = downloadGrantedCapture(c, r)
+			if f != nil {
+				return nil, f
+			}
+			defer verifiedCapture.Close()
 		}
 		name := "artifact"
 		if r.Name != "" {
@@ -643,11 +671,14 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			return nil, permanentf("cannot create the input file")
 		}
 		defer out.Close()
-		src, f := c.get(*r.Url)
-		if f != nil {
-			return nil, f
+		var src io.ReadCloser = verifiedCapture
+		if verifiedCapture == nil {
+			src, f = c.get(*r.Url)
+			if f != nil {
+				return nil, f
+			}
+			defer src.Close()
 		}
-		defer src.Close()
 		if _, err := io.Copy(out, src); err != nil {
 			return nil, ioFailure(err)
 		}

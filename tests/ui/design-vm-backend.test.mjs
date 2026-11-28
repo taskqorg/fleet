@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { decodeVMJob } from '../../deploy/design-verifier/parity.mjs';
-import { DesignBlocked, VerificationWait } from '../../deploy/design-verifier/provider.mjs';
+import { DesignBlocked, RendererBusy, VerificationWait } from '../../deploy/design-verifier/provider.mjs';
 import { validateVMConfig, validateVMProbe, vmBackend } from '../../deploy/design-verifier/vm-backend.mjs';
 
 const hash = x => createHash('sha256').update(x).digest();
@@ -36,7 +36,14 @@ async function fixture(t, behavior = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-vm-test-'));
   const path = join(dir, 'b.sock'), nonce = Buffer.alloc(32, 9);
   const seen = [];
+  const dials = [];
   const server = createServer(socket => {
+    dials.push(true);
+    if (dials.length <= (behavior.busyCount ?? 0)) {
+      const busy = Buffer.alloc(40); busy.write('FVBU'); busy[4] = 1;
+      socket.end(busy);
+      return;
+    }
     const challenge = Buffer.alloc(40); challenge.write('FVMB'); challenge[4] = 1; nonce.copy(challenge, 8);
     if (behavior.badChallenge) challenge[4] = 2;
     if (behavior.highChallenge) challenge[0] |= 0x80;
@@ -70,7 +77,8 @@ async function fixture(t, behavior = {}) {
   });
   await new Promise((resolve, reject) => { server.on('error', reject); server.listen(path, resolve); });
   t.after(async () => { await new Promise(resolve => server.close(resolve)); rmSync(dir, { recursive: true, force: true }); });
-  return { seen, client: vmBackend({ launchSha256 }, { connect: () => createConnection(path), deadlineOverride: 200, signal: behavior.signal }) };
+  return { seen, dials, client: vmBackend({ launchSha256 }, { connect: () => createConnection(path),
+    deadlineOverride: behavior.deadline ?? 200, signal: behavior.signal, wait: behavior.wait }) };
 }
 
 test('socket probe result matches the protected runtime', async t => {
@@ -78,6 +86,26 @@ test('socket probe result matches the protected runtime', async t => {
   const { client } = await fixture(t, { output });
   const bytes = await client.run('render', ['--probe']);
   assert.equal(validateVMProbe(bytes, runtime, manifest), runtime);
+});
+
+test('protected stock probe retries busy responses within its original deadline', async t => {
+  const output = Buffer.from(JSON.stringify({ node: runtime.node, chromium: runtime.chromium, runtime, guest }));
+  const delays = [];
+  const { client, dials, seen } = await fixture(t, { busyCount: 2, output, deadline: 2000,
+    wait: async ms => delays.push(ms) });
+  const bytes = await client.run('render', ['--probe']);
+  assert.equal(validateVMProbe(bytes, runtime, manifest), runtime);
+  assert.deepEqual(delays, [250, 500]);
+  assert.equal(dials.length, 3);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].header[5], 1);
+});
+
+test('persistent contention is explicit and cannot consume the protected job deadline', async t => {
+  const { client, dials, seen } = await fixture(t, { busyCount: 9, deadline: 2000, wait: async () => {} });
+  await assert.rejects(client.run('render', ['--probe']), RendererBusy);
+  assert.equal(dials.length, 3);
+  assert.equal(seen.length, 0);
 });
 
 test('guest bridge accepts only fixed bounded operations', () => {

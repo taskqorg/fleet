@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,11 +10,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
+	"time"
 
 	"fleet/contract"
+	"fleet/executor/supervise"
 )
 
 const captureStageKind = "design-capture-stage"
@@ -88,9 +91,9 @@ func captureStageTool(result any, c *delegationContext, db *sql.DB, requestID st
 		return mcpText(r.Value, &yes), nil
 	}
 	verified, decodeErr := contractOf[capturePublication](r.Value)
-	expected := filepath.Join(str0(c.TempDir), "design-originals-"+proof.Job.Request.Job)
-	if decodeErr != nil || verified.Proof != proof || verified.Capture.Directory != expected || !checkCapturePublication(verified.Capture) {
-		return mcpText(M{"error": "Staged originals no longer match the verified Fleet archive"}, &yes), nil
+	if decodeErr != nil || verified.Proof != proof || verified.Capture.Directory != "" ||
+		!sceneSHA.MatchString(verified.Capture.ManifestSHA256) {
+		return mcpText(M{"error": "Verification does not match the immutable Fleet archive"}, &yes), nil
 	}
 	observed, err := recheck()
 	latest, ready := captureToolReturn(observed)
@@ -100,7 +103,9 @@ func captureStageTool(result any, c *delegationContext, db *sql.DB, requestID st
 	if !ready || latest != proof {
 		return mcpText(M{"error": "Capture authority changed before handoff"}, &yes), nil
 	}
-	return mcpText(M{"state": "staged", "capture": verified.Capture}, nil), nil
+	return mcpText(M{"state": "verified", "archiveArtifactId": proof.CaptureArtifact,
+		"archiveSha256": proof.Job.Capture.SHA256, "manifestSha256": verified.Capture.ManifestSHA256,
+		"files": verified.Capture.Files}, nil), nil
 }
 
 func (c *transferClient) captureAuthority(request captureStageRequest) (contract.DesignCaptureReturn, *failure) {
@@ -129,9 +134,9 @@ type captureTransferPin struct {
 	Limit                 int64
 }
 
-func (c *transferClient) captureArtifact(execution string, pin captureTransferPin) (io.ReadCloser, *failure) {
+func (c *transferClient) captureArtifact(request captureStageRequest, pin captureTransferPin) (io.ReadCloser, *failure) {
 	r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{
-		HostId: c.host, ExecutionId: &execution, ArtifactId: pin.ID,
+		HostId: c.host, ExecutionId: &request.ExecutionID, CommandId: &request.CommandID, ArtifactId: pin.ID,
 	})
 	if f != nil {
 		return nil, f
@@ -143,9 +148,10 @@ func (c *transferClient) captureArtifact(execution string, pin captureTransferPi
 	return c.get(*r.Url)
 }
 
-func executeCaptureStage(root string, request captureStageRequest,
+func executeCaptureStage(request captureStageRequest,
 	authorize func() (contract.DesignCaptureReturn, *failure),
-	get func(string, captureTransferPin) (io.ReadCloser, *failure),
+	get func(captureStageRequest, captureTransferPin) (io.ReadCloser, *failure),
+	validateReplay func([]byte) error,
 ) (capturePublication, *failure) {
 	var none capturePublication
 	proof, f := authorize()
@@ -155,64 +161,27 @@ func executeCaptureStage(root string, request captureStageRequest,
 	if !captureID.MatchString(proof.Job.Request.Job) || proof.Job.Request.Execution != request.ExecutionID {
 		return none, permanentf("Capture job belongs to another execution")
 	}
-
-	// Executor-owned sibling of the agent's TMPDIR and artifact_save roots.
-	// The transfer lane is serial. A retry can safely replace private scratch.
-	private := capturePrivateDir(root, request.ExecutionID)
-	if err := os.MkdirAll(private, 0700); err != nil {
-		return none, ioFailure(err)
-	}
-	final := filepath.Join(runTempDir(root, request.ExecutionID), "design-originals-"+proof.Job.Request.Job)
-	marker := filepath.Join(private, "publication.json")
-	if _, err := os.Lstat(final); err == nil {
-		saved, err := os.ReadFile(marker)
-		var proven capturePublication
-		if err != nil || json.Unmarshal(saved, &proven) != nil || proven.Proof != proof || proven.Capture.Directory != final || !checkCapturePublication(proven.Capture) {
-			return none, permanentf("Existing staged files do not match the verified capture")
-		}
-		return proven, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return none, ioFailure(err)
-	}
-
-	scratch := filepath.Join(private, "verify")
-	if err := os.RemoveAll(scratch); err != nil {
-		return none, ioFailure(err)
-	}
-	if err := os.Mkdir(scratch, 0700); err != nil {
-		return none, ioFailure(err)
-	}
-	defer os.RemoveAll(scratch)
-
-	receipt, f := get(request.ExecutionID, captureTransferPin{proof.ReceiptArtifact, proof.Job.Request.Job, "receipt.json", proof.Job.ReceiptSHA256, captureReceiptLimit})
+	receipt, f := get(request, captureTransferPin{proof.ReceiptArtifact, proof.Job.Request.Job, "receipt.json", proof.Job.ReceiptSHA256, captureReceiptLimit})
 	if f != nil {
 		return none, f
 	}
 	raw, err := io.ReadAll(io.LimitReader(receipt, captureReceiptLimit+1))
 	if err := errors.Join(err, receipt.Close()); err != nil {
-		return none, ioFailure(err)
+		return none, retryf("Capture receipt transport was interrupted")
 	}
-	archive, f := get(request.ExecutionID, captureTransferPin{proof.CaptureArtifact, proof.Job.Request.Job, "capture.tar", proof.Job.Capture.SHA256, proof.Job.Capture.Bytes})
+	archive, f := get(request, captureTransferPin{proof.CaptureArtifact, proof.Job.Request.Job, "capture.tar", proof.Job.Capture.SHA256, proof.Job.Capture.Bytes})
 	if f != nil {
 		return none, f
 	}
-	verified, err := stageDesignerCapture(context.Background(), scratch, proof.Job.Request.DesignCaptureScope, proof.Job, raw, archive)
-	if err := errors.Join(err, archive.Close()); err != nil {
+	stream := &captureBody{Reader: archive}
+	verified, err := verifyDesignerCapture(context.Background(), proof.Job.Request.DesignCaptureScope, proof.Job, raw, stream, validateReplay)
+	closeErr := archive.Close()
+	if stream.interrupted(proof.Job.Capture.Bytes) || closeErr != nil {
+		return none, retryf("Capture archive transport was interrupted")
+	}
+	if err != nil {
 		return none, permanentf("Capture archive failed verification")
 	}
-	// Persist the exact proven handoff before publication, so losing the reply
-	// or restarting between rename and settlement cannot manufacture a replay.
-	publish := capturePublication{Proof: proof, Capture: verified}
-	publish.Capture.Directory = final
-	if err := saveCapturePublication(private, marker, publish); err != nil {
-		return none, ioFailure(err)
-	}
-	published := false
-	defer func() {
-		if !published {
-			_ = os.Remove(marker)
-		}
-	}()
 	latest, f := authorize()
 	if f != nil {
 		return none, f
@@ -220,91 +189,94 @@ func executeCaptureStage(root string, request captureStageRequest,
 	if latest != proof {
 		return none, permanentf("Capture authorization changed during transfer")
 	}
-	if err := publishCaptureDirectory(verified.Directory, final); err != nil {
-		return none, ioFailure(err)
+	// This is evidence, not a release of bytes. The subsequent artifact_get
+	// is mediated again by the coordinator against the current execution lock.
+	return capturePublication{Proof: proof, Capture: verified}, nil
+}
+
+type captureBody struct {
+	io.Reader
+	bytes int64
+	err   error
+}
+
+func (r *captureBody) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.bytes += int64(n)
+	if err != nil {
+		r.err = err
 	}
-	published = true
-	return publish, nil
+	return n, err
 }
 
-func capturePrivateDir(root, execution string) string {
-	return filepath.Join(root, "design-capture-staging", execution)
+func (r *captureBody) interrupted(expected int64) bool {
+	return r.err != nil && (!errors.Is(r.err, io.EOF) || r.bytes < expected)
 }
 
-func saveCapturePublication(dir, marker string, publication capturePublication) error {
-	f, err := os.CreateTemp(dir, "publication-")
+// A fresh grant may complete despite later cancellation. Read and hash the
+// granted bytes before creating any designer-visible file.
+func downloadGrantedCapture(client *transferClient, view contract.ArtifactGetReply) (*os.File, *failure) {
+	if view.Name != "capture.tar" || view.Size <= 0 || view.Size > maxCaptureWire ||
+		!sceneSHA.MatchString(view.Sha256) || view.Url == nil || protectCaptureMemory() != nil {
+		return nil, permanentf("Invalid capture download grant")
+	}
+	body, f := client.get(*view.Url)
+	if f != nil {
+		return nil, f
+	}
+	defer body.Close()
+	file, err := anonymousCaptureFile()
+	if err != nil {
+		return nil, ioFailure(err)
+	}
+	hash := sha256.New()
+	n, err := io.Copy(io.MultiWriter(file, hash), io.LimitReader(body, view.Size+1))
+	if err != nil || n < view.Size {
+		file.Close()
+		return nil, retryf("Capture download was interrupted")
+	}
+	if n != view.Size || hex.EncodeToString(hash.Sum(nil)) != view.Sha256 {
+		file.Close()
+		return nil, permanentf("Capture download differs from verified archive")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		file.Close()
+		return nil, ioFailure(err)
+	}
+	return file, nil
+}
+
+// The signed producer and replay command share the one JS fixture grammar.
+func checkSignedCaptureReplay(raw []byte) error {
+	entry := filepath.Join(filepath.Dir(exe()), "deploy", "design-verifier", "designer.mjs")
+	cmd := &exec.Cmd{Path: "/usr/bin/node", Args: []string{"node", entry, "validate-replay"}, Env: []string{}, Stdin: bytes.NewReader(raw)}
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Deadline: 10 * time.Second, KillLeftovers: true})
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	writeErr := json.NewEncoder(f).Encode(publication)
-	if err := errors.Join(writeErr, f.Sync(), f.Close()); err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), marker); err != nil {
-		return err
-	}
-	root, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	return errors.Join(root.Sync(), root.Close())
+	return proc.Wait()
 }
 
-func checkCapturePublication(staged appCaptureReceipt) bool {
-	if !sceneSHA.MatchString(staged.ManifestSHA256) || len(staged.Files) < 7 || len(staged.Files) > 2+maxCaptureCases*5 {
-		return false
+// The ordinary artifact tool never accepts a command ID from its caller.
+// Only verified archive evidence belonging to this exact start can set it.
+func captureDownloadCommand(db *sql.DB, c *delegationContext, artifact string) string {
+	execution, _ := c.execution()
+	command := str0(c.CommandId)
+	if !captureID.MatchString(execution) || !captureID.MatchString(command) || artifact == "" || str0(c.ProjectId) != "fleet" {
+		return ""
 	}
-	st, err := os.Lstat(staged.Directory)
-	if err != nil || !st.IsDir() || st.Mode().Perm() != 0700 || owner(st) != os.Geteuid() {
-		return false
+	var raw string
+	err := db.QueryRow(`SELECT response FROM transfers WHERE kind=? AND state='done'
+		AND json_extract(body,'$.commandId')=? AND json_extract(body,'$.executionId')=?
+		AND json_extract(response,'$.proof.captureArtifact')=? LIMIT 1`,
+		captureStageKind, command, execution, artifact).Scan(&raw)
+	var result capturePublication
+	if err != nil || json.Unmarshal([]byte(raw), &result) != nil || result.Proof.CaptureArtifact != artifact ||
+		result.Proof.Job.Request.Execution != execution || !sceneSHA.MatchString(result.Capture.ManifestSHA256) ||
+		result.Capture.Directory != "" {
+		return ""
 	}
-	manifest, err := openInside(staged.Directory, []string{"handoff.json"})
-	if err != nil {
-		return false
-	}
-	raw, err := io.ReadAll(io.LimitReader(manifest, maxCaptureManifest+1))
-	if errors.Join(err, manifest.Close()) != nil || len(raw) > maxCaptureManifest || digestCaptureBytes(raw) != staged.ManifestSHA256 {
-		return false
-	}
-	var handoff appCaptureManifest
-	if json.Unmarshal(raw, &handoff) != nil || len(handoff.Cases) == 0 || len(handoff.Cases) > maxCaptureCases {
-		return false
-	}
-	expected := map[string]string{"handoff.json": staged.ManifestSHA256, "source.tar": handoff.SourceSHA256}
-	for _, c := range handoff.Cases {
-		expected[c.RecipeFile] = c.RecipeSHA256
-		for _, frame := range c.Frames {
-			expected[frame.File] = frame.SHA256
-		}
-	}
-	entries, err := os.ReadDir(staged.Directory)
-	if err != nil || len(entries) != len(expected) || len(staged.Files) != len(expected) {
-		return false
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		want := expected[name]
-		if !sceneSHA.MatchString(want) || !slices.Contains(staged.Files, name) || !checkCaptureFile(staged.Directory, name, want) {
-			return false
-		}
-	}
-	return true
-}
-
-func checkCaptureFile(directory, name, want string) bool {
-	f, err := openInside(directory, []string{name})
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() || st.Size() < 1 || st.Size() > maxCaptureSource {
-		return false
-	}
-	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(f, st.Size()+1))
-	return err == nil && n == st.Size() && hex.EncodeToString(h.Sum(nil)) == want
+	return command
 }
 
 func digestCaptureBytes(raw []byte) string {

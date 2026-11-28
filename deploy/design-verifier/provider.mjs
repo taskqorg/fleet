@@ -11,6 +11,9 @@ export const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(v
 const positive = value => Number.isSafeInteger(value) && value > 0;
 
 export class VerificationWait extends Error {}
+export class RendererBusy extends VerificationWait {
+  constructor() { super('Protected VM is busy. The renderer will retry.'); }
+}
 export class QueueModeUnconfirmed extends VerificationWait {}
 export class DesignBlocked extends Error {}
 export class DesignAbsent extends DesignBlocked {}

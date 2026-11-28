@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 REQUEST = struct.Struct('>4sBB2s32sQ32s')
@@ -589,28 +590,77 @@ def main():
             raise RuntimeError('invalid broker listener')
         listeners[path] = listener
     capture_host = load_sibling('vm-capture-host') if CAPTURE_SOCKET in listeners else None
-    # Each listener has its own protocol and permissions. Both share one
-    # serial VM runner, cgroup, volume and retained cleanup fence.
-    while True:
-        try:
-            ready, _, _ = select.select(listeners.values(), [], [])
-            for path, listener in listeners.items():
-                if listener not in ready:
+    handlers = {PROTECTED_SOCKET: serve}
+    if capture_host is not None:
+        handlers[CAPTURE_SOCKET] = lambda client: capture_host.serve_capture(sys.modules[__name__], client)
+    schedule(listeners, handlers)
+
+
+def schedule(listeners, handlers, stop=None):
+    # One thread owns the one allocation. The listener stays responsive only
+    # to reject contenders and reserve the next turn for waiting protected work.
+    active = None
+    client = None
+    fenced = threading.Event()
+    protected_waiting = False
+    protected_until = 0
+    ordered = [path for path in (PROTECTED_SOCKET, CAPTURE_SOCKET) if path in listeners]
+
+    def worker(connection, handler, path):
+        with connection:
+            try:
+                if path == CAPTURE_SOCKET:
+                    send_all(connection, b'FDCA', time.monotonic() + 1)
+                handler(connection)
+            except CleanupUnconfirmed:
+                fenced.set()
+                print('renderer fenced: VM cleanup requires operator review', file=sys.stderr, flush=True)
+            except (OSError, ValueError, EOFError, TimeoutError, RuntimeError, subprocess.SubprocessError) as error:
+                print('renderer job unconfirmed: ' + type(error).__name__, file=sys.stderr, flush=True)
+
+    try:
+        while not fenced.is_set() and (stop is None or not stop.is_set()):
+            ready, _, _ = select.select(listeners.values(), [], [], 0.1)
+            if protected_waiting and active is not None and not active.is_alive():
+                # Start the bounded reservation only after cleanup completes.
+                protected_waiting = False
+                protected_until = time.monotonic() + 45
+            for path in ordered:
+                if listeners[path] not in ready or fenced.is_set():
                     continue
-                client, _ = listener.accept()
-                client.setblocking(False)
-                with client:
+                incoming, _ = listeners[path].accept()
+                incoming.setblocking(False)
+                busy = active is not None and active.is_alive()
+                now = time.monotonic()
+                if not busy and protected_waiting:
+                    protected_waiting = False
+                    protected_until = now + 45
+                if busy or (path == CAPTURE_SOCKET and now < protected_until):
                     if path == PROTECTED_SOCKET:
-                        serve(client)
-                    else:
-                        capture_host.serve_capture(sys.modules[__name__], client)
-        except StopRequested:
-            break
-        except CleanupUnconfirmed:
-            print('renderer fenced: VM cleanup requires operator review', file=sys.stderr, flush=True)
-            break
-        except (OSError, ValueError, EOFError, TimeoutError, RuntimeError, subprocess.SubprocessError) as error:
-            print('renderer job unconfirmed: ' + type(error).__name__, file=sys.stderr, flush=True)
+                        protected_waiting = True
+                    frame = b'FVBU\x01' + bytes(35) if path == PROTECTED_SOCKET else b'FDB1'
+                    with incoming:
+                        try:
+                            send_all(incoming, frame, now + 0.1)
+                        except (OSError, EOFError, TimeoutError):
+                            pass
+                    continue
+                if path == PROTECTED_SOCKET:
+                    protected_until = 0
+                client = incoming
+                active = threading.Thread(target=worker, args=(client, handlers[path], path), daemon=True)
+                active.start()
+    except StopRequested:
+        pass
+    finally:
+        if active is not None and active.is_alive():
+            try:
+                client.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            # systemd kills the service cgroup if teardown outlives the unit's
+            # stop deadline. The retained fence blocks the next startup.
+            active.join(15)
 
 
 if __name__ == '__main__':

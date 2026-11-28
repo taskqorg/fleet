@@ -50,7 +50,7 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 	foreignOverlay := asset(foreign, "overlay.json", "foreign overlay")
 	runtime := contract.DesignCaptureRuntime{Node: "test", Chromium: "test", Playwright: "test", ImageSHA256: strings.Repeat("1", 64), FontSHA256: strings.Repeat("2", 64), LockSHA256: strings.Repeat("3", 64)}
 	producer := contract.DesignCaptureProducer{Commit: strings.Repeat("4", 40), Version: "invented", Target: "linux-amd64"}
-	cfg := designCaptureInstallation{Host: contract.DesignCaptureHost, BaseArtifact: base, Producer: producer, Runtime: runtime}
+	cfg := designCaptureInstallation{Host: contract.DesignCaptureHost, BaseArtifact: base, Producer: producer, Runtime: runtime, LaunchSHA256: strings.Repeat("5", 64)}
 	t.Setenv("FLEET_DESIGN_CAPTURE_INSTALLATION", string(jsonBytes(cfg)))
 	key := filepath.Join(t.TempDir(), "test-signer")
 	seed := make([]byte, ed25519.SeedSize)
@@ -127,7 +127,7 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Fatal("missing typed dispatch")
 	}
 	signature, _ := hex.DecodeString(permit.Signature)
-	if !ed25519.Verify(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey), p.Request.PermitMessage(permit.ExpiresAt), signature) {
+	if !ed25519.Verify(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey), p.Request.PermitMessage(permit.ExpiresAt, p.InstallationDigest()), signature) {
 		t.Fatal("invalid per-job permit")
 	}
 	if p.Request.Execution != eid || p.Request.Job != start.JobId || p.Request.BaseSHA256 != sha256hex([]byte("invented bundle")) {
@@ -159,8 +159,28 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 		t.Fatalf("stage grant: %+v %v", staged, err)
 	}
 
+	// The proof alone and project membership cannot fetch raw transport.
+	transport := func(command *string) int {
+		code, _ := e.callJSON(t, "POST", contract.RouteArtifactsGet.Path, contract.HostArtifactGetRequest{
+			HostId: designerHost, ExecutionId: &eid, CommandId: command, ArtifactId: aid,
+		}, map[string]string{"Authorization": "Bearer " + designerSecret})
+		return code
+	}
+	if code := transport(nil); code != 403 {
+		t.Fatalf("generic artifact GET bypassed the capture mediator: %d", code)
+	}
+	if code, _ := e.callJSON(t, "GET", "/api/results/"+aid, nil, e.ownerHeaders()); code != 403 {
+		t.Fatalf("project result view exposed private capture transport: %d", code)
+	}
+	if code := transport(&startCommand); code != 200 {
+		t.Fatalf("mediator rejected a current verified execution: %d", code)
+	}
+
 	if _, err := call(designerHost, eid, "cancel", "first", nil, nil); err != nil {
 		t.Fatal(err)
+	}
+	if code := transport(&startCommand); code != 403 {
+		t.Fatalf("cancellation before mediated download did not fence release: %d", code)
 	}
 	if revoked, err := call(designerHost, eid, "stage", "first", nil, nil); err != nil || revoked.Result != nil || revoked.State != "cancelled" {
 		t.Fatalf("completed job revoke released outputs: %+v %v", revoked, err)
@@ -244,6 +264,71 @@ func TestDesignCaptureDispatchAuthorizationReplayAndReturn(t *testing.T) {
 				t.Fatalf("stale capture did not settle: %q %v", state, err)
 			}
 		})
+	}
+
+	// Start through native MCP as a non-owner whose only project authority
+	// initially comes from the live membership row. Deliberately keep the
+	// in-memory snapshot unchanged while committing each database update.
+	const member = "capture-member@example.invalid"
+	sql("INSERT INTO person(email,name,roles) VALUES ($1,'Synthetic member',ARRAY['operator'])", member)
+	people := map[string]*Person{member: {Email: member, Name: "Synthetic member", Roles: []string{"operator"}}}
+	for _, person := range e.app.peopleSnapshot().list() {
+		people[person.Email] = person
+	}
+	e.app.publishPeople(people)
+	sql("UPDATE definition SET initial_member=$1,initial_member_revoked_at=NULL WHERE kind='project' AND id='fleet'", member)
+
+	startMember := func(label string) string {
+		t.Helper()
+		_, execution := turn("designer")
+		sql("UPDATE execution SET directed_by=$2,data=jsonb_set(data,'{directedBy}',to_jsonb($2::text)) WHERE id=$1", execution, member)
+		command := newID()
+		sql("INSERT INTO command (id,execution_id,host_id,project_id,kind,status,payload,handed_out) VALUES ($1,$2,$3,'fleet','start','started','{}',true)",
+			command, execution, designerHost)
+		overlay := asset(execution, "overlay.json", "synthetic member overlay")
+		fixture := asset(execution, "fixture.json", "synthetic member fixture")
+		code, body := e.callJSON(t, "POST", contract.RouteAgentTools.Path, contract.AgentToolsRequest{
+			HostId: designerHost, CommandId: command, ExecutionId: &execution,
+			Request: jsonBytes(doc{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": doc{
+				"name": "design_capture", "arguments": doc{"action": "start", "requestId": label, "overlayArtifactId": overlay, "fixtureArtifactId": fixture},
+			}}),
+		}, map[string]string{"Authorization": "Bearer " + designerSecret})
+		job := designCaptureJobID(execution)
+		if code != 200 || !strings.Contains(string(jsonBytes(body)), job) {
+			t.Fatalf("native MCP member start failed: %d %+v", code, body)
+		}
+		return job
+	}
+	pollHas := func(job string) bool {
+		t.Helper()
+		commands, err := e.app.pollReadyCommands(e.ctx, contract.DesignCaptureHost, caps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, command := range commands {
+			if command.Script != nil && command.Script.ExecutionId == job {
+				return true
+			}
+		}
+		return false
+	}
+	if allowed := startMember("initial-membership"); !pollHas(allowed) {
+		t.Fatal("initial project member passed native MCP but was denied at handoff")
+	}
+	revokedMembership := startMember("membership-revocation")
+	sql("UPDATE definition SET initial_member_revoked_at=now(),access_version=access_version+1 WHERE kind='project' AND id='fleet'")
+	if pollHas(revokedMembership) {
+		t.Fatal("committed initial membership revocation did not fence handoff")
+	}
+	// Give the member an explicit project grant in both sources, then remove
+	// only the live row. A stale published projection must never allow it.
+	people[member].Grants = []personGrant{{Kind: "project", ID: "fleet"}}
+	e.app.publishPeople(people)
+	sql("INSERT INTO person_grant (email,object_kind,object_id) VALUES ($1,'project','fleet')", member)
+	revokedGrant := startMember("direct-revocation")
+	sql("DELETE FROM person_grant WHERE email=$1 AND object_kind='project' AND object_id='fleet'", member)
+	if pollHas(revokedGrant) {
+		t.Fatal("stale people projection overrode a committed direct project revocation")
 	}
 
 }

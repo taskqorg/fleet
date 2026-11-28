@@ -4,12 +4,8 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import os
-import resource
-import selectors
-import time
-import signal
+import socket
 import struct
-import subprocess
 import tempfile
 
 REQUEST = struct.Struct('>4sBB2s32sQ32s')
@@ -17,7 +13,8 @@ RESPONSE = struct.Struct('>4sBBB1s32s32s32sQ32s')
 LIMITS = {1: (0, 1024, 25), 2: (4 + 96 * 1024 + 96 * 1024 * 1024, 24 * 1024 * 1024, 60),
           3: (32 * 1024 * 1024, 32 * 1024 * 1024, 65), 4: (64 * 1024 * 1024 + 2048, 1024, 10)}
 PORT = '/dev/virtio-ports/org.fleet.design-verifier'
-WORKER = '/opt/fleet-design-verifier/current/deploy/design-verifier/vm-guest-worker.mjs'
+WORKER_SOCKET = '/run/fleet-design-vm-worker.sock'
+WORKER_REPLY = struct.Struct('>BQ')
 WORKDIR = '/var/lib/fleet-design-vm-guest'
 CHUNK = 65536
 
@@ -65,50 +62,37 @@ def read_request(stream, tempdir):
         raise
 
 
-def run_job(op, payload, tempdir, worker=WORKER):
-    if op == capture.OPERATION:
-        return load_sibling('vm-capture-guest').fixed_job(capture, read_exact, payload)
-    _, maximum, seconds = LIMITS[op]
-    process = None
-    def limits():
-        os.setsid()
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+def worker_job(client, op, payload, maximum, seconds):
+    client.settimeout(seconds)
+    client.sendall(bytes([op]))
+    if payload is not None:
+        while chunk := payload.read(CHUNK):
+            client.sendall(chunk)
+    client.shutdown(socket.SHUT_WR)
+    with client.makefile('rb') as reply:
+        status, size = WORKER_REPLY.unpack(read_exact(reply, WORKER_REPLY.size))
+        if status not in (0, 1, 2) or size > maximum or status and size:
+            raise ValueError('invalid guest worker result')
+        data = read_exact(reply, size)
+        if reply.read(1):
+            raise ValueError('extra guest worker result')
+        return status, data
+
+
+def run_job(client, op, payload, tempdir):
     try:
-        process = subprocess.Popen(['/usr/sbin/runuser', '-u', 'fleet-render-worker', '--', '/usr/bin/node', worker, str(op)],
-            stdin=payload, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True,
-            env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'LANG': 'C.UTF-8'}, preexec_fn=limits)
-        output = bytearray()
-        deadline = time.monotonic() + seconds + 3
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            while selector.get_map():
-                left = deadline - time.monotonic()
-                if left <= 0 or not selector.select(left):
-                    raise TimeoutError('worker watchdog')
-                part = os.read(process.stdout.fileno(), min(CHUNK, maximum + 1 - len(output)))
-                if not part:
-                    selector.unregister(process.stdout)
-                else:
-                    output.extend(part)
-                    if len(output) > maximum:
-                        raise ValueError('worker output limit')
-        code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
-        if code == 42 and op == 2:
-            return 1, b''
-        if code != 0:
-            return 2, b''
-        return 0, bytes(output)
-    except (TimeoutError, ValueError, subprocess.TimeoutExpired):
+        if op == capture.OPERATION:
+            def start_capture_worker():
+                if worker_job(client, op, None, 0, 605) != (0, b''):
+                    raise ValueError('fixed capture worker did not complete')
+            return load_sibling('vm-capture-guest').fixed_job(capture, read_exact, payload, runner=start_capture_worker)
+        _, maximum, seconds = LIMITS[op]
+        return worker_job(client, op, payload, maximum, seconds + 3)
+    except (OSError, EOFError, ValueError):
         return 2, b''
-    finally:
-        if process is not None and process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
-        if process is not None:
-            process.stdout.close()
 
 
-def serve(stream, tempdir, runner=run_job):
+def serve(stream, tempdir, runner):
     op, nonce, request_hash, payload = read_request(stream, tempdir)
     try:
         status, result = runner(op, payload, tempdir)
@@ -133,16 +117,18 @@ def serve(stream, tempdir, runner=run_job):
 def main():
     os.umask(0o077)
     os.makedirs(WORKDIR, mode=0o700, exist_ok=True)
-    try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as worker:
+        worker.settimeout(5)
+        worker.connect(WORKER_SOCKET)
+        with worker.makefile('rb', buffering=0) as ready:
+            if read_exact(ready, 8) != b'FVWK\x01\0\0\0':
+                raise ValueError('fixed worker did not confirm readiness')
         with open(PORT, 'r+b', buffering=0) as stream:
             if stream.write(b'FVGR\x01\0\0\0') != 8:
                 raise EOFError('guest readiness write failed')
             stream.flush()
-            serve(stream, WORKDIR)
-    finally:
-        # The host requires QMP guest-shutdown and QEMU exit before accepting.
-        subprocess.run(['/usr/bin/systemctl', 'poweroff'], check=False, timeout=10,
-                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            serve(stream, WORKDIR, lambda op, payload, tempdir: run_job(worker, op, payload, tempdir))
+    # PID 1 powers off the guest on either terminal unit outcome.
 
 
 if __name__ == '__main__':

@@ -249,6 +249,15 @@ try {
     const overlay = packOverlay(resolve(values.checkout), values.base, paths);
     writeFileSync(resolve(values.out), json(overlay), { mode: 0o600, flag: 'wx' });
     console.log(json({ base: overlay.base, paths: overlay.files.map(file => file.path), sha256: hash(json(overlay)) }).trimEnd());
+  } else if (mode === 'validate-replay' && !extra.length && !Object.keys(values).length) {
+    const parts = [];
+    let total = 0;
+    for await (const part of process.stdin) {
+      total += part.length;
+      if (total > maxManifest) throw new Error('Oversized replay manifest');
+      parts.push(part);
+    }
+    validateReplay(JSON.parse(Buffer.concat(parts)));
   } else if (mode === 'capture-job' && !extra.length && Object.keys(values).sort().join(',') === 'job-input,out') {
     await captureJob(resolve(values['job-input']), resolve(values.out));
   } else {
