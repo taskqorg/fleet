@@ -30,7 +30,9 @@ YAML has no renderer: its source is already its readable form.
 
 **Enlarging images (owner).** Offer inline enlargement only when the image stage can occupy the entire available area. Put controls over the image and keep the original file directly accessible from the trusted app. Where the stage cannot fill the area, use the standard viewer for the original file. Prefer native fullscreen, modal dismissal and file navigation.
 
-**Question images.** Conversation and Task Details use the same viewer for images linked from a question. It opens to fill the available area, with Fit, Actual size, zoom and pan based on the decoded original's dimensions. Back to question and Escape restore the source tab, scroll and focus. The original opens in the same tab and browser Back restores that question. Check both normal question routes at desktop and phone widths in both themes, including the original-file return. Enlargement for the Results view is pending.
+**Question images.** Conversation and Task Details use the same viewer for images linked from a question. It opens to fill the available area, with Fit, Actual size, zoom and pan based on the decoded original's dimensions. The zoom buttons and keys step by one quarter of the fitted width. Back to question and Escape restore the source tab, scroll and focus. The original opens in the same tab and browser Back restores that question. Check both normal question routes at desktop and phone widths in both themes, including the original-file return. Enlargement for the Results view is pending.
+
+Retain the sizing mode on viewport change and end enlargement when the question or its access generation changes. List each available original once in attachment order. Use a stored thumbnail when present and defer loading the original until it is opened. The fullscreen stage and controls use the question-viewer palette in either theme.
 
 **States.** Loading (header shown at once, body skeleton), ready, unavailable ("No holding store is online. Last copy on windows, seen 2h ago"; never "lost"), too large to preview (download only), error.
 

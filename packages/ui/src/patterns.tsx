@@ -319,7 +319,7 @@ export function AppShell(p: {
   /** Column and side-panel widths in px by key (`nav`, `control`, `session-context`) and which side panels are open by key
    *  (`nav` is the navigation, open when expanded): person settings (OR-41, OR-42, side-panel.md). onWidth(key, 0) resets.
    *  Without them the shell keeps its own (book and mockups). */
-  privateReady?: boolean; privateGeneration?: number;
+  privateReady?: boolean; privateGeneration?: number; privateRoute?: string;
   widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; panels?: Record<string, boolean>; onPanel?: (key: string, open: boolean) => void;
   /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
   /** Wall mode (Live on a TV, pages/live.md): no navigation and no shell header; the page fills the screen. */ wall?: boolean;
@@ -462,7 +462,7 @@ export function AppShell(p: {
           )}
         </Show>
         <TooltipLayer />
-        <EntityCardLayer />
+        <EntityCardLayer privateReady={p.privateReady} privateGeneration={p.privateGeneration} privateRoute={p.privateRoute} />
       </div>
     </SidePanels>
   );

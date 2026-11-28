@@ -52,6 +52,16 @@ fleet.id-coral: color(#b4472a, dark: #ec9a82)
 fleet.id-slate: color(#4d5d70, dark: #a3b1c2)
 fleet.float: color(#ffffff, dark: #202022)
 fleet.rail: color(#e9e9ea, dark: #050505)
+fleet.question-viewer-bg: color(#090b0d, dark: #090b0d)
+fleet.question-viewer-fg: color(#f4f5f6, dark: #f4f5f6)
+fleet.question-viewer-muted: color(#d4dce2, dark: #d4dce2)
+fleet.question-viewer-disabled: color(#aeb8c0, dark: #aeb8c0)
+fleet.question-viewer-bar: color(#14191e, dark: #14191e)
+fleet.question-viewer-bar-line: color(#55616d, dark: #55616d)
+fleet.question-viewer-button: color(#202a32, dark: #202a32)
+fleet.question-viewer-button-line: color(#687989, dark: #687989)
+fleet.question-viewer-button-hover: color(#344651, dark: #344651)
+fleet.question-viewer-shadow: color(#000000, dark: #000000)
 
 // Brilliant's semantic roles mapped onto Fleet tokens, so $color.* rows draw in Fleet colours.
 color.surface: fleet.bg

@@ -62,7 +62,7 @@ export function DecisionBlock(p: DecisionProps) {
         <div
           class="decision"
           data-ui="decision-block"
-          data-question-images={p.questionId ? '' : undefined}
+          data-question-images={p.questionId}
           role="group"
           aria-label={p.question}
           onKeyDown={e => {

@@ -13,28 +13,31 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
   let picture: HTMLImageElement | undefined;
   let viewer: HTMLElement | undefined;
   let observer: ResizeObserver | undefined;
-  let initialized = false;
+  let sizing: 'fill' | 'fit' | 'actual' | 'custom' = 'fill';
   const points = new Map<number, { x: number; y: number }>();
   let drag: { x: number; y: number; ox: number; oy: number } | null = null;
   let pinch: { distance: number; scale: number } | null = null;
   onCleanup(() => observer?.disconnect());
 
   // Stop at each edge; a small image remains centered instead of being lost offscreen.
-  const pan = (x: number, y: number, atScale = scale()) => {
+  const pan = (x: number, y: number, atScale = scale(), fit = fitWidth()) => {
     if (!stage || !picture?.naturalWidth || !picture.naturalHeight) return;
-    const width = fitWidth() * atScale;
+    const width = fit * atScale;
     const height = width * picture.naturalHeight / picture.naturalWidth;
     const maxX = Math.max(0, (width - stage.clientWidth) / 2);
     const maxY = Math.max(0, (height - stage.clientHeight) / 2);
     setOffset({ x: Math.max(-maxX, Math.min(maxX, x)), y: Math.max(-maxY, Math.min(maxY, y)) });
   };
-  const zoom = (value: number) => {
-    if (!Number.isFinite(value) || value <= 0) return;
-    const minimum = sourceWidth() ? Math.min(1, sourceWidth() / fitWidth()) : 1;
-    const next = Math.max(minimum, value);
+  const minimumScale = (fit = fitWidth(), width = sourceWidth()) => width ? Math.min(1, width / fit) : 1;
+  const zoom = (value: number, mode: typeof sizing = 'custom') => {
+    if (!Number.isFinite(value)) return;
+    const next = Math.max(minimumScale(), value);
+    sizing = mode;
     setScale(next);
     pan(offset().x, offset().y, next);
   };
+  // Each button or key step adds a quarter of the fitted image width.
+  const stepZoom = (direction: 1 | -1) => zoom(scale() + direction * 0.25);
   const measure = () => {
     if (!stage || !picture?.naturalWidth || !picture.naturalHeight) return;
     const ratio = picture.naturalWidth / picture.naturalHeight;
@@ -42,10 +45,11 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
     if (!fit) return;
     setSourceWidth(picture.naturalWidth);
     setFitWidth(fit);
-    if (!initialized) {
-      initialized = true;
-      setScale(Math.max(stage.clientWidth, stage.clientHeight * ratio) / fit);
-    } else pan(offset().x, offset().y);
+    const next = sizing === 'fill' ? Math.max(stage.clientWidth, stage.clientHeight * ratio) / fit
+      : sizing === 'actual' ? picture.naturalWidth / fit
+      : Math.max(minimumScale(fit, picture.naturalWidth), scale());
+    setScale(next);
+    pan(offset().x, offset().y, next, fit);
   };
   const distance = () => {
     const a = [...points.values()];
@@ -80,9 +84,9 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
       const first = items[0], last = items.at(-1);
       if (e.shiftKey && e.target === first && last) { e.preventDefault(); last.focus(); }
       if (!e.shiftKey && e.target === last && first) { e.preventDefault(); first.focus(); }
-    } else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoom(scale() * 1.25); }
-    else if (e.key === '-') { e.preventDefault(); zoom(scale() / 1.25); }
-    else if (e.key === '0') { e.preventDefault(); zoom(1); }
+    } else if (e.key === '+' || e.key === '=') { e.preventDefault(); stepZoom(1); }
+    else if (e.key === '-') { e.preventDefault(); stepZoom(-1); }
+    else if (e.key === '0') { e.preventDefault(); zoom(1, 'fit'); }
     else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
       pan(offset().x + (e.key === 'ArrowLeft' ? 40 : e.key === 'ArrowRight' ? -40 : 0), offset().y + (e.key === 'ArrowUp' ? 40 : e.key === 'ArrowDown' ? -40 : 0));
@@ -94,11 +98,11 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
       <Show when={controls()}>
         <div class="qiv-title"><strong>{p.title}</strong></div>
         <div class="qiv-tools">
-          <Button label="Zoom out" icon="minus" iconOnly onClick={() => zoom(scale() / 1.25)} />
+          <Button label="Zoom out" icon="minus" iconOnly onClick={() => stepZoom(-1)} disabledReason={scale() <= minimumScale() ? 'Minimum zoom' : undefined} />
           <span class="qiv-zoom" aria-live="polite">{sourceWidth() ? Math.round(fitWidth() * scale() * 100 / sourceWidth()) + '%' : ''}</span>
-          <Button label="Zoom in" icon="plus" iconOnly onClick={() => zoom(scale() * 1.25)} />
-          <Button label="Fit" onClick={() => zoom(1)} />
-          <Button label="Actual size" onClick={() => zoom(sourceWidth() / fitWidth())} disabledReason={sourceWidth() ? '' : 'Image loading'} />
+          <Button label="Zoom in" icon="plus" iconOnly onClick={() => stepZoom(1)} />
+          <Button label="Fit" onClick={() => zoom(1, 'fit')} />
+          <Button label="Actual size" onClick={() => zoom(sourceWidth() / fitWidth(), 'actual')} disabledReason={sourceWidth() ? '' : 'Image loading'} />
           <Button label="Hide controls" onClick={() => changeControls(false)} />
         </div>
       </Show>
@@ -107,7 +111,7 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
     <div class="qiv-stage" tabindex="0" role="region" aria-label="Image. Drag to pan; plus and minus to zoom."
       ref={el => { stage = el; observer = new ResizeObserver(measure); observer.observe(el); }}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
-      onWheel={e => { e.preventDefault(); zoom(scale() * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }}>
+      onWheel={e => { e.preventDefault(); zoom(scale() + (e.deltaY < 0 ? 0.15 : -0.15)); }}>
       <Show when={failed()}><div role="alert">Image could not be loaded. Return to the question to open the original.</div></Show>
       <img ref={el => { picture = el; }} onLoad={() => { setFailed(false); measure(); }} onError={() => setFailed(true)}
         draggable={false} src={p.src} alt={p.title} style={{ width: `${fitWidth() * scale()}px`, transform: `translate(${offset().x}px, ${offset().y}px)` }} />

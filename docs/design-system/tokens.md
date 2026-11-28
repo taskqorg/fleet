@@ -12,6 +12,7 @@ Colour carries meaning only ([principles §1](principles.md#1-density-and-calm))
 |---|---|
 | `rail`, `bg`, `surface` | The three columns, in order: navigation, control column, work area ([app shell](patterns/app-shell.md)). Each step is lighter than the one before, in both themes, so the work area reads as the top layer. |
 | `float` | Floating layers: tooltips, context menus (OR-16). |
+| `question-viewer-*` | Fullscreen question image stage and toolbar, using the same dark palette over images in either theme. |
 | `surface-sunken` | Code, transcripts, wells inside a pane. |
 | `fg`, `fg-muted`, `fg-faint` | Main text; secondary text (IDs, reasons, column heads); placeholder and disabled. All meet 4.5:1 on `surface` except `fg-faint`, which is used only for placeholders and disabled text. |
 | `line`, `line-soft` | Pane and header borders; row separators. |

@@ -39,7 +39,7 @@ export function QuestionCard(p: {
       when={p.answered}
       keyed
       fallback={
-        <div class={['qcard', { danger: danger() }]} data-ui="question-card" role="group" aria-label={p.question} data-question-images={p.showImages ? '' : undefined} onClick={e => e.stopPropagation()}>
+        <div class={['qcard', { danger: danger() }]} data-ui="question-card" role="group" aria-label={p.question} data-question-images={p.showImages ? p.questionId ?? '' : undefined} onClick={e => e.stopPropagation()}>
           {ref()}
           {/* Codes, Fleet links and UUIDs in the text are entity references (OR-38, OR-44), never raw ids or URLs. */}
           <p class="qcard-q">{linkCodes(p.question, 0)}</p>
