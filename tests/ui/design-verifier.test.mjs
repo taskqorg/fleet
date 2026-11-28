@@ -351,3 +351,62 @@ test('a restarted issuer reacquires a short-lived installation token and closes 
   await client.close();
   assert.deepEqual(auth, { issued: 2, revoked: [1, 2] });
 });
+
+test('stopping during token renewal never starts the check write and revokes a late token', async () => {
+  const stop = new AbortController(), calls = [];
+  let started, finish;
+  const entered = new Promise(resolve => { started = resolve; });
+  const client = fleetDesignGitHub({}, { signal: stop.signal,
+    connect: async () => { started(); return new Promise(resolve => { finish = resolve; }); },
+    send: async (path, token, options) => { calls.push({ path, token, method: options.method }); },
+  });
+  const write = client('/repos/taskqorg/fleet/check-runs', { method: 'POST', body: {} });
+  await entered; stop.abort();
+  await assert.rejects(write);
+  finish({ token: 'late-fixture', expires: Date.now() + 90_000 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [{ path: '/installation/token', token: 'late-fixture', method: 'DELETE' }]);
+});
+
+test('stopping a stalled provider request releases the poll and revokes its token', async () => {
+  const stop = new AbortController(), calls = [];
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const client = fleetDesignGitHub({}, { signal: stop.signal,
+    connect: async () => ({ token: 'fixture', expires: Date.now() + 90_000 }),
+    send: async (path, token, options) => {
+      calls.push({ path, token, method: options.method });
+      if (options.method !== 'DELETE') { entered(); return new Promise(() => {}); }
+    },
+  });
+  const request = client('/fixture'); await started; stop.abort();
+  await assert.rejects(request);
+  await client.close();
+  assert.deepEqual(calls.at(-1), { path: '/installation/token', token: 'fixture', method: 'DELETE' });
+});
+
+test('stopping cancels an in-flight Fleet evidence request', async t => {
+  const { fleetVerifierClient } = await import('../../deploy/design-verifier/fleet.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-evidence-stop-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'fleet-access.json'), JSON.stringify({ clientId: 'invented-id', clientSecret: 'invented-secret' }), { mode: 0o600 });
+  const stop = new AbortController();
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const client = await fleetVerifierClient(dir, (_url, options) => new Promise((_, reject) => {
+    entered(); options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+  }), { signal: stop.signal });
+  const probe = client.probe(); await started; stop.abort();
+  await assert.rejects(probe);
+});
+
+test('token revocation is bounded even when the provider transport stalls', async () => {
+  const client = fleetDesignGitHub({}, {
+    connect: async () => ({ token: 'fixture', expires: Date.now() + 90_000 }),
+    send: async (_path, _token, options) => options.method === 'DELETE' ? new Promise(() => {}) : {},
+  });
+  await client('/fixture');
+  const started = Date.now();
+  await assert.rejects(client.close(), /revocation|timeout|abort/i);
+  assert.ok(Date.now() - started < 5000);
+});

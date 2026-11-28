@@ -7,8 +7,8 @@ import { fleetVerifierClient } from './fleet.mjs';
 import { openRepository } from './git.mjs';
 import { receiptStore } from './receipts.mjs';
 import { evaluate } from './verifier.mjs';
-import { parityRunner, vmBackendConfigured } from './parity.mjs';
-import { rendererController } from './renderer-state.mjs';
+import { parityRunner } from './parity.mjs';
+import { rendererController, rendererPoll, pollComplete } from './renderer-state.mjs';
 
 const once = process.argv[2] === '--once';
 if (process.argv.length !== (once ? 3 : 2)) throw new Error('Usage: service.mjs [--once]');
@@ -19,17 +19,17 @@ const config = designGitHubConfig(process.env);
 if (config.appId !== appId || config.installationId !== installationId) throw new Error('Unexpected Fleet design App identity');
 const release = JSON.parse(await readFile(new URL('../../release.json', import.meta.url), 'utf8'));
 if (!sha(release.commit)) throw new Error('The verifier needs an exact trusted release commit');
-const api = fleetDesignGitHub(config);
+const stop = new AbortController();
+const api = fleetDesignGitHub(config, { signal: stop.signal });
 const checks = fleetDesignChecks(api, appId);
 const provider = githubCandidates(api);
 const receipts = await receiptStore(state, release.commit, checks);
 const git = openRepository(state);
 let fleet;
 let fleetAccess = 'unconfigured';
-try { fleet = await fleetVerifierClient(process.env.CREDENTIALS_DIRECTORY); }
+try { fleet = await fleetVerifierClient(process.env.CREDENTIALS_DIRECTORY, fetch, { signal: stop.signal }); }
 catch { fleetAccess = 'unknown'; }
 const service = { appId, installationId, repositoryId, revision: release.commit };
-const stop = new AbortController();
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => stop.abort());
 const ensureRunning = () => { if (stop.signal.aborted) throw new Error('Verifier stopped'); };
 const renderer = rendererController(service, onUnavailable => parityRunner({ signal: stop.signal, onUnavailable }), stop.signal);
@@ -73,7 +73,7 @@ async function poll() {
       if (stop.signal.aborted) break;
       const [event] = candidates;
       try {
-        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet, runner: renderer.current, rendererPending: !renderer.current && vmBackendConfigured(), signal: stop.signal }));
+        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet, runner: renderer.current, rendererPending: !renderer.current, signal: stop.signal }));
         else {
           ensureRunning();
           const reason = 'The SHA has multiple active provider identities';
@@ -102,15 +102,14 @@ async function poll() {
   const status = { ...service, ...observation, at: new Date().toISOString(), fleetEvidence, results };
   await receipts.observe(status);
   console[observation.provider === 'ready' ? 'log' : 'error'](JSON.stringify(status));
-  return observation.provider === 'ready';
+  return pollComplete(observation, fleetEvidence, results);
 }
 
 let ok;
 try {
 
   do {
-    renderer.start();
-    ok = await poll();
+    ok = await rendererPoll(renderer, poll, once);
     if (!once) await delay(period * 1000, null, { signal: stop.signal });
   } while (!once && !stop.signal.aborted);
 } catch (err) {

@@ -44,3 +44,16 @@ export function rendererController(service, createRunner, signal) {
     async wait() { await probing; },
   };
 }
+
+// One-shot mode must consume the completed probe before reporting success.
+export async function rendererPoll(controller, poll, once) {
+  controller.start();
+  if (once) await controller.wait();
+  const ok = await poll();
+  return Boolean(ok && (!once || controller.current));
+}
+
+export function pollComplete(observation, fleetEvidence, results) {
+  return observation.provider === 'ready' && fleetEvidence === 'ready' &&
+    results.every(result => result.state !== 'unknown' && result.conclusion != null);
+}

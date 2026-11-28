@@ -33,3 +33,35 @@ test('provider can proceed while one probe waits and execution failure invalidat
   stop.abort(); finish({ node: 'fixture' }); await manager.wait();
   assert.equal(manager.current, undefined); assert.equal(state.visualParity, 'unavailable');
 });
+
+test('one-shot waits for local or VM probe and never succeeds with an unavailable renderer', async () => {
+  const { rendererController, rendererPoll } = await import('../../deploy/design-verifier/renderer-state.mjs');
+  for (const ready of [true, false]) {
+    let finish, polled = false;
+    const state = {}, stop = new AbortController();
+    const controller = rendererController(state, () => ({ probe: () => new Promise((resolve, reject) => {
+      finish = () => ready ? resolve({ node: 'fixture' }) : reject(Error('unavailable'));
+    }) }), stop.signal);
+    const result = rendererPoll(controller, async () => { polled = true; return true; }, true);
+    await Promise.resolve(); assert.equal(polled, false);
+    finish(); assert.equal(await result, ready); assert.equal(polled, true);
+  }
+});
+
+test('ordinary polling continues while a local probe is pending', async () => {
+  const { rendererController, rendererPoll } = await import('../../deploy/design-verifier/renderer-state.mjs');
+  let finish;
+  const controller = rendererController({}, () => ({ probe: () => new Promise(resolve => { finish = resolve; }) }));
+  assert.equal(await rendererPoll(controller, async () => true, false), true);
+  assert.equal(controller.current, undefined);
+  finish({ node: 'fixture' }); await controller.wait();
+});
+
+test('one-shot status cannot succeed with pending results or unavailable evidence', async () => {
+  const { pollComplete } = await import('../../deploy/design-verifier/renderer-state.mjs');
+  assert.equal(pollComplete({ provider: 'ready' }, 'ready', [{ conclusion: 'success' }]), true);
+  assert.equal(pollComplete({ provider: 'ready' }, 'ready', [{ conclusion: 'failure' }]), true);
+  assert.equal(pollComplete({ provider: 'ready' }, 'ready', [{ conclusion: null }]), false);
+  assert.equal(pollComplete({ provider: 'ready' }, 'ready', [{ state: 'unknown' }]), false);
+  assert.equal(pollComplete({ provider: 'ready' }, 'unknown', []), false);
+});

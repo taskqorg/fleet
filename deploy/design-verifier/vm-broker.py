@@ -94,11 +94,24 @@ def run_checked(args, client, timeout, pass_fds=(), capture=False):
                     raise subprocess.CalledProcessError(process.returncode, args)
                 return bytes(output)
     finally:
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
-        if process.stdout is not None:
-            process.stdout.close()
+        try:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=5)
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise CleanupUnconfirmed('image helper process group remains')
+        except (OSError, subprocess.SubprocessError) as error:
+            raise CleanupUnconfirmed('image helper cleanup unconfirmed') from error
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 def validate_image_fd(fd, client=None):
@@ -181,7 +194,10 @@ def read_request(client, nonce, root, deadline):
         payload.seek(0)
         return op, size, expected, payload
     except BaseException:
-        payload.close()
+        try:
+            payload.close()
+        except OSError as error:
+            raise CleanupUnconfirmed('request staging cleanup unconfirmed') from error
         raise
 
 
@@ -347,13 +363,12 @@ class CleanupUnconfirmed(Exception):
 
 
 def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
-    # A durable marker fences socket reactivation if any teardown step fails.
-    fence = Path(tempfile.mkdtemp(prefix='run.fence.', dir=root))
-    run = Path(tempfile.mkdtemp(prefix='run.', dir=root))
-    overlay = run / 'overlay.qcow2'
-    guest_path, qmp_path = str(run / 'guest.sock'), str(run / 'qmp.sock')
+    run = None
     process = guest = listener = qmp = qmp_file = None
     try:
+        run = Path(tempfile.mkdtemp(prefix='run.', dir=root))
+        overlay = run / 'overlay.qcow2'
+        guest_path, qmp_path = str(run / 'guest.sock'), str(run / 'qmp.sock')
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         listener.bind(guest_path)
         os.chmod(guest_path, 0o600)
@@ -410,42 +425,53 @@ def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
                     handle.close()
                 except OSError:
                     cleanup_failed = True
-        if not cleanup_failed:
+        if not cleanup_failed and run is not None:
             try:
                 shutil.rmtree(run)
             except OSError:
                 cleanup_failed = True
-        if cleanup_failed or run.exists():
+        if cleanup_failed or (run is not None and run.exists()):
             raise CleanupUnconfirmed('VM cleanup incomplete; operator review required')
-        try:
-            require_empty_job_cgroup()
-            fence.rmdir()
-        except (OSError, RuntimeError) as error:
-            raise CleanupUnconfirmed('VM cleanup unconfirmed; operator review required') from error
 
 
 def serve(client, manifest_loader=load_manifest, runner=run_vm, root=STATE):
-    nonce = os.urandom(32)
-    send_all(client, b'FVMB\x01\0\0\0' + nonce, time.monotonic() + 5)
-    op, _, request_hash, payload = read_request(client, nonce, root, time.monotonic() + 10)
-    launch_fd = bios_fd = None
+    # Fence the entire attempt, including request staging and image inspection.
     try:
+        fence = Path(tempfile.mkdtemp(prefix='run.fence.', dir=root))
+    except OSError as error:
+        raise CleanupUnconfirmed('Cannot establish cleanup fence') from error
+    payload = launch_fd = bios_fd = None
+    unconfirmed = False
+    try:
+        nonce = os.urandom(32)
+        send_all(client, b'FVMB\x01\0\0\0' + nonce, time.monotonic() + 5)
+        op, _, request_hash, payload = read_request(client, nonce, root, time.monotonic() + 10)
         identity, launch_fd, bios_fd = manifest_loader(client)
         client_alive(client)
         status, result = runner(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root)
         if status not in (0, 1, 2) or status == 1 and op != 2 or status != 0 and result or len(result) > LIMITS[op][1]:
             raise ValueError('invalid worker result')
-        # runner must return only after successful QMP shutdown, reap and cleanup.
         response = RESPONSE.pack(b'FVMR', 1, op, status, b'\0', nonce, request_hash, identity,
                                  len(result), hashlib.sha256(result).digest())
-        send_all(client, response, time.monotonic() + 5)
-        send_all(client, result, time.monotonic() + 5)
+    except CleanupUnconfirmed:
+        unconfirmed = True
+        raise
     finally:
-        payload.close()
-        if launch_fd is not None:
-            os.close(launch_fd)
-        if bios_fd is not None:
-            os.close(bios_fd)
+        try:
+            if payload is not None:
+                payload.close()
+            if launch_fd is not None:
+                os.close(launch_fd)
+            if bios_fd is not None:
+                os.close(bios_fd)
+            require_empty_job_cgroup()
+            if not unconfirmed:
+                fence.rmdir()
+        except (OSError, RuntimeError) as error:
+            raise CleanupUnconfirmed('Attempt cleanup unconfirmed; operator review required') from error
+    # Release bytes only after all worker and staging cleanup is confirmed.
+    send_all(client, response, time.monotonic() + 5)
+    send_all(client, result, time.monotonic() + 5)
 
 
 class StopRequested(Exception):

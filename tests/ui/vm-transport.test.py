@@ -5,6 +5,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+from unittest.mock import patch
 import socket
 import subprocess
 import tempfile
@@ -24,6 +25,12 @@ H = lambda b: hashlib.sha256(b).digest()
 
 
 class TransportTests(unittest.TestCase):
+    def setUp(self):
+        # This fixture runs outside the protected service cgroup.
+        self.cgroup = patch.object(broker, 'require_empty_job_cgroup', return_value=None)
+        self.cgroup.start()
+        self.addCleanup(self.cgroup.stop)
+
     def request(self, op, nonce, body=b'', digest=None):
         return broker.REQUEST.pack(b'FVMQ', 1, op, b'\0\0', nonce, len(body), digest or H(body)) + body
 
@@ -175,22 +182,41 @@ if (result.toString() !== '{\"probe\":\"fixture\"}') throw Error('unexpected rep
             broker.await_guest(listener, Process(), client, time.monotonic() + 1)
         listener.close(); client.close()
 
-    def test_unconfirmed_cleanup_leaves_a_durable_admission_fence(self):
-        from unittest.mock import patch
+    def test_unconfirmed_image_cleanup_leaves_durable_fence(self):
         preflight = load('preflight', 'deploy/design-verifier/vm-preflight.py')
-        class Listener:
-            def bind(self, path): pass
-            def listen(self, count): pass
-            def close(self): pass
         with tempfile.TemporaryDirectory() as root:
-            with patch.object(broker.socket, 'socket', return_value=Listener()), \
-                 patch.object(broker.os, 'chmod'), \
-                 patch.object(broker, 'run_checked', side_effect=ValueError('fixture startup')), \
-                 patch.object(broker, 'require_empty_job_cgroup', side_effect=RuntimeError('fixture cleanup')):
+            with patch.object(broker, 'send_all'), \
+                 patch.object(broker, 'read_request', return_value=(1, 0, H(b''), io.BytesIO())), \
+                 patch.object(broker, 'load_manifest', side_effect=broker.CleanupUnconfirmed('helper could not be reaped')):
                 with self.assertRaises(broker.CleanupUnconfirmed):
-                    broker.run_vm(None, 1, b'n' * 32, H(b''), io.BytesIO(), 1, 2, root)
+                    broker.serve(None, broker.load_manifest, root=root)
             self.assertEqual(len(list(Path(root).glob('run.fence.*'))), 1)
             with self.assertRaises(ValueError): preflight.check_clean_work(root)
+
+    def test_run_directory_failure_keeps_fence_if_cgroup_cleanup_unconfirmed(self):
+        real = tempfile.mkdtemp
+        with tempfile.TemporaryDirectory() as root:
+            def mkdir(*args, **kwargs):
+                if kwargs.get('prefix') == 'run.': raise OSError('fixture mkdir failure')
+                return real(*args, **kwargs)
+            with patch.object(broker.tempfile, 'mkdtemp', side_effect=mkdir), \
+                 patch.object(broker, 'send_all'), \
+                 patch.object(broker, 'read_request', return_value=(1, 0, H(b''), io.BytesIO())), \
+                 patch.object(broker, 'require_empty_job_cgroup', side_effect=RuntimeError('unconfirmed')):
+                with self.assertRaises(broker.CleanupUnconfirmed):
+                    broker.serve(None, lambda _: (b'i' * 32, os.open('/dev/null', os.O_RDONLY), os.open('/dev/null', os.O_RDONLY)), root=root)
+            self.assertEqual(len(list(Path(root).glob('run.fence.*'))), 1)
+
+    def test_image_helper_kill_failure_is_unconfirmed(self):
+        class Helper:
+            pid = 12345
+            stdout = None
+            def poll(self): return None
+        with patch.object(broker.subprocess, 'Popen', return_value=Helper()), \
+             patch.object(broker.time, 'sleep', side_effect=TimeoutError('fixture timeout')), \
+             patch.object(broker.os, 'killpg', side_effect=PermissionError('fixture kill failure')):
+            with self.assertRaises(broker.CleanupUnconfirmed):
+                broker.run_checked(['fixture'], None, 5)
 
     def test_cleanup_failure_cannot_send_success(self):
         client, server = socket.socketpair(); called = []

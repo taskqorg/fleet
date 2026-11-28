@@ -39,6 +39,7 @@ async function fixture(t, behavior = {}) {
   const server = createServer(socket => {
     const challenge = Buffer.alloc(40); challenge.write('FVMB'); challenge[4] = 1; nonce.copy(challenge, 8);
     if (behavior.badChallenge) challenge[4] = 2;
+    if (behavior.highChallenge) challenge[0] |= 0x80;
     socket.write(challenge.subarray(0, 11)); socket.write(challenge.subarray(11));
     let input = Buffer.alloc(0), done = false;
     socket.on('data', bytes => {
@@ -55,6 +56,7 @@ async function fixture(t, behavior = {}) {
       response[6] = behavior.status ?? 0;
       nonce.copy(response, 8); hash(body).copy(response, 40); Buffer.from(launchSha256, 'hex').copy(response, 72);
       response.writeBigUInt64BE(BigInt(behavior.length ?? value.length), 104); hash(value).copy(response, 112);
+      if (behavior.highResponse) response[0] |= 0x80;
       if (behavior.wrongOperation) response[5] ^= 1;
       if (behavior.wrongRequestHash) response[40] ^= 1;
       if (behavior.badReserved) response[7] = 1;
@@ -114,7 +116,7 @@ test('one framed challenge and response binds probe and build payloads', async t
   await assert.rejects(client.run('unknown', [], Buffer.alloc(0)), VerificationWait);
 });
 
-for (const behavior of [{ badChallenge: true }, { wrongOperation: true }, { wrongRequestHash: true },
+for (const behavior of [{ badChallenge: true }, { highChallenge: true }, { highResponse: true }, { wrongOperation: true }, { wrongRequestHash: true },
   { badReserved: true }, { truncated: true }, { wrongNonce: true }, { wrongLaunch: true }, { wrongHash: true },
   { length: 1025 }, { trailing: true }, { stall: true }, { status: 2, output: Buffer.alloc(0) }]) {
   test('transport failures stay unconfirmed: ' + JSON.stringify(behavior), async t => {

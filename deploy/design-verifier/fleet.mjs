@@ -9,7 +9,7 @@ const origin = 'https://fleet.ufobe.com';
 const identity = 'fleet-design-verifier';
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 
-export async function fleetVerifierClient(credentialDir, send = fetch) {
+export async function fleetVerifierClient(credentialDir, send = fetch, { signal } = {}) {
   if (!credentialDir) return null;
   const path = join(credentialDir, 'fleet-access.json');
   let file;
@@ -31,7 +31,8 @@ export async function fleetVerifierClient(credentialDir, send = fetch) {
     'CF-Access-Client-Id': access.clientId, 'CF-Access-Client-Secret': access.clientSecret };
   async function op(name, body) {
     const reply = await send(origin + '/api/ops/' + name, {
-      method: 'POST', redirect: 'error', headers, signal: AbortSignal.timeout(30_000), body: JSON.stringify(body),
+      method: 'POST', redirect: 'error', headers,
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000), body: JSON.stringify(body),
     });
     if (!reply.ok) throw Object.assign(new Error('Fleet verifier API returned HTTP ' + reply.status), { status: reply.status });
     return reply.json();

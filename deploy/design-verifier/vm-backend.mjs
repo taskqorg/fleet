@@ -13,7 +13,7 @@ const ops = {
 };
 const sha = bytes => createHash('sha256').update(bytes).digest();
 const equal = (a, b) => a.length === b.length && timingSafeEqual(a, b);
-const text = (b, start, value) => b.toString('ascii', start, start + value.length) === value;
+const text = (b, start, value) => b.subarray(start, start + value.length).equals(Buffer.from(value, 'ascii'));
 const hex = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 
 function boundedBytes(value, maximum) {
