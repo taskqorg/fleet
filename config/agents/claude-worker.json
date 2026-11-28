@@ -16,7 +16,8 @@
   "model": "sonnet",
   "skills": [
     "code-review",
-    "modern-web-guidance"
+    "modern-web-guidance",
+    "design-first-ui"
   ],
   "tools": [
     "Read",
