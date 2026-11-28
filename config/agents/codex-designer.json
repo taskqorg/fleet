@@ -4,10 +4,11 @@
   ],
   "effort": "medium",
   "id": "codex-designer",
-  "instructions": "Create the requested design result (mockups, visuals, graphics, design book) under the project's rules. Retain outputs in output/. Do not use subagents. Read the principles card at the top of the project's docs/design-system/owner-rules.md first, where the project has one, and follow it.",
+  "instructions": "On Fleet, use a task-bound private preview checkout, retain the recipe, sources and originals, and submit them with design_offer. The owner chooses before a separate worker implements the accepted option. On other projects, create the requested design result (mockups, visuals, graphics, design book) under the project's rules. Retain outputs in output/. Do not use subagents. Read the principles card at the top of the project's docs/design-system/owner-rules.md first, where the project has one, and follow it.",
   "mcpServers": [],
   "model": "gpt-6.2-sol",
   "skills": [
+    "design-first-ui",
     "modern-web-guidance"
   ]
 }

@@ -396,6 +396,21 @@ func (q *Queries) TaskCount(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
+const taskDeclareDesignImpact = `-- name: TaskDeclareDesignImpact :exec
+UPDATE task SET completion_requirements=jsonb_set(completion_requirements,'{visualImpact}',to_jsonb($1::text)),updated_at=now()
+WHERE id=$2
+`
+
+type TaskDeclareDesignImpactParams struct {
+	Impact string
+	TaskID string
+}
+
+func (q *Queries) TaskDeclareDesignImpact(ctx context.Context, arg TaskDeclareDesignImpactParams) error {
+	_, err := q.db.Exec(ctx, taskDeclareDesignImpact, arg.Impact, arg.TaskID)
+	return err
+}
+
 const taskDeleteTriggers = `-- name: TaskDeleteTriggers :exec
 DELETE FROM trigger t USING session s WHERE s.id=t.session_id AND s.task_id=$1
 `
@@ -905,6 +920,25 @@ SELECT EXISTS (SELECT 1 FROM execution WHERE task_id=$1 AND kind NOT IN ('child_
 
 func (q *Queries) TaskHasPrimaryExecution(ctx context.Context, taskID *string) (bool, error) {
 	row := q.db.QueryRow(ctx, taskHasPrimaryExecution, taskID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const taskHasPriorDesignWriter = `-- name: TaskHasPriorDesignWriter :one
+SELECT EXISTS (
+ SELECT 1 FROM execution e LEFT JOIN session s ON s.id=e.session_id
+ WHERE (e.task_id=$1 OR s.task_id=$1 OR e.data->>'deliveryId'=$1
+        OR s.payload->>'deliveryId'=$1)
+ AND e.kind IN ('agent_run','pipeline_step','child_agent')
+ AND (e.started_at IS NOT NULL OR EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='start'))
+ AND coalesce(e.data->'dispatch'->>'access',s.payload->>'access','write')<>'read'
+ AND NOT (coalesce(e.profile_id,e.data->'agentConfig'->>'id','')='codex-designer' AND coalesce(s.payload->>'role','')='designer')
+)::boolean
+`
+
+func (q *Queries) TaskHasPriorDesignWriter(ctx context.Context, taskID *string) (bool, error) {
+	row := q.db.QueryRow(ctx, taskHasPriorDesignWriter, taskID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

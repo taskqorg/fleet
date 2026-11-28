@@ -321,6 +321,14 @@ func init() {
 				return fail(403, "Command rejected")
 			}
 			if rpc.Method == "tools/call" {
+				profile, _ := profileOf(e.AgentConfig)
+				if fleetDesigner(e.dispatchProject(), profile.ID) {
+					switch rpc.Params.Name {
+					case "design_offer", "design_review_get", "execution_status", "project_context", "worker_done":
+					default:
+						return fail(403, "Operation is outside the Fleet designer grant")
+					}
+				}
 				bindToolHTTPSpan(q, executionID, e.ProjectID, rpc.Params.Name)
 			}
 			if sid := e.SessionID; sid != "" {
@@ -854,6 +862,8 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 	}
 	sessionArg, _ := jsonText(a["sessionId"])
 	switch {
+	case name == "design_offer":
+		delete(a, "executionId") // the designer is the authenticated caller
 	case name == "execution_status" && jsonGiven(a["sessionId"]):
 		s, err := sessionMaybe(q, sessionArg)
 		if err != nil {

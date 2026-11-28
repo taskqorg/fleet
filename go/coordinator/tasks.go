@@ -1011,6 +1011,15 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 	if err != nil {
 		return nil, err
 	}
+	design, err := designRecord(cur)
+	if err != nil {
+		return nil, err
+	}
+	if design != nil {
+		if err := designMayAnswer(q, cur, design, answer); err != nil {
+			return nil, err
+		}
+	}
 	delivery, authority := deliveryAuthorityOf(cur.Data)
 	if authority && (q.agent != "" || q.person == nil || !q.person.Owner) {
 		return nil, fail(403, "Only the Fleet owner can answer a delivery authority decision")
@@ -1315,6 +1324,17 @@ func createTask(q *Request, v newTask) (string, error) {
 	cr := []byte(v.CompletionRequirements)
 	if len(cr) == 0 || string(cr) == "null" {
 		cr = []byte("{}")
+	}
+	if deref(v.ProjectID) == "fleet" {
+		var requirements rawObject
+		_ = json.Unmarshal(cr, &requirements)
+		if _, declared := requirements["visualImpact"]; declared {
+			switch designImpactOf(cr) {
+			case "visual", "unknown", "nonvisual":
+			default:
+				return "", fail(400, "Expected completionRequirements.visualImpact: visual, unknown or nonvisual")
+			}
+		}
 	}
 	var createdByExec, createdBySess *string
 	if eid, ok := strings.CutPrefix(v.CreatedBy, "execution:"); ok && eid != "" {
@@ -1997,6 +2017,11 @@ func init() {
 		}
 		if r.WaiveDependencyId != nil || r.ReplaceDependencyId != nil {
 			if err := resolveTaskDependency(q, id, deref(r.WaiveDependencyId), deref(r.ReplaceDependencyId)); err != nil {
+				return none, err
+			}
+		}
+		if r.VisualImpact != nil {
+			if err := declareDesignImpact(q, id, string(*r.VisualImpact)); err != nil {
 				return none, err
 			}
 		}

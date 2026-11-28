@@ -109,12 +109,24 @@ func parsePresets(v any) ([]preset, error) {
 
 // presetsOf: the project's presets, or the system presets when it defines none (settings nil: outside projects; any
 // JSON object value).
-func presetsOf(settingsValue any) ([]preset, contract.SessionPresetSource, error) {
+func presetsOf(settingsValue any, projectID string) ([]preset, contract.SessionPresetSource, error) {
 	var settings rawObject
 	json.Unmarshal(jsonBytes(settingsValue), &settings)
 	if v, ok := settings["presets"]; ok && len(presetSettingsOf(settings).Presets) > 0 {
 		ps, err := parsePresets(v)
 		return ps, contract.SessionPresetSourceProject, err
+	}
+	if projectID == "fleet" {
+		ps := slices.Clone(systemPresets)
+		for i, p := range ps {
+			if p.ID == "design" {
+				p.Role, p.Profile, p.Branch = "designer", "", false
+				p.Description = "Prepare a design proposal in a private preview worktree."
+				ps[i] = p
+				break
+			}
+		}
+		return ps, contract.SessionPresetSourceSystem, nil
 	}
 	return systemPresets, contract.SessionPresetSourceSystem, nil
 }
@@ -181,12 +193,15 @@ func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.Ses
 		}
 		out.BranchPrefix, out.Base = ptr(firstString(wt.BranchPrefix, "fleet")), &base
 	}
-	ps, source, err := presetsOf(settings)
+	ps, source, err := presetsOf(settings, deref(r.ProjectId))
 	if err != nil {
 		return out, err
 	}
 	for _, p := range ps {
-		role, profileID, profile, unavailable := resolvePreset(q, p, settings)          // ponytail: one profile read per preset (five); cache by id if presets grow
+		role, profileID, profile, unavailable := resolvePreset(q, p, settings) // ponytail: one profile read per preset (five); cache by id if presets grow
+		if unavailable == "" && deref(r.ProjectId) == "fleet" && p.ID == "design" && (role != "designer" || profileID != designProfileID) {
+			unavailable = "Fleet Design requires the codex-designer profile in the designer role"
+		}
 		if unavailable == "" && q.agent != "" && !profileInRoles(settings, profileID) { // what session_start refuses an agent
 			unavailable = "Your project maps no role to profile " + profileID
 		}

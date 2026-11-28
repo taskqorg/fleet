@@ -15,7 +15,9 @@ These Node ESM scripts derive token CSS, build the static design book, and repor
 - `build-scene.mjs` serves one scene with a recipe and managed capture script under an execution-private output directory. `scene-build.mjs` builds the scene and hashes its actual inputs.
 - `design-sources.mjs` enforces hard source rules in both the local design report and the app candidate check.
 
-- `design-candidate.mjs` produces unprivileged recipe inputs for exact PR and merge-group heads. Unmapped impact stays unknown.
+- `design-impact.mjs` maps changed scene and shared files and preserves unmapped impact. `design-candidate.mjs` produces unprivileged recipe inputs for exact PR and merge-group heads. Unmapped impact stays unknown.
+- `design-protected.mjs` checks provider candidate identity and merge-group member receipts, recomputes Git changes, and requires protected findings for unmapped paths and app parity. It runs from the protected verifier revision and takes the provider, Fleet and isolated-render adapters from its caller. It performs no check publication.
+- `design-github-checks.mjs` is the issuer entry point for a separate protected service. It verifies before publishing and reads back the completed check on the exact head from the configured App. It uses `FLEET_DESIGN_GITHUB_APP_ID`, `FLEET_DESIGN_GITHUB_INSTALLATION_ID` and `FLEET_DESIGN_GITHUB_APP_KEY_FILE`. For a service named `fleet-design-verifier.service`, use the service's `github-app.pem` credential at `/run/credentials/fleet-design-verifier.service/github-app.pem`. The code does not provision the App, store the installation token or run in candidate CI.
 - `design-evidence.mjs` binds stored four-frame originals to one selected recipe. Its decision and artifact inputs belong to the trusted Fleet verifier described in the [delivery contract](../../../docs/designs/fleet-delivery-pipeline.md#design-approval).
 
 ## Invariants

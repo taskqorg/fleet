@@ -305,6 +305,21 @@ UPDATE task SET title=coalesce(sqlc.narg(title),title),expected_outcome=coalesce
  priority=coalesce(sqlc.narg(priority),priority),result_destination=coalesce(sqlc.narg(result_destination),result_destination),updated_at=now()
 WHERE id = @id;
 
+-- name: TaskDeclareDesignImpact :exec
+UPDATE task SET completion_requirements=jsonb_set(completion_requirements,'{visualImpact}',to_jsonb(sqlc.arg(impact)::text)),updated_at=now()
+WHERE id=sqlc.arg(task_id);
+
+-- name: TaskHasPriorDesignWriter :one
+SELECT EXISTS (
+ SELECT 1 FROM execution e LEFT JOIN session s ON s.id=e.session_id
+ WHERE (e.task_id=sqlc.arg(task_id) OR s.task_id=sqlc.arg(task_id) OR e.data->>'deliveryId'=sqlc.arg(task_id)
+        OR s.payload->>'deliveryId'=sqlc.arg(task_id))
+ AND e.kind IN ('agent_run','pipeline_step','child_agent')
+ AND (e.started_at IS NOT NULL OR EXISTS (SELECT 1 FROM command c WHERE c.execution_id=e.id AND c.kind='start'))
+ AND coalesce(e.data->'dispatch'->>'access',s.payload->>'access','write')<>'read'
+ AND NOT (coalesce(e.profile_id,e.data->'agentConfig'->>'id','')='codex-designer' AND coalesce(s.payload->>'role','')='designer')
+)::boolean;
+
 -- name: TaskQuestionLock :one
 SELECT project_id,state FROM question WHERE id=$1 FOR UPDATE;
 

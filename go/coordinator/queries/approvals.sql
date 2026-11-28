@@ -15,3 +15,21 @@ FROM question q LEFT JOIN session s ON s.id = q.session_id WHERE q.id = $1 AND q
 -- name: ApprovalOpenForSession :many
 -- Open approval cards of a conversation: free-text approval counts only when there is exactly one.
 SELECT id FROM question WHERE session_id = $1 AND state = 'open' AND data ? 'approval' ORDER BY asked_at;
+
+-- name: LatestDesignOffer :one
+-- The newest sealed revision owns admission even after rework or withdrawal.
+SELECT * FROM question WHERE task_id=sqlc.arg(task_id) AND data ? 'designOffer'
+ORDER BY (data->'designOffer'->>'revision')::bigint DESC LIMIT 1;
+
+-- name: DesignOfferRequest :one
+SELECT * FROM question WHERE task_id=sqlc.arg(task_id) AND execution_id=sqlc.arg(execution_id)
+AND data->'designOffer'->>'requestId'=sqlc.arg(request_key)::text ORDER BY (data->'designOffer'->>'revision')::bigint DESC LIMIT 1;
+
+-- name: DesignOfferArtifact :one
+-- Share-lock the retained original while sealing or deciding. Legacy IDs are not packet identities.
+SELECT * FROM artifact WHERE id=$1 AND tombstoned_at IS NULL AND state='stored' FOR SHARE;
+
+-- name: AssignDesignWriter :exec
+-- Mutable build ownership is outside the sealed designOffer. The task lock serializes retries and replacements.
+UPDATE question SET data=jsonb_set(data,'{designBuildExecution}',to_jsonb(sqlc.arg(execution_id)::text))
+WHERE id=sqlc.arg(question_id) AND state='answered' AND data ? 'designOffer';
