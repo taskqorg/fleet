@@ -53,7 +53,7 @@ func cleanupSpanRules(ctx context.Context) ([]contract.Finding, error) {
 	argMax(sample, tuple(start, trace_id, span_id)) AS current
 	FROM (SELECT host_id, start, trace_id, span_id,
 		CAST(tuple(trace_id, span_id, toString(start),
-			mapFilter((k, v) -> isNotNull(v), mapFromArrays([`+strings.Join(keys, ", ")+`], [`+strings.Join(values, ", ")+`])))
+			mapFilter((k, v) -> ifNull(isFinite(v), 0), mapFromArrays([`+strings.Join(keys, ", ")+`], [`+strings.Join(values, ", ")+`])))
 			AS Tuple(traceId String, spanId String, start String, values Map(String, Nullable(Float64)))) AS sample
 		FROM span
 		WHERE name = 'host.disk' AND start >= now64() - toIntervalHour(25))
