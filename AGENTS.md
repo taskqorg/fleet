@@ -10,6 +10,8 @@ Web UI, CSS or client-side JS work: before writing it, follow the `modern-web-gu
 
 **Browser support:** the current stable Chromium only. Features Chromium ships need no fallback or polyfill for other engines.
 
+For Fleet visual QA, use managed Linux Chromium through `project-browser` or the protected verifier’s isolated Linux Chromium. Never launch or fall back to user-installed macOS Chrome, including Playwright `channel: "chrome"`. If the required Linux browser is unavailable, record the affected check as unverified.
+
 EGM artifact directory: .egm
 
 Docs work: before editing `docs/`, read the open `docs-order` issue (label `docs`) and fix its findings in the files you touch. Working papers (briefs, review reports, handoffs, screenshots) are never committed; their substance goes into the pull request description ([docs governance](docs/designs/fleet-docs-governance.md)).
