@@ -650,7 +650,11 @@ func (a *App) authorize(q *Request) error {
 	if err != nil {
 		return err
 	}
-	if isViewer(q.person) && !viewerMay(q.r) {
+	if q.person.Email == designVerifierIdentity {
+		if p.AccessCommonName == "" || !strings.EqualFold(p.AccessCommonName, email) || !designVerifierRequest(q.person, q.r) {
+			return fail(403, "Fleet design verifier operation denied")
+		}
+	} else if isViewer(q.person) && !viewerMay(q.r) {
 		return fail(403, "A viewer may only read")
 	}
 	return checkOrigin(q)

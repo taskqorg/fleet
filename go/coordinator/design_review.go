@@ -120,6 +120,10 @@ func designEvidence(r *contract.DesignOfferRequest, retain func(id, kind, sha st
 func validDesignHash(s string) bool { return len(s) == 64 && strings.Trim(s, "0123456789abcdef") == "" }
 
 func designDigest(q *Request, r *contract.DesignOfferRequest, project, task, execution string, write, inspect bool) (string, error) {
+	return readDesignDigest(q, r, project, task, execution, write, inspect, nil)
+}
+
+func readDesignDigest(q *Request, r *contract.DesignOfferRequest, project, task, execution string, write, inspect bool, readRecipe func(string, []byte) error) (string, error) {
 	originals := []designOriginal{}
 	err := designEvidence(r, func(id, kind, expected string, c *contract.DesignReviewCase, cell *designCell) error {
 		var a db.Artifact
@@ -149,6 +153,11 @@ func designDigest(q *Request, r *contract.DesignOfferRequest, project, task, exe
 			}
 			if err := checkDesignOriginal(buf, c, cell); err != nil {
 				return err
+			}
+			if kind == "recipe" && readRecipe != nil {
+				if err := readRecipe(id, buf); err != nil {
+					return err
+				}
 			}
 		}
 		originals = append(originals, designOriginal{a.ID, mime, a.ContentHash, a.Size})

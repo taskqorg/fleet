@@ -1,0 +1,31 @@
+[Unit]
+Description=Fleet protected design verifier
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+DynamicUser=yes
+StateDirectory=fleet-design-verifier
+StateDirectoryMode=0700
+UMask=0077
+Environment=FLEET_DESIGN_GITHUB_APP_ID=5962560
+Environment=FLEET_DESIGN_GITHUB_INSTALLATION_ID=186718702
+Environment=FLEET_DESIGN_GITHUB_APP_KEY_FILE=%d/github-app.pem
+LoadCredentialEncrypted=github-app.pem:/etc/credstore.encrypted/fleet-design-verifier.github-app.pem
+ExecStart=/usr/bin/node /opt/fleet-design-verifier/current/deploy/design-verifier/service.mjs
+Restart=on-failure
+RestartSec=30s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -82,6 +82,7 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 // lock, so messages, host polls and receipts of other sessions run in parallel; an empty session id keeps GLOBAL and
 // the operation's own check refuses it.
 var opLocks = map[string]func(b json.RawMessage) string{
+	"design_verifier_observe": func(json.RawMessage) string { return "project:fleet" },
 	"message_send": func(b json.RawMessage) string {
 		if sid := jsonPathString(b, "sessionId"); sid != "" {
 			return "session:" + sid

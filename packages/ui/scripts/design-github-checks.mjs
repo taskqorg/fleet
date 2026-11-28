@@ -1,5 +1,5 @@
 // Issuer entry point for a separate protected service. This module is never invoked by candidate CI.
-import { createHash, sign } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
@@ -8,6 +8,7 @@ import { verifyProtectedDesignCandidate } from './design-protected.mjs';
 const repo = '/repos/taskqorg/fleet';
 const name = 'design-approval';
 const permissions = { checks: 'write', contents: 'read', pull_requests: 'read', metadata: 'read' };
+const repositoryId = 1450484391;
 
 export function designGitHubConfig(env = process.env) {
   const appId = Number(env.FLEET_DESIGN_GITHUB_APP_ID);
@@ -27,7 +28,10 @@ async function gitHubJWT({ appId, keyFile }) {
     const now = Math.floor(Date.now() / 1000);
     const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
     const jwt = encode({ alg: 'RS256', typ: 'JWT' }) + '.' + encode({ iss: String(appId), iat: now - 60, exp: now + 540 });
-    return jwt + '.' + sign('RSA-SHA256', Buffer.from(jwt), await file.readFile()).toString('base64url');
+    const key = createPrivateKey(await file.readFile());
+    const keyFingerprint = 'SHA256:' + createHash('sha256')
+      .update(createPublicKey(key).export({ type: 'spki', format: 'der' })).digest('base64');
+    return { jwt: jwt + '.' + sign('RSA-SHA256', Buffer.from(jwt), key).toString('base64url'), keyFingerprint };
   } catch {
     throw new Error('Could not load the private GitHub App signing key');
   } finally {
@@ -35,20 +39,22 @@ async function gitHubJWT({ appId, keyFile }) {
   }
 }
 
-async function github(path, token, body) {
+async function github(path, token, { method = 'GET', body } = {}) {
   const response = await fetch('https://api.github.com' + path, {
-    method: body ? 'POST' : 'GET',
+    method,
     redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json',
       'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2026-03-10' },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!response.ok) throw new Error('GitHub design checker returned HTTP ' + response.status);
+  if (!response.ok) throw Object.assign(new Error('GitHub design checker returned HTTP ' + response.status), { status: response.status });
+  if (response.status === 204) return undefined;
   return response.json();
 }
 
 async function fleetInstallation(config) {
-  const jwt = await gitHubJWT(config);
+  const { jwt, keyFingerprint } = await gitHubJWT(config);
   const installed = await github(repo + '/installation', jwt);
   if (installed.id !== config.installationId || installed.app_id !== config.appId ||
       installed.repository_selection !== 'selected' || installed.suspended_at ||
@@ -56,40 +62,98 @@ async function fleetInstallation(config) {
       Object.keys(installed.permissions).some(key => !Object.hasOwn(permissions, key)))
     throw new Error('The GitHub App installation does not match the protected Fleet issuer');
   const issued = await github('/app/installations/' + config.installationId + '/access_tokens', jwt, {
-    repositories: ['fleet'], permissions,
+    method: 'POST', body: { repository_ids: [repositoryId], permissions },
   });
   if (typeof issued.token !== 'string' || !issued.token ||
       !Object.entries(permissions).every(([key, value]) => issued.permissions?.[key] === value) ||
       Object.keys(issued.permissions).some(key => !Object.hasOwn(permissions, key)))
     throw new Error('GitHub did not grant the restricted issuer token');
   const scope = await github('/installation/repositories?per_page=2', issued.token);
-  if (scope.total_count !== 1 || scope.repositories?.[0]?.full_name !== 'taskqorg/fleet')
+  if (scope.total_count !== 1 || scope.repositories?.[0]?.full_name !== 'taskqorg/fleet' ||
+      scope.repositories[0].id !== repositoryId)
     throw new Error('The issuer token is not scoped to the Fleet repository');
-  return issued.token;
+  const expires = Date.parse(issued.expires_at);
+  if (!Number.isFinite(expires) || expires <= Date.now()) throw new Error('GitHub issued an invalid token expiry');
+  return { token: issued.token, expires, keyFingerprint, authenticatedAt: Date.now() };
 }
 
-export function readDesignCheckReceipt(check, { appId, head, externalId }) {
+// Only the protected service receives this client. Git and any future isolated builder receive no token.
+export function fleetDesignGitHub(config, { connect = fleetInstallation, send = github } = {}) {
+  let access;
+  const api = async (path, options) => {
+    if (!access || access.expires - Date.now() < 60_000) access = await connect(config);
+    try {
+      return await send(path, access.token, options);
+    } catch (err) {
+      if (err.status === 401) access = undefined;
+      throw err;
+    }
+  };
+  api.authentication = () => access && ({ keyFingerprint: access.keyFingerprint,
+    authenticatedAt: access.authenticatedAt, expiresAt: access.expires });
+  api.close = async () => {
+    if (!access) return;
+    const { token } = access;
+    access = undefined;
+    await send('/installation/token', token, { method: 'DELETE' });
+  };
+  return api;
+}
+
+export function readDesignCheckReceipt(check, { appId, head, externalId, conclusion = 'success' }) {
+  const status = conclusion === null ? 'in_progress' : 'completed';
   if (!Number.isSafeInteger(check?.id) || check.id < 1 || check.name !== name || check.app?.id !== appId ||
-      check.head_sha !== head || check.status !== 'completed' || check.conclusion !== 'success' ||
+      check.head_sha !== head || check.status !== status || check.conclusion !== conclusion ||
       check.external_id !== externalId)
     throw new Error('GitHub design check readback did not match its App, head and retained receipt');
   return { checkRunId: check.id, appId, head, externalId, conclusion: check.conclusion };
 }
 
-// The protected adapter must durably retain evidence before publication. It never receives a credential.
+export const designCheckDigest = evidence => createHash('sha256').update('fleet:design-check:v1\0')
+  .update(JSON.stringify(evidence)).digest('hex');
+
+export function fleetDesignChecks(api, appId) {
+  const runs = repo + '/check-runs';
+  const valid = (check, head) => Number.isSafeInteger(check?.id) && check.id > 0 &&
+    check.name === name && check.app?.id === appId && check.head_sha === head;
+  async function find(head) {
+    const found = await api(repo + '/commits/' + head + '/check-runs?check_name=' + name +
+      '&filter=latest&app_id=' + appId);
+    if (!Array.isArray(found.check_runs) || found.total_count !== found.check_runs.length ||
+        found.check_runs.length > 1 || found.check_runs.some(check => !valid(check, head)))
+      throw new Error('GitHub returned ambiguous design check runs');
+    return found.check_runs[0];
+  }
+  const read = id => api(runs + '/' + id);
+  return {
+    find, read,
+    async publish(head, externalId, conclusion, summary, assertCurrent = () => {}) {
+      let check = await find(head);
+      await assertCurrent();
+      const status = conclusion === null ? 'in_progress' : 'completed';
+      if (!check || check.external_id !== externalId || check.status !== status || check.conclusion !== conclusion) {
+        const body = { name, status, external_id: externalId,
+          output: { title: 'Fleet design verification', summary } };
+        if (conclusion !== null) {
+          body.conclusion = conclusion;
+          body.completed_at = new Date().toISOString();
+        }
+        // GitHub cannot reopen a completed check run. A new latest run supersedes it.
+        check = check?.status === 'in_progress'
+          ? await api(runs + '/' + check.id, { method: 'PATCH', body })
+          : await api(runs, { method: 'POST', body: { ...body, head_sha: head } });
+      }
+      if (!valid(check, head)) throw new Error('GitHub did not return the expected check run');
+      return readDesignCheckReceipt(await read(check.id), { appId, head, externalId, conclusion });
+    },
+  };
+}
+
+// The protected adapter durably retains evidence before publication.
 export async function issueFleetDesignCheck(config, event, adapter) {
   const evidence = await verifyProtectedDesignCandidate(event, adapter);
-  const externalId = createHash('sha256').update('fleet:design-check:v1\0').update(JSON.stringify(evidence)).digest('hex');
+  const externalId = designCheckDigest(evidence);
   await adapter.retainReceipt(externalId, evidence);
-  const installationToken = await fleetInstallation(config);
-  const found = await github(repo + '/commits/' + evidence.head + '/check-runs?check_name=' + name +
-    '&filter=latest&app_id=' + config.appId, installationToken);
-  const existing = found.check_runs?.find(check => check.external_id === externalId);
-  const check = existing ?? await github(repo + '/check-runs', installationToken, {
-    name, head_sha: evidence.head, status: 'completed', conclusion: 'success', external_id: externalId,
-    output: { title: 'Fleet design verification', summary: evidence.classification },
-  });
-  if (!Number.isSafeInteger(check.id) || check.id < 1) throw new Error('Missing GitHub check-run ID');
-  const stored = await github(repo + '/check-runs/' + check.id, installationToken);
-  return readDesignCheckReceipt(stored, { appId: config.appId, head: evidence.head, externalId });
+  return fleetDesignChecks(fleetDesignGitHub(config), config.appId)
+    .publish(evidence.head, externalId, 'success', evidence.classification);
 }
