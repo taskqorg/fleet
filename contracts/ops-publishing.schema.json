@@ -352,6 +352,8 @@
         "supportedActions"
       ],
       "properties": {
+        "publicationIdentity": {"type": "string"},
+        "providerActor": {"type": "string"},
         "projectId": {"type": "string"},
         "repoId": {"type": "string"},
         "provider": {"$ref": "#/$defs/PublishingProvider"},

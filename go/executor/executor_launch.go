@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/projectpublisher"
 )
 
 func (e *executor) run(c M) error {
@@ -457,7 +458,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		ref, refOK := contract.ParseRepoRemote(str0(repo.Remote), str0(repo.Forge), str0(repo.Host))
 		store := os.Getenv("FLEET_FORGE_CONFIG_DIR")
 		branchBytes, err := exec.Command("git", "-C", work, "symbolic-ref", "--short", "HEAD").Output()
-		if err != nil || !refOK || !forgeRepoGrantedRef(ref) || !filepath.IsAbs(store) {
+		if err != nil || !refOK || !forgeRepoGrantedRef(ref) || (!projectpublisher.Required(ref) && !filepath.IsAbs(store)) {
 			return fail(1, "project-forge-unready")
 		}
 		prefix, mergeMethod := "fleet", "squash"
@@ -477,6 +478,10 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		if base == "" {
 			base = "main"
 		}
+		branchSession := session
+		if projectpublisher.Required(ref) {
+			branchSession = workspaceSession(session, key)
+		}
 		context := forgeContext{
 			Repositories:     os.Getenv("FLEET_FORGE_REPOSITORIES"),
 			CredentialHome:   os.Getenv("HOME"),
@@ -488,7 +493,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			ConnectionsDir:   connectionsDir(),
 			Base:             base,
 			Branch:           strings.TrimSpace(string(branchBytes)),
-			SessionBranch:    sessionBranch(project, session),
+			SessionBranch:    sessionBranch(project, branchSession),
 			Prefix:           prefix,
 			AutoMerge:        autoMerge,
 			MergeMethod:      mergeMethod,

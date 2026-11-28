@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"fleet/contract"
+	"fleet/projectpublisher"
 )
 
 // cmdID returns a command identity field: non-empty ASCII alphanumerics, '_' and '-'.
@@ -264,6 +265,11 @@ func capabilities(productionBrowserReady bool) []string {
 			c = append(c, contract.ToolCapability(tool))
 		}
 	}
+	if os.Getenv("FLEET_HOST_ID") == projectpublisher.Executor &&
+		forgeRepoGrantedRef(contract.RepoRef{Provider: "github", Host: projectpublisher.Host, Slug: projectpublisher.Repo}) &&
+		forgeLoginVerified(projectpublisher.Mode, projectpublisher.Host) {
+		c = append(c, projectpublisher.Capability)
+	}
 	if store := os.Getenv("FLEET_FORGE_CONFIG_DIR"); filepath.IsAbs(store) {
 		hasGH := isFile(filepath.Join(store, "hosts.yml"))
 		glabHosts := glabConfiguredHosts(store)
@@ -336,11 +342,7 @@ func (e *executor) sessionDir(session string) string {
 }
 
 func workspaceSession(session, key string) string {
-	if key != "" {
-		sum := sha256.Sum256([]byte(key))
-		return session + "-" + fmt.Sprintf("%x", sum[:])
-	}
-	return session
+	return contract.WorkspaceSession(session, key)
 }
 
 // commandDir keeps transitioned workspaces isolated; legacy commands retain their original directory.

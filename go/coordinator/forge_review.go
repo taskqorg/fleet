@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"fleet/contract"
+	"fleet/projectpublisher"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -308,6 +309,9 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 		}
 		if deref(b.Host) != "" && !strings.EqualFold(*b.Host, ref.Host) {
 			return fail(403, "Repository host does not match project repository")
+		}
+		if projectpublisher.Required(ref) && (b.HostId != projectpublisher.Executor || providerActor != projectpublisher.Actor) {
+			return fail(403, "Review attestation requires the repository App identity")
 		}
 		if !hostCapsHaveRepo(*obs.Capabilities, ref) {
 			return fail(403, "Host lacks forge capability for "+b.Repo)

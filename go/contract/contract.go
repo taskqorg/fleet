@@ -3,6 +3,8 @@
 package contract
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"reflect"
 	"slices"
@@ -211,3 +213,12 @@ func ForgeCapability(repo string) string { return "forge:" + repo }
 
 // FfmpegCapability: the host's ffmpeg version (ffmpeg:<version>).
 func FfmpegCapability(version string) string { return "ffmpeg:" + version }
+
+// WorkspaceSession is the branch and worktree identifier for a session in its keyed workspace.
+func WorkspaceSession(session, key string) string {
+	if key == "" {
+		return session
+	}
+	sum := sha256.Sum256([]byte(key))
+	return session + "-" + hex.EncodeToString(sum[:])
+}

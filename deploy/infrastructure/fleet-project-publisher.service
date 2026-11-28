@@ -1,0 +1,26 @@
+[Unit]
+Description=Fleet repository publishing GitHub App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/fleet-agent/releases/current/fleet-executor project-publisher
+Environment=FLEET_PUBLISHER_APP_ID=5963672
+Environment=FLEET_PUBLISHER_INSTALLATION_ID=186749078
+LoadCredentialEncrypted=github-app.pem:/etc/credstore.encrypted/fleet-project-publisher.github-app.pem
+DynamicUser=yes
+RuntimeDirectory=fleet-project-publisher
+RuntimeDirectoryMode=0755
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

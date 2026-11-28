@@ -7,6 +7,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/projectpublisher"
 )
 
 // Requirement: configuration.md a host grant "<host>/<group>/*" places publishing for every project of the group;
@@ -181,5 +182,23 @@ func TestResolvePublishingTargetPrefersVerifiedForgeLogin(t *testing.T) {
 	<-done
 	if !reply.Requested || reply.Number != 46 || len(seenHosts) != 2 || seenHosts[0] != "owner-mac" || seenHosts[1] != "pds18-native" {
 		t.Fatalf("failover hosts=%v reply=%+v, want [owner-mac pds18-native]", seenHosts, reply)
+	}
+}
+
+// A legacy GitHub login cannot place Fleet writes, even on PDS18. The App's ready report is repository-scoped.
+func TestFleetAppPublishingPlacement(t *testing.T) {
+	legacy := []string{contract.PublishingHostCapability("github", "github.com", projectpublisher.Repo)}
+	app := []string{projectpublisher.Capability}
+	settings := runSettings{Repos: []projectRepo{{ID: "main", Remote: "https://github.com/" + projectpublisher.Repo + ".git"}}}
+	if hostHasProjectPublishingCapability(legacy, settings, projectpublisher.Executor) ||
+		hostHasProjectPublishingCapability(app, settings, "owner-mac") ||
+		!hostHasProjectPublishingCapability(app, settings, projectpublisher.Executor) {
+		t.Fatal("Fleet dispatch did not require the ready App on PDS18")
+	}
+	settings.Repos[0].Remote = "https://github.com/invented/project.git"
+	unconfigured := []string{contract.PublishingHostCapability("github", "github.com", "invented/project")}
+	if hostHasProjectPublishingCapability(app, settings, projectpublisher.Executor) ||
+		!hostHasProjectPublishingCapability(unconfigured, settings, "owner-mac") {
+		t.Fatal("Fleet App authority affected a different repository")
 	}
 }

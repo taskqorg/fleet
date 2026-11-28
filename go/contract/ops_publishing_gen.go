@@ -625,7 +625,9 @@ type PublishingCapability struct {
 	MergeMethod             string                   `json:"mergeMethod"`
 	ProjectId               string                   `json:"projectId"`
 	Provider                PublishingProvider       `json:"provider"`
+	ProviderActor           *string                  `json:"providerActor,omitempty"`
 	ProviderFactsConfigured bool                     `json:"providerFactsConfigured"`
+	PublicationIdentity     *string                  `json:"publicationIdentity,omitempty"`
 	PublicationSupported    bool                     `json:"publicationSupported"`
 	Reason                  *string                  `json:"reason,omitempty"`
 	Remote                  *string                  `json:"remote,omitempty"`

@@ -13,6 +13,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/projectpublisher"
 )
 
 func init() {
@@ -147,6 +148,13 @@ func publishingAwaitCommand(ctx context.Context, cmdID string, timeout time.Dura
 }
 
 func hostCapsHaveRepo(caps []string, ref contract.RepoRef) bool {
+	if projectpublisher.Required(ref) {
+		return contract.HasCapability(caps, projectpublisher.Capability)
+	}
+	return hostCapsHaveLegacyRepo(caps, ref)
+}
+
+func hostCapsHaveLegacyRepo(caps []string, ref contract.RepoRef) bool {
 	if contract.HasCapability(caps, contract.PublishingHostCapability(ref.Provider, ref.Host, ref.Slug)) {
 		return true
 	}
@@ -183,6 +191,9 @@ func hostHasProjectPublishingCapability(caps []string, settings runSettings, hos
 			if !ok {
 				legacy := strings.TrimSuffix(strings.TrimPrefix(r.Remote, "https://github.com/"), ".git")
 				return legacy != "" && contract.HasCapability(caps, contract.ForgeCapability(legacy))
+			}
+			if projectpublisher.Required(ref) && hostID != projectpublisher.Executor {
+				return false
 			}
 			return hostCapsHaveRepo(caps, ref)
 		}
@@ -331,11 +342,11 @@ func buildProjectPublishingCapabilities(q *Request, projectID, repoFilter string
 			if !hostHolderAllowsProject(q, h.holder, projectID) {
 				continue
 			}
-			if hostCapsHaveRepo(h.caps, ref) {
+			if ciPolicy != nil && publishingCIHost(h, ref, r.ID, s.Environments) {
+				ciHosts = append(ciHosts, h.id)
+			}
+			if hostCapsHaveRepo(h.caps, ref) && (!projectpublisher.Required(ref) || (h.id == projectpublisher.Executor && projectID == "fleet")) {
 				eligible = append(eligible, h.id)
-				if ciPolicy != nil && publishingCIHost(h, ref, r.ID, s.Environments) {
-					ciHosts = append(ciHosts, h.id)
-				}
 			}
 		}
 		supported := forgeEnabled && len(eligible) > 0
@@ -353,6 +364,13 @@ func buildProjectPublishingCapabilities(q *Request, projectID, repoFilter string
 		}
 		if len(ciHosts) != 0 {
 			actions = append(actions, "rerun_failed")
+		}
+		var identity, providerActor *string
+		if projectpublisher.Required(ref) {
+			identity, providerActor = ptr(projectpublisher.Mode), ptr(projectpublisher.Actor)
+			if forgeEnabled && !supported {
+				reason = ptr("repository GitHub App is unavailable on " + projectpublisher.Executor)
+			}
 		}
 		defBranch := r.DefaultBranch
 		if defBranch == "" {
@@ -373,6 +391,8 @@ func buildProjectPublishingCapabilities(q *Request, projectID, repoFilter string
 			CiRerunHosts:            ciHosts,
 			MergeMethod:             mergeMethod,
 			ProviderFactsConfigured: factsReady,
+			PublicationIdentity:     identity,
+			ProviderActor:           providerActor,
 			PublicationSupported:    supported,
 			EligibleHosts:           eligible,
 			SupportedActions:        actions,
@@ -1001,22 +1021,13 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 		return "", "", "", fail(404, "Repository is not granted by project")
 	}
 
-	if projectID == "fleet" && sourceExec != nil && slices.Contains([]string{"publish_draft", "mark_ready", "request_merge"}, p.action) {
-		link, err := q.db().TaskExecutionLink(q.ctx(), sourceExec.ID)
-		if err != nil {
+	if sourceExec != nil {
+		if err := checkPublishingDesign(q, projectID, *sourceExec, p.action, chosenRef); err != nil {
 			return "", "", "", err
 		}
-		task := deref(link.TaskID)
-		if task == "" && sourceExec.SessionID != "" {
-			session, err := sessionByID(q, sourceExec.SessionID)
-			if err != nil {
-				return "", "", "", err
-			}
-			task = firstString(session.TaskID, session.DeliveryID)
-		}
-		if err := checkDesignPublication(q, task, sourceExec.ID, chosenRef.Host+"/"+chosenRef.Slug); err != nil {
-			return "", "", "", err
-		}
+	}
+	if app := projectpublisher.Required(chosenRef); app && sourceExec != nil {
+		sourceSessionBranch = publicationExecutionBranch(prefix, *sourceExec)
 	}
 	branch := deref(p.branch)
 	if branch == "" && sourceSessionBranch != "" {
@@ -1067,8 +1078,15 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 	} else if deref(p.hostID) != "" {
 		requireHost = *p.hostID
 	}
+	app := projectpublisher.Required(chosenRef)
+	if app && (projectID != "fleet" || (requireHost != "" && requireHost != projectpublisher.Executor)) {
+		return "", "", "", fail(409, "Repository GitHub App publishing requires an eligible PDS18 execution")
+	}
 	bestRank := 3
 	for _, h := range online {
+		if app && h.id != projectpublisher.Executor {
+			continue
+		}
 		if p.excludeHosts[h.id] {
 			continue
 		}
@@ -1082,7 +1100,11 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 			continue
 		}
 		if hostCapsHaveRepo(h.caps, chosenRef) {
-			if rank := publishingHostForgeRank(h, chosenRef); rank < bestRank {
+			rank := publishingHostForgeRank(h, chosenRef)
+			if app {
+				rank = 0
+			}
+			if rank < bestRank {
 				targetHost = h.id
 				bestRank = rank
 				if rank == 0 {
@@ -1139,10 +1161,33 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 	return projectID, targetHost, cmdID, err
 }
 
+func checkPublishingDesign(q *Request, projectID string, source agentExecution, action string, ref contract.RepoRef) error {
+	if projectID != "fleet" || !slices.Contains([]string{"publish_draft", "mark_ready", "request_merge"}, action) {
+		return nil
+	}
+	link, err := q.db().TaskExecutionLink(q.ctx(), source.ID)
+	if err != nil {
+		return err
+	}
+	task := deref(link.TaskID)
+	if task == "" && source.SessionID != "" {
+		session, err := sessionByID(q, source.SessionID)
+		if err != nil {
+			return err
+		}
+		task = firstString(session.TaskID, session.DeliveryID)
+	}
+	return checkDesignPublication(q, task, source.ID, ref.Host+"/"+ref.Slug)
+}
+
 // queuePublishingCommand creates a host job and its typed command in the caller's transaction.
 func queuePublishingCommand(q *Request, targetHost string, payload contract.PublishingCommandPayload) (string, error) {
 	eid := newID() // a host job: no session
 	cmdID := newID()
+	var director string
+	if projectpublisher.Required(contract.RepoRef{Provider: payload.Provider, Host: payload.Host, Slug: payload.Repo}) && q.person != nil {
+		director = q.person.Email
+	}
 	if err := executionWrite(q, struct {
 		ID          string `json:"id"`
 		ExecutionID string `json:"executionId"`
@@ -1151,7 +1196,8 @@ func queuePublishingCommand(q *Request, targetHost string, payload contract.Publ
 		State       string `json:"state"`
 		CreatedAt   int64  `json:"createdAt"`
 		Actor       string `json:"actor"`
-	}{ID: eid, ExecutionID: eid, HostID: targetHost, ProjectID: payload.ProjectId, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
+		DirectedBy  string `json:"directedBy,omitempty"`
+	}{ID: eid, ExecutionID: eid, HostID: targetHost, ProjectID: payload.ProjectId, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", DirectedBy: director}); err != nil {
 		return "", err
 	}
 	if err := commandPut(q, &agentCommand{

@@ -9,6 +9,7 @@ This module builds Fleet's coordinator, executor, connection gateway, updater, s
 - [contract](contract/README.md): typed JSON contracts shared by the coordinator, executor, and gateway.
 - [coordinator](coordinator/README.md): HTTP control-plane service and durable Fleet state.
 - [executor](executor/README.md): host-side command runner, native harness adapter, and local journal.
+- [projectpublisher](projectpublisher/README.md): PDS18 GitHub App mediation for the Fleet repository.
 - [gateway](gateway/README.md): loopback-only provider-key gateway and Cloudflare Access guard.
 - [gen](gen/README.md): contract-schema-to-Go generator.
 - [mcpserve](mcpserve/README.md): the one MCP tools server over contract operations.

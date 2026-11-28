@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,8 +15,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
+	"fleet/projectpublisher"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -30,6 +34,12 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 		}
 	}
 	const project = "fleet"
+	var publicationSettings projectWriteResult
+	e.opInto(t, "project_create", doc{"requestId": "design-publisher-project", "id": project, "content": doc{
+		"settings": doc{"id": project, "name": "Fleet", "contextFiles": []string{"rules.md"}, "execution": doc{"forge": true},
+			"repos": []doc{{"id": "main", "remote": "https://github.com/" + projectpublisher.Repo}}},
+		"contextFiles": []doc{{"path": "rules.md", "text": "Invented design publishing fixture."}},
+	}}, e.ownerHeaders(), &publicationSettings)
 	var task contract.TaskDetail
 	e.opInto(t, "task_create", doc{"title": "Compare a design", "projectId": project, "completionRequirements": doc{"requireHumanAcceptance": true}}, e.ownerHeaders(), &task)
 	e.opInto(t, "task_update", doc{"taskId": task.Id, "visualImpact": "unknown"}, e.ownerHeaders(), &task)
@@ -156,8 +166,10 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 		t.Fatalf("task acceptance %d", code)
 	}
 	builder, builderSession := newID(), newID()
+	const builderHost = projectpublisher.Executor
+	e.registerHost(t, builderHost)
 	exec("INSERT INTO session (id,project_id,task_id,directed_by) VALUES ($1,$2,$3,$4)", builderSession, project, task.Id, testOwnerEmail)
-	exec("INSERT INTO execution (id,kind,state,host_id,project_id,session_id,task_id,harness,started_at,data,observation,config_ref) VALUES ($1,'agent_run','running','design-host',$2,$3,$4,'codex',now(),'{}','confirmed','{}')", builder, project, builderSession, task.Id)
+	exec("INSERT INTO execution (id,kind,state,host_id,project_id,session_id,task_id,harness,started_at,data,observation,config_ref) VALUES ($1,'agent_run','running',$5,$2,$3,$4,'codex',now(),'{}','confirmed','{}')", builder, project, builderSession, task.Id, builderHost)
 	write := func(fn func(q *Request) error) error {
 		return e.appStore.Write(e.ctx, &Request{app: e.app, person: e.app.peopleSnapshot().person(testOwnerEmail)}, nil, fn)
 	}
@@ -193,6 +205,32 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	}
 	if err := write(func(q *Request) error { return checkDesignPublication(q, task.Id, eid, r.Repository) }); err == nil {
 		t.Fatal("designer published")
+	}
+	// The new App route must allow the selected writer in the normal task-linked flow.
+	command := newID()
+	if err := write(func(q *Request) error {
+		now := time.Now()
+		if err := q.db().HostObservationPut(q.ctx(), db.HostObservationPutParams{ID: builderHost, Holder: ptr(testOwnerEmail),
+			LastSeenAt: &now, Payload: jsonBytes(hostPollObservationPayload{Capabilities: &[]string{projectpublisher.Capability}})}); err != nil {
+			return err
+		}
+		return commandPut(q, &agentCommand{ID: command, ExecutionID: builder, SessionID: builderSession, HostID: builderHost,
+			Kind: "start", Status: "accepted", Payload: jsonBytes(contract.StartPayload{ProjectId: ptr(project), Branch: ptr(true),
+				Project: rawObject{"execution": jsonBytes(contract.ProjectExecution{Forge: ptr(true)})}})})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scope := &Request{app: e.app, host: &authHost{HostID: builderHost, Holder: testOwnerEmail}}
+	req := contract.PublishingAppRequest{HostId: builderHost, CommandId: command, ExecutionId: builder, Action: "publish_draft",
+		AgentToolKey: "invented-design-app-publish", ExpectedHeadSha: ptr(strings.Repeat("a", 40))}
+	got, err := publishApp(scope, &req, func(_ context.Context, op projectpublisher.Operation) (projectpublisher.Reply, error) {
+		if op.Branch != "fleet/"+builderSession {
+			t.Fatalf("wrong design writer branch: %+v", op)
+		}
+		return projectpublisher.Reply{Ticket: "invented-design-push-ticket"}, nil
+	})
+	if err != nil || deref(got.Ticket) != "invented-design-push-ticket" {
+		t.Fatalf("admitted design writer could not publish: %+v, %v", got, err)
 	}
 	const prNumber = 181
 	head := strings.Repeat("a", 40)
