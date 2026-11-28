@@ -34,3 +34,5 @@
 For coordinator-local publication leaves, the execution tree names the coordinator service instead of a native host and shows the configured publication authority separately. A configured authority is not a live host observation.
 
 **Open.** None from stage 3. Phone navigation (d) is still open.
+
+Private design preview: [Question image context](../../../packages/ui/book/scenes/pages/conversations/question-image-context).

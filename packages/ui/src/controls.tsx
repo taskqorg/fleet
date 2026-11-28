@@ -40,3 +40,5 @@ export * from './controls/detail-head.tsx';
 export * from './controls/diff-row.tsx';
 export * from './controls/matrix-cell.tsx';
 export * from './controls/pipeline-outline.tsx';
+
+export * from './controls/question-image-viewer.tsx';

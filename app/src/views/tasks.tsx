@@ -7,6 +7,7 @@ import {
   ListDetail, LiveRow, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button, WorkFacts, peerFence,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
+  questionImageReturnPending,
   type TreeNode, type Harness, type StateOf, type Stat, states as states_, isFinished, openStates,
   type Tone, life, keyConnection, answerChoices, deliveryAuthorityContent, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
@@ -333,7 +334,8 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   const tDoc = useOp('task_get', () => ({ taskId: props.id }));
   const board = useSwarmBoard('task', () => props.id);
   const hasSwarm = createMemo(() => hasSwarmBoard(board.data));
-  const [tab, setTab] = createSignal<'history' | 'details' | 'swarm'>('history', { ownedWrite: true });
+  const initialTab = () => questionImageReturnPending() ? 'details' : 'history';
+  const [tab, setTab] = createSignal<'history' | 'details' | 'swarm'>(initialTab(), { ownedWrite: true });
   const [busy, setBusy] = createSignal<string | null>(null, { ownedWrite: true });
   const [failure, setFailure] = createSignal<string | null>(null, { ownedWrite: true });
   const answers = useAnswers();
@@ -342,7 +344,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   createEffect(
     () => props.id,
     () => {
-      setTab('history');
+      setTab(initialTab());
       setBusy(null);
       setFailure(null);
       setConfirming(false);
@@ -396,7 +398,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   );
 
   const renderDetailsBody = () => {
-    const task = t()!;
+    const task = () => t()!;
     return (
       <>
         <Show when={unconfirmed()}>
@@ -407,28 +409,31 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             actions={conversation() ? [{ label: 'Open conversation', onClick: () => go(`/conversations/${encodeURIComponent(conversation()!)}`) }] : []}
           />
         </Show>
-        <For each={openQs()}>
+        <For each={openQs()} keyed={q => q.id}>
           {q => {
-            const authority = () => deliveryAuthorityContent(q);
+            const authority = () => deliveryAuthorityContent(q());
+            const answer = () => answers.answered(q().id);
             return (
               <>
                 <DecisionBlock
-                  question={authority()?.title ?? q.text}
-                  askedBy={actor(q.askedBy) || q.kind}
+                  question={authority()?.title ?? q().text}
+                  questionId={q().id}
+                  artifactIds={q().artifactIds}
+                  askedBy={actor(q().askedBy) || q().kind}
                   addressedTo="you"
-                  since={ms(q.askedAt) ?? now()}
+                  since={ms(q().askedAt) ?? now()}
                   now={now()}
                   context={authority()
                     ? <Markdown text={authority()!.evidence} />
-                    : <TaskQuestionContext question={q} />}
-                  typed={typedAnswer(q)}
-                  options={answerChoices(q).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
-                  answered={answers.answered(q.id) ? { by: 'you', answer: answers.answered(q.id)!.answer, at: answers.answered(q.id)!.at, delivered: true } : undefined}
-                  answering={answers.answering(q.id)}
-                  onAnswer={a => answers.send(q, a)}
-                  onSecret={keyConnection(q.options) ? v => answers.addKey(q, v) : undefined}
+                    : <TaskQuestionContext question={q()} />}
+                  typed={typedAnswer(q())}
+                  options={answerChoices(q()).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
+                  answered={answer() ? { by: 'you', answer: answer()!.answer, at: answer()!.at, delivered: true } : undefined}
+                  answering={answers.answering(q().id)}
+                  onAnswer={a => answers.send(q(), a)}
+                  onSecret={keyConnection(q().options) ? v => answers.addKey(q(), v) : undefined}
                 />
-                <AnswerNote answers={answers} id={q.id} />
+                <AnswerNote answers={answers} id={q().id} />
               </>
             );
           }}
@@ -440,7 +445,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             </DetailSection>
           )}
         </Show>
-        <Show when={task.completionReportMissing}>
+        <Show when={task().completionReportMissing}>
           <p class="muted">The latest run finished successfully. No completion report is available for that run.</p>
         </Show>
         <Show when={reported()} keyed>
@@ -466,10 +471,10 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
             </For>
           </DetailSection>
         </Show>
-        <Show when={task.expectedOutcome || req().length > 0 || task.dependencies.length > 0}>
-          <OutcomeBlock outcome={task.expectedOutcome ?? ''} requirements={req()} inputs={[]} depends={task.dependencies.length ? dependsOn(task.dependencies) : undefined} />
+        <Show when={task().expectedOutcome || req().length > 0 || task().dependencies.length > 0}>
+          <OutcomeBlock outcome={task().expectedOutcome ?? ''} requirements={req()} inputs={[]} depends={task().dependencies.length ? dependsOn(task().dependencies) : undefined} />
         </Show>
-        <ScopedRollupBar rollup={task.resources} cost={task.cost} />
+        <ScopedRollupBar rollup={task().resources} cost={task().cost} />
         <Show when={nodes().length > 0}>
           <DetailSection title="Executions">
             <ExecTree nodes={nodes()} now={now()} label="Executions" />

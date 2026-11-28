@@ -280,3 +280,57 @@
   .ec-sk i:nth-child(2) { width: 55%; }
   .ec-sk i:nth-child(3) { width: 70%; }
 }
+
+/* An enlarged question image occupies the entire available work viewport. */
+dialog.side-sheet:has(> .qiv):modal { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: hidden; overscroll-behavior: contain; }
+dialog.side-sheet:has(> .qiv)::backdrop { background: transparent; overflow: hidden; overscroll-behavior: contain; }
+.qiv { color-scheme:dark; position: absolute; inset: 0; width: 100%; height: 100%; background: var(--question-viewer-bg); color: var(--question-viewer-fg); }
+.qiv-header { display:flex; align-items:center; gap:8px; position:absolute; inset:12px 12px auto; z-index:2; padding:7px; border:1px solid var(--question-viewer-bar-line); border-radius:8px; background:color-mix(in srgb, var(--question-viewer-bar) 94%, transparent); box-shadow:0 3px 18px color-mix(in srgb, var(--question-viewer-shadow) 53.33%, transparent); }
+.qiv-title { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.qiv-tools { display:flex; align-items:center; gap:5px; }
+.qiv-zoom { min-width:48px; text-align:center; font-variant-numeric:tabular-nums; font-size:12px; color:var(--question-viewer-muted); }
+.qiv-stage { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; overflow:hidden; touch-action:none; background:var(--question-viewer-bg); cursor:grab; outline-offset:-3px; }
+.qiv-stage:active { cursor:grabbing; }
+.qiv-stage img { display:block; flex:none; max-width:none; max-height:none; height:auto; object-fit:contain; user-select:none; }
+.qiv-header.compact { background:none; border:0; box-shadow:none; padding:0; justify-content:space-between; pointer-events:none; }
+.qiv-header .btn { background:var(--question-viewer-button); color:var(--question-viewer-fg); border-color:var(--question-viewer-button-line); }
+.qiv-header .btn:hover { background:var(--question-viewer-button-hover); }
+.qiv-header .btn[aria-disabled=true] { color:var(--question-viewer-disabled); }
+.qiv-header.compact .btn { pointer-events:auto; width:44px; height:44px; box-shadow:0 2px 10px color-mix(in srgb, var(--question-viewer-shadow) 46.67%, transparent); }
+.qiv :focus-visible { outline-color:currentColor; }
+@media (max-width:600px) {
+  .qiv-header { inset:8px 8px auto; flex-wrap:wrap; padding:6px; }
+  .qiv-header > .btn { min-height:44px; min-width:44px; }
+  .qiv-title { min-width:120px; }
+  .qiv-tools { width:100%; justify-content:center; gap:3px; }
+  .qiv-tools .btn { min-height:44px; min-width:44px; }
+  .qiv-tools .btn:last-child { font-size:11px; padding-inline:5px; }
+}
+
+.qiv-attachments { display: grid; gap: var(--space-2); min-width: 0; }
+.qiv-attachments:empty { display: none; }
+.qiv-attachment {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0;
+  padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface);
+}
+.qiv-thumbnail, .qiv-thumbnail-placeholder {
+  flex: none; width: 110px; height: 70px; padding: 0; overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-sunken);
+}
+.qiv-thumbnail { cursor: pointer; }
+.qiv-thumbnail-placeholder { display: grid; place-items: center; color: var(--fg-muted); }
+.qiv-thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.qiv-thumbnail:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.qiv-file { flex: 1; min-width: 0; }
+.qiv-file > * { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qiv-original, .qiv-blocked { color: var(--fg-muted); font-size: var(--font-size-sm); }
+.qiv-original { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
+.qiv-blocked { flex-basis: 100%; }
+@media (max-width: 600px) {
+  .qiv-attachment { display: grid; grid-template-columns: 88px minmax(0, 1fr); justify-items: start; }
+  .qiv-thumbnail, .qiv-thumbnail-placeholder { width: 88px; height: 60px; }
+  .qiv-file { width: 100%; }
+  .qiv-attachment > .btn, .qiv-original { grid-column: 2; min-height: 44px; }
+  .qiv-attachment > .btn { justify-self: stretch; }
+  .qiv-blocked { grid-column: 1 / -1; }
+}

@@ -116,6 +116,10 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 	for _, x := range qs {
 		question := contract.SessionViewQuestion{Id: x.ID, SessionId: x.SessionID, Kind: x.Kind, Text: x.Text,
 			Options: choiceLabels(x.Options), ExecutionId: x.ExecutionID}
+		var artifactIDs []string
+		if json.Unmarshal(x.ArtifactIds, &artifactIDs) == nil {
+			question.ArtifactIds = artifactIDs
+		}
 		var authority deliveryAuthorityOptions
 		if json.Unmarshal(x.Options, &authority) == nil && authority.DeliveryAuthority {
 			question.Options, question.DeliveryAuthority = authority.Choices, ptr(true)

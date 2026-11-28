@@ -110,7 +110,7 @@ func (q *Queries) SessionViewLastMessage(ctx context.Context, sessionID string) 
 }
 
 const sessionViewOpenQuestions = `-- name: SessionViewOpenQuestions :many
-SELECT x.id, coalesce(x.session_id, '')::text AS session_id, x.kind::text AS kind, x.text, coalesce(x.options, '[]')::jsonb AS options, x.execution_id
+SELECT x.id, coalesce(x.session_id, '')::text AS session_id, x.kind::text AS kind, x.text, coalesce(x.options, '[]')::jsonb AS options, x.execution_id, (x.data->'artifactIds')::jsonb AS artifact_ids
 FROM question x WHERE x.session_id = ANY ($1::text[]) AND x.state = 'open' ORDER BY x.asked_at
 `
 
@@ -121,6 +121,7 @@ type SessionViewOpenQuestionsRow struct {
 	Text        string
 	Options     []byte
 	ExecutionID *string
+	ArtifactIds []byte
 }
 
 // Open questions of the given sessions, oldest first.
@@ -140,6 +141,7 @@ func (q *Queries) SessionViewOpenQuestions(ctx context.Context, sessionIds []str
 			&i.Text,
 			&i.Options,
 			&i.ExecutionID,
+			&i.ArtifactIds,
 		); err != nil {
 			return nil, err
 		}

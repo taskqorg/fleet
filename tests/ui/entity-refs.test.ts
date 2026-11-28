@@ -19,7 +19,7 @@ const states = new Map<string, string>();
   const name = url.split('/api/ops/')[1], body = JSON.parse(init.body);
   assert.equal(name, 'entity_refs');
   calls.push(body.refs);
-  const items = (body.refs as Ref[]).map((r, ref) => ({ ref, kind: r.kind ?? 'task', id: r.id ?? 'id-' + r.code, code: r.code ?? null, state: states.get(r.id ?? '') ?? 'queued', title: 'T ' + (r.id ?? r.code) }))
+  const items = (body.refs as Ref[]).map((r, ref) => ({ ref, kind: r.kind ?? 'task', id: r.id ?? 'id-' + r.code, code: r.code ?? null, state: states.get(r.id ?? '') ?? 'queued', title: 'T ' + (r.id ?? r.code), ...(r.kind === 'result' ? { mediaType: 'image/png', preview: { resultId: 'thumbnail', view: 'image' } } : {}) }))
     .filter(it => it.id !== 'hidden');
   return new Response(JSON.stringify({ items }), { status: 200, headers: { 'content-type': 'application/json' } });
 };
@@ -42,6 +42,17 @@ test('200 references mount with one read; 210 with two; one entity is one entry;
   assert.deepEqual(calls.map(c => c.length), [200, 11]);
   assert.equal(gone.read(), null);
   assert.equal(more[209].read()?.kind, 'conversation');
+  calls.length = 0;
+});
+
+test('image references share one batch and carry the authorized preview metadata', async () => {
+  calls.length = 0;
+  const images = Array.from({ length: 27 }, (_, i) => source.live!({ kind: 'result', id: 'image-' + i }));
+  await tick(5);
+  assert.deepEqual(calls.map(c => c.length), [27]);
+  assert.equal(images[0].read()?.mediaType, 'image/png');
+  assert.deepEqual(images[0].read()?.preview, { resultId: 'thumbnail', view: 'image' });
+  for (const image of images) image.release();
   calls.length = 0;
 });
 

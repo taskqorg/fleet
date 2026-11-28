@@ -4,7 +4,7 @@ import { createEffect, createSignal, For, Show } from 'solid-js';
 import { createDraft } from '../drafts.ts';
 import { isSubmitEnter } from '../keys.ts';
 import { Button, Ago } from './primitives.tsx';
-import { EntityCode, linkCodes } from './overlays.tsx';
+import { EntityCode, linkCodes, QuestionImages } from './overlays.tsx';
 import type { QuestionChoice } from '../answer.ts';
 
 /**
@@ -13,7 +13,7 @@ import type { QuestionChoice } from '../answer.ts';
  * Answered: one muted line; the card's owner then shows the next open question in its place.
  */
 export function QuestionCard(p: {
-  code?: string | null; questionId?: string | null;
+  code?: string | null; questionId?: string | null; artifactIds?: unknown; showImages?: boolean;
   question: string; context?: JSX.Element; choices: QuestionChoice[]; tone?: 'attention' | 'danger';
   /** The chosen label while its answer is on the way: that button is busy, the others wait. */
   answering?: string;
@@ -39,10 +39,11 @@ export function QuestionCard(p: {
       when={p.answered}
       keyed
       fallback={
-        <div class={['qcard', { danger: danger() }]} data-ui="question-card" role="group" aria-label={p.question} onClick={e => e.stopPropagation()}>
+        <div class={['qcard', { danger: danger() }]} data-ui="question-card" role="group" aria-label={p.question} data-question-images={p.showImages ? p.questionId ?? '' : undefined} onClick={e => e.stopPropagation()}>
           {ref()}
           {/* Codes, Fleet links and UUIDs in the text are entity references (OR-38, OR-44), never raw ids or URLs. */}
           <p class="qcard-q">{linkCodes(p.question, 0)}</p>
+          <Show when={p.showImages}><QuestionImages text={p.question} questionId={p.questionId} artifactIds={p.artifactIds} /></Show>
           {p.context}
           <div class="qcard-choices">
             <For each={p.choices}>

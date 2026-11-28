@@ -116,3 +116,5 @@ Fleet's own notices to an agent (a watch timer, a wake or run request: an operat
 ## Design board
 
 Canvas [screens/session.bl](../board/screens/session.bl): working in the Conversations frame, waiting for you in the Home frame, failed, and the phone with the context sheet; the frame "Conversations v2" holds the approved thread list, tool chips and results at 1440 and 390. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+
+Private design preview: [Question image context](../../../packages/ui/book/scenes/pages/conversations/question-image-context).

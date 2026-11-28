@@ -26,13 +26,19 @@
 
 YAML has no renderer: its source is already its readable form.
 
-**Viewers.** Text and markdown (rendered, with raw toggle); diff (unified and split, file list on the left); image (fit, 100 %, zoom with wheel and `+`/`-`, pan by drag); video (poster frame, native controls); preview link (URL, last check, "Open preview"); 3D (placeholder until defined); unknown type (metadata and download only).
+**Viewers.** Text and markdown (rendered, with raw toggle); diff (unified and split, file list on the left); image (fit in the result; enlarged view follows the rule below); video (poster frame, native controls); preview link (URL, last check, "Open preview"); 3D (placeholder until defined); unknown type (metadata and download only).
+
+**Enlarging images (owner).** Offer inline enlargement only when the image stage can occupy the entire available area. Put controls over the image and keep the original file directly accessible from the trusted app. Where the stage cannot fill the area, use the standard viewer for the original file. Prefer native fullscreen, modal dismissal and file navigation.
+
+**Question images.** Conversation and Task Details use the same viewer for images linked from a question. It opens to fill the available area, with Fit, Actual size, zoom and pan based on the decoded original's dimensions. The zoom buttons and keys step by one quarter of the fitted width. Back to question and Escape restore the source tab, scroll and focus. The original opens in the same tab and browser Back restores that question. Check both normal question routes at desktop and phone widths in both themes, including the original-file return. Enlargement for the Results view is pending.
+
+Retain the sizing mode on viewport change and end enlargement when the question or its access generation changes. List each available original once in attachment order. Use a stored thumbnail when present and defer loading the original until it is opened. The fullscreen stage and controls use the question-viewer palette in either theme.
 
 **States.** Loading (header shown at once, body skeleton), ready, unavailable ("No holding store is online. Last copy on windows, seen 2h ago"; never "lost"), too large to preview (download only), error.
 
-**Behaviour.** Compare opens two versions side by side with synchronised zoom and scroll, or a diff for text. Opening a result keeps the task context; `Esc` returns to it.
+**Behaviour.** Compare opens two versions side by side, or a diff for text. Any enlarged image follows the full-screen rule above. Opening a result keeps the task context; `Esc` returns to it.
 
-**Keyboard.** `Esc` close; `[`/`]` previous and next result; `c` compare; `+`/`-`/`0` zoom.
+**Keyboard.** `Esc` close; `[`/`]` previous and next result; `c` compare; `+`/`-`/`0` zoom where the embedded enlarged view is available; an external viewer keeps its own controls.
 
 **Accessibility.** Images need alt text from the result description; diffs are readable as text with added and removed lines marked in words, not only colour.
 

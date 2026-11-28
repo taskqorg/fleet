@@ -1,6 +1,8 @@
 // Floating overlay layers and entity references: tooltips, entity codes/cards, and context menus.
 import { ProjectTile, projectIdentity } from './identity.tsx';
-import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext } from 'solid-js';
+import { PanelSheet } from './side-panel.tsx';
+import { QuestionImageViewer } from './question-image-viewer.tsx';
+import { createContext, createEffect, createMemo, createSignal, For, onSettled, onCleanup, Show, untrack, useContext } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { type IconName, type Harness, type EntityKind, entityKinds, codeKind, ENTITY_CODE, states, actions, harnesses } from '../registry.ts';
 import { bytes, count, duration } from '../format.ts';
@@ -78,7 +80,7 @@ export type EntityCardData = EntityCardReply;
 export type EntityRef = { kind: EntityKind; id?: string; code?: string };
 export type EntityCardRead = { data: EntityCardData | null; error: string | null; retry?: () => void };
 /** The live state of a rendered reference: undefined while it loads, null when the entity is unknown or not visible. */
-export type EntityLive = { kind: EntityKind; id: string; code: string | null; state: string | null; title: string };
+export type EntityLive = { kind: EntityKind; id: string; code: string | null; state: string | null; title: string; mediaType?: string | null; preview?: EntityCardData['preview'] };
 /** Where cards come from: the app reads `entity_card` through its store; the book serves fixtures. `useCard` is called once per open card; `open` goes to an in-app path (default: a full page load).
  *  `live` holds a rendered reference's live state (one batched registry, entity-card.md "Live state of many references"); `src` is the bytes URL of a result preview. */
 export type EntityCardSource = {
@@ -93,7 +95,7 @@ export type EntityForm = 'code' | 'chip' | 'full';
 
 // The one shown card (one at a time): which reference, the code it hangs from, and whether a key opened it.
 // Opens on click, tap, Enter, or Space only (OR-44, OR-23, OR-37).
-type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
+type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean; live: () => EntityLive | null | undefined };
 const [shown, setShown] = createSignal<Shown | null>(null, { ownedWrite: true });
 const showCard = (s: Shown | null) => setShown(s);
 const CARD_ID = 'entity-card';
@@ -166,7 +168,7 @@ export function EntityCode(p: {
     // The open card is read now, not from the last render: a second click before a re-render still closes it.
     // A click from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
     const cur = untrack(shown);
-    showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0 });
+    showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0, live });
   };
   const what = () => entityKinds[k()!].label;
   const name = () => `${what()}${code() ? ' ' + code() : ''}${st() ? ', ' + st()!.label.toLowerCase() : ''}${live() === null ? ', not visible' : ''}: show details`;
@@ -208,6 +210,7 @@ export function EntityCode(p: {
               flash() ? `ec-flash t-${flash()}` : '', p.cls,
             ]}
             data-ui="entity-code"
+            data-question-reference={p.code ?? p.id ?? undefined}
             data-state={st()?.state}
             aria-haspopup="dialog"
             aria-expanded={open() ? 'true' : 'false'}
@@ -262,7 +265,7 @@ export function linkCodes(text: string, _key: number, literal = (value: string, 
   return out;
 }
 
-function EntityCardDialog(p: { cur: Shown }) {
+function EntityCardDialog(p: { cur: Shown; onImage: OpenQuestionImage }) {
   let box: HTMLDivElement | undefined;
   onSettled(() => {
     const el = box as PopoverElement | undefined;
@@ -334,6 +337,9 @@ function EntityCardDialog(p: { cur: Shown }) {
     >
       <CardBody
         r={p.cur.ref}
+        imageAnchor={p.cur.anchor}
+        imageState={p.cur.live}
+        onImage={p.onImage}
         onOpen={() => {
           const a = p.cur.anchor;
           showCard(null);
@@ -344,18 +350,243 @@ function EntityCardDialog(p: { cur: Shown }) {
   );
 }
 
+// Resolve question files through the existing access-checked reference registry.
+type QuestionPicture = { src: string; title: string };
+type OpenQuestionImage = (picture: QuestionPicture, anchor: HTMLElement, blocked: () => void, available?: () => boolean) => void;
+let openQuestionImage: OpenQuestionImage | undefined;
+export function QuestionImages(p: { text: string; questionId?: string | null; artifactIds?: unknown }) {
+  const source = useContext(EntityCards);
+  const refs = createMemo(() => [...new Set([
+    ...(Array.isArray(p.artifactIds) ? p.artifactIds.filter((id): id is string => typeof id === 'string') : []),
+    ...[...p.text.matchAll(UUID_REF)].map(m => m[0].toLowerCase()),
+    ...[...p.text.matchAll(ENTITY_CODE)].map(m => m[0]).filter(code => code.startsWith('R-')),
+  ])]);
+  const holders = createMemo(() => source?.src && source.live ? refs().map(reference =>
+    source.live!(reference.startsWith('R-') ? { kind: 'result', code: reference } : { id: reference }),
+  ) : []);
+  createEffect(holders, entries => () => entries.forEach(entry => entry.release()));
+  const images = createMemo(() => {
+    const byId = new Map<string, EntityLive>();
+    for (const entry of holders()) {
+      const data = entry.read();
+      if (data?.kind === 'result' && data.state === 'stored' && data.mediaType?.startsWith('image/') && !byId.has(data.id)) {
+        byId.set(data.id, data);
+      }
+    }
+    return Array.from(byId.values());
+  });
+  let list: HTMLElement | undefined;
+  const restoreReference = restoreOriginalFocus(() => {
+    const saved = originalReturn();
+    if (!list || !saved?.reference || !p.questionId || saved.questionId !== p.questionId) return;
+    const refs = questionReferenceNodes(list, saved.reference);
+    return refs[saved.referenceIndex ?? 0] ?? refs[0] ??
+      list.querySelector<HTMLElement>(`.qiv-original[href="${CSS.escape(saved.href)}"]`) ?? undefined;
+  });
+  createEffect(images, restoreReference);
+  return <div class="qiv-attachments" ref={el => { list = el; }}>
+    <For each={images()} keyed={data => data.id}>{data =>
+      <QuestionImageAttachment data={data()} src={source!.src!} questionId={p.questionId} />
+    }</For>
+  </div>;
+}
+
+type OriginalReturn = { questionId: string | null; href: string; reference?: string; referenceIndex?: number; scroll: number[] };
+const originalReturn = (): OriginalReturn | undefined => typeof history === 'undefined' ? undefined : history.state?.questionImageOriginal;
+export function questionImageReturnPending(): boolean {
+  return typeof originalReturn()?.href === 'string';
+}
+
+function scrollParents(element: HTMLElement) {
+  const parents: HTMLElement[] = [];
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    if (parent === document.scrollingElement || /auto|scroll/.test(getComputedStyle(parent).overflowY)) parents.push(parent);
+  }
+  return parents;
+}
+
+function questionReferenceNodes(element: HTMLElement, reference: string) {
+  const question = element.closest('[data-question-images]');
+  return question ? [...question.querySelectorAll<HTMLElement>(`[data-question-reference="${CSS.escape(reference)}"]`)] : [];
+}
+
+function restoreOriginalFocus(target: () => HTMLElement | undefined) {
+  const restore = () => {
+    const saved = originalReturn();
+    if (!saved || !target()) return;
+    const sameReturn = () => {
+      const current = originalReturn();
+      return current?.questionId === saved.questionId && current.href === saved.href &&
+        current.reference === saved.reference && current.referenceIndex === saved.referenceIndex;
+    };
+    // Back can reload the app. Let the route's initial focus and layout settle
+    // before restoring the link inside its source panel.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const anchor = target();
+      if (!anchor?.isConnected || !sameReturn()) return;
+      anchor.focus({ preventScroll: true });
+      // Restore after focus styles and browser scroll anchoring have settled.
+      requestAnimationFrame(() => {
+        if (document.activeElement !== anchor || !sameReturn()) return;
+        scrollParents(anchor).forEach((parent, i) => { if (Number.isFinite(saved.scroll[i])) parent.scrollTop = saved.scroll[i]; });
+        const state = { ...history.state };
+        delete state.questionImageOriginal;
+        history.replaceState(state, '');
+      });
+    }));
+  };
+  onSettled(restore);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pageshow', restore);
+    onCleanup(() => window.removeEventListener('pageshow', restore));
+  }
+  return restore;
+}
+
+function OriginalImageLink(p: { href: string; questionId?: string | null; label?: string; focusAnchor?: HTMLElement }) {
+  let anchor: HTMLAnchorElement | undefined;
+  restoreOriginalFocus(() => {
+    const saved = originalReturn();
+    if (!p.focusAnchor && saved && saved.questionId === (p.questionId ?? null) && saved.href === p.href && !saved.reference) return anchor;
+  });
+  return <a class="qiv-original" ref={el => { anchor = el; }} href={p.href} rel="noreferrer" onClick={e => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const scroll = scrollParents(p.focusAnchor ?? e.currentTarget).map(parent => parent.scrollTop);
+    const reference = p.focusAnchor?.dataset.questionReference;
+    const referenceIndex = p.focusAnchor && reference ? questionReferenceNodes(p.focusAnchor, reference).indexOf(p.focusAnchor) : undefined;
+    const saved: OriginalReturn = { questionId: p.questionId ?? null, href: p.href, reference, referenceIndex, scroll };
+    history.replaceState({ ...history.state, questionImageOriginal: saved }, '');
+  }}>{p.label ?? 'Open original'}</a>;
+}
+
+function QuestionImageAttachment(p: { data: EntityLive; src: (id: string) => string; questionId?: string | null }) {
+  const [blocked, setBlocked] = createSignal(false);
+  const original = () => p.src(p.data.id);
+  const thumbnail = () => p.data.preview?.view === 'image' && p.data.preview.resultId !== p.data.id ? p.data.preview.resultId : undefined;
+  const open = (e: MouseEvent) => openQuestionImage?.(
+    { src: original(), title: p.data.title }, e.currentTarget as HTMLElement, () => setBlocked(true),
+  );
+  return (
+    <div class="qiv-attachment">
+      <Show when={thumbnail()} keyed fallback={<span class="qiv-thumbnail-placeholder" aria-hidden="true"><Icon name="file-text" /></span>}>
+        {id => <button type="button" class="qiv-thumbnail" aria-label={`Open ${p.data.title}`} onClick={open}>
+          <img src={p.src(id)} alt="" loading="lazy" decoding="async" />
+        </button>}
+      </Show>
+      <span class="qiv-file"><strong>{p.data.title}</strong></span>
+      <Button label="Open image" name={`Open image: ${p.data.title}`} icon="maximize-2" onClick={open} />
+      <OriginalImageLink href={original()} questionId={p.questionId} label={p.data.mediaType === 'image/png' ? 'Open original PNG' : 'Open original'} />
+      <Show when={blocked()}><span class="qiv-blocked" role="status">Fullscreen is unavailable here. Use the original file link.</span></Show>
+    </div>
+  );
+}
+
 /** The floating card of the open EntityCode: mount once (AppShell does). A non-modal dialog (OR-14 informational, OR-16
  *  surface): under the code, above it when there is no room, kept inside the window. Escape, a click outside, a scroll,
  *  focus leaving it or the code again close it; Escape and the Open action give focus back to the code. */
-export function EntityCardLayer() {
-  return <Show when={shown()} keyed>{c => <EntityCardDialog cur={c} />}</Show>;
+export function EntityCardLayer(p: { privateReady?: boolean; privateGeneration?: number; privateRoute?: string }) {
+  const [image, setImage] = createSignal<(QuestionPicture & {
+    anchor: HTMLElement; scroll: [HTMLElement, number][]; valid: () => boolean;
+  }) | null>(null);
+  let fullscreen = false;
+  let closing = false;
+  let opening = false;
+  let disposed = false;
+  let observer: MutationObserver | undefined;
+  const openImage: OpenQuestionImage = (picture, anchor, blocked, available = () => true) => {
+    if (opening || closing || image() || p.privateReady === false) return;
+    const question = anchor.closest('[data-question-images]');
+    if (!question) return;
+    const route = location.href, generation = p.privateGeneration;
+    const valid = () => !disposed && p.privateReady !== false && p.privateGeneration === generation &&
+      location.href === route && anchor.isConnected && question.contains(anchor) && available();
+    if (!valid()) return;
+    const scroll = scrollParents(anchor).map((parent): [HTMLElement, number] => [parent, parent.scrollTop]);
+    const open = () => {
+      if (!valid()) {
+        if (fullscreen && document.fullscreenElement === document.documentElement) void document.exitFullscreen().catch(() => {});
+        fullscreen = false;
+        return;
+      }
+      showCard(null);
+      setImage({ ...picture, anchor, scroll, valid });
+      observer = new MutationObserver(checkSource);
+      observer.observe(document.body, { childList: true, subtree: true });
+      requestAnimationFrame(() => { if (valid()) document.querySelector<HTMLElement>('.qiv-stage')?.focus({ preventScroll: true }); });
+    };
+    const refuse = () => {
+      if (valid()) blocked();
+    };
+    const embedded = window.self !== window.top;
+    if (!document.fullscreenEnabled || !document.documentElement.requestFullscreen) {
+      if (!embedded) open(); else refuse();
+      return;
+    }
+    opening = true;
+    document.documentElement.requestFullscreen().then(() => {
+      fullscreen = true;
+      open();
+    }, () => { if (!embedded) open(); else refuse(); }).finally(() => { opening = false; });
+  };
+  openQuestionImage = openImage;
+  onCleanup(() => { if (openQuestionImage === openImage) openQuestionImage = undefined; });
+  const closeImage = () => {
+    const current = image();
+    if (!current || closing) return;
+    closing = true;
+    observer?.disconnect();
+    observer = undefined;
+    setImage(null);
+    const exit = fullscreen && document.fullscreenElement === document.documentElement ? document.exitFullscreen().catch(() => {}) : Promise.resolve();
+    fullscreen = false;
+    void exit.then(() => requestAnimationFrame(() => {
+      if (current.valid()) {
+        current.scroll.forEach(([parent, top]) => { parent.scrollTop = top; });
+        current.anchor.focus({ preventScroll: true });
+      }
+      closing = false;
+    }));
+  };
+  const checkSource = () => { if (image()?.valid() === false) closeImage(); };
+  createEffect(() => [p.privateReady, p.privateGeneration, p.privateRoute, image()?.valid()], checkSource);
+  const onFullscreen = () => { if (fullscreen && !document.fullscreenElement && !closing) closeImage(); };
+  document.addEventListener('fullscreenchange', onFullscreen);
+  window.addEventListener('popstate', checkSource);
+  onCleanup(() => {
+    disposed = true;
+    observer?.disconnect();
+    if (fullscreen && document.fullscreenElement === document.documentElement) void document.exitFullscreen().catch(() => {});
+    document.removeEventListener('fullscreenchange', onFullscreen);
+    window.removeEventListener('popstate', checkSource);
+  });
+  return <>
+    <Show when={shown()} keyed>{c => <EntityCardDialog cur={c} onImage={openImage} />}</Show>
+    <PanelSheet open={!!image()} label="Image viewer" onClose={closeImage}>
+      <Show when={image()} keyed>{v => <QuestionImageViewer src={v.src} title={v.title} onClose={closeImage} />}</Show>
+    </PanelSheet>
+  </>;
 }
 
-function CardBody(p: { r: EntityRef; onOpen: () => void }) {
+function CardBody(p: {
+  r: EntityRef; onOpen: () => void; imageAnchor: HTMLElement; imageState: Shown['live']; onImage: OpenQuestionImage;
+}) {
   const source = useContext(EntityCards);
+  const [imageBlocked, setImageBlocked] = createSignal(false);
   const read: EntityCardRead = source ? source.useCard(untrack(() => p.r)) : { data: null, error: 'Details are not available here' };
   const k = createMemo(() => entityKinds[p.r.kind]);
   const c = createMemo(() => read.error ? null : read.data);
+  const question = () => p.imageAnchor.closest<HTMLElement>('[data-question-images]');
+  const questionImage = (data: EntityCardData) => question() && data.kind === 'result' && data.state === 'stored' && data.mediaType?.startsWith('image/');
+  // The trigger keeps its registered entry even after the card closes. Use that exact entry
+  // for a code, typed ID or bare ID, and require current stored-image metadata before showing bytes.
+  const imageAvailable = (id: string) => {
+    const latest = p.imageState();
+    return latest?.id === id && latest.kind === 'result' && latest.state === 'stored' && !!latest.mediaType?.startsWith('image/');
+  };
+  const openImage = (data: EntityCardData) => {
+    if (!source?.src || !questionImage(data)) return;
+    p.onImage({ src: source.src(data.id), title: data.title }, p.imageAnchor, () => setImageBlocked(true), () => imageAvailable(data.id));
+  };
   // Before it loads, a release names itself by its tag (the reference may show a label such as UI 1.2.5).
   const code = createMemo(() => c() ? c()!.code : p.r.kind === 'release' ? p.r.id : p.r.code);
   // Copy actions: the code (a pull request: owner/repo#n), the UUID, the id of a kind with neither, a result's hash.
@@ -425,13 +656,29 @@ function CardBody(p: { r: EntityRef; onOpen: () => void }) {
                 <Show when={Number.isFinite(at())}><span>{data.atLabel ? data.atLabel + ' ' : ''}<Ago t={at()} /></span></Show>
               </p>
             </Show>
-            <Show when={data.preview && source?.src ? data.preview : null} keyed>
+            <Show when={data.preview && source?.src && !(question() && data.preview.resultId === data.id) ? data.preview : null} keyed>
               {pv => (
-                <a class="ec-pv" href={data.path ?? undefined} onClick={go} aria-label={`Open ${data.title}`}>
+                <a class="ec-pv" href={data.path ?? undefined} onClick={e => {
+                  if (pv.view === 'image' && questionImage(data) && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) {
+                    e.preventDefault();
+                    openImage(data);
+                  } else go(e);
+                }} aria-label={`Open ${data.title}`}>
                   <img src={source!.src!(pv.resultId)} alt={data.title} loading="lazy" decoding="async" />
                   <Show when={pv.view === 'video'}><Icon name="play" /></Show>
                 </a>
               )}
+            </Show>
+            <Show when={questionImage(data) && source?.src}>
+              <Button label="Open image" name={`Open image: ${data.title}`} icon="maximize-2"
+                disabledReason={imageAvailable(data.id) ? undefined : 'Image unavailable'} onClick={() => openImage(data)} />
+            </Show>
+            <Show when={imageBlocked() && source?.src}>
+              <p class="ec-image-fallback">Fullscreen is unavailable here. <OriginalImageLink
+                href={source!.src!(data.id)}
+                questionId={question()?.dataset.questionImages}
+                focusAnchor={p.imageAnchor}
+              /></p>
             </Show>
             <Show when={data.facts.length > 0}>
               <dl class="ec-f">

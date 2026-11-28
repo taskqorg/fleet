@@ -11,7 +11,7 @@ import { author, clipMessage, writeClip } from '../clip.ts';
 import { isSubmitEnter } from '../keys.ts';
 import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, StageChip, Num, CostFigures, Ago, AgeChip, HarnessMark, Empty, ErrorBanner, copyText, SearchBox } from './primitives.tsx';
-import { EntityCode, linkCodes } from './overlays.tsx';
+import { EntityCode, linkCodes, QuestionImages } from './overlays.tsx';
 import { TabBar } from './tables.tsx';
 import { Choice } from './forms.tsx';
 import { ToolLine, type ToolCallIO } from './tool-line.tsx';
@@ -26,6 +26,7 @@ const ROW = parseInt(tokens.size.row);
 
 type DecisionProps = {
   question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: JSX.Element;
+  questionId?: string; artifactIds?: unknown;
   context?: JSX.Element; timeInRow?: boolean; technicalAnswer?: boolean; options: { label: string; kbd?: string; primary?: boolean }[];
   answered?: { by: string; answer: string; at: number; delivered: boolean };
   /** The chosen label while its answer is on the way: that button is busy, the others wait. */
@@ -61,6 +62,7 @@ export function DecisionBlock(p: DecisionProps) {
         <div
           class="decision"
           data-ui="decision-block"
+          data-question-images={p.questionId}
           role="group"
           aria-label={p.question}
           onKeyDown={e => {
@@ -70,6 +72,7 @@ export function DecisionBlock(p: DecisionProps) {
           }}
         >
           <div class="dq"><Icon name="bell" /><b>{linkCodes(p.question, 0)}</b></div>
+          <Show when={p.questionId}><QuestionImages text={p.question} questionId={p.questionId} artifactIds={p.artifactIds} /></Show>
           <div class="meta">
             {p.askedBy}{p.addressedTo === 'you' ? '' : ` · for ${p.addressedTo}`}
             <Show when={!p.timeInRow}> <> · <AgeChip t={p.since} /></></Show>

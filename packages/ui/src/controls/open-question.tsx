@@ -16,7 +16,7 @@ export function AnswerNote(p: { answers: Answers<unknown>; id: string }) {
  * One open question as a card: its choices, a typed answer, or for a key request a password field with Add key and
  * decline. `title` replaces the question's text (a list names the asking session first).
  */
-export function OpenQuestion(p: { q: OpenQuestionRow; answers: Answers<unknown>; title?: string }) {
+export function OpenQuestion(p: { q: OpenQuestionRow; answers: Answers<unknown>; title?: string; showImages?: boolean }) {
   const authority = () => deliveryAuthorityContent(p.q);
   const text = () => authority()
     ? (p.title?.split('\n\n', 1)[0] ?? authority()!.title)
@@ -26,6 +26,8 @@ export function OpenQuestion(p: { q: OpenQuestionRow; answers: Answers<unknown>;
       <QuestionCard
         code={p.q.code}
         questionId={p.q.id}
+        artifactIds={p.q.artifactIds}
+        showImages={p.showImages}
         question={text()}
         context={
           <Show when={p.q.kind === 'acceptance'} fallback={<Show when={authority()} keyed>{a => <Markdown text={a.evidence} />}</Show>}>
