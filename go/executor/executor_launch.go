@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,23 @@ import (
 	"fleet/contract"
 	"fleet/projectpublisher"
 )
+
+// A retained command proves identity and supports cleanup. The broker permit
+// is needed only for the first launch and is never written to the journal.
+func captureJournalBody(c M, cmd contract.Command) string {
+	if !isDesignCaptureJob(cmd) {
+		return enc(c)
+	}
+	payload, ok := c["payload"].(M)
+	if !ok {
+		return enc(c)
+	}
+	body := maps.Clone(c)
+	privatePayload := maps.Clone(payload)
+	delete(privatePayload, "designCapturePermit")
+	body["payload"] = privatePayload
+	return enc(body)
+}
 
 func (e *executor) run(c M) error {
 	cid, err := cmdID(c, "id")
@@ -41,6 +60,9 @@ func (e *executor) run(c M) error {
 	}
 	if typedErr != nil {
 		cmd = contract.Command{Raw: json.RawMessage(body)} // receipts and events still read its identities
+	}
+	if isDesignCaptureJob(cmd) {
+		body = captureJournalBody(c, cmd)
 	}
 	if old, ok := e.commandBody(cid, false); ok {
 		if old != body {
@@ -359,7 +381,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	os.MkdirAll(outputDir, 0o755)
 	os.MkdirAll(inputDir, 0o755)
 	setEnvKV(cmd, "FLEET_OUTPUT_DIR="+outputDir, "FLEET_INPUT_DIR="+inputDir)
-	if err := e.stageArtifactInputs(sp.Inputs, inputDir, execution); err != nil {
+	if err := e.stageArtifactInputs(sp.Inputs, inputDir, execution, nil); err != nil {
 		return fail(1, err.Error())
 	}
 	resolved, err := resolveAttemptContext(project, e.host, projectRootsFor(project, e.host), e.forbidden(), inputDir)
@@ -869,6 +891,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		return e.finish(c, "failed", "")
 	}
 	personal := personalScriptJob(c)
+	capture := isDesignCaptureJob(c)
 	staging := false
 	refuse := func(reason string) error {
 		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: reason}); err != nil {
@@ -885,6 +908,21 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	if err != nil {
 		return refuse("invalid script payload: " + err.Error())
 	}
+	var captureJob contract.DesignCaptureCommand
+	var captureStageDir string
+	var permit contract.DesignCapturePermit
+	if capture {
+		captureJob, permit, err = fixedCaptureCommand(c, e.host, execution)
+		if err != nil || !captureBrokerReady() {
+			return refuse(errCaptureBroker.Error())
+		}
+		if captureJob.OriginHost == e.host {
+			captureStageDir = e.captureStageInput(captureJob.Request.Execution, captureJob.Request.Session)
+			if captureStageDir == "" || !captureStageReady(captureStageDir) {
+				return refuse(errCaptureStageUnavailable.Error())
+			}
+		}
+	}
 	command := sp.Command
 	if command == "" {
 		return refuse("script command missing")
@@ -896,50 +934,79 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	}
 	staging = true
 	output, input := filepath.Join(dir, "output"), filepath.Join(dir, "input")
+	mode := os.FileMode(0o755)
+	if capture {
+		mode = 0o700
+	}
 	for _, path := range []string{output, input} {
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		if err := os.MkdirAll(path, mode); err != nil {
 			if personal {
 				return refuse("create script staging: " + err.Error())
 			}
 			return err
 		}
 	}
-	if err := e.stageArtifactInputs(sp.Inputs, input, execution); err != nil {
+	var pins map[string]artifactInputPin
+	if capture {
+		r := captureJob.Request
+		pins = map[string]artifactInputPin{
+			"base.bundle": {60 << 20, r.BaseSHA256}, "overlay.json": {3 << 20, r.OverlaySHA256},
+			"fixture.json": {256 << 10, r.FixtureSHA256},
+		}
+	}
+	if err := e.stageArtifactInputs(sp.Inputs, input, execution, pins); err != nil {
 		return refuse(err.Error())
 	}
-	project, err := projectContext(sp.Project)
-	if err != nil {
-		return refuse(err.Error())
+	if capture {
+		f, err := os.OpenFile(filepath.Join(input, "request.json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return refuse("stage fixed capture request")
+		}
+		_, writeErr := f.Write(captureJob.Request.Bytes())
+		if errors.Join(writeErr, f.Close()) != nil {
+			return refuse("stage fixed capture request")
+		}
 	}
-	wd := typedRaw[*string](sp.Rest["workingDirectory"])
-	repo, hasRepo := repoPath(wd, project, e.host)
 	work := dir
 	var trial *[2]string
-	switch {
-	case hasRepo && sp.Commit != nil:
-		w, top, err := trialWorktree(dir, repo, *sp.Commit, projectRootsFor(project, e.host), e.forbidden())
+	var cmd *exec.Cmd
+	if capture {
+		cmd = cleanCmd(exe(), "design-capture-client", input)
+		cmd.Dir, cmd.Env = dir, []string{}
+	} else {
+		project, err := projectContext(sp.Project)
 		if err != nil {
 			return refuse(err.Error())
 		}
-		work, trial = w, &[2]string{top, w}
-	case !hasRepo && sp.Commit == nil:
-	default:
-		return refuse("script needs both a repository and a commit, or neither")
+		wd := typedRaw[*string](sp.Rest["workingDirectory"])
+		repo, hasRepo := repoPath(wd, project, e.host)
+		switch {
+		case hasRepo && sp.Commit != nil:
+			w, top, err := trialWorktree(dir, repo, *sp.Commit, projectRootsFor(project, e.host), e.forbidden())
+			if err != nil {
+				return refuse(err.Error())
+			}
+			work, trial = w, &[2]string{top, w}
+		case !hasRepo && sp.Commit == nil:
+		default:
+			return refuse("script needs both a repository and a commit, or neither")
+		}
+		cmd = cleanCmd("sh", "-c", command)
+		cmd.Dir = work
+		realSession, _ := idOf(c, "sessionId") // empty for a sessionless host job
+		cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+realSession, "FLEET_EXECUTION_ID="+execution,
+			// Lab scripts ship in the release next to the binary. Blender is a host setting.
+			"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"))
+		if v := os.Getenv("FLEET_BLENDER"); v != "" {
+			cmd.Env = append(cmd.Env, "FLEET_BLENDER="+v)
+		}
 	}
 	dropTrial := func() {
 		if trial != nil {
 			removeTrial(trial[0], trial[1])
 		}
 	}
-	cmd := cleanCmd("sh", "-c", command)
-	cmd.Dir = work
-	realSession, _ := idOf(c, "sessionId") // "" for a host job: session is then its executionId, not a session
-	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+realSession, "FLEET_EXECUTION_ID="+execution,
-		// Lab scripts ship in the release next to the binary (fleet-asset-pipelines §4); Blender is a host setting.
-		"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"))
-	if v := os.Getenv("FLEET_BLENDER"); v != "" {
-		cmd.Env = append(cmd.Env, "FLEET_BLENDER="+v)
-	}
+
 	cid, _ := idOf(c, "id")
 	if err := e.launch(execution, cid, session); err != nil {
 		dropTrial()
@@ -962,12 +1029,17 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 		CmdArgs:    cmd.Args,
 		CmdEnv:     cmd.Env,
 		CmdDir:     cmd.Dir,
-		UseMCP:     true,
+		UseMCP:     !capture,
 		TimeoutMs:  sp.TimeoutMs,
 		Trial:      trial,
 		InitialSeq: 2,
 	}
-	l, err := e.spawnWorker(c, spec, nil)
+	var captureAuthority *captureUploadAuthority
+	if capture {
+		captureAuthority = &captureUploadAuthority{URL: e.url, Token: e.token, Access: accessToken(accessFile()),
+			Execution: execution, OriginHost: captureJob.OriginHost, StageInput: captureStageDir, Permit: permit, Stores: storeAccessHosts()}
+	}
+	l, err := e.spawnWorkerWithCapture(c, spec, nil, captureAuthority)
 	if err != nil {
 		if personal && errors.Is(err, errWorkerStartUnknown) {
 			return e.finishUnconfirmedScript(c)
@@ -997,10 +1069,15 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 		return errors.New("invalid input")
 	}
 	executionID, _ := execution.(string)
-	return e.stageArtifactInputs(in.Inputs, input, executionID)
+	return e.stageArtifactInputs(in.Inputs, input, executionID, nil)
 }
 
-func (e *executor) stageArtifactInputs(list []contract.InputArtifact, input, executionID string) error {
+type artifactInputPin struct {
+	max    int64
+	sha256 string
+}
+
+func (e *executor) stageArtifactInputs(list []contract.InputArtifact, input, executionID string, pins map[string]artifactInputPin) error {
 	if len(list) == 0 {
 		return nil
 	}
@@ -1027,13 +1104,30 @@ func (e *executor) stageArtifactInputs(list []contract.InputArtifact, input, exe
 		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			return fmt.Errorf("input %s: %w", rel, err)
 		}
-		out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		pin := pins[rel]
+		mode := os.FileMode(0o644)
+		if pins != nil {
+			if pin.max <= 0 {
+				return errors.New("capture input has no immutable pin")
+			}
+			mode = 0o600
+		}
+		out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
 			return fmt.Errorf("input %s: %w", rel, err)
 		}
 		src, f := c.get(*r.Url)
 		if f == nil {
-			_, err = io.Copy(out, src)
+			if pin.max == 0 {
+				_, err = io.Copy(out, src)
+			} else {
+				sum := sha256.New()
+				var n int64
+				n, err = io.Copy(io.MultiWriter(out, sum), io.LimitReader(src, pin.max+1))
+				if err == nil && (n <= 0 || n > pin.max || hex.EncodeToString(sum.Sum(nil)) != pin.sha256) {
+					err = errors.New("stored capture input differs from its immutable pin")
+				}
+			}
 			src.Close()
 		} else {
 			err = errors.New(f.msg)

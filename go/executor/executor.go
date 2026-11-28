@@ -223,7 +223,8 @@ func runExecutor() error {
 		return err
 	}
 	// Artifact transfers run on their own goroutines; the Access token for store tunnels from FLEET_CF_ACCESS_FILE.
-	if err := spawnTransfers(journal, newTransferClient(url, token, host, accessToken(accessFile())), func(_ *transferClient, db *sql.DB, body M, response any) {
+	transfers := newTransferClient(url, token, host, accessToken(accessFile()))
+	if err := spawnTransfers(journal, transfers, func(_ *transferClient, db *sql.DB, body M, response any) {
 		// A remote store answers "verifying" until the store's host checks the copy; the bytes are uploaded either way.
 		answer := transferAnswerOf(response)
 		file := typed[transferFile](body)
@@ -413,7 +414,15 @@ func (e *executor) pollWaitSignal(ctx context.Context, wait time.Duration, flush
 	offsetMinutes := int64(offset / 60)
 	browserReady, browserProblems := e.productionBrowserStatus()
 	active := e.activeExecutions()
-	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(browserReady != nil && *browserReady), BrowserProductionReady: browserReady, BrowserTargets: e.projectSiteStatus(active), Stores: e.stores(),
+	caps := capabilities(browserReady != nil && *browserReady)
+	platformID := contract.Platform(platform())
+	if platformID == contract.PlatformLinux {
+		caps = append(caps, e.captureStageCapabilities(active, captureStageReady)...)
+	}
+	if e.host == contract.DesignCaptureHost && captureBrokerReady() {
+		caps = append(caps, contract.DesignCaptureCapability)
+	}
+	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: platformID, Capabilities: caps, BrowserProductionReady: browserReady, BrowserTargets: e.projectSiteStatus(active), Stores: e.stores(),
 		Problems: append(browserProblems, edgeProblems(pollRoute)...), ProjectRoots: roots, ForgeLogins: forgeLoginReport(), Version: &v, HarnessVersions: managedVersions(), ToolVersions: toolVersions(), Update: lastUpdate(e.root),
 		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: active, Load: e.sampleHostLoad()}
 	if diagnoseNext.Swap(false) {
@@ -613,7 +622,7 @@ func (e *executor) runOrFail(m M) error {
 		return nil
 	}
 	b, ok := e.commandBody(id, true)
-	if !ok || b != enc(m) {
+	if !ok || b != captureJournalBody(m, c) {
 		return nil
 	}
 	if k := commandKind(b); k == contract.CommandKindStart || k == contract.CommandKindInput {

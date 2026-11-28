@@ -1,7 +1,9 @@
 #!/usr/bin/python3
 """Socket-activated, one-job-at-a-time renderer VM broker; no Fleet credentials."""
+from contextlib import contextmanager
 import hashlib
 import json
+import importlib.util
 import os
 import re
 from pathlib import Path
@@ -14,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 REQUEST = struct.Struct('>4sBB2s32sQ32s')
@@ -27,6 +30,21 @@ QEMU = '/usr/bin/qemu-system-x86_64'
 QEMU_IMG = '/usr/bin/qemu-img'
 BIOS = '/usr/share/seabios/bios-256k.bin'
 CHUNK = 65536
+
+PROTECTED_SOCKET = '/run/fleet-design-vm/broker.sock'
+CAPTURE_SOCKET = '/run/fleet-design-capture/broker.sock'
+
+
+def load_sibling(name):
+    # Python isolated mode omits the script directory from its import path.
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+capture = load_sibling('vm-capture')
+CAPTURE_LIMITS = (capture.INPUT_MAX, capture.OUTPUT_MAX, capture.WORK_SECONDS)
 
 
 def digest_file(fd, client=None):
@@ -149,7 +167,7 @@ def validate_image_fd(fd, client=None):
     validate_image_info(raw)
 
 
-def load_manifest(client=None):
+def load_manifest(client=None, *, expected_identity=None, expected_commit=None):
     # /app and /image are read-only binds inside the fixed systemd RootDirectory.
     fd = trusted_file(MANIFEST)
     try:
@@ -171,6 +189,9 @@ def load_manifest(client=None):
             not isinstance(obj[key], str) or len(obj[key]) != 64 or any(c not in '0123456789abcdef' for c in obj[key])
             for key in fields - {'version', 'releaseCommit'}) or not isinstance(obj['releaseCommit'], str) or not re.fullmatch(r'[a-f0-9]{40}', obj['releaseCommit']):
         raise ValueError('invalid launch manifest')
+    identity = hashlib.sha256(raw).digest()
+    if expected_identity is not None and (identity != expected_identity or obj['releaseCommit'] != expected_commit):
+        raise ValueError('capture launch manifest or release differs')
     image_fd = trusted_file(GOLDEN)
     try:
         if digest_file(image_fd, client) != obj['goldenSha256']:
@@ -180,7 +201,7 @@ def load_manifest(client=None):
         try:
             if digest_file(bios_fd, client) != obj['biosSha256']:
                 raise ValueError('firmware digest mismatch')
-            return hashlib.sha256(raw).digest(), image_fd, bios_fd
+            return identity, image_fd, bios_fd
         except BaseException:
             close_input(bios_fd)
             raise
@@ -389,18 +410,27 @@ def wait_guest_response(guest, qmp, process, client, op, nonce, request_hash, de
                 magic, version, got_op, status, reserved, got_nonce, got_hash, guest_identity, size, expected = header
                 if (magic != b'FVMR' or version != 1 or got_op != op or status not in (0, 1, 2) or
                         status == 1 and op != 2 or reserved != b'\0' or got_nonce != nonce or got_hash != request_hash or
-                        guest_identity != b'\0' * 32 or size > LIMITS[op][1] or status != 0 and size):
+                        guest_identity != b'\0' * 32 or size > (CAPTURE_LIMITS if op == capture.OPERATION else LIMITS[op])[1] or status != 0 and size):
                     raise ValueError('invalid guest response')
                 wanted = RESPONSE.size + size
         if header is not None and len(response) == wanted and not worker_done:
             worker_done = True
             deadline = time.monotonic() + 30
         if header is not None and len(response) == wanted and shutdown and process.poll() is not None:
-            if select.select([guest], [], [], 0)[0] and guest.recv(1):
+            channel_ready = select.select([guest], [], [], 0)[0]
+            if channel_ready and guest.recv(1):
                 raise ValueError('guest sent extra response bytes')
+            if op == capture.OPERATION and not channel_ready:
+                # Capture requires explicit EOF as well as the QMP event and
+                # process exit. A retained chardev cannot complete the job.
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    raise TimeoutError('capture guest channel never closed')
+                select.select([guest, client], [], [], min(remain, 0.2))
+                continue
             if process.returncode != 0:
                 raise RuntimeError('VM exit was not clean')
-            body = bytes(response[RESPONSE.size:])
+            body = bytes(memoryview(response)[RESPONSE.size:])
             if hashlib.sha256(body).digest() != header[-1]:
                 raise ValueError('guest response digest')
             return header[3], body
@@ -451,14 +481,14 @@ def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
         guest = await_guest(listener, process, client, boot_deadline)
         guest.setblocking(False)
         wait_guest_ready(guest, process, client, boot_deadline)
-        send_deadline = time.monotonic() + 10
+        send_deadline = time.monotonic() + (30 if op == capture.OPERATION else 10)
         size = os.fstat(payload.fileno()).st_size
         send_all(guest, REQUEST.pack(b'FVMQ', 1, op, b'\0\0', nonce, size, request_hash), send_deadline)
         while part := payload.read(CHUNK):
             client_alive(client)
             send_all(guest, part, send_deadline)
         return wait_guest_response(guest, qmp, process, client, op, nonce, request_hash,
-                                   time.monotonic() + LIMITS[op][2] + 5)
+                                   time.monotonic() + (CAPTURE_LIMITS if op == capture.OPERATION else LIMITS[op])[2] + 5)
     finally:
         cleanup_failed = process is not None and not cleanup_process(process, 10)
         for handle in (guest, listener, qmp):
@@ -476,33 +506,23 @@ def run_vm(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root):
             raise CleanupUnconfirmed('VM cleanup incomplete; operator review required')
 
 
-def serve(client, manifest_loader=load_manifest, runner=run_vm, root=STATE):
+@contextmanager
+def attempt(root):
     # Fence the entire attempt, including request staging and image inspection.
     try:
         fence = Path(tempfile.mkdtemp(prefix='run.fence.', dir=root))
     except OSError as error:
         raise CleanupUnconfirmed('Cannot establish cleanup fence') from error
-    payload = launch_fd = bios_fd = None
+    handles = []
     unconfirmed = False
     try:
-        nonce = os.urandom(32)
-        send_all(client, b'FVMB\x01\0\0\0' + nonce, time.monotonic() + 5)
-        op, _, request_hash, payload = read_request(client, nonce, root, time.monotonic() + 10)
-        identity, launch_fd, bios_fd = manifest_loader(client)
-        client_alive(client)
-        status, result = runner(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root)
-        if status not in (0, 1, 2) or status == 1 and op != 2 or status != 0 and result or len(result) > LIMITS[op][1]:
-            raise ValueError('invalid worker result')
-        response = RESPONSE.pack(b'FVMR', 1, op, status, b'\0', nonce, request_hash, identity,
-                                 len(result), hashlib.sha256(result).digest())
+        yield handles
     except CleanupUnconfirmed:
         unconfirmed = True
         raise
     finally:
         cleanup_failed = False
-        for handle in (payload, launch_fd, bios_fd):
-            if handle is None:
-                continue
+        for handle in handles:
             try:
                 if isinstance(handle, int):
                     os.close(handle)
@@ -522,6 +542,21 @@ def serve(client, manifest_loader=load_manifest, runner=run_vm, root=STATE):
         if cleanup_failed:
             raise CleanupUnconfirmed('Attempt cleanup unconfirmed; operator review required')
 
+
+def serve(client, manifest_loader=load_manifest, runner=run_vm, root=STATE):
+    with attempt(root) as handles:
+        nonce = os.urandom(32)
+        send_all(client, b'FVMB\x01\0\0\0' + nonce, time.monotonic() + 5)
+        op, _, request_hash, payload = read_request(client, nonce, root, time.monotonic() + 10)
+        handles.append(payload)
+        identity, launch_fd, bios_fd = manifest_loader(client)
+        handles.extend((launch_fd, bios_fd))
+        client_alive(client)
+        status, result = runner(client, op, nonce, request_hash, payload, launch_fd, bios_fd, root)
+        if status not in (0, 1, 2) or status == 1 and op != 2 or status != 0 and result or len(result) > LIMITS[op][1]:
+            raise ValueError('invalid worker result')
+        response = RESPONSE.pack(b'FVMR', 1, op, status, b'\0', nonce, request_hash, identity,
+                                 len(result), hashlib.sha256(result).digest())
     # Release bytes only after all worker and staging cleanup is confirmed.
     send_all(client, response, time.monotonic() + 5)
     send_all(client, result, time.monotonic() + 5)
@@ -541,24 +576,104 @@ def main():
     signal.signal(signal.SIGTERM, stop_requested)
     signal.signal(signal.SIGINT, stop_requested)
     os.umask(0o077)
-    if os.environ.get('LISTEN_PID') != str(os.getpid()) or os.environ.get('LISTEN_FDS') != '1':
-        raise RuntimeError('expected exactly one systemd-owned listener')
-    listener = socket.socket(fileno=3)
-    if listener.family != socket.AF_UNIX or listener.type & socket.SOCK_STREAM != socket.SOCK_STREAM:
-        raise RuntimeError('invalid listener')
-    while True:
-        try:
-            client, _ = listener.accept()
-            client.setblocking(False)
-            with client:
-                serve(client)
-        except StopRequested:
-            break
-        except CleanupUnconfirmed:
-            print('renderer fenced: VM cleanup requires operator review', file=sys.stderr, flush=True)
-            break
-        except (OSError, ValueError, EOFError, TimeoutError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
-            print('renderer job unconfirmed: ' + type(error).__name__, file=sys.stderr, flush=True)
+    if os.environ.get('LISTEN_PID') != str(os.getpid()):
+        raise RuntimeError('missing systemd-owned listeners')
+    fds = os.environ.get('LISTEN_FDS')
+    if fds not in ('1', '2'):
+        raise RuntimeError('expected fixed systemd-owned listeners')
+    listeners = {}
+    for fd in range(3, 3 + int(fds)):
+        listener = socket.socket(fileno=fd)
+        path = listener.getsockname()
+        if (listener.family != socket.AF_UNIX or listener.type & socket.SOCK_STREAM != socket.SOCK_STREAM or
+                path not in (PROTECTED_SOCKET, CAPTURE_SOCKET) or path in listeners):
+            raise RuntimeError('invalid broker listener')
+        listeners[path] = listener
+    capture_host = load_sibling('vm-capture-host') if CAPTURE_SOCKET in listeners else None
+    handlers = {PROTECTED_SOCKET: serve}
+    if capture_host is not None:
+        handlers[CAPTURE_SOCKET] = lambda client: capture_host.serve_capture(sys.modules[__name__], client)
+    schedule(listeners, handlers)
+
+
+def schedule(listeners, handlers, stop=None):
+    # One thread owns the one allocation. The listener stays responsive only
+    # to reject contenders and reserve the next turn for waiting protected work.
+    active = None
+    client = None
+    settled = False
+    protected_waiting = False
+    protected_until = 0
+    ordered = [path for path in (PROTECTED_SOCKET, CAPTURE_SOCKET) if path in listeners]
+
+    def worker(connection, handler, path):
+        nonlocal settled
+        with connection:
+            try:
+                if path == CAPTURE_SOCKET:
+                    send_all(connection, b'FDCA', time.monotonic() + 1)
+                handler(connection)
+            except CleanupUnconfirmed:
+                print('renderer fenced: VM cleanup requires operator review', file=sys.stderr, flush=True)
+                return
+            except (OSError, ValueError, EOFError, TimeoutError, RuntimeError, subprocess.SubprocessError) as error:
+                print('renderer job unconfirmed: ' + type(error).__name__, file=sys.stderr, flush=True)
+        settled = True
+
+    def retire():
+        nonlocal active, protected_waiting, protected_until
+        if active is None or active.is_alive():
+            return True
+        active.join()
+        active = None
+        if not settled:
+            return False
+        if protected_waiting:
+            protected_waiting = False
+            protected_until = time.monotonic() + 45
+        return True
+
+    try:
+        while (stop is None or not stop.is_set()) and retire():
+            ready, _, _ = select.select(listeners.values(), [], [], 0.1)
+            for path in ordered:
+                if listeners[path] not in ready:
+                    continue
+                incoming, _ = listeners[path].accept()
+                incoming.setblocking(False)
+                # This is the admission check, after accept. A still-live
+                # worker stays installed and can only yield a busy response.
+                if not retire():
+                    incoming.close()
+                    return
+                now = time.monotonic()
+                if active is not None or (path == CAPTURE_SOCKET and now < protected_until):
+                    if path == PROTECTED_SOCKET:
+                        protected_waiting = True
+                    frame = b'FVBU\x01' + bytes(35) if path == PROTECTED_SOCKET else b'FDB1'
+                    with incoming:
+                        try:
+                            send_all(incoming, frame, now + 0.1)
+                        except (OSError, EOFError, TimeoutError):
+                            pass
+                    continue
+                if path == PROTECTED_SOCKET:
+                    protected_until = 0
+                client = incoming
+                settled = False
+                active = threading.Thread(target=worker, args=(client, handlers[path], path), daemon=True)
+                active.start()
+    except StopRequested:
+        pass
+    finally:
+        if active is not None and active.is_alive():
+            try:
+                client.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            # systemd kills the service cgroup if teardown outlives the unit's
+            # stop deadline. The retained fence blocks the next startup.
+            active.join(15)
 
 
 if __name__ == '__main__':

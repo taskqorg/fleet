@@ -1,0 +1,29 @@
+[Unit]
+Description=Unprivileged fixed worker for the Fleet isolated design VM
+Requires=fleet-design-vm-worker.socket
+After=fleet-design-vm-worker.socket
+
+[Service]
+Type=exec
+User=fleet-render-worker
+Group=fleet-render-worker
+Sockets=fleet-design-vm-worker.socket
+ExecStart=/usr/bin/python3 -I -B /opt/fleet-design-verifier/current/deploy/design-verifier/vm-guest-worker.py
+RuntimeMaxSec=615s
+TimeoutStopSec=5s
+KillMode=control-group
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+InaccessiblePaths=/var/tmp
+Environment=PATH=/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 TMPDIR=/tmp
+MemoryAccounting=yes
+MemoryMax=1152M
+MemorySwapMax=0
+CPUQuota=200%
+TasksMax=128
+LimitCORE=0
+UMask=0077

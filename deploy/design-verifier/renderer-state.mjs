@@ -1,4 +1,4 @@
-import { DesignBlocked } from './provider.mjs';
+import { DesignBlocked, RendererBusy } from './provider.mjs';
 
 // Retry an unavailable renderer on normal polls; never retain a failed runner.
 export async function refreshRenderer(service, createRunner) {
@@ -10,10 +10,10 @@ export async function refreshRenderer(service, createRunner) {
     service.rendererProbedAt = new Date().toISOString();
     delete service.visualParityReason;
     return runner;
-  } catch {
+  } catch (error) {
     delete service.renderer;
     service.visualParity = 'unavailable';
-    service.visualParityReason = 'Isolated renderer runtime or Chromium probe failed';
+    service.visualParityReason = error instanceof RendererBusy ? error.message : 'Isolated renderer runtime or Chromium probe failed';
     return undefined;
   }
 }
@@ -21,11 +21,11 @@ export async function refreshRenderer(service, createRunner) {
 // Probe in the background, allowing provider and nonvisual work to continue.
 export function rendererController(service, createRunner, signal) {
   let runner, probing;
-  const unavailable = () => {
+  const unavailable = error => {
     runner = undefined;
     delete service.renderer;
     service.visualParity = 'unavailable';
-    service.visualParityReason = 'Isolated renderer execution could not be confirmed';
+    service.visualParityReason = error instanceof RendererBusy ? error.message : 'Isolated renderer execution could not be confirmed';
   };
   return {
     get current() { return runner; },
@@ -37,7 +37,7 @@ export function rendererController(service, createRunner, signal) {
           if (!found) { runner = undefined; return; }
           runner = { ...found, async measure(...args) {
             try { return await found.measure(...args); }
-            catch (error) { if (!(error instanceof DesignBlocked)) unavailable(); throw error; }
+            catch (error) { if (!(error instanceof DesignBlocked)) unavailable(error); throw error; }
           } };
         }).finally(() => { probing = undefined; });
     },

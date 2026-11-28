@@ -18,6 +18,23 @@ export function fetchGitObjects(gitAt, slot, objects, remote, source, negotiatio
 }
 
 // This Git process only reads objects. It has no checkout, hooks, helpers or credentials.
+export function validateArchiveTree(git, tree, signedBuildFiles) {
+  const rows = new TextDecoder('utf-8', { fatal: true }).decode(git('ls-tree', '-r', '-z', '--full-tree', tree)).split('\0');
+  rows.pop();
+  for (const row of rows) {
+    const entry = /^100(?:644|755) blob ([a-f0-9]{40})\t(.*)$/.exec(row);
+    if (!entry || !sourcePath(entry[2])) throw new DesignBlocked('Candidate tree contains an unsupported file type or name');
+    const parts = entry[2].split('/');
+    if (parts.includes('node_modules') || parts[0] === 'dist')
+      throw new DesignBlocked('Candidate tree contains a reserved build output path');
+    if (/^(?:package|tsconfig|jsconfig)\.json$/.test(parts.at(-1)) && !Object.hasOwn(signedBuildFiles, entry[2]))
+      throw new DesignBlocked('Candidate tree contains an unpinned module or compiler configuration');
+    if (entry[2].split('/').at(-1) === '.gitattributes' &&
+        /export-(?:ignore|subst)/.test(git('cat-file', 'blob', entry[1]).toString('utf8')))
+      throw new DesignBlocked('Candidate Git export attributes can change checkout content');
+  }
+}
+
 export function openRepository(state) {
   const dir = join(state, 'git');
   const env = { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
@@ -65,20 +82,7 @@ export function openRepository(state) {
     diffBase({ base, head }) { return read('merge-base', base, head); },
     archive(head, signedBuildFiles) {
       if (!sha(head)) throw new VerificationWait('Invalid render commit');
-      const rows = new TextDecoder('utf-8', { fatal: true }).decode(git('ls-tree', '-r', '-z', '--full-tree', head)).split('\0');
-      rows.pop();
-      for (const row of rows) {
-        const entry = /^100(?:644|755) blob ([a-f0-9]{40})\t(.*)$/.exec(row);
-        if (!entry || !sourcePath(entry[2])) throw new DesignBlocked('Candidate tree contains an unsupported file type or name');
-        const parts = entry[2].split('/');
-        if (parts.includes('node_modules') || parts[0] === 'dist')
-          throw new DesignBlocked('Candidate tree contains a reserved build output path');
-        if (/^(?:package|tsconfig|jsconfig)\.json$/.test(parts.at(-1)) && !Object.hasOwn(signedBuildFiles, entry[2]))
-          throw new DesignBlocked('Candidate tree contains an unpinned module or compiler configuration');
-        if (entry[2].split('/').at(-1) === '.gitattributes' &&
-            /export-(?:ignore|subst)/.test(git('cat-file', 'blob', entry[1]).toString('utf8')))
-          throw new DesignBlocked('Candidate Git export attributes can change checkout content');
-      }
+      validateArchiveTree(git, head, signedBuildFiles);
       return git('archive', '--format=tar', head);
     },
     measureInputs(head, recipes) {

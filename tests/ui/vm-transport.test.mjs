@@ -3,9 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-// The Python broker and the Node verifier must agree on framing and failures.
-test('protected VM transport protocol', () => {
-  const result = spawnSync('python3', [fileURLToPath(new URL('./vm-transport.test.py', import.meta.url))],
-    { encoding: 'utf8', timeout: 15_000 });
-  assert.equal(result.status, 0, result.stderr || result.error?.message);
-});
+for (const [name, script] of [
+  ['protected VM transport protocol', 'vm-transport.test.py'],
+  ['designer capture authorization, VM transport and teardown', 'design-capture-vm.test.py'],
+]) {
+  test(name, () => {
+    const result = spawnSync('python3', ['-B', fileURLToPath(new URL('./' + script, import.meta.url))],
+      { encoding: 'utf8', timeout: 15_000 });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+  });
+}

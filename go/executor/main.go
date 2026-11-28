@@ -144,7 +144,8 @@ func migrateJournal(db *sql.DB) (err error) {
 
 // subcommands: argv[1] -> handler. No argument runs the executor loop.
 var subcommands = map[string]func(args []string) error{
-	"project-publisher": func([]string) error { return projectpublisher.Serve() },
+	"design-capture-client": captureBrokerCLI,
+	"project-publisher":     func([]string) error { return projectpublisher.Serve() },
 
 	"mcp":            func(args []string) error { return runMCP(args) }, // part E2
 	"qualify-mcp":    qualifyMCP,

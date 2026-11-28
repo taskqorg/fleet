@@ -31,26 +31,28 @@ import (
 // reads) with the command and the spool folder; get and list carry the MCP call; done is the journaled per-part
 // progress of an upload or copy.
 type transferJob struct {
-	Path        string          `json:"path"`
-	Spool       string          `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
-	Name        string          `json:"name"`
-	MediaType   string          `json:"mediaType"`
-	ExecutionId string          `json:"executionId"`
-	DerivedFrom string          `json:"derivedFrom"`
-	Role        string          `json:"role"`
-	Required    bool            `json:"required"`
-	ArtifactId  *string         `json:"artifactId"`
-	StoreId     string          `json:"storeId"`
-	Url         string          `json:"url"`
-	StagingKey  *string         `json:"stagingKey"`
-	Size        *uint64         `json:"size"`
-	PartSize    *uint64         `json:"partSize"`
-	Source      transferSource  `json:"source"`
-	InputDir    string          `json:"inputDir"`
-	Filter      *transferFilter `json:"filter"`
-	Done        []donePart      `json:"done"`
-	Command     jsonValue       `json:"command"` // present (even null): the job sends the command's final receipt
-	Recoveries  int             `json:"recoveries"`
+	CaptureCommand *string             `json:"captureCommandId"`
+	Path           string              `json:"path"`
+	Spool          string              `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
+	Name           string              `json:"name"`
+	MediaType      string              `json:"mediaType"`
+	ExecutionId    string              `json:"executionId"`
+	DerivedFrom    string              `json:"derivedFrom"`
+	Role           string              `json:"role"`
+	Required       bool                `json:"required"`
+	ArtifactId     *string             `json:"artifactId"`
+	StoreId        string              `json:"storeId"`
+	Url            string              `json:"url"`
+	StagingKey     *string             `json:"stagingKey"`
+	Size           *uint64             `json:"size"`
+	PartSize       *uint64             `json:"partSize"`
+	Source         transferSource      `json:"source"`
+	InputDir       string              `json:"inputDir"`
+	CaptureStage   captureStageRequest `json:"-"`
+	Filter         *transferFilter     `json:"filter"`
+	Done           []donePart          `json:"done"`
+	Command        jsonValue           `json:"command"` // present (even null): the job sends the command's final receipt
+	Recoveries     int                 `json:"recoveries"`
 }
 
 type transferSource struct {
@@ -71,7 +73,11 @@ type donePart struct {
 }
 
 // readJob: a body that is not a JSON object reads as an empty job.
-func readJob(body string) transferJob { return typedRaw[transferJob]([]byte(body)) }
+func readJob(body string) transferJob {
+	out := typedRaw[transferJob]([]byte(body))
+	out.CaptureStage = typedRaw[captureStageRequest]([]byte(body))
+	return out
+}
 
 // orU64: *p, or def when p is nil.
 func orU64(p *uint64, def uint64) uint64 {
@@ -141,16 +147,22 @@ func isLoopback(url string) bool {
 // accessAllowed: the Access service token goes only to a store tunnel: the host of this host's own store endpoint
 // (FLEET_STORE_CONFIG) or a host in FLEET_STORE_ENDPOINT_HOSTS (comma-separated; ".example.com" matches subdomains), the
 // list the coordinator accepts store endpoints from. Never to loopback or any other presigned URL.
-func accessAllowed(raw string) bool {
+func storeAccessHosts() []string {
+	hosts := append([]string{}, storeEndpointHosts()...)
+	if own, err := neturl.Parse(storeConfig().endpoint()); err == nil && own.Hostname() != "" {
+		hosts = append(hosts, own.Hostname())
+	}
+	return hosts
+}
+
+func accessAllowed(raw string) bool { return accessAllowedOn(raw, storeAccessHosts()) }
+
+func accessAllowedOn(raw string, hosts []string) bool {
 	u, err := neturl.Parse(raw)
 	if err != nil || u.Scheme != "https" || isLoopback(raw) {
 		return false
 	}
 	h := u.Hostname()
-	hosts := storeEndpointHosts()
-	if own, err := neturl.Parse(storeConfig().endpoint()); err == nil && own.Hostname() != "" {
-		hosts = append(hosts, own.Hostname())
-	}
 	for _, x := range hosts {
 		x = strings.TrimSpace(x)
 		if x != "" && (h == x || strings.HasPrefix(x, ".") && strings.HasSuffix(h, x)) {
@@ -163,6 +175,7 @@ func accessAllowed(raw string) bool {
 type transferClient struct {
 	url, token, host string
 	access           *[2]string
+	accessHosts      []string
 	coordinator      *http.Client
 	store            *http.Client
 }
@@ -255,9 +268,15 @@ func (c *transferClient) storeDo(method, url string, body []byte) (*http.Respons
 	if err != nil {
 		return nil, permanentf("%s", err)
 	}
-	if c.access != nil && accessAllowed(url) {
-		req.Header.Set("CF-Access-Client-Id", c.access[0])
-		req.Header.Set("CF-Access-Client-Secret", c.access[1])
+	if c.access != nil {
+		hosts := c.accessHosts
+		if hosts == nil {
+			hosts = storeAccessHosts()
+		}
+		if accessAllowedOn(url, hosts) {
+			req.Header.Set("CF-Access-Client-Id", c.access[0])
+			req.Header.Set("CF-Access-Client-Secret", c.access[1])
+		}
 	}
 	rest := url
 	if _, r, ok := strings.Cut(url, "://"); ok {
@@ -331,14 +350,19 @@ func hashFile(path string) (string, int64, error) {
 
 // sendParts uploads the file parts to the reservation, commits, and, when the coordinator answers with a verify URL
 // (this host owns the store), re-hashes over loopback.
-func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID string, size, partSize uint64) (contract.ArtifactStateReply, *failure) {
+func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID string, size, partSize uint64, done *[]donePart) (contract.ArtifactStateReply, *failure) {
 	if partSize == 0 {
 		partSize = 32 << 20
 	}
 	count := max((size+partSize-1)/partSize, 1)
-	var bodyText string
-	db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
-	done := readJob(bodyText).Done
+	if done == nil {
+		done = new([]donePart)
+	}
+	if db != nil {
+		var bodyText string
+		db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
+		*done = readJob(bodyText).Done
+	}
 	f, err := os.Open(file)
 	if err != nil {
 		return contract.ArtifactStateReply{}, ioFailure(err)
@@ -347,7 +371,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	var missing []uint64
 	for n := uint64(1); n <= count; n++ {
 		have := false
-		for _, d := range done {
+		for _, d := range *done {
 			if d.PartNumber == n {
 				have = true
 			}
@@ -383,13 +407,15 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 			if fl != nil {
 				return contract.ArtifactStateReply{}, fl
 			}
-			done = append(done, donePart{n, etag})
+			*done = append(*done, donePart{n, etag})
 			// progress: the backoff starts over
-			db.Exec("UPDATE transfers SET body=json_set(body,'$.done',json(?)),attempts=0 WHERE id=?", enc(done), jobID)
+			if db != nil {
+				db.Exec("UPDATE transfers SET body=json_set(body,'$.done',json(?)),attempts=0 WHERE id=?", enc(*done), jobID)
+			}
 		}
 	}
 	req := contract.ArtifactCommitRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
-	for _, d := range done {
+	for _, d := range *done {
 		n, etag := d.PartNumber, d.Etag
 		req.Parts = append(req.Parts, contract.ArtifactPart{PartNumber: int64(n), Etag: &etag})
 	}
@@ -451,96 +477,118 @@ func recoverUpload(db *sql.DB, id, path string, body *transferJob, digest *strin
 	return nil, true
 }
 
-func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (any, *failure) {
-	switch kind {
-	case "upload":
-		path := body.Path
-		digest, size, err := hashFile(path)
+// runUpload keeps the multipart and verification continuation in the caller's
+// state. Durable uploads journal it and private capture retains it while the
+// anonymous source exists. Remote verification is owned by the store host.
+func runUpload(c *transferClient, db *sql.DB, id string, body *transferJob) (any, *failure) {
+	path := body.Path
+	var digest string
+	var size int64
+	if body.Url != "verifying" || str0(body.ArtifactId) == "" {
+		var err error
+		digest, size, err = hashFile(path)
 		if err != nil {
 			return nil, ioFailure(err)
 		}
-		required := body.Required
-		for {
-			if body.Url == "verifying" && body.ArtifactId != nil && *body.ArtifactId != "" {
-				renew, f := transferReply(c, contract.RouteArtifactsRenew, contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: *body.ArtifactId, StoreId: optStr(body.StoreId)})
-				if f != nil {
-					if outErr, ok := recoverUpload(db, id, path, &body, &digest, &size, f); ok {
-						continue
-					} else {
-						return nil, outErr
-					}
-				}
-				switch renew.State {
-				case "stored":
-					return M{"artifactId": *body.ArtifactId, "state": "stored"}, nil
-				case "pending", "verifying", "copying":
-					return nil, retryf("awaiting sha256 verification")
-				default:
-					if outErr, ok := recoverUpload(db, id, path, &body, &digest, &size, &failure{recoverable: true, msg: "artifact verification failed (" + renew.State + ")"}); ok {
-						continue
-					} else {
-						return nil, outErr
-					}
-				}
-			}
-			if body.ArtifactId == nil || *body.ArtifactId == "" {
-				req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: body.ExecutionId, ArtifactId: optStr(id), Name: body.Name, MediaType: body.MediaType,
-					Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom), Role: optStr(body.Role)}
-				r, f := transferReply(c, contract.RouteArtifactsReserve, req)
-				if f != nil {
-					if !f.retry {
-						// A refused reservation (purged content, no store, a bad name): the coordinator said no on purpose.
-						return nil, &failure{refused: true, msg: refusalText(f.msg)}
-					}
-					return nil, f
-				}
-				a := id
-				if r.ArtifactId != "" {
-					a = r.ArtifactId
-				}
-				partSize := uint64(32 << 20)
-				if r.PartSize != nil && *r.PartSize > 0 {
-					partSize = uint64(*r.PartSize)
-				}
-				storeID := str0(r.StoreId)
-				body.ArtifactId = &a
-				body.StoreId = storeID
-				body.PartSize = &partSize
-				if db != nil {
-					db.Exec("UPDATE transfers SET body=json_set(body,'$.artifactId',?,'$.storeId',?,'$.partSize',?),response=? WHERE id=?",
-						a, storeID, int64(partSize), enc(M{"artifactId": r.ArtifactId, "state": r.State}), id)
-					wake(db, id)
-				}
-				switch r.State {
-				case "stored":
-					return M{"artifactId": r.ArtifactId, "state": "stored"}, nil
-				case "failed":
-					return nil, permanentf("artifact failed")
-				}
-			}
-			a := str0(body.ArtifactId)
-			if a == "" {
-				a = id
-			}
-			partSize := orU64(body.PartSize, 32<<20)
-			out, f := sendParts(c, db, id, path, a, "", uint64(size), partSize)
+	}
+	required := body.Required
+	for {
+		if body.Url == "verifying" && body.ArtifactId != nil && *body.ArtifactId != "" {
+			renew, f := transferReply(c, contract.RouteArtifactsRenew, contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: *body.ArtifactId, StoreId: optStr(body.StoreId)})
 			if f != nil {
-				if outErr, ok := recoverUpload(db, id, path, &body, &digest, &size, f); ok {
+				if outErr, ok := recoverUpload(db, id, path, body, &digest, &size, f); ok {
 					continue
 				} else {
 					return nil, outErr
 				}
 			}
-			if out.State != "stored" {
-				// Keep local spool intact until SHA-256 verification succeeds on the remote store host.
+			switch renew.State {
+			case "stored":
+				return M{"artifactId": *body.ArtifactId, "state": "stored"}, nil
+			case "pending", "verifying", "copying":
+				return nil, retryf("awaiting sha256 verification")
+			default:
+				if outErr, ok := recoverUpload(db, id, path, body, &digest, &size, &failure{recoverable: true, msg: "artifact verification failed (" + renew.State + ")"}); ok {
+					continue
+				} else {
+					return nil, outErr
+				}
+			}
+		}
+		if body.ArtifactId == nil || *body.ArtifactId == "" {
+			req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: body.ExecutionId, ArtifactId: optStr(id), Name: body.Name, MediaType: body.MediaType,
+				Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom), Role: optStr(body.Role)}
+			r, f := transferReply(c, contract.RouteArtifactsReserve, req)
+			if f != nil {
+				if !f.retry {
+					// A refused reservation (purged content, no store, a bad name): the coordinator said no on purpose.
+					return nil, &failure{refused: true, msg: refusalText(f.msg)}
+				}
+				return nil, f
+			}
+			a := id
+			if r.ArtifactId != "" {
+				a = r.ArtifactId
+			}
+			partSize := uint64(32 << 20)
+			if r.PartSize != nil && *r.PartSize > 0 {
+				partSize = uint64(*r.PartSize)
+			}
+			storeID := str0(r.StoreId)
+			body.ArtifactId = &a
+			body.StoreId = storeID
+			body.PartSize = &partSize
+			if db != nil {
+				db.Exec("UPDATE transfers SET body=json_set(body,'$.artifactId',?,'$.storeId',?,'$.partSize',?),response=? WHERE id=?",
+					a, storeID, int64(partSize), enc(M{"artifactId": r.ArtifactId, "state": r.State}), id)
+				wake(db, id)
+			}
+			switch r.State {
+			case "stored":
+				return M{"artifactId": r.ArtifactId, "state": "stored"}, nil
+			case "verifying", "copying":
 				body.Url = "verifying"
 				if db != nil {
 					db.Exec("UPDATE transfers SET body=json_set(body,'$.url','verifying') WHERE id=?", id)
 				}
-				return nil, retryf("awaiting sha256 verification")
+				continue
+			case "failed":
+				return nil, permanentf("artifact failed")
 			}
-			return M{"artifactId": a, "state": out.State}, nil
 		}
+		a := str0(body.ArtifactId)
+		if a == "" {
+			a = id
+		}
+		partSize := orU64(body.PartSize, 32<<20)
+		out, f := sendParts(c, db, id, path, a, "", uint64(size), partSize, &body.Done)
+		if f != nil {
+			if outErr, ok := recoverUpload(db, id, path, body, &digest, &size, f); ok {
+				continue
+			} else {
+				return nil, outErr
+			}
+		}
+		if out.State != "stored" {
+			// Keep local spool intact until SHA-256 verification succeeds on the remote store host.
+			body.Url = "verifying"
+			if db != nil {
+				db.Exec("UPDATE transfers SET body=json_set(body,'$.url','verifying') WHERE id=?", id)
+			}
+			return nil, retryf("awaiting sha256 verification")
+		}
+		return M{"artifactId": a, "state": out.State}, nil
+	}
+}
+
+func openArtifactInputDir(path string) (int, error) {
+	return unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+}
+
+func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (any, *failure) {
+	switch kind {
+	case "upload":
+		return runUpload(c, db, id, &body)
 	case "verify":
 		return verifyArtifact(c, str0(body.ArtifactId), body.StoreId, body.Url, body.StagingKey)
 	case "copy":
@@ -567,13 +615,21 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		if err != nil {
 			return nil, ioFailure(err)
 		}
-		out, f := sendParts(c, db, id, tmp, str0(body.ArtifactId), body.StoreId, uint64(st.Size()), orU64(body.PartSize, 32<<20))
+		out, f := sendParts(c, db, id, tmp, str0(body.ArtifactId), body.StoreId, uint64(st.Size()), orU64(body.PartSize, 32<<20), nil)
 		if f == nil || !f.retry {
 			os.Remove(tmp)
 		}
 		return out, f
+	case captureStageKind:
+		request := body.CaptureStage
+		if !request.valid() || id != request.key() || protectCaptureMemory() != nil {
+			return nil, permanentf("Invalid private capture stage request")
+		}
+		return executeCaptureStage(request, func() (contract.DesignCaptureReturn, *failure) {
+			return c.captureAuthority(request)
+		}, c.captureArtifact, checkSignedCaptureReplay)
 	case "get":
-		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId), ArtifactId: str0(body.ArtifactId)})
+		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId), ArtifactId: str0(body.ArtifactId), CommandId: body.CaptureCommand})
 		if f != nil {
 			return nil, f
 		}
@@ -583,6 +639,17 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 				av = r.Availability
 			}
 			return nil, permanentf("artifact %s", av)
+		}
+		var verifiedCapture *os.File
+		if body.CaptureCommand != nil {
+			if r.Id != str0(body.ArtifactId) {
+				return nil, permanentf("Capture download does not match the requested artifact")
+			}
+			verifiedCapture, f = downloadGrantedCapture(c, r)
+			if f != nil {
+				return nil, f
+			}
+			defer verifiedCapture.Close()
 		}
 		name := "artifact"
 		if r.Name != "" {
@@ -609,9 +676,17 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			tag = tag[:8]
 		}
 		// The folder is opened once without following a link, and the file is created relative to that descriptor.
-		dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		dfd, err := openArtifactInputDir(dir)
 		if err != nil {
 			return nil, permanentf("input folder is not a directory")
+		}
+		if verifiedCapture != nil {
+			name, err := publishCaptureArchive(dfd, tag, name, verifiedCapture, r.Size)
+			unix.Close(dfd)
+			if err != nil {
+				return nil, ioFailure(err)
+			}
+			return M{"artifactId": r.Id, "path": filepath.Join(dir, name), "mediaType": r.MediaType, "size": r.Size}, nil
 		}
 		var target string
 		var out *os.File
@@ -673,7 +748,7 @@ type afterJob func(c *transferClient, db *sql.DB, body M, response any)
 // oldest first. Retryable failures back off and stay queued. A third goroutine renews the coordinator lease of every
 // queued or running job every 10 minutes.
 func spawnTransfers(journal string, c *transferClient, after afterJob) error {
-	for _, lane := range []string{"kind<>'verify'", "kind='verify'"} {
+	for _, lane := range []string{"kind NOT IN ('verify','" + captureStageKind + "')", "kind='verify'", "kind='" + captureStageKind + "'"} {
 		db, err := openJournal(journal)
 		if err != nil {
 			return err
@@ -730,6 +805,9 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 			body = readJob(freshBody)
 		} else {
 			db.QueryRow("SELECT attempts FROM transfers WHERE id=?", id).Scan(&attempts) // a run that journaled parts reset it
+		}
+		if kind == captureStageKind && f != nil && f.retry && attempts >= 2 {
+			f = permanentf("Capture transfer retry limit reached")
 		}
 		// The terminal state and its outbound notices commit together. In this process a failed commit is retried as a
 		// commit, not by running the job again (a crash before the commit leaves the row running, and the job runs again

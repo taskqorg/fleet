@@ -26,7 +26,7 @@ corepack pnpm install --frozen-lockfile
 node app/build.mjs
 if [ -f deploy/design-verifier/service.mjs ]; then
   corepack pnpm exec esbuild deploy/design-verifier/service.mjs deploy/design-verifier/renderer-probe.mjs \
-    deploy/design-verifier/vm-guest-worker.mjs deploy/design-verifier/git-worker.mjs \
+    deploy/design-verifier/vm-guest-worker.mjs deploy/design-verifier/git-worker.mjs deploy/design-verifier/designer.mjs \
     --bundle --platform=node --format=esm --target=node22 --out-extension:.js=.mjs --outdir="$work/verifier"
   node deploy/design-verifier/build-pins.mjs > "$work/verifier/build-inputs.json"
 fi
@@ -43,7 +43,8 @@ for target in "$@"; do
     cp "$work/verifier/"* "$stage/deploy/design-verifier/"
     if [ "$target" = linux/amd64 ]; then
       mkdir -p "$stage/tests/ui"
-      cp tests/ui/design-image-parity.test.mjs "$stage/tests/ui/"
+      cp tests/ui/design-image-parity.test.mjs tests/ui/vm-transport.test.mjs \
+        tests/ui/vm-transport.test.py tests/ui/design-capture-vm.test.py "$stage/tests/ui/"
       runtime="$stage/deploy/design-verifier/runtime-lock"
       mkdir "$runtime"
       cp package.json pnpm-lock.yaml pnpm-workspace.yaml "$runtime/"

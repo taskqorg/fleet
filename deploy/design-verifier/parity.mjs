@@ -10,6 +10,8 @@ import { DesignBlocked, VerificationWait } from './provider.mjs';
 import { imageScenarioOK, isImageFlow, resolveImages, validateImages } from './worker/image-journey.mjs';
 import { vmBackend, validateVMConfig, validateVMProbe } from './vm-backend.mjs';
 
+import { dependencyWire } from './worker/dependencies.mjs';
+
 const releaseDir = fileURLToPath(new URL('./', import.meta.url));
 const rootfs = '/opt/fleet-design-renderer/rootfs';
 const runtimeDir = '/opt/fleet-design-runtime';
@@ -35,7 +37,7 @@ function trustedPath(path, file) {
   return path;
 }
 
-function readTrusted(path, max) {
+export function readTrusted(path, max) {
   const info = lstatSync(path);
   if (!info.isFile()) throw new Error('The operator input is not a regular file');
   trustedPath(path, true);
@@ -175,6 +177,13 @@ function localRuntime(build, signal, onUnconfirmed) {
     run: (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout, signal, onUnconfirmed) };
 }
 
+// Designer jobs are already inside the independently authenticated guest.
+// Their renderer always uses the local sandbox, without opening the issuer's VM socket.
+export function designerRuntime() {
+  const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
+  return { build, ...localRuntime(build) };
+}
+
 // Parse before opening the local runtime. The protocol exposes no command, path or binary selector.
 export function decodeVMJob(operation, bytes) {
   if (!Buffer.isBuffer(bytes)) throw new VerificationWait('Invalid isolated worker input');
@@ -237,7 +246,7 @@ export function parityRunner({ signal, onUnavailable = () => {}, onUnconfirmed }
     const backend = vmBackend(config, { signal });
     run = async (job, args, bytes) => {
       try { return await backend.run(job, args, bytes); }
-      catch (error) { if (error instanceof VerificationWait) onUnavailable(); throw error; }
+      catch (error) { if (error instanceof VerificationWait) onUnavailable(error); throw error; }
     };
     vm = true;
   } else {
@@ -300,8 +309,9 @@ export function parityRunner({ signal, onUnavailable = () => {}, onUnconfirmed }
       const tree = await git.measureInputs(event.head, [...selected.values()].map(s => s.recipe));
       evidence.treeInputs = tree;
       if (tree.some(item => item.changed.length)) throw new DesignBlocked('The candidate differs from selected recipe inputs');
-      const dependencies = JSON.stringify(tree.flatMap(item => item.dependencies));
-      if (Buffer.byteLength(dependencies) > 96 * 1024) throw new DesignBlocked('Selected dependency input list is too large');
+      let dependencies;
+      try { dependencies = dependencyWire(tree.flatMap(item => item.dependencies)); }
+      catch (error) { throw new DesignBlocked(error.message); }
       const archive = await git.archive(event.head, build.files);
       evidence.archiveSha256 = sha256(archive);
       const artifacts = await run('build', [dependencies], archive, 24 * 1024 * 1024, 60_000);

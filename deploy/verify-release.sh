@@ -18,3 +18,7 @@ for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tm
 if [ -f "$new/deploy/design-verifier/worker/image-journey.mjs" ]; then
   node --test "$new/tests/ui/design-image-parity.test.mjs"
 fi
+# The isolated capture endpoint and authored tests ship together once available.
+if [ -f "$new/deploy/design-verifier/fleet-design-capture.socket" ]; then
+  node --test --test-concurrency=1 "$new/tests/ui/vm-transport.test.mjs"
+fi

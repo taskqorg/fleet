@@ -61,6 +61,7 @@ test('the isolated normal origin requires exact synthetic operations and both de
   t.after(() => site.close());
   const get = (path, options) => fetch(site.origin + path, options);
   assert.equal(await (await get(s.start)).text(), html);
+  assert.equal(await (await get('/home')).text(), html);
   assert.equal((await get('/projects/TST/tasks/T-TST-2')).status, 404);
   assert.deepEqual(site.unmet(), ['task_get', 'entity_refs', original.path, thumbnail.path]);
   const post = body => ({ method: 'POST', body: JSON.stringify(body) });

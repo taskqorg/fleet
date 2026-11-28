@@ -16,7 +16,7 @@ import (
 // Only a sessionless host job owns its entire staging directory. Older commands
 // without project data and commands sharing a session keep their previous behavior.
 func personalScriptJob(c contract.Command) bool {
-	return c.Script != nil && str0(c.Script.SessionId) == "" && c.Script.Payload != nil && projectPersonal(c.Script.Payload.Project)
+	return c.Script != nil && str0(c.Script.SessionId) == "" && c.Script.Payload != nil && (isDesignCaptureJob(c) || projectPersonal(c.Script.Payload.Project))
 }
 
 type scriptOutputs struct {
@@ -66,16 +66,29 @@ func (e *executor) finishPersonalScriptRun(execution string, l *live, ex *worker
 	status := ex.Status
 	cleanup := contract.ScriptPersonalCleanup{}
 	var trial *contract.TrialRemoved
-	if scriptExitUnconfirmed(ex) {
+	if isDesignCaptureJob(c) && (scriptExitUnconfirmed(ex) || status != "completed") {
+		// A stopped/unconfirmed guest must never publish partially returned outputs.
+		if scriptExitUnconfirmed(ex) {
+			cleanup.Unconfirmed = new(true)
+		} else {
+			cleanup.Removed = e.removeScriptStaging(dir)
+		}
+	} else if scriptExitUnconfirmed(ex) {
 		// Retain the existing best-effort upload of diagnostics and results.
 		// The launch fence keeps the staging available while ownership is unknown.
 		cleanup.Unconfirmed = new(true)
 		result.CollectionFailed = !e.insideDirs(dir) || e.artifacts(dir, []string{"output"}, execution, &result.Names) != nil
 	} else {
 		if !captured {
-			result, err = e.queuePersonalScriptOutputs(dir, execution)
-			if err != nil {
-				return err
+			if isDesignCaptureJob(c) {
+				// The worker exits successfully only after both private streams
+				// were uploaded and verified using the existing artifact store.
+				result.Names = []string{"receipt.json", "capture.tar"}
+			} else {
+				result, err = e.queuePersonalScriptOutputs(dir, execution)
+				if err != nil {
+					return err
+				}
 			}
 			if err := saveScriptOutputs(e.db, execution, result); err != nil {
 				return err
@@ -85,6 +98,9 @@ func (e *executor) finishPersonalScriptRun(execution string, l *live, ex *worker
 			status = "failed"
 		} else {
 			cleanup.Removed = e.removeScriptStaging(dir)
+			if isDesignCaptureJob(c) && !cleanup.Removed {
+				status = "failed"
+			}
 		}
 		if l.trial != nil {
 			// A replay may find the trial already removed.

@@ -161,6 +161,10 @@ INSERT INTO definition(kind,id,path,head,project_id,created_by,initial_member) V
 -- name: DefProjectAccessLock :one
 SELECT access_version, (initial_member_revoked_at IS NOT NULL)::boolean AS revoked FROM definition WHERE kind='project' AND id=$1 FOR UPDATE;
 
+-- name: DefProjectAccessShare :one
+-- Serialize an authority read with updates to initial project membership.
+SELECT true AS locked FROM definition WHERE kind='project' AND id=$1 FOR SHARE;
+
 -- name: DefProjectAccess :one
 SELECT initial_member, (initial_member_revoked_at IS NOT NULL)::boolean AS revoked, access_version FROM definition WHERE kind='project' AND id=$1;
 

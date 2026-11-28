@@ -1,0 +1,17 @@
+[Unit]
+Description=Fleet PDS18 fixed designer capture socket
+ConditionPathExists=/opt/fleet-render-vm/bin/capture.json
+
+[Socket]
+ListenStream=/run/fleet-design-capture/broker.sock
+SocketUser=root
+SocketGroup=fleet-design-capture-client
+SocketMode=0660
+DirectoryMode=0710
+Accept=no
+Backlog=2
+RemoveOnStop=yes
+Service=fleet-design-vm.service
+
+[Install]
+WantedBy=sockets.target

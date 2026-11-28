@@ -564,6 +564,18 @@ func (q *Queries) DefProjectAccessLock(ctx context.Context, id string) (DefProje
 	return i, err
 }
 
+const defProjectAccessShare = `-- name: DefProjectAccessShare :one
+SELECT true AS locked FROM definition WHERE kind='project' AND id=$1 FOR SHARE
+`
+
+// Serialize an authority read with updates to initial project membership.
+func (q *Queries) DefProjectAccessShare(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, defProjectAccessShare, id)
+	var locked bool
+	err := row.Scan(&locked)
+	return locked, err
+}
+
 const defProjectCreate = `-- name: DefProjectCreate :exec
 INSERT INTO definition(kind,id,path,head,project_id,created_by,initial_member) VALUES('project', $1, $2, 0, $1, $3, $3)
 `

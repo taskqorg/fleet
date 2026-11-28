@@ -1549,6 +1549,9 @@ func artifactRead(ctx context.Context, a *App, id string, rng []int64) (*Artifac
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := checkCaptureTransportRead(ctx, a, x); err != nil {
+		return nil, nil, err
+	}
 	if x.State != "stored" {
 		return nil, nil, fail(409, "Artifact not stored")
 	}
@@ -1606,6 +1609,9 @@ func artifactBytes(ctx context.Context, a *App, id string, max int64) ([]byte, e
 func artifactView(ctx context.Context, a *App, id, hostID string) (contract.ArtifactView, error) {
 	x, err := artifactRow(ctx, a, id)
 	if err != nil {
+		return contract.ArtifactView{}, err
+	}
+	if err := checkCaptureTransportRead(ctx, a, x); err != nil {
 		return contract.ArtifactView{}, err
 	}
 	cs, err := connDB(ctx, a).ArtCopyStates(ctx, x.ID)

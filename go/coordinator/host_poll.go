@@ -24,7 +24,8 @@ import (
 )
 
 // POST /api/hosts/poll (SL5). Decoupled from GLOBAL: heartbeat writes and readiness checks run under "host:"+hostID
-// only when host state/stores changed or >= 30s elapsed; global dispatch/promote/reconcile/problem sweeps run asynchronously
+// when host state/stores changed, >= 30s elapsed, or an active capture staging report needs its own timestamp. Global
+// dispatch/promote/reconcile/problem sweeps run asynchronously
 // in the single-flight background dispatcher. Supports ?wait=<duration> (clamped 0..25s) long-polling woken immediately
 // via per-host broadcast channels when commands are queued.
 
@@ -497,12 +498,79 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				Branchless: isBool && !branch && !isNull(row.PayloadProjectID), WorkspaceKey: row.WorkspaceKey != "", Attachments: row.HasAttachments}); missing {
 				continue
 			}
+			var permit *contract.DesignCapturePermit
+			if cv.Kind == "script" && host == contract.DesignCaptureHost {
+				cmd, err := commandGet(wq, cv.ID)
+				if err != nil {
+					return err
+				}
+				if capture, ok := captureCommandPayload(cmd); ok {
+					request := capture.DesignCapture.Request
+					expired := capture.PermitExpiresAt <= time.Now().Unix()
+					if expired {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-permit-expired"); err != nil {
+							return err
+						}
+						continue
+					}
+					if !contract.HasCapability(caps, contract.DesignCaptureCapability) {
+						continue
+					}
+					scope, err := designCaptureAuthority(wq, request.Execution, "")
+					if err != nil {
+						_, outcome := pollCommandRefusal(err)
+						var refused *HTTPError
+						if outcome != pollStopsCommand && (!errors.As(err, &refused) || refused.Code != 409) {
+							return err
+						}
+					}
+					if err != nil || scope != request.DesignCaptureScope {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-authority-changed"); err != nil {
+							return err
+						}
+						continue
+					}
+					origin, err := getExecution(wq, request.Execution)
+					if err != nil {
+						return err
+					}
+					originHost := capture.DesignCapture.OriginHost
+					if originHost == "" || deref(origin.HostID) != originHost {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-origin-changed"); err != nil {
+							return err
+						}
+						continue
+					}
+					if err := requireDesignCaptureOrigin(wq, originHost, request.Execution); err != nil {
+						var refused *HTTPError
+						if !errors.As(err, &refused) || refused.Code != 403 {
+							return err
+						}
+						// A short outage or rolling update may recover before the original permit expires.
+						continue
+					}
+					current, err := loadDesignCaptureInstallation()
+					producer, runtime := capture.DesignCapture.Producer, capture.DesignCapture.Runtime
+					if err != nil || len(capture.Inputs) != 3 || capture.Inputs[0].ArtifactId != current.BaseArtifact ||
+						producer != current.Producer || runtime != current.Runtime || capture.DesignCapture.LaunchSHA256 != current.LaunchSHA256 {
+						if err := stopDesignerCapture(wq, request.Execution, "design-capture-installation-changed"); err != nil {
+							return err
+						}
+						continue
+					}
+					p, err := capturePermit(capture.DesignCapture, capture.PermitExpiresAt)
+					if err != nil {
+						continue
+					}
+					permit = &p
+				}
+			}
 			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
 			// its reason, and the rest of the poll goes on (2026-11-17: one stored run failed every poll for 2.5 h).
 			if err := exec(wq, "SAVEPOINT poll_command"); err != nil {
 				return err
 			}
-			fresh, err := a.pollReadyCommand(wq, hostDoc, cv, prepared, contract.HasCapability(caps, string(contract.CapabilityAgentSiteAccessV1)))
+			fresh, err := a.pollReadyCommand(wq, hostDoc, cv, prepared, contract.HasCapability(caps, string(contract.CapabilityAgentSiteAccessV1)), permit != nil)
 			if err != nil {
 				reason, outcome := pollCommandRefusal(err)
 				if outcome == pollFails {
@@ -547,6 +615,9 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			}
 			pollCommandWaits.forget(cv.ID) // prepared: no longer waiting on an error
 			if fresh != nil {
+				if permit != nil {
+					fresh = withCapturePermit(fresh, *permit)
+				}
 				out = append(out, *fresh)
 			}
 		}
@@ -637,6 +708,7 @@ func (p *preparedCommands) keep(host string, entries map[string]pollPreparedEntr
 
 // pollExecutionView: the fields of a command's execution the poll reads.
 type pollExecutionView struct {
+	StopRequested     *bool           `json:"stopRequested"`
 	TaskStopRequested *bool           `json:"taskStopRequested"`
 	ProjectID         json.RawMessage `json:"projectId"`
 	DirectedBy        json.RawMessage `json:"directedBy"`
@@ -644,7 +716,7 @@ type pollExecutionView struct {
 
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
-func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandView, prepared map[string]pollPreparedEntry, siteAccessSupported bool) (*contract.Command, error) {
+func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandView, prepared map[string]pollPreparedEntry, siteAccessSupported, fixedCapture bool) (*contract.Command, error) {
 	ok, err := agentReady(wq, cv.Kind, cv.ExecutionID)
 	if err != nil || !ok {
 		return nil, err
@@ -689,6 +761,9 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 		return nil, err
 	}
 	ev := agentView[pollExecutionView](e)
+	if fixedCapture && isTrue(ev.StopRequested) {
+		return nil, nil
+	}
 	// A previously handed-out start may already be in flight. Stop it on its
 	// owning host, while withholding further delivery of work after the stop.
 	if ev.TaskStopRequested != nil && *ev.TaskStopRequested && inList(stopWithheldKinds, cv.Kind) {
@@ -700,7 +775,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 			return nil, nil
 		}
 	}
-	if cv.Kind != "stop" {
+	if cv.Kind != "stop" && !fixedCapture {
 		ok, err := a.delegationReady(wq, e)
 		if err != nil || !ok {
 			return nil, err
@@ -914,6 +989,14 @@ func pollObserved(q *Request, run func() (any, error)) (any, error) {
 	return out, err
 }
 
+func reportsCaptureStage(b *contract.PollRequest) bool {
+	return b.Platform == contract.PlatformLinux && deref(b.Version) != "" &&
+		slices.ContainsFunc(b.Capabilities, func(capability string) bool {
+			execution, ok := contract.DesignCaptureStageExecution(capability)
+			return ok && slices.Contains(b.ActiveExecutions, execution)
+		})
+}
+
 func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply, error) {
 	host := hostOf(q)
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
@@ -1000,17 +1083,16 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	// Store changes persist with host observations without triggering global state-change work.
 	obs.Stores = stores
 	flushObs = flushObs || flushStores
+	// Capture admission uses the persisted report's timestamp. An unchanged
+	// capture refresh must not postpone the ordinary host/store heartbeat.
+	captureRefresh := !flushObs && reportsCaptureStage(b)
+	flushObs = flushObs || captureRefresh
 
 	var flushGen uint64
 	ctx := q.ctx()
 	if flushObs || flushStores {
 		obs.LastSeenAt = now
 		if err := a.store.Write(ctx, nil, []string{"host:" + host}, func(wq *Request) error {
-			if flushStores {
-				if err := storesObserve(wq.ctx(), wq.tx, host, stores); err != nil {
-					return err
-				}
-			}
 			if flushObs {
 				var prev *struct {
 					Update         json.RawMessage                     `json:"update"`
@@ -1018,6 +1100,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 					BrowserTargets []contract.BrowserTargetObservation `json:"browserTargets"`
 				}
 				if r, err := wq.db().HostObservationOf(wq.ctx(), host); err == nil {
+					if r.LastSeenAt != nil && r.LastSeenAt.UnixMilli() >= now {
+						return nil // both poll write paths keep the observation that already won the host lock
+					}
 					var p struct {
 						Update         json.RawMessage                     `json:"update"`
 						PollError      json.RawMessage                     `json:"pollError"`
@@ -1029,6 +1114,11 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 					prev = &p
 				} else if !errors.Is(err, pgx.ErrNoRows) {
 					return err
+				}
+				if flushStores {
+					if err := storesObserve(wq.ctx(), wq.tx, host, stores); err != nil {
+						return err
+					}
 				}
 				var prevUpdate any
 				row := obs
@@ -1065,7 +1155,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 				}
 			}
 			afterCommit(wq, func() {
-				a.commitHostHeartbeat(host, stateSig, storesSig, now)
+				if !captureRefresh {
+					a.commitHostHeartbeat(host, stateSig, storesSig, now)
+				}
 				if stateChanged {
 					flushGen = a.triggerDispatch()
 				}

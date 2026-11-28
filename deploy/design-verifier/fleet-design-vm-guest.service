@@ -1,4 +1,8 @@
 [Unit]
+Requires=fleet-design-vm-worker.socket fleet-design-vm-worker.service
+After=fleet-design-vm-worker.socket fleet-design-vm-worker.service
+SuccessAction=poweroff
+FailureAction=poweroff
 Description=Fleet isolated design VM fixed job supervisor
 After=dev-virtio\x2dports-org.fleet.design\x2dverifier.device
 Requires=dev-virtio\x2dports-org.fleet.design\x2dverifier.device

@@ -1773,7 +1773,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		if design {
 			if dir := q.peopleSnapshot().person(deref(e.DirectedBy)); dir != nil {
 				for _, operation := range fleetOperations(dir) {
-					if operation.Name == "design_offer" || operation.Name == "design_review_get" {
+					if operation.Name == "design_offer" || operation.Name == "design_review_get" || operation.Name == "design_capture" {
 						opsList = append(opsList, operation)
 					}
 				}
