@@ -6,6 +6,150 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+type DesignVerifierEvidenceReply struct {
+	Branch  string                 `json:"branch"`
+	Head    string                 `json:"head"`
+	Number  int64                  `json:"number"`
+	Recipes []DesignVerifierRecipe `json:"recipes"`
+	Review  DesignReviewGetReply   `json:"review"`
+	Writer  string                 `json:"writer"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierEvidenceReply) Validate() error {
+	if v.Recipes == nil {
+		return Missing("recipes")
+	}
+	for i := range v.Recipes {
+		if err := Check(&v.Recipes[i], "recipes"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Review, "review"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type DesignVerifierEvidenceRequest struct {
+	Branch string `json:"branch"`
+	Head   string `json:"head"`
+	Number int64  `json:"number"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierEvidenceRequest) Validate() error {
+	return nil
+}
+
+type DesignVerifierObservation struct {
+	AuthenticatedAt *int64  `json:"authenticatedAt,omitempty"`
+	CheckRunId      *int64  `json:"checkRunId,omitempty"`
+	ExpiresAt       *int64  `json:"expiresAt,omitempty"`
+	ExternalId      *string `json:"externalId,omitempty"`
+	Head            *string `json:"head,omitempty"`
+	KeyFingerprint  *string `json:"keyFingerprint,omitempty"`
+	Kind            string  `json:"kind"`
+	Revision        string  `json:"revision"`
+	State           string  `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierObservation) Validate() error {
+	return nil
+}
+
+type DesignVerifierObservationRecord struct {
+	At          int64                     `json:"at"`
+	Observation DesignVerifierObservation `json:"observation"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierObservationRecord) Validate() error {
+	if err := Check(&v.Observation, "observation"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type DesignVerifierObserveReply = OkReply
+
+type DesignVerifierObserveRequest = DesignVerifierObservation
+
+type DesignVerifierRecipe struct {
+	Inputs   []DesignVerifierRecipeInput `json:"inputs"`
+	ScopeKey string                      `json:"scopeKey"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierRecipe) Validate() error {
+	if v.Inputs == nil {
+		return Missing("inputs")
+	}
+	for i := range v.Inputs {
+		if err := Check(&v.Inputs[i], "inputs"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DesignVerifierRecipeInput struct {
+	Path   string `json:"path"`
+	Sha256 string `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierRecipeInput) Validate() error {
+	return nil
+}
+
+type DesignVerifierStatusReply struct {
+	AppId                   int64                            `json:"appId"`
+	FleetIdentityConfigured bool                             `json:"fleetIdentityConfigured"`
+	InstallationId          int64                            `json:"installationId"`
+	LastReady               *DesignVerifierObservationRecord `json:"lastReady,omitempty"`
+	LatestMergeGroup        *DesignVerifierObservationRecord `json:"latestMergeGroup,omitempty"`
+	LatestPR                *DesignVerifierObservationRecord `json:"latestPR,omitempty"`
+	LatestProvider          *DesignVerifierObservationRecord `json:"latestProvider,omitempty"`
+	Permissions             []string                         `json:"permissions"`
+	Provider                string                           `json:"provider"`
+	ProviderReason          *string                          `json:"providerReason,omitempty"`
+	Repository              string                           `json:"repository"`
+	RepositoryId            int64                            `json:"repositoryId"`
+	Service                 string                           `json:"service"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierStatusReply) Validate() error {
+	if v.LastReady != nil {
+		if err := Check(v.LastReady, "lastReady"); err != nil {
+			return err
+		}
+	}
+	if v.LatestMergeGroup != nil {
+		if err := Check(v.LatestMergeGroup, "latestMergeGroup"); err != nil {
+			return err
+		}
+	}
+	if v.LatestPR != nil {
+		if err := Check(v.LatestPR, "latestPR"); err != nil {
+			return err
+		}
+	}
+	if v.LatestProvider != nil {
+		if err := Check(v.LatestProvider, "latestProvider"); err != nil {
+			return err
+		}
+	}
+	if v.Permissions == nil {
+		return Missing("permissions")
+	}
+	return nil
+}
+
+type DesignVerifierStatusRequest = map[string]json.RawMessage
+
 type MergeMethod string
 
 const (
@@ -931,6 +1075,9 @@ func (v *PublishingStatusRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"design_verifier_evidence":        {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "no", Description: "Resolve an exact Fleet PR head and branch to its managed publishing record, admitted writer, active owner decision and verified original artifacts. Restricted to the Fleet verifier and human owner.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"branch\":{\"type\":\"string\"},\"head\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"}},\"required\":[\"number\",\"head\",\"branch\"],\"type\":\"object\"}")},
+		"design_verifier_observe":         {Read: false, Long: false, Errors: []int{400, 403}, Auth: "person", Agent: "no", Description: "Retain the protected Fleet verifier's GitHub provider and check readbacks. Restricted to its enrolled Fleet machine identity.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"authenticatedAt\":{\"type\":\"integer\"},\"checkRunId\":{\"type\":\"integer\"},\"expiresAt\":{\"type\":\"integer\"},\"externalId\":{\"type\":\"string\"},\"head\":{\"type\":\"string\"},\"keyFingerprint\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"revision\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"required\":[\"kind\",\"state\",\"revision\"],\"type\":\"object\"}")},
+		"design_verifier_status":          {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read Fleet's protected design issuer registration, latest provider readiness, last successful authentication and exact-head check readbacks. No credentials.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"publishing_cancel_merge_request": {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Cancel an active auto-merge request, merge-when-pipeline-succeeds flag, or merge queue entry idempotently, fenced by optional expectedHeadSha.", InputSchema: json.RawMessage("{\"properties\":{\"branch\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"repo\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"publishing_capabilities":         {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Inspect project publishing capabilities per bound repository: detected provider (github or gitlab), host, repository slug, branch/integration policy, eligible hosts, provider facts readiness and publication support.", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"publishing_ci_recovery":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Read durable PR-head CI recovery records for a visible project, without invoking the provider.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"expectedHeadSha\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},

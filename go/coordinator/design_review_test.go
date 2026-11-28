@@ -154,8 +154,9 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	if code, _ := e.callJSON(t, "POST", "/api/ops/questions_answer", doc{"questionId": id, "answer": "accepted"}, e.ownerHeaders()); code != 400 {
 		t.Fatalf("task acceptance %d", code)
 	}
-	builder := newID()
-	exec("INSERT INTO execution (id,kind,state,project_id,task_id,started_at,data,observation,config_ref) VALUES ($1,'host_job','running',$2,$3,now(),'{}','confirmed','{}')", builder, project, task.Id)
+	builder, builderSession := newID(), newID()
+	exec("INSERT INTO session (id,project_id,task_id,directed_by) VALUES ($1,$2,$3,$4)", builderSession, project, task.Id, testOwnerEmail)
+	exec("INSERT INTO execution (id,kind,state,host_id,project_id,session_id,task_id,harness,started_at,data,observation,config_ref) VALUES ($1,'agent_run','running','design-host',$2,$3,$4,'codex',now(),'{}','confirmed','{}')", builder, project, builderSession, task.Id)
 	write := func(fn func(q *Request) error) error {
 		return e.appStore.Write(e.ctx, &Request{app: e.app, person: e.app.peopleSnapshot().person(testOwnerEmail)}, nil, fn)
 	}
@@ -192,9 +193,32 @@ func TestDesignReviewOwnerRoundTrip(t *testing.T) {
 	if err := write(func(q *Request) error { return checkDesignPublication(q, task.Id, eid, r.Repository) }); err == nil {
 		t.Fatal("designer published")
 	}
+	const prNumber = 181
+	head := strings.Repeat("a", 40)
+	branch := "fleet/" + builderSession
+	if err := write(func(q *Request) error {
+		return audit(q, "publishing:taskqorg/fleet", "publish_draft", nil, doc{"sourceExecutionId": builder,
+			"commandId": "invented-command", "baseBranch": "main", "provider": "github", "host": "github.com",
+			"state": "OPEN", "kind": "pull_request", "branch": branch, "number": prNumber, "headSha": head}, auditExtra{ProjectID: ptr(project)})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var evidence contract.DesignVerifierEvidenceReply
+	exact := doc{"number": prNumber, "head": head, "branch": branch}
+	e.opInto(t, "design_verifier_evidence", exact, verifierTestHeaders(t, e), &evidence)
+	if evidence.Writer != builder || evidence.Review.Digest != offer.Digest || len(evidence.Recipes) != 1 ||
+		len(evidence.Recipes[0].Inputs) != 1 || evidence.Recipes[0].Inputs[0].Path != "source.tsx" {
+		t.Fatalf("wrong exact-head evidence: %+v", evidence)
+	}
+	if code, _ := e.callJSON(t, "POST", "/api/ops/design_verifier_evidence", doc{"number": prNumber, "head": strings.Repeat("b", 40), "branch": branch}, e.ownerHeaders()); code != 404 {
+		t.Fatalf("new head inherited the former admission: %d", code)
+	}
 	exec("UPDATE artifact SET state='failed' WHERE id=$1", c.Frames[0].ArtifactId)
 	if code, _ := e.callJSON(t, "POST", "/api/ops/design_review_get", doc{"taskId": task.Id}, e.ownerHeaders()); code != 409 {
 		t.Fatalf("missing evidence %d", code)
+	}
+	if code, _ := e.callJSON(t, "POST", "/api/ops/design_verifier_evidence", exact, e.ownerHeaders()); code != 409 {
+		t.Fatalf("unavailable originals were still attested: %d", code)
 	}
 }
 

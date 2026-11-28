@@ -2,6 +2,27 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations and host CI diagnostics for unified project publishing (GitHub PR + GitLab MR parity).",
   "operations": {
+    "design_verifier_status": {
+      "read": true,
+      "errors": [404],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Read Fleet's protected design issuer registration, latest provider readiness, last successful authentication and exact-head check readbacks. No credentials."
+    },
+    "design_verifier_observe": {
+      "read": false,
+      "errors": [400, 403],
+      "auth": "person",
+      "agent": "no",
+      "description": "Retain the protected Fleet verifier's GitHub provider and check readbacks. Restricted to its enrolled Fleet machine identity."
+    },
+    "design_verifier_evidence": {
+      "read": true,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "no",
+      "description": "Resolve an exact Fleet PR head and branch to its managed publishing record, admitted writer, active owner decision and verified original artifacts. Restricted to the Fleet verifier and human owner."
+    },
     "publishing_report_blocker": {
       "read": false,
       "errors": [400, 403, 404, 409],
@@ -80,6 +101,35 @@
     }
   },
   "$defs": {
+    "DesignVerifierStatusRequest": {"type": "object", "additionalProperties": false, "properties": {}},
+    "DesignVerifierObservation": {"type": "object", "additionalProperties": false,
+      "required": ["kind", "state", "revision"],
+      "properties": {"kind": {"type": "string"}, "state": {"type": "string"}, "revision": {"type": "string"},
+        "keyFingerprint": {"type": "string"}, "authenticatedAt": {"type": "integer"}, "expiresAt": {"type": "integer"},
+        "head": {"type": "string"}, "externalId": {"type": "string"}, "checkRunId": {"type": "integer"}}},
+    "DesignVerifierObservationRecord": {"type": "object", "additionalProperties": false,
+      "required": ["at", "observation"], "properties": {"at": {"type": "integer"}, "observation": {"$ref": "#/$defs/DesignVerifierObservation"}}},
+    "DesignVerifierStatusReply": {"type": "object", "additionalProperties": false,
+      "required": ["service", "repository", "repositoryId", "appId", "installationId", "permissions", "fleetIdentityConfigured", "provider"],
+      "properties": {"service": {"type": "string"}, "repository": {"type": "string"}, "repositoryId": {"type": "integer"},
+        "appId": {"type": "integer"}, "installationId": {"type": "integer"}, "permissions": {"type": "array", "items": {"type": "string"}},
+        "fleetIdentityConfigured": {"type": "boolean"}, "provider": {"type": "string"}, "providerReason": {"type": "string"},
+        "latestProvider": {"$ref": "#/$defs/DesignVerifierObservationRecord"}, "lastReady": {"$ref": "#/$defs/DesignVerifierObservationRecord"},
+        "latestPR": {"$ref": "#/$defs/DesignVerifierObservationRecord"}, "latestMergeGroup": {"$ref": "#/$defs/DesignVerifierObservationRecord"}}},
+    "DesignVerifierObserveRequest": {"$ref": "#/$defs/DesignVerifierObservation"},
+    "DesignVerifierObserveReply": {"$ref": "host-protocol.schema.json#/$defs/OkReply"},
+    "DesignVerifierEvidenceRequest": {"type": "object", "additionalProperties": false, "required": ["number", "head", "branch"],
+      "properties": {"number": {"type": "integer"}, "head": {"type": "string"}, "branch": {"type": "string"}}},
+    "DesignVerifierEvidenceReply": {"type": "object", "additionalProperties": false,
+      "required": ["number", "head", "branch", "writer", "review", "recipes"],
+      "properties": {"number": {"type": "integer"}, "head": {"type": "string"}, "branch": {"type": "string"}, "writer": {"type": "string"},
+        "review": {"$ref": "ops-sessions.schema.json#/$defs/DesignReviewGetReply"},
+        "recipes": {"type": "array", "items": {"$ref": "#/$defs/DesignVerifierRecipe"}}}},
+    "DesignVerifierRecipe": {"type": "object", "additionalProperties": false, "required": ["scopeKey", "inputs"],
+      "properties": {"scopeKey": {"type": "string"}, "inputs": {"type": "array", "items": {"$ref": "#/$defs/DesignVerifierRecipeInput"}}}},
+    "DesignVerifierRecipeInput": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}}},
+
     "PublishingBlockerOperation": {"type": "string", "enum": ["ci_logs", "rerun_failed", "status", "publish_draft", "record_code_review", "mark_ready", "request_merge", "release", "host_landing"]},
     "PublishingBlockerReason": {"type": "string", "enum": ["access_unavailable", "diagnostics_unavailable", "provider_unavailable", "outcome_unconfirmed"]},
     "PublishingReportBlockerRequest": {

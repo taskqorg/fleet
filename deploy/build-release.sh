@@ -24,6 +24,10 @@ cd "$work"
 status working 15 "building the web app"
 corepack pnpm install --frozen-lockfile
 node app/build.mjs
+if [ -f deploy/design-verifier/service.mjs ]; then
+  corepack pnpm exec esbuild deploy/design-verifier/service.mjs --bundle --platform=node --format=esm \
+    --target=node22 --outfile="$work/design-verifier-service.mjs"
+fi
 step=0
 for target in "$@"; do
   os=${target%/*} arch=${target#*/} stage="$work/stage-$os-$arch"
@@ -33,6 +37,9 @@ for target in "$@"; do
     CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-X main.version=$version" -o "$stage/fleet-$cmd" "./$cmd"
   done)
   cp -R dist/app "$stage/dist/" && cp -R config deploy "$stage/" && mkdir -p "$stage/scripts" && cp -R scripts/lab "$stage/scripts/"
+  if [ -f "$work/design-verifier-service.mjs" ]; then
+    cp "$work/design-verifier-service.mjs" "$stage/deploy/design-verifier/service.mjs"
+  fi
   printf '{"version":"%s","previous":"%s","commit":"%s","target":"%s","builtAt":"%s"}\n' \
     "$version" "$previous" "$commit" "$os-$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$stage/release.json"
   if [ -n "${RELEASE_PACING:-}" ]; then

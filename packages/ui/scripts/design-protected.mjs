@@ -1,6 +1,7 @@
 // Load this module from a protected revision. The adapter reads provider facts and trusted
 // receipts. Candidate code runs only in a separate credential-free builder.
 import { execFileSync } from 'node:child_process';
+import { devNull } from 'node:os';
 import { designImpact } from './design-impact.mjs';
 import { verifyRetainedDesignEvidence } from './design-evidence.mjs';
 
@@ -11,13 +12,14 @@ const reject = message => { throw new Error('Protected design verification: ' + 
 export function candidateChanges(repositoryDir, { kind, base, head }) {
   if (!sha(base) || !sha(head) || !['pull_request', 'merge_group'].includes(kind))
     reject('missing immutable provider revisions');
-  const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: repositoryDir, encoding: 'utf8' });
+  const env = { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull };
+  const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: repositoryDir, encoding: 'utf8', env });
   if (git('rev-parse', '--verify', base + '^{commit}').trim() !== base ||
       git('rev-parse', '--verify', head + '^{commit}').trim() !== head) reject('provider revisions are not local commits');
   const ancestor = git('merge-base', base, head).trim();
   if (kind === 'merge_group' && ancestor !== base) reject('the provider group base is not an ancestor');
   // Treat renames as an addition and deletion. Check both paths.
-  return git('diff', '--no-ext-diff', '--no-renames', '--name-only', '-z', ancestor, head).split('\0').filter(Boolean);
+  return git('diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', ancestor, head).split('\0').filter(Boolean);
 }
 
 function requireFence(record, expected) {
