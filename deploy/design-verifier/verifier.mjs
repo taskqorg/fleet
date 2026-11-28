@@ -10,7 +10,7 @@ const decision = ({ found, review, selected }) => ({
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const publicReason = reason => reason.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 400);
 
-export async function evaluate(event, { provider, git, receipts, checks, fleet, runner }) {
+export async function evaluate(event, { provider, git, receipts, checks, fleet, runner, rendererPending = false, signal }) {
   let candidate, policy, evidence, conclusion, evidenceState;
   const memberReceipts = [];
   const visual = {};
@@ -54,10 +54,11 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
   }
 
   try {
-    git.ensure(event);
+    await git.ensure(event);
     candidate = await provider.readCandidate(event, git);
     evidence = await verifyProtectedDesignCandidate(event, {
       repositoryDir: git.dir,
+      ...(git.changes && { readChanges: current => git.changes(current) }),
       readCandidate: async () => candidate,
       readPRReceipt: async member => {
         const receipt = await receipts.readPR(member);
@@ -71,9 +72,10 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
       measureImpact: async (_event, paths) => {
         if (!runner) {
           if (fleet && event.kind === 'pull_request') await select();
+          if (rendererPending) throw new VerificationWait('Protected VM renderer is temporarily unavailable');
           throw new DesignBlocked('Protected normal-route verification is unconfigured for this change');
         }
-        const measured = runner.impact(event, paths, git, visual);
+        const measured = await runner.impact(event, paths, git, visual);
         policy = measured.policy;
         return measured;
       },
@@ -104,7 +106,9 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
     failed(err);
   }
 
+  const ensureRunning = () => { if (signal?.aborted) throw new Error('Verifier stopped'); };
   const publication = async (recheck = false) => {
+    ensureRunning();
     evidence.evidenceState = evidenceState;
     if (event.kind === 'pull_request') evidence.source = { branch: event.branch, repositoryId: event.sourceRepositoryId };
     if (event.kind === 'merge_group' && candidate) evidence.queue = {
@@ -116,6 +120,7 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
     if (selections.size || Object.keys(visual).length)
       evidence.visual = { ...visual, decisions: [...selections.values()].map(decision) };
     const id = await receipts.retain(evidence, conclusion);
+    ensureRunning();
     const summary = evidence.reason ?? evidence.classification;
     const check = await checks.publish(event.head, id, conclusion, summary, async () => {
       if (recheck) {
@@ -136,6 +141,7 @@ export async function evaluate(event, { provider, git, receipts, checks, fleet, 
         }
       }
       await provider.assertCurrent(event, candidate);
+      ensureRunning();
     });
     await receipts.recordReadback(id, check);
     return { ...check, kind: event.kind, number: event.number, ref: event.ref, classification: evidence.classification,

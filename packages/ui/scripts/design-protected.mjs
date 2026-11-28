@@ -70,7 +70,7 @@ export async function verifyProtectedDesignCandidate(event, adapter) {
     }
   }
 
-  const changes = candidateChanges(adapter.repositoryDir, event);
+  const changes = adapter.readChanges ? await adapter.readChanges(event) : candidateChanges(adapter.repositoryDir, event);
   const scenes = await adapter.readSceneInventory(event);
   const impact = designImpact(changes, scenes);
   const scope = new Set(impact.affected.flatMap(scene => Object.keys(scene.states).map(state => scene.key + ':' + state)));

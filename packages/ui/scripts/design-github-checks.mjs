@@ -47,11 +47,12 @@ async function gitHubJWT({ appId, keyFile }) {
   }
 }
 
-async function github(path, token, { method = 'GET', body } = {}) {
+async function github(path, token, { method = 'GET', body, signal } = {}) {
+  const deadline = AbortSignal.timeout(30_000);
   const response = await fetch('https://api.github.com' + path, {
     method,
     redirect: 'error',
-    signal: AbortSignal.timeout(30_000),
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json',
       'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2026-03-10' },
     body: body ? JSON.stringify(body) : undefined,
@@ -61,37 +62,111 @@ async function github(path, token, { method = 'GET', body } = {}) {
   return response.json();
 }
 
-async function fleetInstallation(config) {
-  const { jwt, keyFingerprint } = await gitHubJWT(config);
-  const installed = await github(repo + '/installation', jwt);
-  if (installed.id !== config.installationId || installed.app_id !== config.appId ||
-      installed.repository_selection !== 'selected' || installed.suspended_at ||
-      !Object.entries(permissions).every(([key, value]) => installed.permissions?.[key] === value) ||
-      Object.keys(installed.permissions).some(key => !Object.hasOwn(permissions, key)))
-    throw new Error('The GitHub App installation does not match the protected Fleet issuer');
-  const issued = await github('/app/installations/' + config.installationId + '/access_tokens', jwt, {
-    method: 'POST', body: { repository_ids: [repositoryId], permissions },
+// A failed mint response may mean GitHub issued a token whose value we never received.
+export async function mintDesignToken(send, path, jwt, options) {
+  try { return await send(path, jwt, options); }
+  catch (error) {
+    if (!Number.isInteger(error?.status) || error.status === 408 || error.status >= 500)
+      console.error('GitHub installation token issuance outcome unconfirmed; no token value was received');
+    throw error;
+  }
+}
+
+async function fleetInstallation(config, signal) {
+  let issued, accepted = false;
+  try {
+    signal?.throwIfAborted();
+    const { jwt, keyFingerprint } = await gitHubJWT(config);
+    signal?.throwIfAborted();
+    const installed = await github(repo + '/installation', jwt, { signal });
+    if (installed.id !== config.installationId || installed.app_id !== config.appId ||
+        installed.repository_selection !== 'selected' || installed.suspended_at ||
+        !Object.entries(permissions).every(([key, value]) => installed.permissions?.[key] === value) ||
+        Object.keys(installed.permissions).some(key => !Object.hasOwn(permissions, key)))
+      throw new Error('The GitHub App installation does not match the protected Fleet issuer');
+    issued = await mintDesignToken(github, '/app/installations/' + config.installationId + '/access_tokens', jwt, {
+      method: 'POST', body: { repository_ids: [repositoryId], permissions }, signal,
+    });
+    if (typeof issued.token !== 'string' || !issued.token ||
+        !Object.entries(permissions).every(([key, value]) => issued.permissions?.[key] === value) ||
+        Object.keys(issued.permissions).some(key => !Object.hasOwn(permissions, key)))
+      throw new Error('GitHub did not grant the restricted issuer token');
+    const scope = await github('/installation/repositories?per_page=2', issued.token, { signal });
+    if (scope.total_count !== 1 || scope.repositories?.[0]?.full_name !== 'taskqorg/fleet' ||
+        scope.repositories[0].id !== repositoryId)
+      throw new Error('The issuer token is not scoped to the Fleet repository');
+    const expires = Date.parse(issued.expires_at);
+    if (!Number.isFinite(expires) || expires <= Date.now()) throw new Error('GitHub issued an invalid token expiry');
+    signal?.throwIfAborted();
+    accepted = true;
+    return { token: issued.token, expires, keyFingerprint, authenticatedAt: Date.now() };
+  } finally {
+    if (!accepted && issued?.token) {
+      try { await github('/installation/token', issued.token, { method: 'DELETE', signal: AbortSignal.timeout(3_000) }); }
+      catch { throw new Error('GitHub installation token revocation could not be confirmed'); }
+    }
+  }
+}
+
+// Stop and deadlines must release the poll even if an injected transport stalls.
+async function bounded(promise, signal) {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  let abort;
+  const stopped = new Promise((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
   });
-  if (typeof issued.token !== 'string' || !issued.token ||
-      !Object.entries(permissions).every(([key, value]) => issued.permissions?.[key] === value) ||
-      Object.keys(issued.permissions).some(key => !Object.hasOwn(permissions, key)))
-    throw new Error('GitHub did not grant the restricted issuer token');
-  const scope = await github('/installation/repositories?per_page=2', issued.token);
-  if (scope.total_count !== 1 || scope.repositories?.[0]?.full_name !== 'taskqorg/fleet' ||
-      scope.repositories[0].id !== repositoryId)
-    throw new Error('The issuer token is not scoped to the Fleet repository');
-  const expires = Date.parse(issued.expires_at);
-  if (!Number.isFinite(expires) || expires <= Date.now()) throw new Error('GitHub issued an invalid token expiry');
-  return { token: issued.token, expires, keyFingerprint, authenticatedAt: Date.now() };
+  try { return await Promise.race([promise, stopped]); }
+  finally { signal.removeEventListener('abort', abort); }
 }
 
 // Only the protected service receives this client. Git and any future isolated builder receive no token.
-export function fleetDesignGitHub(config, { connect = fleetInstallation, send = github } = {}) {
-  let access;
-  const api = async (path, options) => {
-    if (!access || access.expires - Date.now() < 60_000) access = await connect(config);
+export function fleetDesignGitHub(config, { connect = fleetInstallation, send = github, signal } = {}) {
+  let access, revokeFailed = false;
+  const pendingCleanup = new Set();
+  const track = promise => {
+    const pending = promise.catch(() => { revokeFailed = true; });
+    pendingCleanup.add(pending);
+    void pending.finally(() => pendingCleanup.delete(pending));
+  };
+  const revoke = async token => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('Token revocation timed out')), 3_000);
     try {
-      return await send(path, access.token, options);
+      await bounded(Promise.resolve().then(() => send('/installation/token', token,
+        { method: 'DELETE', signal: controller.signal })), controller.signal);
+    } finally { clearTimeout(timer); }
+  };
+  const api = async (path, options = {}) => {
+    signal?.throwIfAborted();
+    if (!access || access.expires - Date.now() < 60_000) {
+      const pending = Promise.resolve().then(() => connect(config, signal));
+      let next;
+      try { next = await bounded(pending, signal); }
+      catch (error) {
+        // A custom connector may ignore cancellation and return a token later.
+        track(pending.then(late => late?.token && revoke(late.token), error => {
+          if (error?.message === 'GitHub installation token revocation could not be confirmed') throw error;
+        }));
+        throw error;
+      }
+      if (signal?.aborted) {
+        if (next?.token) track(revoke(next.token));
+        signal.throwIfAborted();
+      }
+      const previous = access;
+      access = next;
+      if (previous?.token && previous.token !== next?.token) track(revoke(previous.token));
+    }
+    signal?.throwIfAborted();
+    const deadline = AbortSignal.timeout(30_000);
+    const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    try {
+      return await bounded(Promise.resolve().then(() => {
+        requestSignal.throwIfAborted();
+        return send(path, access.token, { ...options, signal: requestSignal });
+      }), requestSignal);
     } catch (err) {
       if (err.status === 401) access = undefined;
       throw err;
@@ -100,10 +175,18 @@ export function fleetDesignGitHub(config, { connect = fleetInstallation, send = 
   api.authentication = () => access && ({ keyFingerprint: access.keyFingerprint,
     authenticatedAt: access.authenticatedAt, expiresAt: access.expires });
   api.close = async () => {
-    if (!access) return;
-    const { token } = access;
-    access = undefined;
-    await send('/installation/token', token, { method: 'DELETE' });
+    if (access) {
+      const { token } = access;
+      access = undefined;
+      track(revoke(token));
+    }
+    if (pendingCleanup.size) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error('Token cleanup timed out')), 4_000);
+      try { await bounded(Promise.all([...pendingCleanup]), controller.signal); }
+      finally { clearTimeout(timer); }
+    }
+    if (revokeFailed) throw new Error('GitHub installation token revocation could not be confirmed');
   };
   return api;
 }

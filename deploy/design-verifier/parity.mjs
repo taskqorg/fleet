@@ -8,6 +8,7 @@ import { designCheckDigest } from '../../packages/ui/scripts/design-github-check
 import { sourcePath } from './git.mjs';
 import { DesignBlocked, VerificationWait } from './provider.mjs';
 import { imageScenarioOK, isImageFlow, resolveImages, validateImages } from './worker/image-journey.mjs';
+import { vmBackend, validateVMConfig, validateVMProbe } from './vm-backend.mjs';
 
 const releaseDir = fileURLToPath(new URL('./', import.meta.url));
 const rootfs = '/opt/fleet-design-renderer/rootfs';
@@ -93,7 +94,7 @@ export function loadPolicy(read = readTrusted) {
   return { hash: sha256(raw), mapping, cases, images };
 }
 
-function worker({ directory, scripts, compareFile }, job, args, bytes, max, timeout) {
+function worker({ directory, scripts, compareFile }, job, args, bytes, max, timeout, signal, onUnconfirmed) {
   const params = [
     '--unshare-all', '--unshare-user', '--uid', '1000', '--gid', '1000', '--cap-drop', 'ALL',
     '--new-session', '--die-with-parent', '--clearenv',
@@ -109,10 +110,33 @@ function worker({ directory, scripts, compareFile }, job, args, bytes, max, time
   if (job === 'compare') params.push('--ro-bind', compareFile, '/trusted-compare', '--', '/trusted-compare');
   else params.push('--ro-bind', scripts, '/trusted', '--', runtimeDir + '/node/bin/node', '/trusted/' + job + '.mjs', ...args);
 
+  if (signal?.aborted) return Promise.reject(new VerificationWait('Isolated worker stopped'));
+  const child = spawn('/usr/bin/bwrap', params, { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] });
+  return collectLocalWorker(child, { job, bytes, max, timeout, signal, onUnconfirmed });
+}
+
+export function collectLocalWorker(child, { job, bytes, max, timeout, signal, onUnconfirmed, cleanupTimeout = 3000 }) {
   return new Promise((accept, reject) => {
-    const child = spawn('/usr/bin/bwrap', params, { env: {}, cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] });
-    let failure;
-    const kill = reason => { failure ??= reason; child.kill('SIGKILL'); };
+    let failure, cleanupTimer;
+    const clear = () => {
+      clearTimeout(timer);
+      clearTimeout(cleanupTimer);
+      signal?.removeEventListener('abort', abort);
+    };
+    const kill = reason => {
+      if (failure) return;
+      failure = reason;
+      cleanupTimer = setTimeout(() => {
+        clear();
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.unref();
+        reject(new VerificationWait('Isolated ' + job + ' cleanup unconfirmed'));
+        onUnconfirmed?.();
+      }, cleanupTimeout);
+      try { child.kill('SIGKILL'); } catch { /* The cleanup deadline still applies. */ }
+    };
+    const abort = () => kill('stopped');
     const timer = setTimeout(() => kill('watchdog expired'), timeout);
     const chunks = [];
     let size = 0;
@@ -124,31 +148,106 @@ function worker({ directory, scripts, compareFile }, job, args, bytes, max, time
     });
     child.on('error', () => kill('could not start'));
     child.on('close', (code) => {
-      clearTimeout(timer);
+      clear();
       if (!failure && code === 0) return accept(Buffer.concat(chunks));
-      if (job === 'build' && code === 42) return reject(new DesignBlocked('A selected dependency fingerprint differs in the isolated toolchain'));
-      if (job === 'build' && code === 43) return reject(new DesignBlocked('The isolated production build or its output was invalid'));
+      if (!failure && job === 'build' && code === 42) return reject(new DesignBlocked('A selected dependency fingerprint differs in the isolated toolchain'));
+      if (!failure && job === 'build' && code === 43) return reject(new DesignBlocked('The isolated production build or its output was invalid'));
       reject(new VerificationWait('Isolated ' + job + ' ' + (failure ?? 'exited with status ' + code)));
     });
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdin.end(bytes);
   });
 }
 
-export function parityRunner() {
+function localRuntime(build, signal, onUnconfirmed) {
   const directory = trustedPath(rootfs, false);
   const scripts = trustedPath(resolve(releaseDir, 'worker'), false);
   const compareFile = trustedPath(resolve(releaseDir, 'compare-png'), true);
-  const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
-  const runtime = JSON.parse(readTrusted(directory + runtimeDir + '/runtime.json', 8192));
+  const runtimeBytes = readTrusted(directory + runtimeDir + '/runtime.json', 8192);
+  const runtime = JSON.parse(runtimeBytes);
   if (!digest(runtime.imageSha256) || !digest(runtime.fontSha256) ||
       runtime.lockSha256 !== build.files?.['pnpm-lock.yaml']?.split(':')[1] ||
       runtime.chromium !== build.chromium || runtime.playwright !== build.playwright || runtime.node !== build.node)
     throw new Error('The renderer runtime does not match the signed release');
   const where = { directory, scripts, compareFile };
-  const run = (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout);
+  return { runtime, runtimeSha256: sha256(runtimeBytes),
+    run: (job, args, bytes, max, timeout) => worker(where, job, args, bytes, max, timeout, signal, onUnconfirmed) };
+}
+
+// Parse before opening the local runtime. The protocol exposes no command, path or binary selector.
+export function decodeVMJob(operation, bytes) {
+  if (!Buffer.isBuffer(bytes)) throw new VerificationWait('Invalid isolated worker input');
+  const MiB = 1024 * 1024;
+  if (operation === 1 && bytes.length === 0)
+    return { job: 'render', args: ['--probe'], bytes: undefined, max: 1024, timeout: 25_000 };
+  if (operation === 2 && bytes.length >= 4) {
+    const n = bytes.readUInt32BE(0);
+    if (n > 96 * 1024 || n > bytes.length - 4 || bytes.length - 4 - n > 96 * MiB)
+      throw new VerificationWait('Invalid isolated build input');
+    let dependencies;
+    try { dependencies = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(4, 4 + n));
+      if (!Array.isArray(JSON.parse(dependencies))) throw new Error('not an array');
+    } catch { throw new VerificationWait('Invalid isolated build dependencies'); }
+    return { job: 'build', args: [dependencies], bytes: bytes.subarray(4 + n), max: 24 * MiB, timeout: 60_000 };
+  }
+  if (operation === 3 && bytes.length <= 32 * MiB)
+    return { job: 'render', args: [], bytes, max: 32 * MiB, timeout: 65_000 };
+  if (operation === 4 && bytes.length <= 64 * MiB + 2048)
+    return { job: 'compare', args: [], bytes, max: 1024, timeout: 10_000 };
+  throw new VerificationWait('Unsupported or oversized isolated worker operation');
+}
+
+// Guest supervisor entry: always the existing local bwrap, regardless of VM config.
+export async function isolatedVMJob(operation, bytes) {
+  const input = decodeVMJob(operation, bytes);
+  const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
+  const { runtime, runtimeSha256, run } = localRuntime(build);
+  const result = await run(input.job, input.args, input.bytes, input.max, input.timeout);
+  if (operation !== 1) return result;
+  const probe = JSON.parse(result);
+  if (probe.chromium !== runtime.chromium || probe.node !== runtime.node)
+    throw new VerificationWait('Isolated Chromium or Node did not match the release pin');
+  const release = JSON.parse(readTrusted(resolve(releaseDir, '../../release.json'), 8192));
+  if (!/^[a-f0-9]{40}$/.test(release.commit)) throw new VerificationWait('Guest release identity unavailable');
+  const workerSha256 = sha256(readTrusted(fileURLToPath(import.meta.url), 2 * 1024 * 1024));
+  return Buffer.from(JSON.stringify({ node: probe.node, chromium: probe.chromium, runtime,
+    guest: { releaseCommit: release.commit, workerSha256, runtimeSha256 } }));
+}
+
+export function vmBackendConfigured() {
+  try { lstatSync('/etc/fleet-design-verifier/vm-backend.json'); return true; }
+  catch (error) { if (error.code === 'ENOENT') return false; return true; }
+}
+
+export function parityRunner({ signal, onUnavailable = () => {}, onUnconfirmed } = {}) {
+  const build = JSON.parse(readTrusted(resolve(releaseDir, 'build-inputs.json'), 8192));
+  const configPath = '/etc/fleet-design-verifier/vm-backend.json';
+  let configured;
+  try { lstatSync(configPath); configured = true; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  let runtime, run, vm = false, expectedRuntime, manifest;
+  if (configured) {
+    const release = JSON.parse(readTrusted(resolve(releaseDir, '../../release.json'), 8192));
+    const config = validateVMConfig(JSON.parse(readTrusted(configPath, 8192)), build, release);
+    expectedRuntime = config.runtime;
+    manifest = config.manifest;
+    runtime = { ...expectedRuntime, vm: { launchSha256: config.launchSha256, issuerReleaseCommit: config.releaseCommit,
+      guestReleaseCommit: manifest.releaseCommit, guestWorkerSha256: manifest.guestWorkerSha256, guestRuntimeSha256: manifest.runtimeSha256 } };
+    const backend = vmBackend(config, { signal });
+    run = async (job, args, bytes) => {
+      try { return await backend.run(job, args, bytes); }
+      catch (error) { if (error instanceof VerificationWait) onUnavailable(); throw error; }
+    };
+    vm = true;
+  } else {
+    ({ runtime, run } = localRuntime(build, signal, onUnconfirmed));
+  }
   return {
     async probe() {
-      const probe = JSON.parse(await run('render', ['--probe'], undefined, 1024, 25_000));
+      const result = await run('render', ['--probe'], undefined, 1024, 25_000);
+      if (vm) { validateVMProbe(result, expectedRuntime, manifest); return runtime; }
+      const probe = JSON.parse(result);
       if (probe.chromium !== runtime.chromium || probe.node !== runtime.node)
         throw new VerificationWait('Isolated Chromium or Node did not match the release pin');
       return runtime;
@@ -156,7 +255,7 @@ export function parityRunner() {
     policyIsCurrent(hash) {
       return sha256(readPolicy(readTrusted).raw) === hash;
     },
-    impact(event, paths, git, evidence) {
+    async impact(event, paths, git, evidence) {
       let policy;
       try { policy = loadPolicy(); }
       catch (err) {
@@ -164,12 +263,12 @@ export function parityRunner() {
         throw new VerificationWait('The protected route policy could not be loaded');
       }
       evidence.policy = policy.hash;
-      const base = git.diffBase(event);
+      const base = await git.diffBase(event);
       const pathsToCases = Object.create(null);
       const unmapped = [];
       const measured = evidence.impact = [];
       for (const path of paths) {
-        const before = git.fingerprint(base, path), after = git.fingerprint(event.head, path);
+        const before = await git.fingerprint(base, path), after = await git.fingerprint(event.head, path);
         const row = policy.mapping.get(JSON.stringify([path, before, after]));
         if (!row) unmapped.push(path);
         measured.push({ path, before, after, ...(row && { cases: row.cases, reason: row.reason }) });
@@ -184,7 +283,7 @@ export function parityRunner() {
     },
     async measure(event, git, policy, selected, evidence, readOriginal) {
       for (const [path, expected] of Object.entries(build.files)) {
-        if (git.fingerprint(event.head, path) !== expected)
+        if (await git.fingerprint(event.head, path) !== expected)
           throw new DesignBlocked('The candidate changed a signed build input: ' + path);
       }
       const scenarios = [...selected].map(([key, { original, sourceSha256, recipe }]) => {
@@ -198,12 +297,12 @@ export function parityRunner() {
       if (['bot', 'back'].some(flow => flows.has(flow)) &&
           ['bot', 'standalone', 'back'].some(flow => !flows.has(flow)))
         throw new DesignBlocked('The bot journey requires click, standalone direct entry and Back cases');
-      const tree = git.measureInputs(event.head, [...selected.values()].map(s => s.recipe));
+      const tree = await git.measureInputs(event.head, [...selected.values()].map(s => s.recipe));
       evidence.treeInputs = tree;
       if (tree.some(item => item.changed.length)) throw new DesignBlocked('The candidate differs from selected recipe inputs');
       const dependencies = JSON.stringify(tree.flatMap(item => item.dependencies));
       if (Buffer.byteLength(dependencies) > 96 * 1024) throw new DesignBlocked('Selected dependency input list is too large');
-      const archive = git.archive(event.head, build.files);
+      const archive = await git.archive(event.head, build.files);
       evidence.archiveSha256 = sha256(archive);
       const artifacts = await run('build', [dependencies], archive, 24 * 1024 * 1024, 60_000);
       const app = JSON.parse(artifacts);

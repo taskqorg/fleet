@@ -4,10 +4,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { designGitHubConfig, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { appId, installationId, repositoryId, githubCandidates, repo, sha } from './provider.mjs';
 import { fleetVerifierClient } from './fleet.mjs';
-import { openRepository } from './git.mjs';
+import { openAsyncRepository } from './git-isolated.mjs';
 import { receiptStore } from './receipts.mjs';
 import { evaluate } from './verifier.mjs';
 import { parityRunner } from './parity.mjs';
+import { rendererController, rendererPoll, pollComplete } from './renderer-state.mjs';
 
 const once = process.argv[2] === '--once';
 if (process.argv.length !== (once ? 3 : 2)) throw new Error('Usage: service.mjs [--once]');
@@ -18,18 +19,27 @@ const config = designGitHubConfig(process.env);
 if (config.appId !== appId || config.installationId !== installationId) throw new Error('Unexpected Fleet design App identity');
 const release = JSON.parse(await readFile(new URL('../../release.json', import.meta.url), 'utf8'));
 if (!sha(release.commit)) throw new Error('The verifier needs an exact trusted release commit');
-const api = fleetDesignGitHub(config);
+const stop = new AbortController();
+const api = fleetDesignGitHub(config, { signal: stop.signal });
 const checks = fleetDesignChecks(api, appId);
 const provider = githubCandidates(api);
 const receipts = await receiptStore(state, release.commit, checks);
-const git = openRepository(state);
-let fleet, runner;
+const failCleanup = reason => {
+  process.exitCode = 1;
+  console.error(reason);
+  stop.abort(new Error(reason));
+};
+const git = openAsyncRepository(state, { signal: stop.signal,
+  onUnconfirmed: () => failCleanup('Git process cleanup unconfirmed') });
+let fleet;
 let fleetAccess = 'unconfigured';
-try { fleet = await fleetVerifierClient(process.env.CREDENTIALS_DIRECTORY); }
+try { fleet = await fleetVerifierClient(process.env.CREDENTIALS_DIRECTORY, fetch, { signal: stop.signal }); }
 catch { fleetAccess = 'unknown'; }
 const service = { appId, installationId, repositoryId, revision: release.commit };
-const stop = new AbortController();
-for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => stop.abort());
+for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => stop.abort(new Error('Service stopped')));
+const ensureRunning = () => { if (stop.signal.aborted) throw new Error('Verifier stopped'); };
+const renderer = rendererController(service, onUnavailable => parityRunner({ signal: stop.signal, onUnavailable,
+  onUnconfirmed: () => failCleanup('Local isolated worker cleanup unconfirmed') }), stop.signal);
 
 let reportedProvider;
 let providerReportedAt = 0;
@@ -70,13 +80,16 @@ async function poll() {
       if (stop.signal.aborted) break;
       const [event] = candidates;
       try {
-        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet, runner }));
+        if (candidates.length === 1) results.push(await evaluate(event, { provider, git, receipts, checks, fleet, runner: renderer.current, rendererPending: !renderer.current, signal: stop.signal }));
         else {
+          ensureRunning();
           const reason = 'The SHA has multiple active provider identities';
           const evidence = { head, classification: 'pending', reason, candidates };
           const id = await receipts.retain(evidence, null);
+          ensureRunning();
           const check = await checks.publish(head, id, null, reason, async () => {
             for (const current of candidates) await provider.assertCurrent(current);
+            ensureRunning();
           });
           await receipts.recordReadback(id, check);
           results.push({ ...check, kind: event.kind, classification: 'pending', reason });
@@ -96,33 +109,41 @@ async function poll() {
   const status = { ...service, ...observation, at: new Date().toISOString(), fleetEvidence, results };
   await receipts.observe(status);
   console[observation.provider === 'ready' ? 'log' : 'error'](JSON.stringify(status));
-  return observation.provider === 'ready';
+  return pollComplete(observation, fleetEvidence, results);
 }
 
 let ok;
 try {
-  try {
-    runner = parityRunner();
-    service.renderer = await runner.probe();
-    service.visualParity = 'ready';
-    service.rendererProbedAt = new Date().toISOString();
-  } catch {
-    runner = undefined;
-    service.visualParity = 'unavailable';
-    service.visualParityReason = 'Isolated renderer runtime or Chromium probe failed';
-  }
+
   do {
-    ok = await poll();
+    ok = await rendererPoll(renderer, poll, once);
     if (!once) await delay(period * 1000, null, { signal: stop.signal });
   } while (!once && !stop.signal.aborted);
 } catch (err) {
-  if (err.name !== 'AbortError') throw err;
-} finally {
-  try { await api.close(); } catch { console.error('GitHub installation token revocation could not be confirmed'); }
-  if (stop.signal.aborted) {
-    const status = { ...service, provider: 'unknown', reason: 'Service stopped', at: new Date().toISOString() };
-    await receipts.observe(status);
-    await report(status, []);
+  if (err.name !== 'AbortError') {
+    stop.abort(new Error('Verifier exited after a service error'));
+    throw err;
   }
+} finally {
+  const stopped = stop.signal.aborted;
+  stop.abort();
+  const cleanup = [renderer.wait(),
+    api.close().catch(() => console.error('GitHub installation token revocation could not be confirmed'))];
+  if (stopped) {
+    const status = { ...service, provider: 'unknown', reason: stop.signal.reason.message, at: new Date().toISOString() };
+    if (fleet) {
+      const finalReport = new AbortController();
+      const deadline = setTimeout(() => finalReport.abort(), 3000);
+      cleanup.push(fleet.observe({ kind: 'provider', state: 'unknown', revision: release.commit },
+        { signal: finalReport.signal })
+        .catch(() => console.error('Final Fleet stop observation could not be confirmed'))
+        .finally(() => clearTimeout(deadline)));
+    }
+    cleanup.push(receipts.observe(status).catch(() => {
+      process.exitCode = 1;
+      console.error('Local verifier stop status could not be written');
+    }));
+  }
+  await Promise.all(cleanup);
 }
 if (once && !ok) process.exitCode = 1;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -9,6 +9,7 @@ import { runInNewContext } from 'node:vm';
 import { designCredentialIsPrivate, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
 import { appId, DesignBlocked, githubCandidates, repo, repositoryId } from '../../deploy/design-verifier/provider.mjs';
 import { openRepository } from '../../deploy/design-verifier/git.mjs';
+import { openAsyncRepository, runGitProcess } from '../../deploy/design-verifier/git-isolated.mjs';
 import { receiptStore } from '../../deploy/design-verifier/receipts.mjs';
 import { evaluate } from '../../deploy/design-verifier/verifier.mjs';
 import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
@@ -208,9 +209,18 @@ test('the verifier gives each original head its own receipt and fences the cumul
   const provider = githubCandidates(api);
   const checks = fleetDesignChecks(api, appId);
   const receipts = await receiptStore(path, 'd'.repeat(40), checks);
-  const deps = { provider, git, checks, receipts };
+  const deps = { provider, git: openAsyncRepository(path), checks, receipts };
   const [firstPR, secondPR, unknown, group] = await provider.snapshot();
-  assert.equal((await evaluate(group, deps)).conclusion, null);
+  const slots = join(path, 'git-fetch');
+  writeFileSync(slots, 'fixture obstructs the first mkdir');
+  const unavailable = await evaluate(group, deps);
+  assert.equal(unavailable.conclusion, null);
+  assert.equal(unavailable.evidenceState, 'unknown');
+  assert.match(unavailable.reason, /could not confirm provider or local evidence/);
+  unlinkSync(slots);
+  const retried = await evaluate(group, deps);
+  assert.equal(retried.conclusion, null);
+  assert.match(retried.reason, /Waiting for a protected check on an original PR head/);
   assert.equal((await evaluate(firstPR, deps)).conclusion, 'success');
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(secondPR, deps)).conclusion, 'success');
@@ -261,6 +271,30 @@ test('the verifier gives each original head its own receipt and fences the cumul
   groupTrusted = false;
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(unknown, deps)).conclusion, 'failure');
+  const stopped = new AbortController(); stopped.abort();
+  let stoppedWrites = 0;
+  await assert.rejects(evaluate(unknown, { ...deps, signal: stopped.signal,
+    checks: { publish: async () => { stoppedWrites++; } } }), /Verifier stopped/);
+  assert.equal(stoppedWrites, 0);
+  const gitStop = new AbortController();
+  const stalled = { ...deps.git, ensure: () => runGitProcess(process.execPath,
+    ['-e', 'setTimeout(() => {}, 10000)'], { signal: gitStop.signal }) };
+  const pendingGit = evaluate(unknown, { ...deps, git: stalled, signal: gitStop.signal,
+    checks: { publish: async () => { stoppedWrites++; } } });
+  setTimeout(() => gitStop.abort(), 150);
+  await assert.rejects(pendingGit, /Verifier stopped/);
+  assert.equal(stoppedWrites, 0);
+  const during = new AbortController();
+  await assert.rejects(evaluate(unknown, { ...deps, signal: during.signal,
+    checks: { publish: async (_head, _id, _conclusion, _summary, assertCurrent) => {
+      during.abort(); await assertCurrent(); stoppedWrites++;
+    } } }), /Verifier stopped/);
+  assert.equal(stoppedWrites, 0);
+
+
+  const pendingRenderer = await evaluate(unknown, { ...deps, rendererPending: true });
+  assert.equal(pendingRenderer.conclusion, null);
+  assert.match(pendingRenderer.reason, /temporarily unavailable/);
   const runner = {
     impact: (event, paths) => ({ ...event, policy: {}, paths: { [paths[0]]: ['pages/conversations/detail:default'] } }),
   };
@@ -334,4 +368,113 @@ test('a restarted issuer reacquires a short-lived installation token and closes 
   assert.equal(await client('/fixture'), 2);
   await client.close();
   assert.deepEqual(auth, { issued: 2, revoked: [1, 2] });
+});
+
+test('stopping during token renewal never starts the check write and revokes a late token', async () => {
+  const stop = new AbortController(), calls = [];
+  let started, finish;
+  const entered = new Promise(resolve => { started = resolve; });
+  const client = fleetDesignGitHub({}, { signal: stop.signal,
+    connect: async () => { started(); return new Promise(resolve => { finish = resolve; }); },
+    send: async (path, token, options) => { calls.push({ path, token, method: options.method }); },
+  });
+  const write = client('/repos/taskqorg/fleet/check-runs', { method: 'POST', body: {} });
+  await entered; stop.abort();
+  await assert.rejects(write);
+  finish({ token: 'late-fixture', expires: Date.now() + 90_000 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [{ path: '/installation/token', token: 'late-fixture', method: 'DELETE' }]);
+});
+
+test('stopping a stalled provider request releases the poll and revokes its token', async () => {
+  const stop = new AbortController(), calls = [];
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const client = fleetDesignGitHub({}, { signal: stop.signal,
+    connect: async () => ({ token: 'fixture', expires: Date.now() + 90_000 }),
+    send: async (path, token, options) => {
+      calls.push({ path, token, method: options.method });
+      if (options.method !== 'DELETE') { entered(); return new Promise(() => {}); }
+    },
+  });
+  const request = client('/fixture'); await started; stop.abort();
+  await assert.rejects(request);
+  await client.close();
+  assert.deepEqual(calls.at(-1), { path: '/installation/token', token: 'fixture', method: 'DELETE' });
+});
+
+test('GitHub renews and reads under independent budgets with the service stop signal', async t => {
+  const stop = new AbortController();
+  const timeout = t.mock.method(AbortSignal, 'timeout');
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'https://api.github.com/fixture');
+    assert.equal(options.signal.aborted, false);
+    return { ok: true, status: 200, json: async () => ({ ready: true }) };
+  });
+  const api = fleetDesignGitHub({}, { signal: stop.signal, connect: async (_, signal) => {
+    assert.equal(signal, stop.signal);
+    assert.equal(timeout.mock.callCount(), 0);
+    return { token: 'invented', expires: Date.now() + 120_000 };
+  } });
+  assert.deepEqual(await api('/fixture'), { ready: true });
+  assert.deepEqual(timeout.mock.calls.map(call => call.arguments[0]), [30_000, 30_000]);
+});
+
+test('stopping cancels an in-flight Fleet evidence request', async t => {
+  const { fleetVerifierClient } = await import('../../deploy/design-verifier/fleet.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-evidence-stop-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'fleet-access.json'), JSON.stringify({ clientId: 'invented-id', clientSecret: 'invented-secret' }), { mode: 0o600 });
+  const stop = new AbortController();
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const client = await fleetVerifierClient(dir, (_url, options) => new Promise((_, reject) => {
+    entered(); options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+  }), { signal: stop.signal });
+  const probe = client.probe(); await started; stop.abort();
+  await assert.rejects(probe);
+});
+
+test('token revocation is bounded even when the provider transport stalls', async () => {
+  const client = fleetDesignGitHub({}, {
+    connect: async () => ({ token: 'fixture', expires: Date.now() + 90_000 }),
+    send: async (_path, _token, options) => options.method === 'DELETE' ? new Promise(() => {}) : {},
+  });
+  await client('/fixture');
+  const started = Date.now();
+  await assert.rejects(client.close(), /revocation|timeout|abort/i);
+  assert.ok(Date.now() - started < 5000);
+});
+
+test('final Fleet stop observation uses a fresh bounded signal', async t => {
+  const { fleetVerifierClient } = await import('../../deploy/design-verifier/fleet.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-stop-observation-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'fleet-access.json'), JSON.stringify({ clientId: 'invented', clientSecret: 'invented' }), { mode: 0o600 });
+  const stop = new AbortController(); stop.abort(); const calls = [];
+  const timeout = t.mock.method(AbortSignal, 'timeout');
+  const client = await fleetVerifierClient(dir, async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body), aborted: options.signal.aborted });
+    return { ok: true, json: async () => ({ ok: true }) };
+  }, { signal: stop.signal });
+  await assert.rejects(client.observe({ kind:'provider', state:'unknown', revision:'a'.repeat(40) }));
+  await client.observe({ kind:'provider', state:'unknown', revision:'a'.repeat(40) }, { signal: AbortSignal.timeout(1000) });
+  assert.equal(calls.length, 1); assert.equal(calls[0].aborted, false); assert.equal(calls[0].body.state, 'unknown');
+  assert.deepEqual(timeout.mock.calls.map(call => call.arguments[0]), [30_000, 1_000, 30_000]);
+});
+
+test('lost mint response emits uncertainty without claiming token revocation', async () => {
+  const { mintDesignToken } = await import('../../packages/ui/scripts/design-github-checks.mjs');
+  const lines = [], original = console.error;
+  console.error = line => lines.push(String(line));
+  try {
+    await assert.rejects(mintDesignToken(async () => { throw Error('connection lost'); }, '/fixture', 'redacted', {}));
+    assert.match(lines[0], /issuance outcome unconfirmed/);
+    assert.doesNotMatch(lines[0], /revoked/);
+    lines.length = 0;
+    await assert.rejects(mintDesignToken(async () => { throw Object.assign(Error('refused'), { status:403 }); }, '/fixture', 'redacted', {}));
+    assert.equal(lines.length, 0);
+    await assert.rejects(mintDesignToken(async () => { throw Object.assign(Error('server failed'), { status:503 }); }, '/fixture', 'redacted', {}));
+    assert.match(lines[0], /issuance outcome unconfirmed/);
+  } finally { console.error = original; }
 });

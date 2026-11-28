@@ -9,7 +9,7 @@ const origin = 'https://fleet.ufobe.com';
 const identity = 'fleet-design-verifier';
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 
-export async function fleetVerifierClient(credentialDir, send = fetch) {
+export async function fleetVerifierClient(credentialDir, send = fetch, { signal } = {}) {
   if (!credentialDir) return null;
   const path = join(credentialDir, 'fleet-access.json');
   let file;
@@ -29,12 +29,26 @@ export async function fleetVerifierClient(credentialDir, send = fetch) {
   }
   const headers = { Origin: origin, 'Content-Type': 'application/json',
     'CF-Access-Client-Id': access.clientId, 'CF-Access-Client-Secret': access.clientSecret };
-  async function op(name, body) {
-    const reply = await send(origin + '/api/ops/' + name, {
-      method: 'POST', redirect: 'error', headers, signal: AbortSignal.timeout(30_000), body: JSON.stringify(body),
+  async function op(name, body, override) {
+    const useSignal = override ?? signal;
+    const deadline = AbortSignal.timeout(30_000);
+    const boundedSignal = useSignal ? AbortSignal.any([useSignal, deadline]) : deadline;
+    boundedSignal.throwIfAborted();
+    let abort;
+    const stopped = new Promise((_, reject) => {
+      abort = () => reject(boundedSignal.reason);
+      boundedSignal.addEventListener('abort', abort, { once: true });
     });
-    if (!reply.ok) throw Object.assign(new Error('Fleet verifier API returned HTTP ' + reply.status), { status: reply.status });
-    return reply.json();
+    try {
+      return await Promise.race([(async () => {
+        const reply = await send(origin + '/api/ops/' + name, {
+          method: 'POST', redirect: 'error', headers,
+          signal: boundedSignal, body: JSON.stringify(body),
+        });
+        if (!reply.ok) throw Object.assign(new Error('Fleet verifier API returned HTTP ' + reply.status), { status: reply.status });
+        return reply.json();
+      })(), stopped]);
+    } finally { boundedSignal.removeEventListener('abort', abort); }
   }
   async function exactEvidence(member, original) {
     const { number, head, branch } = member;
@@ -62,8 +76,8 @@ export async function fleetVerifierClient(credentialDir, send = fetch) {
       if (me.email !== identity || me.owner !== false || me.roles?.length !== 1 || me.roles[0] !== 'viewer')
         throw new Error('The Fleet verifier identity does not match');
     },
-    async observe(observation) {
-      if ((await op('design_verifier_observe', observation)).ok !== true) throw new Error('Fleet did not retain the observation');
+    async observe(observation, { signal: override } = {}) {
+      if ((await op('design_verifier_observe', observation, override)).ok !== true) throw new Error('Fleet did not retain the observation');
     },
     async evidence(member) {
       if (member.sourceRepositoryId !== repositoryId) return null;
