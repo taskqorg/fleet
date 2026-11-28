@@ -140,7 +140,10 @@ export function openAsyncRepository(state, { signal, onUnconfirmed } = {}) {
     return method === 'archive' ? Buffer.from(reply.value, 'base64') : reply.value;
   }
   return { dir: join(state, 'git'), async ensure(value) {
-    await (slotsReady ??= reapFetchSlots(slots, objects));
+    await (slotsReady ??= reapFetchSlots(slots, objects).catch(error => {
+      slotsReady = undefined;
+      throw error;
+    }));
     const slot = await mkdtemp(join(slots, 'slot-'));
     try {
       if (await call('ensure', value, slot)) {

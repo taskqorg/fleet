@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -211,7 +211,16 @@ test('the verifier gives each original head its own receipt and fences the cumul
   const receipts = await receiptStore(path, 'd'.repeat(40), checks);
   const deps = { provider, git: openAsyncRepository(path), checks, receipts };
   const [firstPR, secondPR, unknown, group] = await provider.snapshot();
-  assert.equal((await evaluate(group, deps)).conclusion, null);
+  const slots = join(path, 'git-fetch');
+  writeFileSync(slots, 'fixture obstructs the first mkdir');
+  const unavailable = await evaluate(group, deps);
+  assert.equal(unavailable.conclusion, null);
+  assert.equal(unavailable.evidenceState, 'unknown');
+  assert.match(unavailable.reason, /could not confirm provider or local evidence/);
+  unlinkSync(slots);
+  const retried = await evaluate(group, deps);
+  assert.equal(retried.conclusion, null);
+  assert.match(retried.reason, /Waiting for a protected check on an original PR head/);
   assert.equal((await evaluate(firstPR, deps)).conclusion, 'success');
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(secondPR, deps)).conclusion, 'success');
