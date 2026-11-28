@@ -244,7 +244,6 @@ func restrictFleetDesignStart(p *contract.StartPayload, cfg rawObject, host stri
 		return fail(403, "Fleet design requires the configured Fleet repository")
 	}
 	previewRepo.Connection = nil
-	p.Project["repos"] = jsonBytes([]contract.ProjectRepo{*previewRepo})
 	checkouts := []contract.ProjectEnvironment{}
 	for _, env := range environments {
 		if deref(env.HostId) == host && deref(env.CheckoutPath) != "" && (env.Repo == nil || deref(env.Repo) == deref(previewRepo.Id)) {
@@ -254,7 +253,32 @@ func restrictFleetDesignStart(p *contract.StartPayload, cfg rawObject, host stri
 	if len(checkouts) != 1 {
 		return fail(409, "Fleet design requires one configured Fleet checkout on this host")
 	}
-	p.Project["environments"] = jsonBytes(checkouts)
+	// The executor stages pinned context from local Git objects before starting Codex.
+	// Keep those named bindings after the primary checkout, without Git connections.
+	previewRepos := []contract.ProjectRepo{*previewRepo}
+	if raw := p.Project["contextSources"]; jsonGiven(raw) {
+		sources, err := contract.ParseContextSources(raw)
+		if err != nil {
+			return fail(409, "Fleet design requires valid pinned context sources")
+		}
+		for _, source := range sources {
+			if source.Repo == deref(previewRepo.Id) {
+				continue
+			}
+			for _, repo := range repos {
+				if deref(repo.Id) == source.Repo {
+					repo.Connection = nil
+					previewRepos = append(previewRepos, repo)
+				}
+			}
+			for _, env := range environments {
+				if deref(env.HostId) == host && deref(env.Repo) == source.Repo && deref(env.CheckoutPath) != "" {
+					checkouts = append(checkouts, contract.ProjectEnvironment{HostId: env.HostId, CheckoutPath: env.CheckoutPath, Repo: env.Repo})
+				}
+			}
+		}
+	}
+	p.Project["repos"], p.Project["environments"] = jsonBytes(previewRepos), jsonBytes(checkouts)
 	p.WorkingDirectory = nil
 	p.Setup, p.Branch, p.GitNetwork = ptr("skip"), ptr(false), ptr(false)
 	cfg["settings"] = jsonBytes(struct {
