@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 // Requirement: staging creates inputs, and their parent directories, only inside the input folder (review W3-5). Risk:
@@ -46,5 +49,67 @@ func TestStageInputsNeverLeaveTheInputFolder(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(input, "in/f")); string(b) != "artifact bytes" {
 		t.Fatalf("staged %q", b)
+	}
+}
+
+// A resumed writer shares the session input root, including earlier staged files.
+// Its new command must download to fresh paths using the ordinary exclusive staging path.
+func TestStageDesignInputsAcrossWriterExecutions(t *testing.T) {
+	input := t.TempDir()
+	t.Setenv("FLEET_CF_ACCESS_FILE", filepath.Join(input, "none"))
+	artifacts := map[string]string{"source": "invented source bytes", "recipe": "invented recipe bytes", "empty": ""}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == contract.RouteArtifactsGet.Path {
+			var request contract.HostArtifactGetRequest
+			if json.NewDecoder(r.Body).Decode(&request) != nil || request.HostId != "h" || str0(request.ExecutionId) == "" {
+				http.Error(w, "missing fixture authorization", http.StatusForbidden)
+				return
+			}
+			json.NewEncoder(w).Encode(M{"url": "http://" + r.Host + "/blob/" + request.ArtifactId})
+			return
+		}
+		if bytes, ok := artifacts[strings.TrimPrefix(r.URL.Path, "/blob/")]; ok {
+			w.Write([]byte(bytes))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	e := &executor{url: server.URL, token: "t", host: "h"}
+	first := []contract.InputArtifact{
+		{ArtifactId: "source", Path: "design-review/first/start-one/selected-source"},
+		{ArtifactId: "recipe", Path: "design-review/first/start-one/case-1-recipe.json"},
+	}
+	if err := e.stageArtifactInputs(first, input, "first"); err != nil {
+		t.Fatal(err)
+	}
+	// Even a stale old selection must leave the next writer free to fetch the same artifacts.
+	if err := os.WriteFile(filepath.Join(input, first[0].Path), []byte("old session file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next := []contract.InputArtifact{
+		{ArtifactId: "source", Path: "design-review/resume/start-two/selected-source"},
+		{ArtifactId: "recipe", Path: "design-review/resume/start-two/case-1-recipe.json"},
+	}
+	if err := e.stageArtifactInputs(next, input, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(input, first[0].Path)); err != nil || string(got) != "old session file" {
+		t.Fatalf("old session file changed: %q, %v", got, err)
+	}
+	for _, file := range next {
+		if got, err := os.ReadFile(filepath.Join(input, file.Path)); err != nil || string(got) != artifacts[file.ArtifactId] {
+			t.Fatalf("resumed file %s = %q, %v", file.Path, got, err)
+		}
+	}
+	legacy := []contract.InputArtifact{{ArtifactId: "empty", Path: "design-review/empty-output"}}
+	if err := e.stageArtifactInputs(legacy, input, "pipeline"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(input, legacy[0].Path)); err != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+		t.Fatalf("expected the valid empty pipeline output: %v, %v", info, err)
+	}
+	if err := e.stageArtifactInputs(legacy, input, "pipeline-retry"); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("ordinary input lost exclusive creation: %v", err)
 	}
 }

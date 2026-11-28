@@ -1795,8 +1795,10 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		inputs, attachments := startAttachments(e.ID, dp.Attachments)
 		p.Inputs, p.Attachments = append(p.Inputs, inputs...), attachments
 	}
+	// Polls replay the stored command. A replacement command gets fresh selected input paths.
+	commandID := newID()
 	if writes {
-		if err := attachDesignSources(q, task, e, host, p); err != nil {
+		if err := attachDesignSources(q, task, e, host, commandID, p); err != nil {
 			return none, err
 		}
 		if err := taskAllowsWork(q, task); err != nil {
@@ -1919,7 +1921,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\n" + sandboxInstruction + "\n\n" + readerInstruction))
 	}
 	command := dispatchStartCommand{
-		ID:          newID(),
+		ID:          commandID,
 		ExecutionID: e.ID,
 		SessionID:   liveSession.ID,
 		HostID:      host,
