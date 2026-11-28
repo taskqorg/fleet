@@ -1893,6 +1893,58 @@ func forgeRepoGrantedRef(ref contract.RepoRef) bool {
 	return contract.ForgeRepoGranted(os.Getenv("FLEET_FORGE_REPOSITORIES"), ref)
 }
 
+// publishingSourceWorktree recovers the workspace from the executor's own retained command journal.
+// The launch's MCP directory is temporary and is not a parent of the managed workspace.
+func (e *executor) publishingSourceWorktree(execution string) (string, error) {
+	rows, err := e.db.Query(`SELECT body FROM commands
+		WHERE json_valid(body) AND json_extract(body,'$.executionId')=?
+		AND json_extract(body,'$.kind') IN ('start','input')`, execution)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var session, key string
+	found := false
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			return "", err
+		}
+		var cmd struct {
+			SessionID string `json:"sessionId"`
+			Payload   struct {
+				WorkspaceKey *string `json:"workspaceKey"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(body), &cmd); err != nil {
+			return "", errors.New("invalid source execution command")
+		}
+		if _, err := checkedID(cmd.SessionID); err != nil {
+			return "", errors.New("invalid source execution command")
+		}
+		workspace := ""
+		if cmd.Payload.WorkspaceKey != nil {
+			workspace = *cmd.Payload.WorkspaceKey
+		}
+		if found && (session != cmd.SessionID || key != workspace) {
+			return "", errors.New("ambiguous source execution workspace")
+		}
+		session, key, found = cmd.SessionID, workspace, true
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if !found {
+		return "", errors.New("source execution command unavailable")
+	}
+	dir := e.commandDir(session, key)
+	worktree := filepath.Join(dir, "worktree")
+	if !e.insideDirs(dir) || !e.insideDirs(worktree) || !exists(filepath.Join(worktree, ".git")) {
+		return "", errors.New("source execution worktree unavailable on host")
+	}
+	return worktree, nil
+}
+
 // forgeReadiness checks readiness for a GitHub or GitLab repository binding.
 func forgeReadiness(remote string) string {
 	return publishingReadiness(remote, "", "")
@@ -1948,23 +2000,11 @@ func (e *executor) runPublishingCommand(cmd contract.Command, execution, cid str
 	}
 	skipHead := p.Action != "publish_draft" && p.Action != "record_code_review"
 	workdir := os.TempDir()
-	if p.SourceExecutionId != nil && *p.SourceExecutionId != "" {
-		var mcpDir, sess, body string
-		_ = e.db.QueryRow("SELECT mcp_dir FROM launches WHERE execution=? LIMIT 1", *p.SourceExecutionId).Scan(&mcpDir)
-		if mcpDir != "" {
-			if wt := filepath.Join(filepath.Dir(mcpDir), "worktree"); exists(filepath.Join(wt, ".git")) {
-				workdir = wt
-			}
-		}
-		if workdir == os.TempDir() {
-			_ = e.db.QueryRow("SELECT session,body FROM commands WHERE execution=? ORDER BY rowid DESC LIMIT 1", *p.SourceExecutionId).Scan(&sess, &body)
-			if sess != "" {
-				var rawCmd contract.Command
-				_ = json.Unmarshal([]byte(body), &rawCmd)
-				if wt := filepath.Join(e.commandDir(sess, workspaceKey(rawCmd)), "worktree"); exists(filepath.Join(wt, ".git")) {
-					workdir = wt
-				}
-			}
+	var sourceErr error
+	if !skipHead {
+		sourceErr = errors.New("source execution worktree unavailable on host")
+		if p.SourceExecutionId != nil && *p.SourceExecutionId != "" {
+			workdir, sourceErr = e.publishingSourceWorktree(*p.SourceExecutionId)
 		}
 	}
 	ctx := forgeContext{
@@ -2006,8 +2046,8 @@ func (e *executor) runPublishingCommand(cmd contract.Command, execution, cid str
 	}
 	var res M
 	var err error
-	if !skipHead && !exists(filepath.Join(workdir, ".git")) {
-		err = errors.New("source execution worktree unavailable on host")
+	if sourceErr != nil {
+		err = sourceErr
 	} else {
 		res, err = executePublishingAction(ctx, p.Action, publishingArgs{
 			RequestId:         &p.RequestId,
