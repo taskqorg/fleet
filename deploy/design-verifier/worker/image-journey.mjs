@@ -77,8 +77,14 @@ const covers = (outer, inner) => pixelBoundary(outer.left) <= pixelBoundary(inne
   pixelBoundary(outer.right) >= pixelBoundary(inner.right) &&
   pixelBoundary(outer.bottom) >= pixelBoundary(inner.bottom);
 
-async function observeOpen(page, path) {
+async function observeOpen(page, opener, path) {
   if (!path) return;
+  const openerPath = await opener.evaluate(el => {
+    const indexes = [];
+    for (let node = el; node !== document.documentElement; node = node.parentElement)
+      indexes.unshift(Array.from(node.parentElement.children).indexOf(node));
+    return indexes;
+  });
   const cdp = await page.context().newCDPSession(page);
   try {
     const { frameTree } = await cdp.send('Page.getFrameTree');
@@ -88,8 +94,10 @@ async function observeOpen(page, path) {
     const { exceptionDetails } = await cdp.send('Runtime.evaluate', {
       contextId: executionContextId,
       expression: `(() => {
+        const opener = ${JSON.stringify(openerPath)}.reduce((node, index) => node?.children[index], document.documentElement);
+        if (!opener) throw new Error('Open control is absent');
         const mark = event => {
-          if (!event.isTrusted) return;
+          if (!event.isTrusted || !event.composedPath().includes(opener)) return;
           window.removeEventListener('click', mark, true);
           const request = new XMLHttpRequest();
           request.open('POST', ${JSON.stringify(path)}, false);
@@ -111,7 +119,7 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
   const shell = task ? page.getByRole('tabpanel', { name: 'Details', exact: true }) : page;
   if (task) await page.getByRole('tab', { name: 'Details', exact: true }).click();
   const question = shell.locator(task ? '[data-ui="decision-block"]' : '[data-ui="question-card"]');
-  const trigger = entry === 'thumbnail' ? button(question, openLabel) :
+  const trigger = entry === 'thumbnail' ? button(question, scenario.thumbnail ? openLabel : 'Open image: ' + resultTitle) :
     question.locator('button[data-ui="entity-code"]').filter({ hasText: new RegExp('^' + resultCode + '$') });
   const dialog = page.getByRole('dialog', { name: 'Image viewer', exact: true });
   const stage = dialog.getByRole('region', { name: 'Image. Drag to pan; plus and minus to zoom.', exact: true });
@@ -174,7 +182,7 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
     }
     // Finish actionability checks before the protected origin starts serving the original.
     if (!returning || entry === 'entity') await opener.click({ trial: true });
-    await observeOpen(page, openSignal);
+    await observeOpen(page, opener, openSignal);
     await opener.click();
 
     checkpoint('image-loaded');

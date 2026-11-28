@@ -101,15 +101,18 @@ test('media phases reject eager originals and late first thumbnails while allowi
   }
 });
 
-function journeyPage(flow, distinct = false) {
+function journeyPage(flow, distinct = false, surface = 'task') {
   const frame = { width: 390, height: 844 };
   const origin = 'http://synthetic.invalid';
-  const spec = { ...scenario('task', flow), image: original, thumbnail: distinct ? thumbnail : undefined };
-  const document = { activeElement: null };
-  const parent = { scrollLeft: 0, scrollTop: 96 };
+  const spec = { ...scenario(surface, flow), image: original, thumbnail: distinct ? thumbnail : undefined };
+  const root = { scrollLeft: 0, scrollTop: 0 };
+  const document = { activeElement: null, documentElement: root };
+  const parent = { scrollLeft: 0, scrollTop: 96, parentElement: root };
   const stageEdges = { left: 0, top: 0, right: frame.width, bottom: frame.height };
   const imageEdges = { left: -480, top: 0, right: 870, bottom: 843.984375 };
   const trigger = { isConnected: true, ownerDocument: document, parentElement: parent };
+  root.children = [parent];
+  parent.children = [trigger];
   const stage = { isConnected: true, ownerDocument: document, getBoundingClientRect: () => ({ toJSON: () => stageEdges }) };
   const picture = { complete: true, naturalWidth: 1600, naturalHeight: 1000, currentSrc: origin + original.path,
     offsetWidth: 1350, offsetHeight: 844, decode: async () => {}, getBoundingClientRect: () => ({ toJSON: () => imageEdges }) };
@@ -117,7 +120,8 @@ function journeyPage(flow, distinct = false) {
   let opened = false, listener;
   const openSignal = distinct ? '/_fleet_image_open/test' : null;
   const handles = new Map([
-    ['button:Open ' + resultTitle, trigger], ['region:Image. Drag to pan; plus and minus to zoom.', stage],
+    ['button:' + (distinct ? 'Open ' : 'Open image: ') + resultTitle, trigger],
+    ['region:Image. Drag to pan; plus and minus to zoom.', stage],
     ['img:' + resultTitle, picture], ['img', { ...picture, currentSrc: origin + thumbnail.path }],
   ]);
   const locator = (key, el = handles.get(key)) => ({
@@ -136,15 +140,16 @@ function journeyPage(flow, distinct = false) {
       if (trial) return;
       calls.push(key);
       if (el === trigger) {
-        listener?.({ isTrusted: false });
+        listener?.({ isTrusted: false, composedPath: () => [trigger, parent] });
+        listener?.({ isTrusted: true, composedPath: () => [parent] });
         assert.ok(!calls.includes('activation signal'));
-        listener?.({ isTrusted: true });
+        listener?.({ isTrusted: true, composedPath: () => [trigger, parent] });
         opened = true;
         document.activeElement = stage;
       }
       if (key === 'button:Back to question') { opened = false; document.activeElement = trigger; }
     },
-    evaluate: async callback => callback(el),
+    evaluate: async callback => callback.name ? callback(el) : runInNewContext('(' + callback + ')(el)', { el, document }),
     elementHandle: async () => ({ evaluate: async callback => callback(el), value: el, dispose: async () => {} }),
   });
   const cdp = { detach: async () => {}, async send(method, params) {
@@ -153,6 +158,7 @@ function journeyPage(flow, distinct = false) {
     assert.equal(method, 'Runtime.evaluate');
     assert.equal(params.contextId, 1);
     runInNewContext(params.expression, {
+      document,
       window: { addEventListener: (_type, fn) => { listener = fn; }, removeEventListener: () => { listener = null; } },
       XMLHttpRequest: class {
         open(method, path, async) { assert.deepEqual([method, path, async], ['POST', openSignal, false]); }
@@ -184,13 +190,22 @@ test('an open capture rejects a displaced stage or image even at the same dimens
   await assert.rejects(journey.confirm(), /compact viewer state changed/);
 });
 
+test('the single-asset Open image action works on both normal shells', async () => {
+  for (const surface of ['task', 'conversation']) {
+    const { start, calls } = journeyPage('image-open', false, surface);
+    await (await start()).confirm();
+    assert.ok(calls.includes('button:Open image: ' + resultTitle));
+    assert.equal(calls.includes('tab:Details'), surface === 'task');
+  }
+});
+
 test('returned capture blocks scroll or focus drift without repairing either', async () => {
   const { start, calls, parent, document, stage } = journeyPage('image-returned');
   const journey = await start();
   try {
     assert.equal(calls[0], 'tab:Details');
     assert.ok(calls.includes('tab:Details:selected:visible'));
-    assert.deepEqual(journey.evidence, { sourceScroll: [[0, 96]], focus: 'source opener' });
+    assert.deepEqual(journey.evidence, { sourceScroll: [[0, 96], [0, 0]], focus: 'source opener' });
     parent.scrollTop = 95;
     await assert.rejects(journey.confirm(), /source scroll changed/);
     assert.equal(parent.scrollTop, 95);
