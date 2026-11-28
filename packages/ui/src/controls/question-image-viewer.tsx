@@ -29,9 +29,11 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
     setOffset({ x: Math.max(-maxX, Math.min(maxX, x)), y: Math.max(-maxY, Math.min(maxY, y)) });
   };
   const minimumScale = (fit = fitWidth(), width = sourceWidth()) => width ? Math.min(1, width / fit) : 1;
+  const zoomFloor = () => scale() < 1 ? minimumScale() : 1;
   const zoom = (value: number, mode: typeof sizing = 'custom') => {
     if (!Number.isFinite(value)) return;
-    const next = Math.max(minimumScale(), value);
+    // Actual size can be smaller than Fit. Zooming from Fit uses the fitted floor.
+    const next = Math.max(mode === 'actual' ? minimumScale() : zoomFloor(), value);
     sizing = mode;
     setScale(next);
     pan(offset().x, offset().y, next);
@@ -98,7 +100,7 @@ export function QuestionImageViewer(p: { src: string; title: string; onClose: ()
       <Show when={controls()}>
         <div class="qiv-title"><strong>{p.title}</strong></div>
         <div class="qiv-tools">
-          <Button label="Zoom out" icon="minus" iconOnly onClick={() => stepZoom(-1)} disabledReason={scale() <= minimumScale() ? 'Minimum zoom' : undefined} />
+          <Button label="Zoom out" icon="minus" iconOnly onClick={() => stepZoom(-1)} disabledReason={scale() <= zoomFloor() ? 'Minimum zoom' : undefined} />
           <span class="qiv-zoom" aria-live="polite">{sourceWidth() ? Math.round(fitWidth() * scale() * 100 / sourceWidth()) + '%' : ''}</span>
           <Button label="Zoom in" icon="plus" iconOnly onClick={() => stepZoom(1)} />
           <Button label="Fit" onClick={() => zoom(1, 'fit')} />
