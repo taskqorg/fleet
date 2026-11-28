@@ -7,16 +7,23 @@ import "encoding/json"
 var _ json.RawMessage
 
 type DesignVerifierEvidenceReply struct {
-	Branch  string                 `json:"branch"`
-	Head    string                 `json:"head"`
-	Number  int64                  `json:"number"`
-	Recipes []DesignVerifierRecipe `json:"recipes"`
-	Review  DesignReviewGetReply   `json:"review"`
-	Writer  string                 `json:"writer"`
+	Branch       string                  `json:"branch"`
+	Head         string                  `json:"head"`
+	Number       int64                   `json:"number"`
+	Original     *DesignVerifierOriginal `json:"original,omitempty"`
+	Recipes      []DesignVerifierRecipe  `json:"recipes"`
+	Review       DesignReviewGetReply    `json:"review"`
+	SourceSha256 *string                 `json:"sourceSha256,omitempty"`
+	Writer       string                  `json:"writer"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DesignVerifierEvidenceReply) Validate() error {
+	if v.Original != nil {
+		if err := Check(v.Original, "original"); err != nil {
+			return err
+		}
+	}
 	if v.Recipes == nil {
 		return Missing("recipes")
 	}
@@ -32,13 +39,19 @@ func (v *DesignVerifierEvidenceReply) Validate() error {
 }
 
 type DesignVerifierEvidenceRequest struct {
-	Branch string `json:"branch"`
-	Head   string `json:"head"`
-	Number int64  `json:"number"`
+	Branch   string                         `json:"branch"`
+	Head     string                         `json:"head"`
+	Number   int64                          `json:"number"`
+	Original *DesignVerifierOriginalRequest `json:"original,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DesignVerifierEvidenceRequest) Validate() error {
+	if v.Original != nil {
+		if err := Check(v.Original, "original"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -76,9 +89,35 @@ type DesignVerifierObserveReply = OkReply
 
 type DesignVerifierObserveRequest = DesignVerifierObservation
 
+type DesignVerifierOriginal struct {
+	ArtifactId string `json:"artifactId"`
+	Base64     string `json:"base64"`
+	Sha256     string `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierOriginal) Validate() error {
+	return nil
+}
+
+type DesignVerifierOriginalRequest struct {
+	ArtifactId string `json:"artifactId"`
+	Decision   string `json:"decision"`
+	Sha256     string `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DesignVerifierOriginalRequest) Validate() error {
+	return nil
+}
+
 type DesignVerifierRecipe struct {
+	Clock    *int64                      `json:"clock,omitempty"`
 	Inputs   []DesignVerifierRecipeInput `json:"inputs"`
+	Locale   *string                     `json:"locale,omitempty"`
 	ScopeKey string                      `json:"scopeKey"`
+	Sha256   *string                     `json:"sha256,omitempty"`
+	TimeZone *string                     `json:"timeZone,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1075,7 +1114,7 @@ func (v *PublishingStatusRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"design_verifier_evidence":        {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "no", Description: "Resolve an exact Fleet PR head and branch to its managed publishing record, admitted writer, active owner decision and verified original artifacts. Restricted to the Fleet verifier and human owner.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"branch\":{\"type\":\"string\"},\"head\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"}},\"required\":[\"number\",\"head\",\"branch\"],\"type\":\"object\"}")},
+		"design_verifier_evidence":        {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "no", Description: "Resolve an exact Fleet PR head and branch to its admitted writer and active owner decision. The protected Fleet verifier alone can request one selected original PNG, bound to this decision and the retained artifact hash.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"branch\":{\"type\":\"string\"},\"head\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"original\":{\"additionalProperties\":false,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"decision\":{\"type\":\"string\"},\"sha256\":{\"type\":\"string\"}},\"required\":[\"decision\",\"artifactId\",\"sha256\"],\"type\":\"object\"}},\"required\":[\"number\",\"head\",\"branch\"],\"type\":\"object\"}")},
 		"design_verifier_observe":         {Read: false, Long: false, Errors: []int{400, 403}, Auth: "person", Agent: "no", Description: "Retain the protected Fleet verifier's GitHub provider and check readbacks. Restricted to its enrolled Fleet machine identity.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"authenticatedAt\":{\"type\":\"integer\"},\"checkRunId\":{\"type\":\"integer\"},\"expiresAt\":{\"type\":\"integer\"},\"externalId\":{\"type\":\"string\"},\"head\":{\"type\":\"string\"},\"keyFingerprint\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"revision\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"required\":[\"kind\",\"state\",\"revision\"],\"type\":\"object\"}")},
 		"design_verifier_status":          {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read Fleet's protected design issuer registration, latest provider readiness, last successful authentication and exact-head check readbacks. No credentials.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"publishing_cancel_merge_request": {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Cancel an active auto-merge request, merge-when-pipeline-succeeds flag, or merge queue entry idempotently, fenced by optional expectedHeadSha.", InputSchema: json.RawMessage("{\"properties\":{\"branch\":{\"type\":\"string\"},\"expectedHeadSha\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"number\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"repo\":{\"type\":\"string\"},\"repoId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceExecutionId\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},

@@ -2,7 +2,12 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { sha, VerificationWait } from './provider.mjs';
+import { DesignBlocked, sha, VerificationWait } from './provider.mjs';
+
+const maxArchive = 96 * 1024 * 1024;
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+export const sourcePath = path => typeof path === 'string' && path.length < 512 && path.split('/').every(
+  part => /^[A-Za-z0-9_.@+ -]{1,120}$/.test(part) && !['.', '..', '.git'].includes(part.toLowerCase()));
 
 // This Git process only reads objects. It has no checkout, hooks, helpers or credentials.
 export function openRepository(state) {
@@ -10,12 +15,22 @@ export function openRepository(state) {
   const env = { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https', GIT_NO_REPLACE_OBJECTS: '1' };
   const git = (...args) => execFileSync('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args],
-    { env, cwd: existsSync(dir) ? dir : state, encoding: 'buffer', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
+    { env, cwd: existsSync(dir) ? dir : state, encoding: 'buffer', stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60_000, maxBuffer: maxArchive });
   if (!existsSync(join(dir, 'HEAD'))) git('init', '--bare', dir);
   const remote = 'https://github.com/taskqorg/fleet.git';
   function read(...args) { return git(...args).toString('utf8').trim(); }
   function has(oid) {
     try { return read('cat-file', '-t', oid) === 'commit'; } catch { return false; }
+  }
+  function blob(head, path) {
+    if (!sha(head) || !sourcePath(path)) throw new DesignBlocked('Unsupported path in a candidate input');
+    const entry = git('--literal-pathspecs', 'ls-tree', '-z', '--full-tree', head, '--', path).toString('utf8');
+    if (!entry) return null;
+    const match = /^(100(?:644|755)) blob ([a-f0-9]{40})\t/.exec(entry);
+    if (!match || entry.slice(match[0].length) !== path + '\0')
+      throw new DesignBlocked('A candidate input is outside the supported regular Git tree');
+    return { mode: match[1], bytes: git('cat-file', 'blob', match[2]) };
   }
   return {
     dir,
@@ -28,6 +43,29 @@ export function openRepository(state) {
       }
       if (!has(base) || !has(head)) throw new VerificationWait('The provider commits are not available');
     },
+    fingerprint(head, path) {
+      const file = blob(head, path);
+      return file && file.mode + ':' + sha256(file.bytes);
+    },
+    diffBase({ base, head }) { return read('merge-base', base, head); },
+    archive(head, signedBuildFiles) {
+      if (!sha(head)) throw new VerificationWait('Invalid render commit');
+      const rows = new TextDecoder('utf-8', { fatal: true }).decode(git('ls-tree', '-r', '-z', '--full-tree', head)).split('\0');
+      rows.pop();
+      for (const row of rows) {
+        const entry = /^100(?:644|755) blob ([a-f0-9]{40})\t(.*)$/.exec(row);
+        if (!entry || !sourcePath(entry[2])) throw new DesignBlocked('Candidate tree contains an unsupported file type or name');
+        const parts = entry[2].split('/');
+        if (parts.includes('node_modules') || parts[0] === 'dist')
+          throw new DesignBlocked('Candidate tree contains a reserved build output path');
+        if (/^(?:package|tsconfig|jsconfig)\.json$/.test(parts.at(-1)) && !Object.hasOwn(signedBuildFiles, entry[2]))
+          throw new DesignBlocked('Candidate tree contains an unpinned module or compiler configuration');
+        if (entry[2].split('/').at(-1) === '.gitattributes' &&
+            /export-(?:ignore|subst)/.test(git('cat-file', 'blob', entry[1]).toString('utf8')))
+          throw new DesignBlocked('Candidate Git export attributes can change checkout content');
+      }
+      return git('archive', '--format=tar', head);
+    },
     measureInputs(head, recipes) {
       if (!sha(head)) throw new VerificationWait('Invalid recipe source revision');
       const hashes = new Map();
@@ -35,17 +73,15 @@ export function openRepository(state) {
         const changed = [], dependencies = [];
         let matched = 0;
         for (const { path, sha256 } of inputs) {
-          if (typeof path !== 'string' || path.split('/').some(part => !part || part === '.' || part === '..') ||
-              /[\\\x00-\x1f]/.test(path) || !/^[a-f0-9]{64}$/.test(sha256))
+          if (!sourcePath(path) || !/^[a-f0-9]{64}$/.test(sha256))
             throw new VerificationWait('A selected recipe input could not be measured');
           if (path.startsWith('node_modules/')) {
-            dependencies.push(path);
+            dependencies.push({ path, sha256 });
             continue;
           }
           if (!hashes.has(path)) {
-            const entry = read('--literal-pathspecs', 'ls-tree', '-z', '--full-tree', head, '--', path);
-            const oid = /^100(?:644|755) blob ([a-f0-9]{40})\t/.exec(entry)?.[1];
-            hashes.set(path, oid ? createHash('sha256').update(git('cat-file', 'blob', oid)).digest('hex') : null);
+            const file = blob(head, path);
+            hashes.set(path, file ? createHash('sha256').update(file.bytes).digest('hex') : null);
           }
           if (hashes.get(path) === sha256) matched++;
           else changed.push(path);

@@ -12,6 +12,7 @@ const positive = value => Number.isSafeInteger(value) && value > 0;
 
 export class VerificationWait extends Error {}
 export class DesignBlocked extends Error {}
+export class DesignAbsent extends DesignBlocked {}
 const requireFact = (value, message) => { if (!value) throw new VerificationWait(message); };
 
 function pull(row) {

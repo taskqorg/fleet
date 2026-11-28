@@ -1,8 +1,9 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { designCredentialIsPrivate } from '../../packages/ui/scripts/design-github-checks.mjs';
-import { repository, repositoryId } from './provider.mjs';
+import { DesignBlocked, repository, repositoryId } from './provider.mjs';
 
 const origin = 'https://fleet.ufobe.com';
 const identity = 'fleet-design-verifier';
@@ -35,6 +36,26 @@ export async function fleetVerifierClient(credentialDir, send = fetch) {
     if (!reply.ok) throw Object.assign(new Error('Fleet verifier API returned HTTP ' + reply.status), { status: reply.status });
     return reply.json();
   }
+  async function exactEvidence(member, original) {
+    const { number, head, branch } = member;
+    let found;
+    try { found = await op('design_verifier_evidence', { number, head, branch, ...(original && { original }) }); }
+    catch (err) {
+      if (err.status === 404 && !original) return null;
+      if (err.status === 404 || err.status === 409)
+        throw new DesignBlocked('Fleet no longer confirms this exact head, selection or original');
+      throw err;
+    }
+    const review = found.review;
+    const selected = review?.options?.find(option => option.key === review.selected);
+    if (found.number !== number || found.head !== head || found.branch !== branch || !found.writer ||
+        review?.projectId !== 'fleet' || review.repository !== repository || review.state !== 'selected' ||
+        !review.owner || !review.questionId || !review.taskId || !review.executionId || !digest(review.digest) || !selected ||
+        !Array.isArray(found.recipes) || !original && (found.recipes.length !== selected.cases.length ||
+        !selected.cases.every(c => found.recipes.filter(r => r.scopeKey === c.scopeKey && digest(r.sha256)).length === 1)))
+      throw new Error('Fleet did not confirm the exact admission and owner selection');
+    return { found, review, selected };
+  }
   return {
     async probe() {
       const me = await op('me', {});
@@ -46,22 +67,27 @@ export async function fleetVerifierClient(credentialDir, send = fetch) {
     },
     async evidence(member) {
       if (member.sourceRepositoryId !== repositoryId) return null;
-      const { number, head, branch } = member;
-      let found;
-      try { found = await op('design_verifier_evidence', { number, head, branch }); }
-      catch (err) { if (err.status === 404 || err.status === 409) return null; throw err; }
-      const review = found.review;
-      const selected = review?.options?.find(option => option.key === review.selected);
-      if (found.number !== number || found.head !== head || found.branch !== branch || !found.writer ||
-          review?.projectId !== 'fleet' || review.repository !== repository || review.state !== 'selected' ||
-          !review.owner || !review.questionId || !review.taskId || !digest(review.digest) || !selected ||
-          !Array.isArray(found.recipes) || found.recipes.length !== selected.cases.length ||
-          !selected.cases.every(c => found.recipes.filter(r => r.scopeKey === c.scopeKey).length === 1))
-        throw new Error('Fleet did not confirm the exact admission and owner selection');
-      return { number, head, branch, writer: found.writer, task: review.taskId, question: review.questionId,
-        selection: review.digest, option: selected.key, recipes: found.recipes,
-        originals: selected.cases.map(c => ({ scopeKey: c.scopeKey, recipe: c.recipe,
-          sha256: c.frames.map(f => f.sha256), artifacts: c.frames.map(f => f.artifactId) })) };
+      const admission = await exactEvidence(member);
+      if (!admission) return null;
+      if (!digest(admission.found.sourceSha256)) throw new Error('Fleet did not verify the selected source artifact bytes');
+      return admission;
+    },
+    async original(member, admission, frame) {
+      if (member.sourceRepositoryId !== repositoryId) throw new DesignBlocked('Original belongs to another repository');
+      const { found, review, selected } = await exactEvidence(member, {
+        decision: admission.review.digest, artifactId: frame.artifactId, sha256: frame.sha256,
+      });
+      const original = found.original;
+      if (review.digest !== admission.review.digest || review.questionId !== admission.review.questionId ||
+          review.executionId !== admission.review.executionId || found.writer !== admission.found.writer ||
+          review.owner !== admission.review.owner || selected.key !== admission.selected.key ||
+          original?.artifactId !== frame.artifactId || original.sha256 !== frame.sha256 ||
+          typeof original.base64 !== 'string' || original.base64.length > 32 * 1024 * 1024)
+        throw new DesignBlocked('Fleet returned a different selected original or admission');
+      const bytes = Buffer.from(original.base64, 'base64');
+      if (createHash('sha256').update(bytes).digest('hex') !== frame.sha256)
+        throw new DesignBlocked('Selected original bytes do not match their retained hash');
+      return bytes;
     },
   };
 }

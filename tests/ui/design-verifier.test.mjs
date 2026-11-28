@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { designCredentialIsPrivate, fleetDesignChecks, fleetDesignGitHub } from '../../packages/ui/scripts/design-github-checks.mjs';
-import { appId, githubCandidates, repo, repositoryId } from '../../deploy/design-verifier/provider.mjs';
+import { appId, DesignBlocked, githubCandidates, repo, repositoryId } from '../../deploy/design-verifier/provider.mjs';
 import { openRepository } from '../../deploy/design-verifier/git.mjs';
 import { receiptStore } from '../../deploy/design-verifier/receipts.mjs';
 import { evaluate } from '../../deploy/design-verifier/verifier.mjs';
+import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
 
 // T-FLT-181: exercise the real Git diff, complete queue membership, disk receipts and Check Run adapter together.
 // Fixture GitHub replies cannot qualify a live provider installation.
@@ -109,12 +110,48 @@ test('the verifier gives each original head its own receipt and fences the cumul
   groupTrusted = false;
   assert.equal((await evaluate(group, deps)).conclusion, null);
   assert.equal((await evaluate(unknown, deps)).conclusion, 'failure');
+  const runner = {
+    impact: (event, paths) => ({ ...event, policy: {}, paths: { [paths[0]]: ['pages/conversations/detail:default'] } }),
+  };
+  const absent = await evaluate(unknown, { ...deps, runner, fleet: { evidence: async () => null } });
+  assert.equal(absent.conclusion, 'failure');
+  assert.equal(absent.evidenceState, 'absent');
+  const stale = await evaluate(unknown, { ...deps, runner, fleet: { evidence: async () => {
+    throw new DesignBlocked('Incompatible selected decision');
+  } } });
+  assert.equal(stale.conclusion, 'failure');
+  assert.equal(stale.evidenceState, 'blocked');
+  assert.notEqual(stale.externalId, absent.externalId);
   prs[0] = pr(1, fresh);
   await assert.rejects(evaluate(firstPR, deps), /source, head or base changed/);
   const [newEvent] = await provider.snapshot();
   const newResult = await evaluate(newEvent, deps);
   assert.equal(newResult.head, fresh);
   assert.equal(newResult.conclusion, 'success');
+});
+
+test('the isolated app origin serves only the registered routes and exact fixture requests', async () => {
+  const site = await openSite({ '/index.html': Buffer.from('<div id="app"></div>').toString('base64') }, {
+    start: '/library/bots/B-FLT-1', target: '/conversations/C-FLT-1', forbiddenOps: ['sessions_list'],
+    responses: [{ op: 'session_view', request: { sessionId: 'fixture', limit: 2 }, reply: { title: 'Fixture' }, required: true }],
+  });
+  try {
+    assert.deepEqual(site.unmet(), ['session_view']);
+    assert.equal((await fetch(site.origin + '/library/bots/B-FLT-1')).status, 200);
+    assert.equal((await fetch(site.origin + '/conversations/C-FLT-1')).status, 200);
+    assert.equal((await fetch(site.origin + '/conversations/another')).status, 404);
+    const post = (op, request) => fetch(site.origin + '/api/ops/' + op, { method: 'POST', body: JSON.stringify(request) });
+    assert.equal((await post('session_view', { sessionId: 'another', limit: 2 })).status, 404);
+    assert.deepEqual(await (await post('session_view', { limit: 2, sessionId: 'fixture' })).json(), { title: 'Fixture' });
+    assert.deepEqual(site.unmet(), []);
+    assert.deepEqual([...site.missing], ['session_view']);
+    const stream = await fetch(site.origin + '/api/stream?cursor=0');
+    const reader = stream.body.getReader();
+    assert.match(Buffer.from((await reader.read()).value).toString(), /event: ready/);
+    await reader.cancel();
+  } finally {
+    await site.close();
+  }
 });
 
 test('only a root-owned systemd credential accepts the service ACL mode', () => {

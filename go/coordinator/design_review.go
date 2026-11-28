@@ -123,7 +123,13 @@ func designDigest(q *Request, r *contract.DesignOfferRequest, project, task, exe
 	return readDesignDigest(q, r, project, task, execution, write, inspect, nil)
 }
 
-func readDesignDigest(q *Request, r *contract.DesignOfferRequest, project, task, execution string, write, inspect bool, readRecipe func(string, []byte) error) (string, error) {
+type designArtifactReader struct {
+	sourceID string
+	pngID    string
+	read     func(id, kind, hash string, data []byte) error
+}
+
+func readDesignDigest(q *Request, r *contract.DesignOfferRequest, project, task, execution string, write, inspect bool, reader *designArtifactReader) (string, error) {
 	originals := []designOriginal{}
 	err := designEvidence(r, func(id, kind, expected string, c *contract.DesignReviewCase, cell *designCell) error {
 		var a db.Artifact
@@ -143,7 +149,7 @@ func readDesignDigest(q *Request, r *contract.DesignOfferRequest, project, task,
 		if kind == "png" && mime != "image/png" || kind == "recipe" && mime != "application/json" || kind == "walk" && !slices.Contains([]string{"text/plain", "text/markdown", "application/json"}, mime) || kind == "source" && !slices.Contains([]string{"application/zip", "application/gzip", "application/x-tar", "application/octet-stream"}, mime) {
 			return fail(409, "Unexpected design artifact type for "+kind)
 		}
-		if inspect && (kind == "recipe" || kind == "png") {
+		if inspect && (kind == "recipe" || kind == "png") && (reader == nil || reader.pngID == "" || id == reader.pngID) {
 			buf, err := artifactBytes(q.ctx(), q.app, id, 24<<20)
 			if err != nil {
 				return err
@@ -154,10 +160,22 @@ func readDesignDigest(q *Request, r *contract.DesignOfferRequest, project, task,
 			if err := checkDesignOriginal(buf, c, cell); err != nil {
 				return err
 			}
-			if kind == "recipe" && readRecipe != nil {
-				if err := readRecipe(id, buf); err != nil {
+			if reader != nil && (kind == "recipe" || kind == "png" && id == reader.pngID) {
+				if err := reader.read(id, kind, a.ContentHash, buf); err != nil {
 					return err
 				}
+			}
+		}
+		if reader != nil && kind == "source" && id == reader.sourceID {
+			buf, err := artifactBytes(q.ctx(), q.app, id, 64<<20)
+			if err != nil {
+				return err
+			}
+			if sha256hex(buf) != a.ContentHash {
+				return fail(409, "Stored design source hash does not match its bytes")
+			}
+			if err := reader.read(id, kind, a.ContentHash, nil); err != nil {
+				return err
 			}
 		}
 		originals = append(originals, designOriginal{a.ID, mime, a.ContentHash, a.Size})

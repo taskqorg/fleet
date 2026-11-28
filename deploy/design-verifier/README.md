@@ -2,7 +2,7 @@
 
 Install this service independently of candidate CI, on a protected Linux systemd host with Git, OpenSSL 3, and Node.js 22 or newer at `/usr/bin/node`. The installer requires the operator's administrative account. The verifier uses a private systemd state directory and a dynamic service identity. It polls GitHub for open PRs targeting `main` and temporary merge queue branches, reads the exact Git objects in a bare repository, and runs only released code.
 
-The initial service qualifies the nonvisual and fail-closed paths. It reports provider readiness independently of visual readiness. Leave the repository's existing rules in effect while this service is being qualified. See the [design approval contract](../../docs/designs/fleet-delivery-pipeline.md#design-approval) for cutover requirements.
+The service reports provider readiness independently of isolated renderer readiness. Leave the repository's existing rules in effect while qualifying the visual path. See the [design approval contract](../../docs/designs/fleet-delivery-pipeline.md#design-approval) for cutover requirements.
 
 ## Install a signed Fleet release
 
@@ -87,7 +87,53 @@ The operator can provision it without an interactive daemon login:
    console.log(await status.json());
    ```
 
-   `fleetIdentityConfigured` reports roster registration. `lastReady` retains the last successful provider authentication even after a later failure. `latestPR` and `latestMergeGroup` each carry the exact commit, App check run and retained receipt when observed. An absent entry is unknown. Fleet marks provider readiness unknown when the last daemon observation is older than two minutes. The current service also reads and hashes selected original PNGs and recipe bytes through the Fleet admission operation. The results include tracked recipe-input comparisons. Normal production-route and isolated rendered parity are unavailable in this stage, so missing evidence, unknown impact and visual changes stay blocked.
+   `fleetIdentityConfigured` reports roster registration. `lastReady` retains the last successful provider authentication even after a later failure. `latestPR` and `latestMergeGroup` each carry the exact commit, App check run and retained receipt when observed. An absent entry is unknown. Fleet marks provider readiness unknown when the last daemon observation is older than two minutes.
+
+## Provision the isolated renderer
+
+The release includes `install-renderer.sh`, two bundled controller entry points, the pinned build input manifest, the release's frozen npm inputs, and the static PNG comparator on Linux amd64. Use the same signed release for the coordinator's evidence operation and the protected issuer. The current verifier's Fleet identity and GitHub App credentials are sufficient.
+
+1. Provision `bubblewrap` on the protected Linux host. Enable unprivileged user namespaces for this runtime and Chromium's sandbox according to the host's local security policy. The renderer refuses to start if either namespace boundary cannot be established.
+2. Preload an approved Linux amd64 OCI base by digest into the root Podman store. It must be a clean OS image with GNU tar, glibc, fontconfig, the Chromium shared libraries and the font inventory of the designer's renderer. Image provenance and fonts are operator inputs. The installer does not start an OCI container. It exports its filesystem, installs Node, Playwright and Chromium from the signed Fleet pins, and populates a frozen npm dependency tree with lifecycle scripts disabled. Host tools used in this preparation are Podman, jq, curl, GNU tar, unzip, corepack and runuser.
+3. Run from the newly verified release directory as root. Replace the image reference with the exact approved one already in the root store. On upgrades with the same runtime inputs reuse the existing rootfs. To replace it, stop the service and move the previous rootfs to a private rollback location first.
+
+   ```sh
+   systemctl stop fleet-design-verifier.service
+   sh deploy/design-verifier/install-renderer.sh 'REGISTRY/IMAGE@sha256:BASE_IMAGE_DIGEST'
+   systemd-run --quiet --wait --pipe -p DynamicUser=yes -p NoNewPrivileges=yes \
+     /usr/bin/node "$(pwd -P)/deploy/design-verifier/renderer-probe.mjs"
+   sh deploy/design-verifier/install.sh
+   ```
+
+After startup, read `/var/lib/fleet-design-verifier/status.json`. Require `provider: "ready"`, `fleetEvidence: "ready"`, `visualParity: "ready"` and the expected release revision. The probe launches sandboxed Chromium and loads a page on the new network namespace's loopback. This is runtime readiness. A candidate qualifies only when its own App check and retained receipt confirm parity.
+
+Each job starts without inherited environment or directory access. It gets a read-only rootfs and protected helpers, a fresh user, mount, PID and network namespace, and bounded scratch mounts under a watchdog and the service cgroup. Git archives enter the build guest over standard input after file types, paths and export attributes have been checked. Build and browser guests have separate writable filesystems. The browser gets only the normal `app/build.mjs` outputs and synthetic operation fixtures. The comparator runs in a third guest with only the two PNGs. Production data, tokens, cookies, verifier state and control sockets stay outside all three guests. The installer and protected service users never share a writable toolchain with a candidate.
+
+## Register a selected route and impact mapping
+
+The operator owns `/etc/fleet-design-verifier/parity.json`. Install it atomically as a root-owned regular file with mode `0644` in a root-owned directory with mode `0755`. Keep the source, fixture and impact review trace with the operator's task or release evidence. Start from the actual selected cases and original scene data. Translate that synthetic data into responses at the normal coordinator operation boundary. Do not take the policy, route scripts or fixture replies from the candidate checkout. The verifier never runs the book to establish production parity.
+
+- Set `version` to `1` and `cases` to an object keyed by the exact selected `scopeKey`. Each value binds `recipe` to the selected recipe digest and `sourceSha256` to the selected source artifact's reported hash. Use `start` and `target` for the literal app paths and `landmark` for a unique visible selector that confirms the target is loaded. The policy has no script field.
+- Choose `flow` as `open` for an ordinary app URL, `direct` for a conversation deep link, `standalone` for direct entry to a conversation independent of the bot page, `bot` for the **Talk to it** click on a real bot detail URL, or `back` for that click followed by browser Back. For `back`, add `backLandmark` for the restored bot page. The bot journey needs selected `bot`, `back` and `standalone` cases. The standalone case opens a direct link in a fresh browser context and can assert a redirect to the canonical URL.
+- Supply `responses` as a list of `{op, request, reply, required}` entries with synthetic data only. A request must match the method, operation and JSON values exactly. Property order is immaterial. Mark the reads that prove the scenario with `required: true`; use `forbiddenOps` when the accepted behavior forbids a read such as `sessions_list`. Unmatched operations, missing required reads, forbidden reads, popups, page exceptions, or a wrong URL or landmark block the capture.
+- Set `paths` to reviewed `{path, before, after, cases, reason}` entries. A fingerprint is the Git mode, a colon and the SHA-256 of the actual blob. Use JSON `null` for an absent side. Review every unclassified path against the PR merge base and against the queue base and final tree. App, shared UI and design paths can map to selected cases. The fixture responds at the operation boundary. Visual changes in the coordinator or other code outside the executed app require a verifier that runs that behavior and stay blocked here. An empty cases list asserts a reviewed nonvisual impact and needs its reason. Paths without an exact mapping stay blocked. The combined tree must cover every selected case of every visual member without overlapping selections.
+
+Use the installer-shipped diagnostic to print fingerprints once the daemon has fetched the actual provider objects. Run against the protected daemon's local bare repository as the operator. The output is a mapping input and does not issue a check.
+
+```sh
+/usr/bin/node /opt/fleet-design-verifier/current/deploy/design-verifier/renderer-probe.mjs \
+  --impact /var/lib/fleet-design-verifier pull_request BASE_SHA HEAD_SHA
+```
+
+Replace the final three arguments for the genuine merge group. Use the reported object fingerprints to populate the corresponding reviewed entries. The release pins the executed build files and package lock. A changed pin needs a newly signed and provisioned verifier environment before the candidate can qualify. Changes to selected scene inputs or installed dependency bytes require current matching owner evidence.
+
+## Render and check the live qualification
+
+The renderer uses the fixed clock, UTC timezone and en-US locale of the recipe, the release-pinned headless Chromium, DPR 1, reduced motion, and a fresh browser context for each frame. It waits for the expected app route, landmark, fonts and two animation frames, then captures the whole viewport with animations disabled and the caret hidden. It compares decoded PNG color and alpha samples at 1440×900 and 390×844 in dark and light. There are no masks or pixel tolerances. A receipt records both PNG hashes, the rectangle enclosing the different pixels and the number of different pixels. Any differing pixel blocks. A browser or runtime change that changes pixels requires a confirmed matching runtime or new owner evidence.
+
+For the separate pilot, compare the real PR result with the genuine merge-group result using managed publishing and the Fleet issuer readbacks. Verify the issuer App, check run, exact head, receipt external ID, selected owner decision, member PR receipts, archive and policy hashes, and all actual and original image hashes. Inspect `receipts/<externalId>.json` in the verifier state directory. The protected service rechecks current selection and provider identity before publishing success. A change while the PR or group remains active is re-evaluated on the next check. The GitHub report is a point-in-time observation.
+
+Inside the receipt, `evidenceState: "absent"` means there was no current exact-head selection or admission. `"blocked"` means a verified input was stale or incompatible, impact was unmapped, a route assertion failed, or pixels differed. These both publish failure. `"unknown"` leaves the check pending when a provider fact or a worker result could not be confirmed. Confirm an actual mismatch and a missing or stale selection on different exact candidates before treating the positive path as qualified. The operator controls rule activation after qualification.
 
 ## Restart and rotation
 
