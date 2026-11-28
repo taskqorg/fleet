@@ -69,6 +69,9 @@ type deliveryMergedPR struct {
 	RollbackConfirmed bool                    `json:"rollbackConfirmed,omitempty"`
 	ReleaseCovered    bool                    `json:"releaseCovered,omitempty"`
 	InstalledOn       []taskDeliveryHostProof `json:"installedOn,omitempty"`
+	gitLabOpenedAt    string
+	gitLabTarget      string
+	gitLabSource      int64
 }
 
 var (
@@ -902,6 +905,7 @@ type glMR struct {
 	SquashCommitSHA           string        `json:"squash_commit_sha"`
 	SHA                       string        `json:"sha"`
 	SourceBranch              string        `json:"source_branch"`
+	SourceProjectID           int64         `json:"source_project_id"`
 	TargetBranch              string        `json:"target_branch"`
 	MergeWhenPipelineSucceeds bool          `json:"merge_when_pipeline_succeeds"`
 	HeadPipeline              *glMRPipeline `json:"head_pipeline"`
@@ -1010,18 +1014,21 @@ func gitlabDeliveryStages(project, host, repo string, g glRepo, now time.Time) (
 			items = append(items, mkItem(m, contract.DeliveryStageMerged, mergedAt))
 		}
 		delivered = append(delivered, deliveryMergedPR{
-			Repo:        repo,
-			Number:      m.IID,
-			Title:       m.Title,
-			Body:        m.Description,
-			URL:         m.WebURL,
-			Branch:      m.SourceBranch,
-			HeadSHA:     m.SHA,
-			MergeSHA:    firstString(m.MergeCommitSHA, m.SquashCommitSHA, m.SHA),
-			MergedAt:    mergedAt,
-			Stage:       string(contract.DeliveryStageMerged),
-			DeliveredAt: mergedAt,
-			Delivered:   true,
+			Repo:           repo,
+			Number:         m.IID,
+			Title:          m.Title,
+			Body:           m.Description,
+			URL:            m.WebURL,
+			Branch:         m.SourceBranch,
+			HeadSHA:        m.SHA,
+			MergeSHA:       firstString(m.MergeCommitSHA, m.SquashCommitSHA, m.SHA),
+			MergedAt:       mergedAt,
+			Stage:          string(contract.DeliveryStageMerged),
+			DeliveredAt:    mergedAt,
+			Delivered:      true,
+			gitLabOpenedAt: m.CreatedAt,
+			gitLabTarget:   m.TargetBranch,
+			gitLabSource:   m.SourceProjectID,
 		})
 	}
 	return items, delivered

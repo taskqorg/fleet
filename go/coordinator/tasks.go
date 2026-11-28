@@ -2410,9 +2410,7 @@ func matchTaskDeliveredPR(
 	delivered []deliveryMergedPR,
 ) (deliveryMergedPR, bool) {
 	var req taskCompletionReq
-	if len(t.CompletionRequirements) > 0 {
-		_ = json.Unmarshal(t.CompletionRequirements, &req)
-	}
+	validRequirements := len(t.CompletionRequirements) == 0 || json.Unmarshal(t.CompletionRequirements, &req) == nil
 	var destRefs []deliveryPRRef
 	destRefs = append(destRefs, explicitPRRefs(t.ResultDestination)...)
 	destRefs = append(destRefs, explicitPRRefs(req.PrURL)...)
@@ -2438,6 +2436,13 @@ func matchTaskDeliveredPR(
 	if len(matched) == 0 {
 		return deliveryMergedPR{}, false
 	}
+	if len(matched) > 1 && len(destRefs) == 0 && validRequirements &&
+		req.PrNumber == nil && req.PullRequest == nil && req.PrURL == "" && req.Branch == "" &&
+		!strings.Contains(t.ResultDestination, "/-/merge_requests/") {
+		if last, ok := latestSequentialGitLabMerge(matched, sessionIDs); ok {
+			return last, true
+		}
+	}
 	if len(matched) > 1 || len(destRefs) > 1 {
 		// Keep an explicit decision for competing matches. No one member can stand for the others.
 		sort.Slice(matched, func(i, j int) bool { return matched[i].URL < matched[j].URL })
@@ -2446,6 +2451,42 @@ func matchTaskDeliveredPR(
 		return conflict, true
 	}
 	return matched[0], true
+}
+
+// A task branch can be reused after its MR merges. Disjoint intervals on the
+// same source and target identify successive deliveries of that branch.
+func latestSequentialGitLabMerge(matched []deliveryMergedPR, sessionIDs []string) (deliveryMergedPR, bool) {
+	first := matched[0]
+	repository, _, ok := strings.Cut(first.URL, "/-/merge_requests/")
+	if !ok || first.gitLabSource <= 0 || first.gitLabTarget == "" || !slices.Contains(sessionIDs, branchSession(first.Branch)) {
+		return deliveryMergedPR{}, false
+	}
+	type interval struct {
+		pr             deliveryMergedPR
+		opened, merged time.Time
+	}
+	series := make([]interval, 0, len(matched))
+	for _, pr := range matched {
+		repo, _, ok := strings.Cut(pr.URL, "/-/merge_requests/")
+		if !ok || repo != repository || pr.Repo != first.Repo || pr.Branch != first.Branch ||
+			pr.gitLabSource != first.gitLabSource || pr.gitLabTarget != first.gitLabTarget ||
+			!pr.Delivered || pr.Stage != string(contract.DeliveryStageMerged) {
+			return deliveryMergedPR{}, false
+		}
+		opened, openErr := time.Parse(time.RFC3339Nano, pr.gitLabOpenedAt)
+		merged, mergeErr := time.Parse(time.RFC3339Nano, pr.MergedAt)
+		if openErr != nil || mergeErr != nil || merged.Before(opened) {
+			return deliveryMergedPR{}, false
+		}
+		series = append(series, interval{pr, opened, merged})
+	}
+	slices.SortFunc(series, func(a, b interval) int { return a.opened.Compare(b.opened) })
+	for i := 1; i < len(series); i++ {
+		if !series[i].opened.After(series[i-1].merged) {
+			return deliveryMergedPR{}, false
+		}
+	}
+	return series[len(series)-1].pr, true
 }
 
 func deliveryRepositoryAllowed(pol deliveryProjectPolicy, pr deliveryMergedPR) bool {

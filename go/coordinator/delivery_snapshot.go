@@ -34,8 +34,11 @@ type deliverySnapRepo struct {
 // deliverySnapPR: a merged pull request with the fields deliveryMergedPR leaves out of its JSON.
 type deliverySnapPR struct {
 	deliveryMergedPR
-	SnapBody      string `json:"body"`
-	SnapDelivered bool   `json:"delivered"`
+	SnapBody         string `json:"body"`
+	SnapDelivered    bool   `json:"delivered"`
+	SnapGitLabOpened string `json:"gitLabOpenedAt,omitempty"`
+	SnapGitLabTarget string `json:"gitLabTarget,omitempty"`
+	SnapGitLabSource int64  `json:"gitLabSource,omitempty"`
 }
 
 func snapshotOf(s deliveryState) deliverySnapshot {
@@ -43,7 +46,8 @@ func snapshotOf(s deliveryState) deliverySnapshot {
 	for key, r := range s.repos {
 		prs := []deliverySnapPR{}
 		for _, pr := range r.delivered {
-			prs = append(prs, deliverySnapPR{deliveryMergedPR: pr, SnapBody: pr.Body, SnapDelivered: pr.Delivered})
+			prs = append(prs, deliverySnapPR{deliveryMergedPR: pr, SnapBody: pr.Body, SnapDelivered: pr.Delivered,
+				SnapGitLabOpened: pr.gitLabOpenedAt, SnapGitLabTarget: pr.gitLabTarget, SnapGitLabSource: pr.gitLabSource})
 		}
 		out.Repos[key] = deliverySnapRepo{Projects: r.projects, Items: r.items, CI: r.ci, Landing: r.landing, Problem: r.problem, Delivered: prs}
 	}
@@ -57,6 +61,7 @@ func (s deliverySnapshot) state() deliveryState {
 		for _, p := range r.Delivered {
 			pr := p.deliveryMergedPR
 			pr.Body, pr.Delivered = p.SnapBody, p.SnapDelivered
+			pr.gitLabOpenedAt, pr.gitLabTarget, pr.gitLabSource = p.SnapGitLabOpened, p.SnapGitLabTarget, p.SnapGitLabSource
 			prs = append(prs, pr)
 		}
 		out.repos[key] = &deliveryRepo{projects: r.Projects, items: r.Items, ci: r.CI, landing: r.Landing, problem: r.Problem, delivered: prs}
