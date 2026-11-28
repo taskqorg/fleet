@@ -105,6 +105,7 @@ type EntityCardReply struct {
 	Hash      *string        `json:"hash,omitempty"`
 	Id        string         `json:"id"`
 	Kind      EntityKind     `json:"kind"`
+	MediaType *string        `json:"mediaType,omitempty"`
 	Path      *string        `json:"path,omitempty"`
 	Preview   *EntityPreview `json:"preview,omitempty"`
 	ProjectId *string        `json:"projectId,omitempty"`
@@ -272,18 +273,25 @@ func (v EntityPreviewView) Valid() bool {
 }
 
 type EntityRefState struct {
-	Code  *string    `json:"code,omitempty"`
-	Id    string     `json:"id"`
-	Kind  EntityKind `json:"kind"`
-	Ref   int64      `json:"ref"`
-	State *string    `json:"state,omitempty"`
-	Title string     `json:"title"`
+	Code      *string        `json:"code,omitempty"`
+	Id        string         `json:"id"`
+	Kind      EntityKind     `json:"kind"`
+	MediaType *string        `json:"mediaType,omitempty"`
+	Preview   *EntityPreview `json:"preview,omitempty"`
+	Ref       int64          `json:"ref"`
+	State     *string        `json:"state,omitempty"`
+	Title     string         `json:"title"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *EntityRefState) Validate() error {
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
+	}
+	if v.Preview != nil {
+		if err := Check(v.Preview, "preview"); err != nil {
+			return err
+		}
 	}
 	return nil
 }

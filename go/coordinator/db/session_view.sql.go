@@ -110,9 +110,15 @@ func (q *Queries) SessionViewLastMessage(ctx context.Context, sessionID string) 
 }
 
 const sessionViewOpenQuestions = `-- name: SessionViewOpenQuestions :many
-SELECT x.id, coalesce(x.session_id, '')::text AS session_id, x.kind::text AS kind, x.text, coalesce(x.options, '[]')::jsonb AS options, x.execution_id
-FROM question x WHERE x.session_id = ANY ($1::text[]) AND x.state = 'open' ORDER BY x.asked_at
+SELECT x.id, coalesce(x.session_id, '')::text AS session_id, x.kind::text AS kind, x.text, coalesce(x.options, '[]')::jsonb AS options, x.execution_id,
+ (CASE WHEN $1::boolean THEN x.data->'artifactIds' END)::jsonb AS artifact_ids
+FROM question x WHERE x.session_id = ANY ($2::text[]) AND x.state = 'open' ORDER BY x.asked_at
 `
+
+type SessionViewOpenQuestionsParams struct {
+	IncludeQuestionArtifactIds bool
+	SessionIds                 []string
+}
 
 type SessionViewOpenQuestionsRow struct {
 	ID          string
@@ -121,11 +127,12 @@ type SessionViewOpenQuestionsRow struct {
 	Text        string
 	Options     []byte
 	ExecutionID *string
+	ArtifactIds []byte
 }
 
 // Open questions of the given sessions, oldest first.
-func (q *Queries) SessionViewOpenQuestions(ctx context.Context, sessionIds []string) ([]SessionViewOpenQuestionsRow, error) {
-	rows, err := q.db.Query(ctx, sessionViewOpenQuestions, sessionIds)
+func (q *Queries) SessionViewOpenQuestions(ctx context.Context, arg SessionViewOpenQuestionsParams) ([]SessionViewOpenQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, sessionViewOpenQuestions, arg.IncludeQuestionArtifactIds, arg.SessionIds)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +147,7 @@ func (q *Queries) SessionViewOpenQuestions(ctx context.Context, sessionIds []str
 			&i.Text,
 			&i.Options,
 			&i.ExecutionID,
+			&i.ArtifactIds,
 		); err != nil {
 			return nil, err
 		}
