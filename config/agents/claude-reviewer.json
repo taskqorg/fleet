@@ -10,7 +10,8 @@
   "mcpServers": [],
   "model": "sonnet",
   "skills": [
-    "code-review"
+    "code-review",
+    "design-first-ui"
   ],
   "tools": [
     "Read",
