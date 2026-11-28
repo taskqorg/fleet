@@ -70,10 +70,39 @@ const pictureState = img => ({
   width: img.offsetWidth, height: img.offsetHeight, naturalWidth: img.naturalWidth,
   imageEdges: img.getBoundingClientRect().toJSON(),
 });
-const covers = (outer, inner) => outer.left <= inner.left && outer.top <= inner.top &&
-  outer.right >= inner.right && outer.bottom >= inner.bottom;
+// At DPR 1, an edge at x covers pixel centers on its inside half-open interval.
+const pixelBoundary = edge => Math.ceil(edge - 0.5);
+const covers = (outer, inner) => pixelBoundary(outer.left) <= pixelBoundary(inner.left) &&
+  pixelBoundary(outer.top) <= pixelBoundary(inner.top) &&
+  pixelBoundary(outer.right) >= pixelBoundary(inner.right) &&
+  pixelBoundary(outer.bottom) >= pixelBoundary(inner.bottom);
 
-export async function imageJourney(page, scenario, frame, origin, settle, checkpoint, beginImageOpen) {
+async function observeOpen(page, path) {
+  if (!path) return;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { frameTree } = await cdp.send('Page.getFrameTree');
+    const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'Fleet verifier' });
+    // The original becomes available during the trusted click, before the app handles it.
+    // The isolated world keeps the one-use loopback URL out of the app's globals.
+    const { exceptionDetails } = await cdp.send('Runtime.evaluate', {
+      contextId: executionContextId,
+      expression: `(() => {
+        const mark = event => {
+          if (!event.isTrusted) return;
+          window.removeEventListener('click', mark, true);
+          const request = new XMLHttpRequest();
+          request.open('POST', ${JSON.stringify(path)}, false);
+          request.send();
+        };
+        window.addEventListener('click', mark, true);
+      })()`,
+    });
+    if (exceptionDetails) throw new Error('Could not observe the trusted Open activation');
+  } finally { await cdp.detach(); }
+}
+
+export async function imageJourney(page, scenario, frame, origin, settle, checkpoint, openSignal) {
   const { surface, flow, entry, resultCode, resultTitle } = scenario;
   const openLabel = 'Open ' + resultTitle;
   const button = (within, name) => within.getByRole('button', { name, exact: true });
@@ -115,7 +144,7 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
   const loadThumbnail = async opener => {
     if (scenario.thumbnail) {
       await opener.scrollIntoViewIfNeeded();
-      await decode(opener.getByRole('img', { name: resultTitle, exact: true }), scenario.thumbnail.path);
+      await decode(opener.locator('img'), scenario.thumbnail.path);
     }
   };
   if (entry === 'thumbnail') await loadThumbnail(trigger);
@@ -145,7 +174,7 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
     }
     // Finish actionability checks before the protected origin starts serving the original.
     if (!returning || entry === 'entity') await opener.click({ trial: true });
-    beginImageOpen();
+    await observeOpen(page, openSignal);
     await opener.click();
 
     checkpoint('image-loaded');

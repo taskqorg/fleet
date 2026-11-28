@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { imageJourney, imageScenarioOK, resolveImages, validateImages } from '../../deploy/design-verifier/worker/image-journey.mjs';
 import { openSite } from '../../deploy/design-verifier/worker/site.mjs';
 
@@ -66,7 +67,7 @@ test('the isolated normal origin requires exact synthetic operations and both de
   for (const f of s.responses)
     assert.deepEqual(await (await get('/api/ops/' + f.op, post(f.request))).json(), f.reply);
   for (const asset of [thumbnail, original]) {
-    if (asset === original) site.beginImageOpen();
+    if (asset === original) assert.equal((await get(site.openSignal, { method: 'POST' })).status, 204);
     const response = await get(asset.path);
     assert.equal(response.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
@@ -90,7 +91,7 @@ test('media phases reject eager originals and late first thumbnails while allowi
       if (early) assert.equal((await fetch(site.origin + early.path)).status, expected);
       if (early === original && fixture.thumbnail)
         assert.equal((await fetch(site.origin + thumbnail.path)).status, 200);
-      site.beginImageOpen();
+      if (site.openSignal) assert.equal((await fetch(site.origin + site.openSignal, { method: 'POST' })).status, 204);
       assert.equal((await fetch(site.origin + original.path)).status, 200);
       const late = fixture.thumbnail && !early;
       if (fixture.thumbnail) assert.equal((await fetch(site.origin + thumbnail.path)).status, late ? 404 : 200);
@@ -100,23 +101,24 @@ test('media phases reject eager originals and late first thumbnails while allowi
   }
 });
 
-function journeyPage(flow) {
+function journeyPage(flow, distinct = false) {
   const frame = { width: 390, height: 844 };
   const origin = 'http://synthetic.invalid';
-  const spec = { ...scenario('task', flow), image: original, thumbnail: undefined };
+  const spec = { ...scenario('task', flow), image: original, thumbnail: distinct ? thumbnail : undefined };
   const document = { activeElement: null };
   const parent = { scrollLeft: 0, scrollTop: 96 };
   const stageEdges = { left: 0, top: 0, right: frame.width, bottom: frame.height };
-  const imageEdges = { left: -480, top: 0, right: 870, bottom: frame.height };
+  const imageEdges = { left: -480, top: 0, right: 870, bottom: 843.984375 };
   const trigger = { isConnected: true, ownerDocument: document, parentElement: parent };
   const stage = { isConnected: true, ownerDocument: document, getBoundingClientRect: () => ({ toJSON: () => stageEdges }) };
   const picture = { complete: true, naturalWidth: 1600, naturalHeight: 1000, currentSrc: origin + original.path,
     offsetWidth: 1350, offsetHeight: 844, decode: async () => {}, getBoundingClientRect: () => ({ toJSON: () => imageEdges }) };
   const calls = [];
-  let opened = false;
+  let opened = false, listener;
+  const openSignal = distinct ? '/_fleet_image_open/test' : null;
   const handles = new Map([
     ['button:Open ' + resultTitle, trigger], ['region:Image. Drag to pan; plus and minus to zoom.', stage],
-    ['img:' + resultTitle, picture],
+    ['img:' + resultTitle, picture], ['img', { ...picture, currentSrc: origin + thumbnail.path }],
   ]);
   const locator = (key, el = handles.get(key)) => ({
     getByRole: (role, { name, exact, selected }) => {
@@ -133,22 +135,45 @@ function journeyPage(flow) {
     click: async ({ trial } = {}) => {
       if (trial) return;
       calls.push(key);
-      if (el === trigger) { opened = true; document.activeElement = stage; }
+      if (el === trigger) {
+        listener?.({ isTrusted: false });
+        assert.ok(!calls.includes('activation signal'));
+        listener?.({ isTrusted: true });
+        opened = true;
+        document.activeElement = stage;
+      }
       if (key === 'button:Back to question') { opened = false; document.activeElement = trigger; }
     },
     evaluate: async callback => callback(el),
     elementHandle: async () => ({ evaluate: async callback => callback(el), value: el, dispose: async () => {} }),
   });
+  const cdp = { detach: async () => {}, async send(method, params) {
+    if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
+    if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
+    assert.equal(method, 'Runtime.evaluate');
+    assert.equal(params.contextId, 1);
+    runInNewContext(params.expression, {
+      window: { addEventListener: (_type, fn) => { listener = fn; }, removeEventListener: () => { listener = null; } },
+      XMLHttpRequest: class {
+        open(method, path, async) { assert.deepEqual([method, path, async], ['POST', openSignal, false]); }
+        send() { calls.push('activation signal'); }
+      },
+    });
+    return {};
+  } };
   const page = { ...locator('page'), evaluate: async () => true, url: () => origin + spec.start,
+    context: () => ({ newCDPSession: async () => cdp }),
     waitForFunction: async (callback, handle) => assert.equal(callback(handle.value), true) };
-  const start = () => imageJourney(page, spec, frame, origin, async () => {}, () => {}, () => calls.push('begin opening'));
+  const start = () => imageJourney(page, spec, frame, origin, async () => {}, () => {}, openSignal);
   return { start, calls, parent, document, stage, stageEdges, imageEdges };
 }
 
 test('an open capture rejects a displaced stage or image even at the same dimensions', async () => {
-  const { start, stageEdges, imageEdges } = journeyPage('image-open');
+  const { start, stageEdges, imageEdges, calls } = journeyPage('image-open', true);
   const journey = await start();
   await journey.confirm();
+  assert.ok(calls.indexOf('img:visible') < calls.indexOf('button:Open ' + resultTitle));
+  assert.equal(calls.indexOf('activation signal'), calls.indexOf('button:Open ' + resultTitle) + 1);
   stageEdges.left += 1;
   stageEdges.right += 1;
   await assert.rejects(journey.confirm(), /viewer does not fill viewport/);
@@ -164,7 +189,6 @@ test('returned capture blocks scroll or focus drift without repairing either', a
   const journey = await start();
   try {
     assert.equal(calls[0], 'tab:Details');
-    assert.equal(calls[calls.indexOf('begin opening') + 1], 'button:Open ' + resultTitle);
     assert.ok(calls.includes('tab:Details:selected:visible'));
     assert.deepEqual(journey.evidence, { sourceScroll: [[0, 96]], focus: 'source opener' });
     parent.scrollTop = 95;

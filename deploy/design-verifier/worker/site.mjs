@@ -1,6 +1,7 @@
 // In-memory HTTP for the normal release bundle inside the browser network namespace.
 // Only the operator's synthetic answers are served. There is no upstream.
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { imageBytes, isImageFlow } from './image-journey.mjs';
 
 const mime = new Map([
@@ -28,6 +29,7 @@ export async function openSite(files, scenario) {
   const fixtures = new Map(scenario.responses.map(f => [key(f.op, f.request), f.reply]));
   if (fixtures.size !== scenario.responses.length) throw new Error('duplicate fixture request');
   const imageFlow = isImageFlow(scenario.flow);
+  const openSignal = imageFlow && scenario.thumbnail ? '/_fleet_image_open/' + randomBytes(16).toString('hex') : null;
   const media = new Map();
   if (imageFlow) for (const item of [scenario.image, ...(scenario.thumbnail ? [scenario.thumbnail] : [])]) {
     const bytes = imageBytes(item);
@@ -44,6 +46,11 @@ export async function openSite(files, scenario) {
     try {
       const url = new URL(request.url, origin);
       if (url.origin !== origin) return reply(404, 'text/plain', '');
+      if (openSignal && !imageOpen && request.method === 'POST' && request.url === openSignal) {
+        if (!used.has(scenario.thumbnail.path)) missing.add('image thumbnail missing before opening');
+        imageOpen = true;
+        return reply(204, 'text/plain', '');
+      }
       if (imageFlow && url.pathname.startsWith('/api/results/')) {
         const bytes = request.method === 'GET' && media.get(request.url);
         if (!bytes) {
@@ -95,11 +102,7 @@ export async function openSite(files, scenario) {
     origin,
     used,
     missing,
-    beginImageOpen() {
-      if (scenario.thumbnail && !used.has(scenario.thumbnail.path))
-        missing.add('image thumbnail missing before opening');
-      imageOpen = true;
-    },
+    openSignal,
     unmet: () => [...scenario.responses.filter(f => f.required && !used.has(key(f.op, f.request))).map(f => f.op),
       ...[...media.keys()].filter(path => !used.has(path))],
     forbidden: () => scenario.forbiddenOps?.filter(op => [...used].some(k => k.startsWith(op + ':'))) ?? [],
