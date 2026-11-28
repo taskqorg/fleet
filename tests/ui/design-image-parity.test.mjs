@@ -101,7 +101,7 @@ test('media phases reject eager originals and late first thumbnails while allowi
   }
 });
 
-function journeyPage(flow, distinct = false, surface = 'task') {
+function journeyPage(flow, distinct = false, surface = 'task', reorder = false) {
   const frame = { width: 390, height: 844 };
   const origin = 'http://synthetic.invalid';
   const spec = { ...scenario(surface, flow), image: original, thumbnail: distinct ? thumbnail : undefined };
@@ -111,55 +111,78 @@ function journeyPage(flow, distinct = false, surface = 'task') {
   const stageEdges = { left: 0, top: 0, right: frame.width, bottom: frame.height };
   const imageEdges = { left: -480, top: 0, right: 870, bottom: 843.984375 };
   const trigger = { isConnected: true, ownerDocument: document, parentElement: parent };
+  const sibling = { parentElement: parent };
   root.children = [parent];
-  parent.children = [trigger];
+  parent.children = [trigger, sibling];
   const stage = { isConnected: true, ownerDocument: document, getBoundingClientRect: () => ({ toJSON: () => stageEdges }) };
   const picture = { complete: true, naturalWidth: 1600, naturalHeight: 1000, currentSrc: origin + original.path,
     offsetWidth: 1350, offsetHeight: 844, decode: async () => {}, getBoundingClientRect: () => ({ toJSON: () => imageEdges }) };
   const calls = [];
-  let opened = false, listener;
+  let opened = false;
+  const listeners = new Map();
+  const emit = (type, event) => {
+    const listener = listeners.get(type);
+    if (listener?.once) listeners.delete(type);
+    listener?.callback(event);
+  };
   const openSignal = distinct ? '/_fleet_image_open/test' : null;
   const handles = new Map([
     ['button:' + (distinct ? 'Open ' : 'Open image: ') + resultTitle, trigger],
     ['region:Image. Drag to pan; plus and minus to zoom.', stage],
     ['img:' + resultTitle, picture], ['img', { ...picture, currentSrc: origin + thumbnail.path }],
   ]);
-  const locator = (key, el = handles.get(key)) => ({
-    getByRole: (role, { name, exact, selected }) => {
-      assert.equal(exact, true);
-      return locator(role + ':' + name + (selected ? ':selected' : ''));
-    },
-    locator: selector => locator(selector),
-    waitFor: async ({ state }) => {
-      calls.push(key + ':' + state);
-      if (state === 'hidden') assert.equal(opened, false);
-    },
-    isVisible: async () => key === 'dialog:Image viewer' ? opened : true,
-    scrollIntoViewIfNeeded: async () => {},
-    click: async ({ trial } = {}) => {
+  const locator = (key, el = handles.get(key)) => {
+    const click = async ({ trial } = {}) => {
       if (trial) return;
       calls.push(key);
       if (el === trigger) {
-        listener?.({ isTrusted: false, composedPath: () => [trigger, parent] });
-        listener?.({ isTrusted: true, composedPath: () => [parent] });
+        emit('click', { isTrusted: false, composedPath: () => [trigger, parent] });
+        emit('click', { isTrusted: true, composedPath: () => [sibling, parent] });
         assert.ok(!calls.includes('activation signal'));
-        listener?.({ isTrusted: true, composedPath: () => [trigger, parent] });
+        emit('click', { isTrusted: true, composedPath: () => [trigger, parent] });
         opened = true;
         document.activeElement = stage;
       }
       if (key === 'button:Back to question') { opened = false; document.activeElement = trigger; }
-    },
-    evaluate: async callback => callback.name ? callback(el) : runInNewContext('(' + callback + ')(el)', { el, document }),
-    elementHandle: async () => ({ evaluate: async callback => callback(el), value: el, dispose: async () => {} }),
-  });
+    };
+    return {
+      getByRole: (role, { name, exact, selected }) => {
+        assert.equal(exact, true);
+        return locator(role + ':' + name + (selected ? ':selected' : ''));
+      },
+      locator: selector => locator(selector),
+      waitFor: async ({ state }) => {
+        calls.push(key + ':' + state);
+        if (state === 'hidden') assert.equal(opened, false);
+      },
+      isVisible: async () => key === 'dialog:Image viewer' ? opened : true,
+      scrollIntoViewIfNeeded: async () => {},
+      click,
+      evaluate: async callback => callback.name ? callback(el) : runInNewContext('(' + callback + ')(el)', { el, document }),
+      elementHandle: async () => ({
+        click, evaluate: async callback => callback(el), value: el, dispose: async () => {},
+        dispatchEvent: async (type, options) => {
+          assert.equal(options.bubbles, false);
+          emit(type, { isTrusted: false, composedPath: () => [el, parent] });
+          assert.ok(!calls.includes('activation signal'));
+        },
+      }),
+    };
+  };
   const cdp = { detach: async () => {}, async send(method, params) {
     if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
-    if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
+    if (method === 'Page.createIsolatedWorld') {
+      if (reorder) parent.children.reverse();
+      return { executionContextId: 1 };
+    }
     assert.equal(method, 'Runtime.evaluate');
     assert.equal(params.contextId, 1);
     runInNewContext(params.expression, {
       document,
-      window: { addEventListener: (_type, fn) => { listener = fn; }, removeEventListener: () => { listener = null; } },
+      window: {
+        addEventListener: (type, callback, options) => listeners.set(type, { callback, once: options?.once }),
+        removeEventListener: type => listeners.delete(type),
+      },
       XMLHttpRequest: class {
         open(method, path, async) { assert.deepEqual([method, path, async], ['POST', openSignal, false]); }
         send() { calls.push('activation signal'); }
@@ -171,8 +194,15 @@ function journeyPage(flow, distinct = false, surface = 'task') {
     context: () => ({ newCDPSession: async () => cdp }),
     waitForFunction: async (callback, handle) => assert.equal(callback(handle.value), true) };
   const start = () => imageJourney(page, spec, frame, origin, async () => {}, () => {}, openSignal);
-  return { start, calls, parent, document, stage, stageEdges, imageEdges };
+  return { start, calls, parent, sibling, document, stage, stageEdges, imageEdges };
 }
+
+test('the trusted activation stays bound to the opener when siblings reorder during setup', async () => {
+  const { start, calls, parent, sibling } = journeyPage('image-open', true, 'task', true);
+  await (await start()).confirm();
+  assert.equal(parent.children[0], sibling);
+  assert.equal(calls.filter(call => call === 'activation signal').length, 1);
+});
 
 test('an open capture rejects a displaced stage or image even at the same dimensions', async () => {
   const { start, stageEdges, imageEdges, calls } = journeyPage('image-open', true);

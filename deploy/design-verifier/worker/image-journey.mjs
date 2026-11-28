@@ -1,5 +1,5 @@
 // The operator supplies route and result data. Gestures and DOM observations ship with the verifier.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 const flows = new Set(['image-open', 'image-fit', 'image-zoom', 'image-returned']);
 const routes = {
@@ -78,35 +78,31 @@ const covers = (outer, inner) => pixelBoundary(outer.left) <= pixelBoundary(inne
   pixelBoundary(outer.bottom) >= pixelBoundary(inner.bottom);
 
 async function observeOpen(page, opener, path) {
-  if (!path) return;
-  const openerPath = await opener.evaluate(el => {
-    const indexes = [];
-    for (let node = el; node !== document.documentElement; node = node.parentElement)
-      indexes.unshift(Array.from(node.parentElement.children).indexOf(node));
-    return indexes;
-  });
+  const bindEvent = 'fleet-bind-image-' + randomUUID();
   const cdp = await page.context().newCDPSession(page);
   try {
     const { frameTree } = await cdp.send('Page.getFrameTree');
     const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'Fleet verifier' });
-    // The original becomes available during the trusted click, before the app handles it.
-    // The isolated world keeps the one-use loopback URL out of the app's globals.
+    // Transfer the same DOM node through a one-use event. The binding event carries no
+    // loopback URL and cannot itself authorize the original. Only the trusted click can.
     const { exceptionDetails } = await cdp.send('Runtime.evaluate', {
       contextId: executionContextId,
       expression: `(() => {
-        const opener = ${JSON.stringify(openerPath)}.reduce((node, index) => node?.children[index], document.documentElement);
-        if (!opener) throw new Error('Open control is absent');
-        const mark = event => {
-          if (!event.isTrusted || !event.composedPath().includes(opener)) return;
-          window.removeEventListener('click', mark, true);
-          const request = new XMLHttpRequest();
-          request.open('POST', ${JSON.stringify(path)}, false);
-          request.send();
-        };
-        window.addEventListener('click', mark, true);
+        window.addEventListener(${JSON.stringify(bindEvent)}, binding => {
+          const opener = binding.composedPath()[0];
+          const mark = event => {
+            if (!event.isTrusted || !event.composedPath().includes(opener)) return;
+            window.removeEventListener('click', mark, true);
+            const request = new XMLHttpRequest();
+            request.open('POST', ${JSON.stringify(path)}, false);
+            request.send();
+          };
+          window.addEventListener('click', mark, true);
+        }, { capture: true, once: true });
       })()`,
     });
     if (exceptionDetails) throw new Error('Could not observe the trusted Open activation');
+    await opener.dispatchEvent(bindEvent, { bubbles: false });
   } finally { await cdp.detach(); }
 }
 
@@ -182,8 +178,13 @@ export async function imageJourney(page, scenario, frame, origin, settle, checkp
     }
     // Finish actionability checks before the protected origin starts serving the original.
     if (!returning || entry === 'entity') await opener.click({ trial: true });
-    await observeOpen(page, opener, openSignal);
-    await opener.click();
+    if (openSignal) {
+      const selected = await opener.elementHandle();
+      try {
+        await observeOpen(page, selected, openSignal);
+        await selected.click();
+      } finally { await selected.dispose(); }
+    } else await opener.click();
 
     checkpoint('image-loaded');
     await decode(picture, scenario.image.path);
