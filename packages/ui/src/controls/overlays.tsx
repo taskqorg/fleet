@@ -95,7 +95,7 @@ export type EntityForm = 'code' | 'chip' | 'full';
 
 // The one shown card (one at a time): which reference, the code it hangs from, and whether a key opened it.
 // Opens on click, tap, Enter, or Space only (OR-44, OR-23, OR-37).
-type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
+type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean; live: () => EntityLive | null | undefined };
 const [shown, setShown] = createSignal<Shown | null>(null, { ownedWrite: true });
 const showCard = (s: Shown | null) => setShown(s);
 const CARD_ID = 'entity-card';
@@ -168,7 +168,7 @@ export function EntityCode(p: {
     // The open card is read now, not from the last render: a second click before a re-render still closes it.
     // A click from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
     const cur = untrack(shown);
-    showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0 });
+    showCard(cur?.anchor === e.currentTarget ? null : { ref: r, anchor: e.currentTarget, keyboard: e.detail === 0, live });
   };
   const what = () => entityKinds[k()!].label;
   const name = () => `${what()}${code() ? ' ' + code() : ''}${st() ? ', ' + st()!.label.toLowerCase() : ''}${live() === null ? ', not visible' : ''}: show details`;
@@ -338,6 +338,7 @@ function EntityCardDialog(p: { cur: Shown; onImage: OpenQuestionImage }) {
       <CardBody
         r={p.cur.ref}
         imageAnchor={p.cur.anchor}
+        imageState={p.cur.live}
         onImage={p.onImage}
         onOpen={() => {
           const a = p.cur.anchor;
@@ -350,8 +351,8 @@ function EntityCardDialog(p: { cur: Shown; onImage: OpenQuestionImage }) {
 }
 
 // Resolve question files through the existing access-checked reference registry.
-type QuestionPicture = { id: string; src: string; title: string };
-type OpenQuestionImage = (picture: QuestionPicture, anchor: HTMLElement, blocked: () => void, reference?: EntityRef) => void;
+type QuestionPicture = { src: string; title: string };
+type OpenQuestionImage = (picture: QuestionPicture, anchor: HTMLElement, blocked: () => void, available?: () => boolean) => void;
 let openQuestionImage: OpenQuestionImage | undefined;
 export function QuestionImages(p: { text: string; questionId?: string | null; artifactIds?: unknown }) {
   const source = useContext(EntityCards);
@@ -463,7 +464,7 @@ function QuestionImageAttachment(p: { data: EntityLive; src: (id: string) => str
   const original = () => p.src(p.data.id);
   const thumbnail = () => p.data.preview?.view === 'image' && p.data.preview.resultId !== p.data.id ? p.data.preview.resultId : undefined;
   const open = (e: MouseEvent) => openQuestionImage?.(
-    { id: p.data.id, src: original(), title: p.data.title }, e.currentTarget as HTMLElement, () => setBlocked(true),
+    { src: original(), title: p.data.title }, e.currentTarget as HTMLElement, () => setBlocked(true),
   );
   return (
     <div class="qiv-attachment">
@@ -484,46 +485,37 @@ function QuestionImageAttachment(p: { data: EntityLive; src: (id: string) => str
  *  surface): under the code, above it when there is no room, kept inside the window. Escape, a click outside, a scroll,
  *  focus leaving it or the code again close it; Escape and the Open action give focus back to the code. */
 export function EntityCardLayer(p: { privateReady?: boolean; privateGeneration?: number; privateRoute?: string }) {
-  const source = useContext(EntityCards);
   const [image, setImage] = createSignal<(QuestionPicture & {
-    anchor: HTMLElement; scroll: [HTMLElement, number][]; valid: () => boolean; release: () => void;
+    anchor: HTMLElement; scroll: [HTMLElement, number][]; valid: () => boolean;
   }) | null>(null);
   let fullscreen = false;
   let closing = false;
   let opening = false;
   let disposed = false;
   let observer: MutationObserver | undefined;
-  const openImage: OpenQuestionImage = (picture, anchor, blocked, reference) => {
+  const openImage: OpenQuestionImage = (picture, anchor, blocked, available = () => true) => {
     if (opening || closing || image() || p.privateReady === false) return;
     const question = anchor.closest('[data-question-images]');
     if (!question) return;
     const route = location.href, generation = p.privateGeneration;
-    // The card closes on entry. Keep its existing live registry entry until the viewer closes.
-    const holder = reference && source?.live?.(reference);
-    const release = () => holder?.release();
-    const available = () => {
-      const latest = holder?.read();
-      return latest === undefined || latest?.id === picture.id && latest.state === 'stored' && latest.mediaType?.startsWith('image/');
-    };
     const valid = () => !disposed && p.privateReady !== false && p.privateGeneration === generation &&
-      location.href === route && anchor.isConnected && question.contains(anchor) && !!available();
+      location.href === route && anchor.isConnected && question.contains(anchor) && available();
+    if (!valid()) return;
     const scroll = scrollParents(anchor).map((parent): [HTMLElement, number] => [parent, parent.scrollTop]);
     const open = () => {
       if (!valid()) {
         if (fullscreen && document.fullscreenElement === document.documentElement) void document.exitFullscreen().catch(() => {});
         fullscreen = false;
-        release();
         return;
       }
       showCard(null);
-      setImage({ ...picture, anchor, scroll, valid, release });
+      setImage({ ...picture, anchor, scroll, valid });
       observer = new MutationObserver(checkSource);
       observer.observe(document.body, { childList: true, subtree: true });
       requestAnimationFrame(() => { if (valid()) document.querySelector<HTMLElement>('.qiv-stage')?.focus({ preventScroll: true }); });
     };
     const refuse = () => {
       if (valid()) blocked();
-      release();
     };
     const embedded = window.self !== window.top;
     if (!document.fullscreenEnabled || !document.documentElement.requestFullscreen) {
@@ -552,7 +544,6 @@ export function EntityCardLayer(p: { privateReady?: boolean; privateGeneration?:
         current.scroll.forEach(([parent, top]) => { parent.scrollTop = top; });
         current.anchor.focus({ preventScroll: true });
       }
-      current.release();
       closing = false;
     }));
   };
@@ -564,7 +555,6 @@ export function EntityCardLayer(p: { privateReady?: boolean; privateGeneration?:
   onCleanup(() => {
     disposed = true;
     observer?.disconnect();
-    image()?.release();
     if (fullscreen && document.fullscreenElement === document.documentElement) void document.exitFullscreen().catch(() => {});
     document.removeEventListener('fullscreenchange', onFullscreen);
     window.removeEventListener('popstate', checkSource);
@@ -577,7 +567,9 @@ export function EntityCardLayer(p: { privateReady?: boolean; privateGeneration?:
   </>;
 }
 
-function CardBody(p: { r: EntityRef; onOpen: () => void; imageAnchor: HTMLElement; onImage: OpenQuestionImage }) {
+function CardBody(p: {
+  r: EntityRef; onOpen: () => void; imageAnchor: HTMLElement; imageState: Shown['live']; onImage: OpenQuestionImage;
+}) {
   const source = useContext(EntityCards);
   const [imageBlocked, setImageBlocked] = createSignal(false);
   const read: EntityCardRead = source ? source.useCard(untrack(() => p.r)) : { data: null, error: 'Details are not available here' };
@@ -585,9 +577,15 @@ function CardBody(p: { r: EntityRef; onOpen: () => void; imageAnchor: HTMLElemen
   const c = createMemo(() => read.error ? null : read.data);
   const question = () => p.imageAnchor.closest<HTMLElement>('[data-question-images]');
   const questionImage = (data: EntityCardData) => question() && data.kind === 'result' && data.state === 'stored' && data.mediaType?.startsWith('image/');
+  // The trigger keeps its registered entry even after the card closes. Use that exact entry
+  // for a code, typed ID or bare ID, and require current stored-image metadata before showing bytes.
+  const imageAvailable = (id: string) => {
+    const latest = p.imageState();
+    return latest?.id === id && latest.kind === 'result' && latest.state === 'stored' && !!latest.mediaType?.startsWith('image/');
+  };
   const openImage = (data: EntityCardData) => {
     if (!source?.src || !questionImage(data)) return;
-    p.onImage({ id: data.id, src: source.src(data.id), title: data.title }, p.imageAnchor, () => setImageBlocked(true), p.r);
+    p.onImage({ src: source.src(data.id), title: data.title }, p.imageAnchor, () => setImageBlocked(true), () => imageAvailable(data.id));
   };
   // Before it loads, a release names itself by its tag (the reference may show a label such as UI 1.2.5).
   const code = createMemo(() => c() ? c()!.code : p.r.kind === 'release' ? p.r.id : p.r.code);
@@ -658,7 +656,7 @@ function CardBody(p: { r: EntityRef; onOpen: () => void; imageAnchor: HTMLElemen
                 <Show when={Number.isFinite(at())}><span>{data.atLabel ? data.atLabel + ' ' : ''}<Ago t={at()} /></span></Show>
               </p>
             </Show>
-            <Show when={data.preview && source?.src && !(questionImage(data) && data.preview.resultId === data.id) ? data.preview : null} keyed>
+            <Show when={data.preview && source?.src && !(question() && data.preview.resultId === data.id) ? data.preview : null} keyed>
               {pv => (
                 <a class="ec-pv" href={data.path ?? undefined} onClick={e => {
                   if (pv.view === 'image' && questionImage(data) && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) {
@@ -672,7 +670,8 @@ function CardBody(p: { r: EntityRef; onOpen: () => void; imageAnchor: HTMLElemen
               )}
             </Show>
             <Show when={questionImage(data) && source?.src}>
-              <Button label="Open image" name={`Open image: ${data.title}`} icon="maximize-2" onClick={() => openImage(data)} />
+              <Button label="Open image" name={`Open image: ${data.title}`} icon="maximize-2"
+                disabledReason={imageAvailable(data.id) ? undefined : 'Image unavailable'} onClick={() => openImage(data)} />
             </Show>
             <Show when={imageBlocked() && source?.src}>
               <p class="ec-image-fallback">Fullscreen is unavailable here. <OriginalImageLink
