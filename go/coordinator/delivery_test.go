@@ -82,17 +82,17 @@ func TestDeliveryStages(t *testing.T) {
 			{Number: 22, MergedAt: s("2026-11-12T11:40:00Z"), MergeSHA: "m22"},
 		},
 		releases: []ghRelease{
-			{Tag: "v1.2.10", Target: "m11", Published: "2026-11-12T10:10:00Z"},
-			{Tag: "v1.2.9", Target: "m10", Published: "2026-11-12T09:10:00Z"},
-			{Tag: "v1.2.11", Target: "m12", Published: "2026-11-12T11:10:00Z"},
-			{Tag: "ui-1.2.11-v1.2.12", Target: "m20", Published: "2026-11-12T11:25:00Z"},
-			{Tag: "ui-1.2.11-v1.2.13", Target: "m21", Published: "2026-11-12T11:35:00Z"},
-			{Tag: "ui-ts-v1.2.14", Target: "m22", Published: "2026-11-12T11:45:00Z"}, // not ui-<backend>-v<UI version>: no release
+			{Tag: "v1.261112.10", Target: "m11", Published: "2026-11-12T10:10:00Z"},
+			{Tag: "v1.261112.9", Target: "m10", Published: "2026-11-12T09:10:00Z"},
+			{Tag: "v1.261112.11", Target: "m12", Published: "2026-11-12T11:10:00Z"},
+			{Tag: "ui-1.261112.11-v1.261112.12", Target: "m20", Published: "2026-11-12T11:25:00Z"},
+			{Tag: "ui-1.261112.11-v1.261112.13", Target: "m21", Published: "2026-11-12T11:35:00Z"},
+			{Tag: "ui-ts-v1.261112.14", Target: "m22", Published: "2026-11-12T11:45:00Z"}, // not ui-<backend>-v<UI version>: no release
 		},
 	}
 	// Fleet releases and installs only its own repository: another repository's merges are done (Merged, no release),
 	// listed for the day after the merge; its v* and ui-* tags are no Fleet releases.
-	other, _ := deliveryStages("p", "o/r", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
+	other, _, _ := deliveryStagesWithMerged("p", "o/r", g, taskDeliveryRollout{}, now)
 	var done []int64
 	for _, it := range other {
 		if it.Merged != nil {
@@ -105,17 +105,18 @@ func TestDeliveryStages(t *testing.T) {
 	if !slices.Equal(done, []int64{10, 11, 12, 20, 21, 22}) {
 		t.Errorf("o/r merged rows = %v", done)
 	}
-	old, _ := deliveryStages("p", "o/r", g, nil, "", now.Add(48*time.Hour))
+	old, _, _ := deliveryStagesWithMerged("p", "o/r", g, taskDeliveryRollout{}, now.Add(48*time.Hour))
 	for _, it := range old {
 		if it.Stage == "merged" {
 			t.Errorf("o/r #%d merged two days ago is still listed", it.Number)
 		}
 	}
-	items, landing := deliveryStages("fleet", "taskqorg/fleet", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
+	rollout := taskDeliveryRollout{site: "1.261112.12", liveVersions: []string{"1.261112.9", "1.261112.10"}}
+	items, landing, _ := deliveryStagesWithMerged("fleet", "taskqorg/fleet", g, rollout, now)
 	want := map[int64]contract.DeliveryStage{1: "pr_open", 2: "pr_ci", 3: "mq_wait", 4: "mq_ci", 5: "mq_wait", 6: "pr_failed", 7: "pr_open", 8: "mq_failed", 9: "pr_open",
 		14: "mq_wait", 15: "pr_open", 16: "pr_open", 17: "mq_failed", 18: "mq_failed", 19: "pr_open", 10: "installed", 11: "installing", 12: "installing",
 		20: "installed", 21: "installing", 22: "releasing"}
-	rel := map[int64]string{10: "v1.2.9", 11: "v1.2.10", 12: "v1.2.11", 20: "ui-1.2.11-v1.2.12", 21: "ui-1.2.11-v1.2.13"}
+	rel := map[int64]string{10: "v1.261112.9", 11: "v1.261112.10", 12: "v1.261112.11", 20: "ui-1.261112.11-v1.261112.12", 21: "ui-1.261112.11-v1.261112.13"}
 	if len(items) != len(want) {
 		t.Fatalf("items = %+v", items)
 	}
@@ -155,7 +156,7 @@ func TestDeliveryRecordedUIRelease(t *testing.T) {
 	if len(g.releases) != 3 || slices.ContainsFunc(g.releases, func(r ghRelease) bool { return r.Tag == older.Tag }) {
 		t.Fatalf("a recorded release the read has is not added twice, one older than every one read not at all: %+v", g.releases)
 	}
-	items, _ := deliveryStages("fleet", githubPublicRepo, g, []string{"1.261117.28"}, "1.261117.28", now)
+	items, _, _ := deliveryStagesWithMerged("fleet", githubPublicRepo, g, taskDeliveryRollout{coordinator: "1.261117.28", site: "1.261117.28"}, now)
 	i := slices.IndexFunc(items, func(it contract.DeliveryItem) bool { return it.Number == 626 })
 	if i < 0 || items[i].Stage != "installed" || deref(items[i].Release) != ui.Tag {
 		t.Fatalf("#626: %+v", items)

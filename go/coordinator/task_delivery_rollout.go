@@ -8,23 +8,32 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"fleet/coordinator/db"
 )
 
 type taskDeliveryHostProof struct {
-	Target  string `json:"target"`
-	Version string `json:"version"`
+	Target          string `json:"target"`
+	Version         string `json:"version"`
+	RequiredVersion string `json:"requiredVersion,omitempty"`
 }
 
 type taskDeliveryRollout struct {
-	site    string
-	hosts   []taskDeliveryHostProof
-	unknown bool
+	release            releaseInfo
+	coordinator        string
+	coordinatorHealthy bool
+	site               string
+	liveVersions       []string
+	hosts              []taskDeliveryHostProof
+	hasHostObservation bool
+	unknown            bool
 }
 
-// The native rollout must reach the coordinator and every observed host eligible for auto-update. The UI route alone
-// proves the independent UI release. A stale or versionless required host leaves the native rollout unconfirmed.
+// Delivery display counts live host versions. Durable task proof requires a healthy coordinator and every observed
+// executor eligible for auto-update, including one with a stale observation, which leaves proof unconfirmed.
 func observeFleetTaskRollout(q *Request, ui string) (taskDeliveryRollout, error) {
-	out := taskDeliveryRollout{site: ui, hosts: []taskDeliveryHostProof{{Target: "coordinator", Version: version}}}
+	healthy, rel := healthyRelease()
+	out := taskDeliveryRollout{coordinator: version, coordinatorHealthy: deref(healthy) == version, release: rel, site: ui}
 	records, err := hostRecords(q)
 	if err != nil {
 		return out, err
@@ -37,19 +46,50 @@ func observeFleetTaskRollout(q *Request, ui string) (taskDeliveryRollout, error)
 	for _, host := range records {
 		configured[host.ID] = host
 	}
+	now := time.Now()
 	for _, observed := range observations {
-		host, exists := configured[observed.ID]
-		if !exists || host.removed() || host.autoUpdate() != "on" || observed.LastSeenMs == 0 {
-			continue
-		}
 		seen := q.app.effectiveHostSeen(observed.ID, observed.LastSeenMs)
-		if time.Since(time.UnixMilli(int64(seen))) > time.Hour || observed.Version == "" {
-			out.unknown = true
-			continue
-		}
-		out.hosts = append(out.hosts, taskDeliveryHostProof{Target: observed.ID, Version: observed.Version})
+		out.observeExecutor(configured[observed.ID], observed, now.Sub(time.UnixMilli(int64(seen))), now)
 	}
 	return out, nil
+}
+
+func (r *taskDeliveryRollout) observeExecutor(host hostRecord, observed db.DeliveryHostsSeenRow, age time.Duration, now time.Time) {
+	if age < time.Hour && observed.Version != "" {
+		r.liveVersions = append(r.liveVersions, observed.Version)
+	}
+	if host.ID == "" || host.removed() || observed.LastSeenMs == 0 {
+		return
+	}
+	r.hasHostObservation = true
+	if auto := host.autoUpdate(); auto != "on" {
+		until, err := time.Parse(time.RFC3339, auto)
+		if err != nil || until.After(now) {
+			return // off or held; an expired hold is eligible for auto-update again
+		}
+	}
+	if age > time.Hour || !releaseVersionRe.MatchString(observed.Version) {
+		r.unknown = true
+		return
+	}
+	r.hosts = append(r.hosts, taskDeliveryHostProof{Target: observed.ID, Version: observed.Version})
+}
+
+// executorRolloutFloor uses the healthy running release's manifest to prove equivalence within its unchanged interval.
+func executorRolloutFloor(required, running string, healthy bool, rel releaseInfo) string {
+	changedIn := rel.Executor.ChangedIn
+	if healthy && rel.Version == running && releaseVersionRe.MatchString(running) &&
+		!olderVersion(running, required) && olderVersion(changedIn, required) && releaseVersionRe.MatchString(changedIn) {
+		return changedIn
+	}
+	return required
+}
+
+func (r taskDeliveryRollout) displayedInstallation(tag string) bool {
+	if uiOnlyRelease(tag) {
+		return len(r.installation(tag)) != 0
+	}
+	return installed(executorRolloutFloor(releaseVersionOf(tag), r.coordinator, r.coordinatorHealthy, r.release), r.liveVersions)
 }
 
 func (r taskDeliveryRollout) installation(tag string) []taskDeliveryHostProof {
@@ -63,15 +103,22 @@ func (r taskDeliveryRollout) installation(tag string) []taskDeliveryHostProof {
 		}
 		return []taskDeliveryHostProof{{Target: "site", Version: r.site}}
 	}
-	if r.unknown || len(r.hosts) == 0 {
+	if r.unknown || !r.hasHostObservation || !r.coordinatorHealthy ||
+		!releaseVersionRe.MatchString(required) || olderVersion(r.coordinator, required) {
 		return nil
 	}
+	executorRequired := executorRolloutFloor(required, r.coordinator, r.coordinatorHealthy, r.release)
+	proof := []taskDeliveryHostProof{{Target: "coordinator", Version: r.coordinator}}
 	for _, host := range r.hosts {
-		if host.Version == "" || versionLess(host.Version, required) {
+		if olderVersion(host.Version, executorRequired) {
 			return nil
 		}
+		if executorRequired != required {
+			host.RequiredVersion = executorRequired
+		}
+		proof = append(proof, host)
 	}
-	return r.hosts
+	return proof
 }
 
 func confirmedRolloutRollback(previous deliveryMergedPR, observed []taskDeliveryHostProof) bool {
@@ -79,10 +126,15 @@ func confirmedRolloutRollback(previous deliveryMergedPR, observed []taskDelivery
 	if required == "" {
 		return false
 	}
+	ui := uiOnlyRelease(previous.Release)
 	for _, host := range observed {
-		if host.Version != "" && versionLess(host.Version, required) &&
-			slices.ContainsFunc(previous.InstalledOn, func(old taskDeliveryHostProof) bool { return old.Target == host.Target }) {
-			return true
+		if host.Version == "" || !ui && !releaseVersionRe.MatchString(host.Version) {
+			continue
+		}
+		for _, old := range previous.InstalledOn {
+			if old.Target == host.Target && versionLess(host.Version, firstString(old.RequiredVersion, required)) {
+				return true
+			}
 		}
 	}
 	return false
@@ -109,6 +161,9 @@ func qualifyFleetTaskDeliveries(ctx context.Context, a *App, projects []string, 
 		pr := &prs[i]
 		if candidates[pr.Number] {
 			pr.ObservedOn = slices.Clone(rollout.hosts)
+			if rollout.coordinatorHealthy {
+				pr.ObservedOn = append(pr.ObservedOn, taskDeliveryHostProof{Target: "coordinator", Version: rollout.coordinator})
+			}
 			if rollout.site != "" {
 				pr.ObservedOn = append(pr.ObservedOn, taskDeliveryHostProof{Target: "site", Version: rollout.site})
 			}

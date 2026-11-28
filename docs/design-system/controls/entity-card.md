@@ -70,7 +70,7 @@ Budget (measured in the book's load page and on prod): a conversation with 200 r
 | Agent (profile) | profile id | none | name | harness, changed | none | Model, Effort, Revision | Open, code |
 | Pipeline | pipeline id | none | name | changed | none | Steps, Revision | Open, id or code |
 | Pull request | `#643` | delivery stage (from history as Delivery puts it: releasing, installing, installed or merged) | title | project, since | none | Repository or Author (history), Release, Opened, Merged | Open (Delivery), reference, GitHub |
-| Release | tag, known to the delivery pass or history or run by a host or the site (else 404) | delivery (installing, installed, as the delivery pass decides) | Release 1.2.3, UI release 1.2.3 | none | none | Hosts (`2 of 3` seen in the hour with a version), Site serves (UI-only), Pull requests | Open (Delivery filtered by the tag), code |
+| Release | tag, known to the delivery pass or history or run by a host or the site (else 404) | delivery (installing, installed, as the delivery pass decides) | Release 1.2.3, UI release 1.2.3 | none | none | Hosts (`2 of 3` with the [required executor part](../../designs/fleet-host-updates.md#delivery-evidence) among those seen in the hour with a version), Site serves (UI-only), Pull requests | Open (Delivery filtered by the tag), code |
 
 Not covered, by decision:
 
