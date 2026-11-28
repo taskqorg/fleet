@@ -331,5 +331,6 @@ dialog.side-sheet:has(> .qiv)::backdrop { background: transparent; overflow: hid
   .qiv-thumbnail, .qiv-thumbnail-placeholder { width: 88px; height: 60px; }
   .qiv-file { width: 100%; }
   .qiv-attachment > .btn, .qiv-original { grid-column: 2; min-height: 44px; }
+  .qiv-attachment > .btn { justify-self: stretch; }
   .qiv-blocked { grid-column: 1 / -1; }
 }
